@@ -1,4 +1,6 @@
-use bun_core::EncodedSlice;
+use core::ffi::c_void;
+
+use bun_core::{CStrRef, EncodedSlice};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
 use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
@@ -38,6 +40,8 @@ pub(crate) fn array_buffer_to_string<'a>(
 unsafe extern "C" {
     safe fn dump_zone_malloc_stats();
     safe fn Bun__memoryFootprint() -> usize;
+    /// Calls `out(line, arg)` with no lock held, and keeps neither argument.
+    safe fn mi_stats_print_out(out: extern "C" fn(CStrRef<'_>, *mut c_void), arg: *mut c_void);
 }
 
 /// Accurate per-process memory footprint in bytes.
@@ -71,13 +75,11 @@ pub(crate) fn set_jit_policy(cx: &mut JsScope<'_>, scale: f64) -> JsResult<()> {
 pub(crate) fn mimalloc_dump() {
     // Print the process-wide mimalloc stats to stderr via
     // `mi_stats_print_out` directly.
-    extern "C" fn dump(text: *const core::ffi::c_char, _arg: *mut core::ffi::c_void) {
-        // SAFETY: mimalloc passes a valid NUL-terminated string.
-        let text = unsafe { core::ffi::CStr::from_ptr(text) };
+    extern "C" fn dump(text: CStrRef<'_>, _arg: *mut c_void) {
+        let text = text.to_cstr();
         let _ = bun_core::Output::error_writer().write_all(text.to_bytes());
     }
-    // SAFETY: `dump` matches `mi_output_fun` and does not unwind.
-    unsafe { bun_alloc::mimalloc::mi_stats_print_out(Some(dump), core::ptr::null_mut()) };
+    mi_stats_print_out(dump, core::ptr::null_mut());
     bun_core::Output::flush();
     if bun_alloc::heap_breakdown::ENABLED {
         dump_zone_malloc_stats();

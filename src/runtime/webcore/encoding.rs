@@ -713,13 +713,9 @@ fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
 /// The low byte of every code unit, in a fresh exactly-sized `Vec<u8>`.
 fn narrow_u16_to_u8(input: &[u16]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(input.len());
-    // SAFETY: `copy_u16_into_u8` only writes `dst`, initializing exactly `input.len()` bytes.
-    unsafe {
-        bun_core::vec::fill_spare(&mut out, 0, |dst| {
-            strings::copy_u16_into_u8(&mut dst[..input.len()], input);
-            (input.len(), ())
-        })
-    };
+    bun_core::vec::append_with(&mut out, input.len(), |spare| {
+        bun_highway::copy_u16_to_u8(input, spare)
+    });
     out
 }
 

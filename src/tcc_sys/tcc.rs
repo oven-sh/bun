@@ -281,30 +281,13 @@ impl State {
     ///
     /// ## Example
     /// ```ignore
-    /// state.define_symbols(&[("foo", 1), ("baz", 42)]);
+    /// state.define_symbols(&[(zstr!("foo"), 1), (zstr!("baz"), 42)]);
     /// ```
-    pub fn define_symbols(&mut self, symbols: &[(&str, i64)]) {
-        let mut buf = [0u8; 256];
+    pub fn define_symbols(&mut self, symbols: &[(&ZStr, i64)]) {
+        let mut buf = [0u8; "-9223372036854775808\0".len()];
         for &(name, value) in symbols {
-            // Copy the name into the stack buffer to NUL-terminate it for the C ABI.
-            let name_len = name.len();
-            debug_assert!(name_len < buf.len());
-            buf[..name_len].copy_from_slice(name.as_bytes());
-            buf[name_len] = 0;
-            let sym_ptr = buf.as_ptr().cast::<c_char>();
-
-            let mut ibuf = bun_core::fmt::ItoaBuf::new();
-            let digits = bun_core::fmt::itoa(&mut ibuf, value);
-            let val_off = name_len + 1;
-            let val_end = val_off + digits.len();
-            debug_assert!(val_end < buf.len());
-            buf[val_off..val_end].copy_from_slice(digits);
-            buf[val_end] = 0;
-            let val_ptr = buf[val_off..].as_ptr().cast::<c_char>();
-
-            // SAFETY: self is a valid *mut TCCState; both buffer regions are NUL-terminated and
-            // outlive the FFI call (tcc_define_symbol copies its arguments).
-            unsafe { tcc_define_symbol(self, sym_ptr, val_ptr) }
+            let len = bun_core::fmt::print_int(&mut buf, value);
+            self.define_symbol(name, ZStr::nul_terminate(&mut buf, len));
         }
     }
 
@@ -389,12 +372,7 @@ impl State {
             let len = name.len();
             debug_assert!(len < buf.len());
             buf[..len].copy_from_slice(name.as_bytes());
-            buf[len] = 0;
-            // SAFETY: self is a valid *mut TCCState; buf[..=len] is NUL-terminated and outlives
-            // the FFI call (tcc_add_symbol copies the name); val is an opaque address.
-            if unsafe { tcc_add_symbol(self, buf.as_ptr().cast::<c_char>(), val) } != 0 {
-                return Err(Error::InvalidSymbol);
-            }
+            self.add_symbol(ZStr::nul_terminate(&mut buf, len), val)?;
         }
         Ok(())
     }

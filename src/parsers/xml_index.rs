@@ -120,11 +120,9 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
         let chunk_len = (len - self.src_off).min(REFILL_INPUT);
         let chunk = &self.contents[self.src_off..self.src_off + chunk_len];
         if bun_core::env::IS_NATIVE && !self.use_scalar {
-            let filled = self.win.len();
-            let out = &mut self.win.spare_capacity_mut()[..chunk_len + 64];
-            let n = U::structural_index_chunk(chunk, self.src_off, out, &mut self.kernel_state);
-            // SAFETY: the kernel initialized `n` entries of the spare capacity it was given.
-            unsafe { self.win.set_len(filled + n) };
+            bun_core::vec::append_with(&mut self.win, usize::MAX, |out| {
+                U::structural_index_chunk(chunk, self.src_off, out, &mut self.kernel_state)
+            });
         } else {
             self.scalar_chunk(chunk, self.src_off);
         }

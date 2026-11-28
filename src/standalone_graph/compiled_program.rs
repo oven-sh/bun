@@ -2608,8 +2608,6 @@ impl StandaloneModuleGraph {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use core::ptr::read_unaligned;
-
     use bun_aot::engine::EngineModuleId;
     use bun_ast::Loader;
     use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
@@ -3418,8 +3416,7 @@ pub(crate) mod tests {
     fn read_graph(request: &GraphRequest<'_>) -> StandaloneModuleGraph {
         let bytes: &'static mut [u8] = graph_bytes(request).unwrap().bytes.leak();
         let offsets_at = bytes.len() - b"\n---- Bun! ----\n".len() - size_of::<Offsets>();
-        // SAFETY: `to_bytes` ends the graph with its `Offsets` and the trailer.
-        let offsets: Offsets = unsafe { read_unaligned(bytes[offsets_at..].as_ptr().cast()) };
+        let offsets: Offsets = read_prefix(&bytes[offsets_at..]).unwrap();
         let (base, length) = (bytes.as_mut_ptr(), bytes.len());
         StandaloneModuleGraph::from_bytes(base, length, offsets, None).unwrap()
     }

@@ -45,13 +45,11 @@ impl JSCDeferredWorkTask {
 /// VM's `kind` loop (captured by `JSCTaskScheduler::onAddPendingWork` on the JS
 /// thread when the work was registered).
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
-    r: *const crate::vm_handle::Shared,
+extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
+    r: &crate::vm_handle::Shared,
     task: JSCDeferredWorkTask,
     kind: crate::LoopKind,
 ) {
     crate::mark_binding!();
-    // SAFETY: C++ passes the reference its JSVMClientData holds.
-    let handle = unsafe { crate::VmHandle::borrow_ref(r) };
-    drop(handle.post::<JSCDeferredWorkTask>(kind, task));
+    drop(r.post::<JSCDeferredWorkTask>(kind, task));
 }

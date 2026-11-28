@@ -34,29 +34,10 @@ const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 // fallback under a `LazyLock` instead — same lifetime semantics
 // (process-static, never freed), just not BSS-backed. Swap to the macro once
 // the crate-level feature flag lands.
-type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
-
-/// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
-/// it can sit inside a `LazyLock`. The underlying list serializes its own
-/// mutation through an internal `Mutex` (see `BSSStringList::append`), so
-/// sharing the raw pointer across threads is sound; the `&mut self` receiver
-/// on `append` is not an exclusivity requirement.
-struct ImportPathsListPtr(core::ptr::NonNull<ImportPathsList>);
-// SAFETY: `BSSStringList` guards every mutating method with `self.mutex`, and
-// the allocation is process-lifetime (never freed). The pointer is therefore
-// safe to publish and dereference from any thread.
-unsafe impl Send for ImportPathsListPtr {}
-// SAFETY: same invariant as `Send` — internal mutex serializes mutation and the
-// allocation is process-lifetime, so shared `&` access from any thread is sound.
-unsafe impl Sync for ImportPathsListPtr {}
+type ImportPathsListPtr = bun_alloc::BSSStringListPtr<{ 512 * 2 }, { 128 + 1 }>;
 
 static RELATIVE_PATHS_LIST: std::sync::LazyLock<ImportPathsListPtr> =
-    std::sync::LazyLock::new(|| ImportPathsListPtr(ImportPathsList::init()));
-
-#[inline]
-fn relative_paths_list_ptr() -> *mut ImportPathsList {
-    RELATIVE_PATHS_LIST.0.as_ptr()
-}
+    std::sync::LazyLock::new(bun_alloc::BSSStringList::init);
 
 // ── HardcodedModule alias lookup ────────────────────────────────────────
 // Thin adapter over `bun_resolve_builtins::Alias::get` so the call site keeps
@@ -100,12 +81,7 @@ mod hardcoded_module {
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
-    // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed
-    // (process-lifetime singleton). `append` takes `*mut Self`, serializes on
-    // the inner mutex, copies `src` into its owned backing buffer and returns
-    // a slice borrowing that storage; the returned borrow is `'static`-valid
-    // by construction.
-    unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
+    RELATIVE_PATHS_LIST.append(&src).expect("OOM")
 }
 impl Linker {
     /// Exclusive borrow of the owning `Transpiler.log`.

@@ -39,11 +39,11 @@ mod preallocate {
 }
 
 pub(crate) type FilenameStoreBacking =
-    allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
+    allocators::BSSStringListPtr<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
 pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage, emitted at the declare site via
-// `bss_*!` macros (returns `*mut`). Each declare site owns its own storage:
+// `bss_*!` macros. Each declare site owns its own storage:
 // `crate::fs::FilenameStore` re-exports `filename_store_backing` from here so
 // it and `FilenameStoreAppender` share one store.
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
@@ -56,9 +56,9 @@ bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FIL
 /// call. `add_entry` runs once per directory entry, so for the
 /// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
 /// `Once` atomic checks per directory. Resolving once up front and carrying the
-/// raw pointer across the loop drops that to a single check per `readdir`.
+/// handle across the loop drops that to a single check per `readdir`.
 pub struct FilenameStoreAppender {
-    backing: *mut FilenameStoreBacking,
+    backing: FilenameStoreBacking,
 }
 impl FilenameStoreAppender {
     #[inline]
@@ -72,11 +72,7 @@ impl FilenameStoreAppender {
 impl strings::Appender for FilenameStoreAppender {
     #[inline]
     fn append(&mut self, s: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
-        // SAFETY: `backing` is the live process-lifetime `bss_string_list!`
-        // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
-        // its inner mutex (no aliased `&mut` is ever formed). Returned slice
-        // borrows the singleton's never-freed storage.
-        unsafe { FilenameStoreBacking::append(self.backing, &s) }
+        self.backing.append(&s)
     }
 }
 

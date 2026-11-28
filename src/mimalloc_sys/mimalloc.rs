@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-use core::ffi::{c_char, c_long, c_void};
+use core::ffi::{c_long, c_void};
 
 // `Option` below is the mimalloc `mi_option_t` enum, which shadows
 // `core::option::Option` in this module. Nullable fn-pointer params therefore
@@ -21,8 +21,6 @@ unsafe extern "C" {
     pub safe fn mi_good_size(size: usize) -> usize;
 }
 
-pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
-
 unsafe extern "C" {
     /// No preconditions.
     pub safe fn mi_collect(force: bool);
@@ -42,7 +40,6 @@ unsafe extern "C" {
     /// Awake again: take the heaps back from the scavenger, waiting for a sweep in progress to
     /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
     pub safe fn mi_on_thread_idle_end();
-    pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     /// No preconditions; writes a number through each argument that is not `None`.
     pub safe fn mi_process_info(
         elapsed_msecs: core::option::Option<&mut usize>,

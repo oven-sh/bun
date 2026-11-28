@@ -52,6 +52,16 @@ unsafe extern "C" {
     -> u32;
 }
 
+/// The index of the RGBA entry of `palette` that is closest to the colour.
+fn nearest_palette(palette: &[u8], [r, g, b, a]: [u8; 4]) -> u8 {
+    let k = (palette.len() / 4) as u32;
+    // SAFETY: the kernel reads `k` entries of four bytes, and channels of 8 bits do not overflow its distance.
+    let index = unsafe {
+        bun_image_nearest_palette(palette.as_ptr(), k, r.into(), g.into(), b.into(), a.into())
+    };
+    u8::try_from(index).unwrap()
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Options {
     pub(crate) max_colors: u16,
@@ -133,24 +143,13 @@ pub(crate) fn quantize(
 
     let mut indices = vec![0u8; n as usize];
     if opts.dither {
-        map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
+        map_floyd_steinberg(rgba, w, h, &palette, &mut indices)?;
     } else {
         // Direct nearest-entry mapping. k ≤ 256; the inner search is the
         // highway-dispatched kernel so it runs under the best -march.
         for px in 0..n as usize {
             let p = &rgba[px * 4..][..4];
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            indices[px] = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    i32::from(p[0]),
-                    i32::from(p[1]),
-                    i32::from(p[2]),
-                    i32::from(p[3]),
-                )
-            })
-            .unwrap();
+            indices[px] = nearest_palette(&palette, [p[0], p[1], p[2], p[3]]);
         }
     }
 
@@ -179,7 +178,6 @@ fn map_floyd_steinberg(
     w: u32,
     h: u32,
     palette: &[u8],
-    k: u16,
     indices: &mut [u8],
 ) -> Result<(), AllocError> {
     // Two rows of accumulated error, ×4 channels. i32 not i16: when the
@@ -210,18 +208,7 @@ fn map_floyd_steinberg(
                 cand[c] = i32::from(rgba[px * 4 + c]) + cur[off + c];
             }
 
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            let idx: u8 = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    clamp255(cand[0]),
-                    clamp255(cand[1]),
-                    clamp255(cand[2]),
-                    clamp255(cand[3]),
-                )
-            })
-            .unwrap();
+            let idx = nearest_palette(palette, cand.map(clamp255));
             indices[px] = idx;
 
             for c in 0..4usize {
@@ -255,8 +242,8 @@ fn map_floyd_steinberg(
 }
 
 #[inline]
-fn clamp255(v: i32) -> i32 {
-    v.clamp(0, 255)
+fn clamp255(v: i32) -> u8 {
+    v.clamp(0, 255) as u8
 }
 
 /// Recompute a box's tight min/max over its pixel slice.

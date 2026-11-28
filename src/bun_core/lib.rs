@@ -453,15 +453,6 @@ pub mod vec {
             // SAFETY: `MaybeUninit<[u8; N]>` has the layout of `[u8; N]`; the caller upholds the write-only contract.
             unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr(), N) }
         }
-
-        /// # Safety
-        /// A producer must have written every byte of `[0..len]` (`len <= N`).
-        #[inline(always)]
-        pub unsafe fn filled(&self, len: usize) -> &[u8] {
-            assert!(len <= N);
-            // SAFETY: `[0..len]` is inside the array (asserted above) and initialized (caller contract).
-            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
-        }
     }
 }
 

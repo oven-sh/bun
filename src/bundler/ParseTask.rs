@@ -1632,15 +1632,29 @@ pub mod parse_worker {
         }
     }
 
+    /// A `*_ptr`, `*_len` pair of `bundler_plugin.h`. Only a plugin makes one.
+    #[repr(C)]
+    struct PluginString {
+        ptr: *const u8,
+        len: usize,
+    }
+
+    impl PluginString {
+        fn as_slice(&self) -> &[u8] {
+            if self.ptr.is_null() {
+                return b"";
+            }
+            // SAFETY: contract of `log_fn`, which lends it.
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        }
+    }
+
     #[repr(C)]
     pub struct BunLogOptions {
         pub(crate) struct_size: usize,
-        pub(crate) message_ptr: *const u8,
-        pub(crate) message_len: usize,
-        pub(crate) path_ptr: *const u8,
-        pub(crate) path_len: usize,
-        pub(crate) source_line_text_ptr: *const u8,
-        pub(crate) source_line_text_len: usize,
+        message: PluginString,
+        path: PluginString,
+        source_line_text: PluginString,
         pub(crate) level: bun_ast::Level,
         // Field order matches `packages/bun-native-bundler-plugin-api/bundler_plugin.h`
         // `BunLogOptions` (`line, lineEnd, column, columnEnd`) — verified by the
@@ -1660,10 +1674,10 @@ pub mod parse_worker {
         struct_size @ 0, context @ 8, path_ptr @ 16, path_len @ 24,
         namespace_ptr @ 32, namespace_len @ 40, default_loader @ 48, external @ 56,
     );
+    bun_core::assert_ffi_layout!(PluginString, 16, 8; ptr @ 0, len @ 8);
     bun_core::assert_ffi_layout!(
         BunLogOptions, 80, 8;
-        struct_size @ 0, message_ptr @ 8, message_len @ 16, path_ptr @ 24,
-        path_len @ 32, source_line_text_ptr @ 40, source_line_text_len @ 48,
+        struct_size @ 0, message @ 8, path @ 24, source_line_text @ 40,
         level @ 56, line @ 60, line_end @ 64, column @ 68, column_end @ 72,
     );
     bun_core::assert_ffi_layout!(
@@ -1673,52 +1687,11 @@ pub mod parse_worker {
     );
 
     impl BunLogOptions {
-        fn source_line_text(&self) -> &[u8] {
-            if !self.source_line_text_ptr.is_null() && self.source_line_text_len > 0 {
-                // SAFETY: genuine FFI — ptr/len are populated by a third-party native
-                // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
-                // len > 0 are checked above; the plugin contract requires the buffer
-                // to remain valid for the duration of the `log` callback (the only
-                // caller of this accessor), and `append` dupes before that returns.
-                return unsafe {
-                    core::slice::from_raw_parts(
-                        self.source_line_text_ptr,
-                        self.source_line_text_len,
-                    )
-                };
-            }
-            b""
-        }
-
-        fn path(&self) -> &[u8] {
-            if !self.path_ptr.is_null() && self.path_len > 0 {
-                // SAFETY: genuine FFI — ptr/len are populated by a third-party native
-                // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
-                // len > 0 are checked above; the plugin contract requires the buffer
-                // to remain valid for the duration of the `log` callback, and
-                // `append` dupes the bytes into the `Log` arena before that returns.
-                return unsafe { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
-            }
-            b""
-        }
-
-        fn message(&self) -> &[u8] {
-            if !self.message_ptr.is_null() && self.message_len > 0 {
-                // SAFETY: genuine FFI — ptr/len are populated by a third-party native
-                // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
-                // len > 0 are checked above; the plugin contract requires the buffer
-                // to remain valid for the duration of the `log` callback, and
-                // `append` dupes the bytes into the `Log` arena before that returns.
-                return unsafe { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
-            }
-            b""
-        }
-
         fn append(&self, log: &mut Log, namespace: &[u8]) {
-            let source_line_text = self.source_line_text();
+            let source_line_text = self.source_line_text.as_slice();
             let length = (self.column_end - self.column).max(0) as usize;
             let location = Location {
-                file: Box::from(self.path()),
+                file: Box::from(self.path.as_slice()),
                 namespace: Box::from(namespace),
                 line: self.line.max(-1),
                 column: self.column.max(-1),
@@ -1729,7 +1702,7 @@ pub mod parse_worker {
             let mut msg = Msg {
                 data: bun_ast::Data {
                     location: Some(location),
-                    text: std::borrow::Cow::Owned(self.message().to_vec()),
+                    text: std::borrow::Cow::Owned(self.message.as_slice().to_vec()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -1750,20 +1723,12 @@ pub mod parse_worker {
         }
 
         /// # Safety
-        /// `args_` and `log_options_`, when non-null, must point at live
-        /// `OnBeforeParseArguments` / `BunLogOptions` for the duration of the
-        /// call (the native-plugin FFI contract).
+        /// `args` are those of the plugin call in progress, and the strings of `log_options` are null or readable.
         unsafe extern "C" fn log_fn(
-            args_: *mut OnBeforeParseArguments,
-            log_options_: *mut BunLogOptions,
+            args: Option<&OnBeforeParseArguments>,
+            log_options: Option<&BunLogOptions>,
         ) {
-            // SAFETY: called from C plugin with valid ptrs or null.
-            let Some(args) = (unsafe { args_.as_mut() }) else {
-                return;
-            };
-            // SAFETY: called from C plugin; when non-null, `log_options_` points
-            // to a live `BunLogOptions` for the duration of the call.
-            let Some(log_options) = (unsafe { log_options_.as_ref() }) else {
+            let (Some(args), Some(log_options)) = (args, log_options) else {
                 return;
             };
             // SAFETY: context backref valid for plugin call duration.
@@ -1797,7 +1762,8 @@ pub mod parse_worker {
         pub(crate) user_context: *mut c_void,
         pub(crate) free_user_context: Option<extern "C" fn(*mut c_void)>,
 
-        pub(crate) log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
+        pub(crate) log:
+            unsafe extern "C" fn(Option<&OnBeforeParseArguments>, Option<&BunLogOptions>),
     }
 
     impl OnBeforeParseResult {

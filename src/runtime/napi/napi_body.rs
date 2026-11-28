@@ -146,7 +146,7 @@ impl NapiEnv {
     /// Any thread holding an env ref: the env's VM handle.
     pub(crate) fn vm_handle(&self) -> bun_jsc::VmHandle {
         // SAFETY: the env holds a reference for its whole lifetime.
-        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }.clone()
+        unsafe { bun_jsc::VmHandle::clone_from_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be

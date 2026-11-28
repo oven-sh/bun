@@ -253,10 +253,9 @@ fn report_what_the_sanitizer_leaves() {
     #[cfg(bun_asan)]
     {
         unsafe extern "C" {
-            fn __sanitizer_set_death_callback(callback: Option<extern "C" fn()>);
+            safe fn __sanitizer_set_death_callback(callback: Option<extern "C" fn()>);
         }
-        // SAFETY: the callback is never unloaded.
-        unsafe { __sanitizer_set_death_callback(Some(write_at_death)) };
+        __sanitizer_set_death_callback(Some(write_at_death));
     }
     for signal in [libc::SIGABRT, libc::SIGILL, libc::SIGTRAP] {
         let mut current: libc::sigaction = bun_core::ffi::zeroed();

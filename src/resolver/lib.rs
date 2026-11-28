@@ -99,33 +99,22 @@ pub mod fs {
                     &$zst
                 }
                 pub fn append_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
-                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // `BSSStringList::append` takes `*mut Self` and serializes
-                    // all mutation through its internal `mutex` (no aliased `&mut` is ever
-                    // formed). The returned slice borrows its never-freed backing storage
-                    // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
-                    // widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                    $backing().append(&value).map_err(crate::Error::Alloc)
                 }
                 pub fn append_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
-                    // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                    $backing().append(&parts).map_err(crate::Error::Alloc)
                 }
                 /// Format directly into the store's tail; no intermediate `String`.
                 pub fn print(
                     &self,
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::print($backing(), args) }
+                    $backing().print(args)
                 }
                 /// `value` with the store's lifetime, if it already points into the store.
                 #[inline]
                 pub fn as_interned(&self, value: &[u8]) -> Option<&'static [u8]> {
-                    // SAFETY: see `append_slice`; the singleton is `'static`.
-                    unsafe { &*$backing() }.as_interned(value)
+                    $backing().as_interned(value)
                 }
             }
         };
@@ -143,12 +132,7 @@ pub mod fs {
                     &self,
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // `BSSStringList::append` takes `*mut Self` and serializes all mutation
-                    // through its internal `mutex`. Returned slice borrows its never-freed
-                    // storage, so widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
-                        .map_err(|_| bun_alloc::AllocError)
+                    $backing().append(&value)
                 }
                 /// Like `append`, but ASCII-lowercases `value` while copying
                 /// it into the store.
@@ -157,9 +141,7 @@ pub mod fs {
                     &self,
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append`.
-                    unsafe { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
-                        .map_err(|_| bun_alloc::AllocError)
+                    $backing().append_lower_case(value)
                 }
             }
         };

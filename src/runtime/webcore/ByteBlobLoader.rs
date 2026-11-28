@@ -169,14 +169,12 @@ impl ByteBlobLoader {
 
     pub(crate) fn to_any_blob(&self, global: &JSGlobalObject) -> Option<blob::Any> {
         // Take ownership via detach_store() up front.
-        let store = self.detach_store()?;
+        let mut store = self.detach_store()?;
         if self.offset.get() == 0
             && self.remain.get() == store.size()
             && self.content_type.get().is_empty()
         {
-            // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
-            // We hold the only outstanding ref (just detached) so exclusive access is sound.
-            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
+            if let Some(blob) = Store::to_any_blob(&mut store) {
                 drop(store);
                 return Some(blob);
             }
@@ -210,7 +208,7 @@ impl ByteBlobLoader {
         self.content_type.set(blob::BlobContentType::default());
 
         if let Some(store) = self.store.take() {
-            drop(store); // store.deref()
+            drop(store);
         }
     }
 }

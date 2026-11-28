@@ -194,14 +194,8 @@ impl JobContext for RandomFillJob {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         match this {
             RandomFillJob::Scratch { scratch, size, .. } => {
-                let size = *size;
-                // SAFETY: `rand_bytes` only writes, and fills every byte of the slice it is given.
-                unsafe {
-                    bun_core::vec::fill_spare(scratch, 0, |spare| {
-                        boringssl::rand_bytes(&mut spare[..size]);
-                        (size, ())
-                    })
-                }
+                bun_core::vec::append_with(scratch, *size, boringssl::c::rand_bytes_buf);
+                assert!(scratch.len() == *size);
             }
             RandomFillJob::InPlace { bytes } => {
                 // SAFETY: `bytes` is the ArrayBuffer `value` keeps alive;

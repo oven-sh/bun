@@ -508,6 +508,17 @@ If an environment variable is not set, you may see runtime errors like `Referenc
 
 See [HTML & static sites](/bundler/html-static#inline-environment-variables) for build-time configuration and examples.
 
+## React Compiler
+
+Bun can run its built-in [React Compiler](https://react.dev/learn/react-compiler) over the `.jsx` and `.tsx` files of an HTML route, like `bun build --react-compiler`. Set `reactCompiler` in your `bunfig.toml`. This option is experimental.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+reactCompiler = true # default false
+```
+
+The compiler runs in development and in production (`development: false`). In development it works together with hot reloading and Fast Refresh. The compiled code imports `react/compiler-runtime`, which React 19 has. Files in `node_modules` are not compiled, and neither is a hook in a `.ts` file: give it the `.tsx` extension.
+
 ## Sourcemaps
 
 In development, Bun generates linked sourcemaps for bundled routes and serves them alongside the JavaScript and CSS chunks. In production (`development: false`), sourcemaps are disabled by default so the server does not expose your original source code.

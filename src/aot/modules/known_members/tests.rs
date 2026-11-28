@@ -1,4 +1,6 @@
+use bun_sema::bind::Decl;
 use bun_sema::hir::EnumId;
+use bun_sema::program::Sym;
 
 use super::{KnownMemberValues, KnownObjects, Validity};
 use crate::modules::testing::{file_named, member_named, with_graph, with_test_run_graph};
@@ -121,5 +123,39 @@ fn foreign_members_in_test_runs() {
     with_graph(&files, |graph, input| {
         assert_eq!(validity_of_read(graph, input, "Ready"), Validity::Always);
         assert_eq!(validity_of_read(graph, input, "Here"), Validity::Always);
+    });
+}
+
+#[test]
+fn enums_behind_an_enum_are_listed_once_each() {
+    let test_file = "import { First } from './first.ts'; console.log(First.A);";
+    let files = [
+        ("a.test.ts", test_file),
+        (
+            "first.ts",
+            "import { Left } from './left.ts'; import { Right } from './right.ts'; export enum First { A = Left.A + Right.A, B = Left.A }",
+        ),
+        (
+            "left.ts",
+            "import { Last } from './last.ts'; export enum Left { A = Last.A + 1 }",
+        ),
+        (
+            "right.ts",
+            "import { Last } from './last.ts'; export enum Right { A = Last.A + 2 }",
+        ),
+        ("last.ts", "export enum Last { A = 1 }"),
+    ];
+    with_test_run_graph(&files, |graph, input| {
+        let values = KnownMemberValues::default();
+        let members = KnownObjects::new(input.files, graph, &values);
+        let enum_in = |name: &str| {
+            let file = file_named(input, name);
+            let id = (input.files.bound(file)).declared_symbol(Decl::Enum(EnumId(0)));
+            Sym { file, id }
+        };
+        let relied_on = members.enums_relied_on(enum_in("first.ts"));
+        let expected = ["left.ts", "right.ts", "last.ts"].map(enum_in);
+        assert_eq!(relied_on.as_slice(), expected);
+        assert!(members.enums_relied_on(enum_in("last.ts")).is_empty());
     });
 }

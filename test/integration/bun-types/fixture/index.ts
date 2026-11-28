@@ -333,6 +333,11 @@ Bun.fetch.preconnect("bun.sh");
 
 new Uint8Array().toBase64();
 
+expectType(new Uint8Array(8).setFromBase64("aGVsbG8=")).is<{ read: number; written: number }>();
+new Uint8Array(8).setFromBase64("aGVsbG8=", { alphabet: "base64url", lastChunkHandling: "strict" });
+// @ts-expect-error The second parameter is the options object. There is no offset.
+new Uint8Array(8).setFromBase64("aGVsbG8=", 2);
+
 Bun.fetch("", {
   proxy: "",
   s3: {

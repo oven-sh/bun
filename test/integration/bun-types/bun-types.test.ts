@@ -1340,6 +1340,35 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("Uint8Array base64 options", () => {
+    typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
+      // lib.esnext.typedarrays.d.ts declares these methods too. Without it, only bun-types does.
+      options: { exactOptionalPropertyTypes: true, lib: ["lib.es2022.d.ts"] },
+      files: {
+        "base64-options.ts": `
+          declare const settings: {
+            alphabet?: "base64" | "base64url";
+            lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+            omitPadding?: boolean;
+          };
+          const bytes = Uint8Array.fromBase64("aGVsbG8=", {
+            alphabet: settings.alphabet,
+            lastChunkHandling: settings.lastChunkHandling,
+          });
+          bytes.setFromBase64("aGVsbG8=", {
+            alphabet: settings.alphabet,
+            lastChunkHandling: settings.lastChunkHandling,
+          });
+          bytes.toBase64({ alphabet: settings.alphabet, omitPadding: settings.omitPadding });
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        expect(diagnostics.filter(d => d.line?.startsWith("base64-options.ts"))).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

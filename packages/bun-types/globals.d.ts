@@ -1661,16 +1661,19 @@ interface Uint8Array {
   /**
    * Convert the Uint8Array to a base64 encoded string
    */
-  toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
+  toBase64(options?: { alphabet?: "base64" | "base64url" | undefined; omitPadding?: boolean | undefined }): string;
 
   /**
    * Set the contents of the Uint8Array from a base64 encoded string
    * @param base64 The base64 encoded string to decode into the array
-   * @param offset Optional starting index to begin setting the decoded bytes (default: 0)
+   * @param options Options for decoding the base64 string
    */
   setFromBase64(
     base64: string,
-    offset?: number,
+    options?: {
+      alphabet?: "base64" | "base64url" | undefined;
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial" | undefined;
+    },
   ): {
     /**
      * The number of bytes read from the base64 string
@@ -1716,8 +1719,8 @@ interface Uint8ArrayConstructor {
   fromBase64(
     base64: string,
     options?: {
-      alphabet?: "base64" | "base64url";
-      lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+      alphabet?: "base64" | "base64url" | undefined;
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial" | undefined;
     },
   ): Uint8Array<ArrayBuffer>;
 

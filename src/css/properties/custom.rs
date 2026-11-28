@@ -22,7 +22,6 @@ use css_values::ident::{
 use css_values::length::LengthValue;
 use css_values::number::{CSSInteger, CSSIntegerFns, CSSNumberFns};
 use css_values::percentage::Percentage;
-use css_values::resolution::Resolution;
 use css_values::time::Time;
 use css_values::url::Url;
 
@@ -228,7 +227,6 @@ impl<'bump> TokenList<'bump> {
                 }
                 TokenOrValue::Angle(v) => v.to_css(dest)?,
                 TokenOrValue::Time(v) => v.to_css(dest)?,
-                TokenOrValue::Resolution(v) => v.to_css(dest)?,
                 TokenOrValue::DashedIdent(v) => dest.write_dashed_ident(v)?,
                 TokenOrValue::AnimationName(v) => v.to_css(dest)?,
                 TokenOrValue::RawNumber(number) => number.to_css(dest)?,
@@ -529,9 +527,8 @@ impl<'bump> TokenList<'bump> {
                         TokenOrValue::Angle(angle)
                     } else if let Ok(time) = Time::try_from_token(&tok) {
                         TokenOrValue::Time(time)
-                    } else if let Ok(resolution) = Resolution::try_from_token(&tok) {
-                        TokenOrValue::Resolution(resolution)
                     } else {
+                        // A resolution stays a token: -webkit-image-set() reads `1x`, not `1dppx`.
                         TokenOrValue::Token(tok)
                     };
 
@@ -1193,8 +1190,6 @@ pub enum TokenOrValue<'bump> {
     Angle(Angle),
     /// A time.
     Time(Time),
-    /// A resolution.
-    Resolution(Resolution),
     /// A dashed ident.
     DashedIdent(DashedIdent<'bump>),
     /// An animation name.
@@ -1240,7 +1235,6 @@ impl Clone for TokenOrValue<'_> {
             TokenOrValue::Length(v) => TokenOrValue::Length(*v),
             TokenOrValue::Angle(v) => TokenOrValue::Angle(*v),
             TokenOrValue::Time(v) => TokenOrValue::Time(*v),
-            TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
             TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
             TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(*v),
             TokenOrValue::RawNumber(v) => TokenOrValue::RawNumber(*v),

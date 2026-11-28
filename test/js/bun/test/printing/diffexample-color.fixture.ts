@@ -107,3 +107,23 @@ try {
 } catch (e: any) {
   console.log(e.message);
 }
+
+// Unequal values that print the same: one line, several lines, and cut short at the output budget.
+try {
+  expect(Symbol("a")).toEqual(Symbol("a"));
+} catch (e: any) {
+  console.log(e.message);
+}
+
+try {
+  expect([1, Symbol("a"), 3]).toStrictEqual([1, Symbol("a"), 3]);
+} catch (e: any) {
+  console.log(e.message);
+}
+
+try {
+  const body = Buffer.alloc(1_001_000, "x").toString();
+  expect({ body, meta: { a: 1 } }).toEqual({ body, meta: { a: 2 } });
+} catch (e: any) {
+  console.log(e.message);
+}

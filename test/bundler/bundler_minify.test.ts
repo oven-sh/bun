@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1913,6 +1913,282 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  const functionBodies = (code: string) =>
+    Object.fromEntries(
+      [...code.matchAll(/^function (\w+)\([^)]*\) \{\n([^]*?)\n\}$/gm)].map(match => [
+        match[1],
+        match[2]
+          .split("\n")
+          .map(line => line.trim())
+          .join(" "),
+      ]),
+    );
+
+  // The substitution takes a chain of binary operators link by link, from the
+  // innermost one outwards. `a` is substituted; `keep` is behind a link that
+  // blocks it.
+  itBundled("minify/SingleUseSubstitutionIntoBinaryChain", {
+    files: {
+      "/entry.js": /* js */ `
+        export function innermostLeft(v, w) { let a = v; return a + w + w; }
+        export function innermostRight(v, w) { let a = v; return w === a === w; }
+        export function middleRight(v, w) { let a = v; return w === w === a === w; }
+        export function lastRight(v, w) { let a = v; return w === w === w === a; }
+        export function rightOfAssignment(v, o) { let a = v; return (o = a) + 1; }
+        export function rightOfUpdateAssignment(v, o) { let a = v; return (o += a) + 1; }
+        export function afterChainInRightOperand(v, b, c, d, e, f, g) { let a = v; return (b === c === d) === (e === f === g) === a; }
+        export function afterWholeChain(v, b, c, d, e) { let a = v; return [(b === c) === (d === e), a]; }
+
+        export function notRemovableLink(v, w) { let keep = v; return w + w + keep; }
+        export function callInChain(v, w, g) { let keep = v; return w === g() === keep; }
+        export function assignmentAtBottom(v, w, x) { let keep = v; return (w = x) === x === keep; }
+        export function sideEffectInAssignmentTarget(v, g) { let keep = v; return (g().p = 1) === keep; }
+        export function updateAssignmentWithSideEffect(g, o) { let keep = g(); return (o += keep) + 1; }
+        export function replacementWithSideEffect(w, g) { let keep = g(); return w === w === keep; }
+
+        // The substitution goes past import(), but not past a link that holds it.
+        export function pastImport(v, p) { let a = v; return import(p) === a; }
+        export function importInLink(v, p, w) { let keep = v; return import(p) === w === keep; }
+        export function importAboveInnermost(v, p, w) { let keep = v; return w === w === import(p) === keep; }
+
+        export function strictNe(v, w) { let a = v; return w !== w !== w !== a; }
+        export function nullish(v, w) { let a = v; return w ?? w ?? w ?? a; }
+        export function logicalOr(v, w) { let a = v; return w || w || w || a; }
+        export function logicalAnd(v, w) { let a = v; return w && w && w && a; }
+        export function looseEqOfKnownTypes(v, w) { let a = v; return (w === w) == (w === w) == (w === w) == a; }
+        export function looseEqOfUnknownType(v, w) { let keep = v; return w === w == v == keep; }
+        export function lessThanOfKnownTypes(v, w) { let a = v; return (typeof w < "s") === a; }
+        export function lessThanOfUnknownType(v, w) { let keep = v; return (w < 1) === keep; }
+        export function lessThanOfComparison(v, w) { let keep = v; return ((w === w) < 2) === keep; }
+
+        // The declared value is a chain. It moves past \`w\` only when every link can be removed.
+        export function removableOr(w) { let a = typeof u === "undefined" || u; return [w, a]; }
+        export function removableAnd(w) { let a = typeof u !== "undefined" && u; return [w, a]; }
+        export function notRemovableOr(w) { let keep = u || u; return [w, keep]; }
+        export function removableComparison(w) { let a = typeof w == "string" === (typeof w < "s"); return [w, a]; }
+        export function notRemovableComparison(w) { let keep = w == 1; return [w, keep]; }
+        export function removableChain(w, x) { let a = w === x !== w; return [w, a]; }
+        export function notRemovableChain(w, x) { let keep = w === x + w; return [w, keep]; }
+        export function notRemovableInnermost(w) { let keep = u === w; return [w, keep]; }
+        export function notRemovableInnermostOfChain(w, x) { let keep = (w + x) === w === w; return [w, keep]; }
+        export function notRemovableRight(w) { let keep = w === u === w; return [w, keep]; }
+        export function notRemovableRightAboveChain(w) { let keep = w === w === u === w; return [w, keep]; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      expect(functionBodies(api.readFile("/out.js"))).toEqual({
+        innermostLeft: "return v + w + w;",
+        innermostRight: "return w === v === w;",
+        middleRight: "return w === w === v === w;",
+        lastRight: "return w === w === w === v;",
+        rightOfAssignment: "return (o = v) + 1;",
+        rightOfUpdateAssignment: "return (o += v) + 1;",
+        afterChainInRightOperand: "return b === c === d === (e === f === g) === v;",
+        afterWholeChain: "return [b === c === (d === e), v];",
+
+        notRemovableLink: "let keep = v; return w + w + keep;",
+        callInChain: "let keep = v; return w === g() === keep;",
+        assignmentAtBottom: "let keep = v; return (w = x) === x === keep;",
+        sideEffectInAssignmentTarget: "let keep = v; return (g().p = 1) === keep;",
+        updateAssignmentWithSideEffect: "let keep = g(); return (o += keep) + 1;",
+        replacementWithSideEffect: "let keep = g(); return w === w === keep;",
+
+        pastImport: "return import(p) === v;",
+        importInLink: "let keep = v; return import(p) === w === keep;",
+        importAboveInnermost: "let keep = v; return w === w === import(p) === keep;",
+
+        strictNe: "return w !== w !== w !== v;",
+        nullish: "return w ?? w ?? w ?? v;",
+        logicalOr: "return w || w || w || v;",
+        logicalAnd: "return w && w && w && v;",
+        looseEqOfKnownTypes: "return w === w == (w === w) == (w === w) == v;",
+        looseEqOfUnknownType: "let keep = v; return w === w == v == keep;",
+        lessThanOfKnownTypes: 'return typeof w < "s" === v;',
+        lessThanOfUnknownType: "let keep = v; return w < 1 === keep;",
+        lessThanOfComparison: "let keep = v; return (w === w) < 2 === keep;",
+
+        removableOr: 'return [w, typeof u > "u" || u];',
+        removableAnd: 'return [w, typeof u < "u" && u];',
+        notRemovableOr: "let keep = u || u; return [w, keep];",
+        removableComparison: 'return [w, typeof w == "string" === typeof w < "s"];',
+        notRemovableComparison: "let keep = w == 1; return [w, keep];",
+        removableChain: "return [w, w === x !== w];",
+        notRemovableChain: "let keep = w === x + w; return [w, keep];",
+        notRemovableInnermost: "let keep = u === w; return [w, keep];",
+        notRemovableInnermostOfChain: "let keep = w + x === w === w; return [w, keep];",
+        notRemovableRight: "let keep = w === u === w; return [w, keep];",
+        notRemovableRightAboveChain: "let keep = w === w === u === w; return [w, keep];",
+      });
+    },
+  });
+
+  // An unused comparison of two primitives is only its operands. A logical
+  // chain inside one is a primitive only if every operand is.
+  itBundled("minify/UnusedComparisonOfLogicalChain", {
+    files: {
+      "/entry.js": /* js */ `
+        export function primitiveThenUnknown(x) { return ((typeof x && x) == 1, 1); }
+        export function unknownInsideChain(x) { return ((typeof x && typeof x && x && typeof x) == 1, 1); }
+        export function logicalInsideEquality(a, f, g) { +a == (u || !a || g()) != 5, f(); }
+        export function logicalInsideRelational(a, f) { (+a < (a && !a && f())) < 2; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      expect(functionBodies(api.readFile("/out.js"))).toEqual({
+        primitiveThenUnknown: "return (typeof x && x) == 0, 1;",
+        unknownInsideChain: "return (typeof x && typeof x && x && typeof x) == 0, 1;",
+        logicalInsideEquality: "+a == (u || !a || g()), f();",
+        logicalInsideRelational: "+a < (a && !a && f());",
+      });
+    },
+  });
+
+  // Each shape is a flat chain of binary operators: it nests in its left
+  // operand, not in depth. It is built at 3 links and at a length where a
+  // helper that takes a stack frame per link runs out of stack in a release
+  // build. Both lengths build to the same output. Debug and ASAN builds use a
+  // shorter length to bound the run time. It is below the limit of some
+  // helpers there.
+  const repeat = (fill: string, count: number) => Buffer.alloc(fill.length * count, fill).toString();
+  const binaryChainSizes = [
+    ["Short", 3],
+    ["Long", isDebug || isASAN ? 30_000 : 250_000],
+  ] as const;
+  for (const [size, links] of binaryChainSizes) {
+    // [signature, body, minified body]
+    const toShape = ([signature, body, output]: string[]) => ({
+      source: `export function ${signature} { ${body} }`,
+      output: `function ${signature} {\n  ${output}\n}`,
+    });
+    const expectOutput = (api: { readFile(file: string): string }, outputs: string[]) => {
+      const code = api.readFile("/out.js");
+      expect(outputs.filter(output => !code.includes(output)).map(output => output.slice(0, 60))).toEqual([]);
+    };
+
+    // The single-use substitution, and the query whether an expression can be removed.
+    const substituted = [
+      [
+        "useIsFirstOperand(x, g)",
+        `const o = g(); return o${repeat(" + x", links)};`,
+        `return g()${repeat(" + x", links)};`,
+      ],
+      [
+        "useIsLastOperand(x)",
+        `const o = { a: 1 }; return x${repeat(" === x", links - 1)} === o;`,
+        `return x${repeat(" === x", links - 1)} === { a: 1 };`,
+      ],
+      [
+        "useIsBehindSideEffect(x)",
+        `const o = { a: 1 }; const chain = x${repeat(" + x", links - 1)} + o.a; return chain;`,
+        `let o = { a: 1 };\n  return x${repeat(" + x", links - 1)} + o.a;`,
+      ],
+      [
+        "useIsAfterChain(x, y)",
+        `const o = [1]; return [y || (x${repeat(" && x", links)}), o];`,
+        `return [y || x${repeat(" && x", links)}, [1]];`,
+      ],
+      [
+        "declaredValue(x)",
+        `const chain = x${repeat(" && x", links)}; return chain;`,
+        `return x${repeat(" && x", links)};`,
+      ],
+      ["ifTest(x, h)", `if (x${repeat(" && x", links)}) h();`, `if (x${repeat(" && x", links)})\n    h();`],
+      [
+        "called(h)",
+        `const o = { a: 1 }; return (${repeat("h(), ", links)}o);`,
+        `let o = { a: 1 };\n  return ${repeat("h(), ", links)}o;`,
+      ],
+    ].map(toShape);
+    // The files are buffers because itBundled reads a string one character at a time.
+    itBundled(`minify/${size}BinaryChain`, {
+      files: {
+        "/entry.js": Buffer.from(
+          [
+            ...substituted.map(shape => shape.source),
+            // Minify joins these statements into one comma chain.
+            `let ticks = 0;`,
+            `function tick() { ticks++; }`,
+            `try { ${repeat("tick(); ", links)}} catch {}`,
+            `let calls = 0;`,
+            `const result = called(() => calls++);`,
+            `console.log(ticks, calls, JSON.stringify(result));`,
+          ].join("\n"),
+        ),
+      },
+      minifySyntax: true,
+      minifyIdentifiers: false,
+      onAfterBundle(api) {
+        expectOutput(api, [
+          ...substituted.map(shape => shape.output),
+          `try {\n  ${repeat("tick(), ", links - 1)}tick();\n} catch {}`,
+        ]);
+      },
+      run: { stdout: `${links} ${links} {"a":1}` },
+    });
+
+    // The simplification of an unused expression.
+    const unused = [
+      ["logical(x, h)", `return (x${repeat(" && x", links)}, h);`, `return h;`],
+      ["logicalOr(x, h)", `return (x${repeat(" || x", links)}, h);`, `return h;`],
+      ["nullish(x, h)", `return (x${repeat(" ?? x", links)}, h);`, `return h;`],
+      ["logicalStopsInside(x, h)", `return (x && h()${repeat(" && x", links)}, 1);`, `return x && h(), 1;`],
+      ["equality(x)", `return (x${repeat(" == 1 != 1", Math.ceil(links / 2))}, 1);`, `return x == 0, 1;`],
+      ["relational(x)", `return (x${repeat(" < 1 > 1 <= 1 >= 1", Math.ceil(links / 4))}, 1);`, `return x < 1, 1;`],
+      [
+        "equalityOfUnknown(x, y)",
+        `return (x${repeat(" == 1", links)} == y${repeat(" == 1", links)}, 1);`,
+        `return x${repeat(" == 1", links)} == y, 1;`,
+      ],
+      [
+        "equalityOfLogical(x)",
+        `return ((x${repeat(" && x", links)}) == 1, 1);`,
+        `return (x${repeat(" && x", links)}) == 0, 1;`,
+      ],
+      ["equalityOfPrimitives(x)", `return ((typeof x${repeat(" && typeof x", links)}) == 1, 1);`, `return 1;`],
+      [
+        "equalityOfMixed(x)",
+        `return ((typeof x${repeat(" && typeof x", links)} && x && typeof x) == 1, 1);`,
+        `return (typeof x${repeat(" && typeof x", links)} && x && typeof x) == 0, 1;`,
+      ],
+    ].map(toShape);
+    itBundled(`minify/${size}BinaryChainUnused`, {
+      files: {
+        "/entry.js": Buffer.from(unused.map(shape => shape.source).join("\n")),
+      },
+      minifySyntax: true,
+      minifyIdentifiers: false,
+      onAfterBundle(api) {
+        expectOutput(
+          api,
+          unused.map(shape => shape.output),
+        );
+      },
+    });
+
+    // Tree shaking runs the same helpers without minify-syntax.
+    itBundled(`minify/${size}BinaryChainWithoutMinifySyntax`, {
+      files: {
+        "/entry.js": Buffer.from(
+          [
+            `export function unusedStatement(x) { x${repeat(" && x", links)}; return 1; }`,
+            `let y = 1;`,
+            `export const topLevel = y${repeat(" && y", links)};`,
+          ].join("\n"),
+        ),
+      },
+      onAfterBundle(api) {
+        expectOutput(api, [
+          `function unusedStatement(x) {\n  return 1;\n}`,
+          `var topLevel = y${repeat(" && y", links)};`,
+        ]);
+      },
+    });
+  }
 
   // Every top-level statement of /esm.js hoists, so it gets no `init_esm()`
   // wrapper and `require("./esm.js")` prints as `__toCommonJS(exports_esm)`

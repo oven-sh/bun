@@ -174,6 +174,7 @@ pub(crate) type StatsBig = StatType<true>;
 /// Test-only: build a Stats/BigIntStats from a raw u64 ino via the real
 /// statToJS path, so regression tests can exercise high-inode values without
 /// a filesystem that hands them out.
+/// Every other field but atime gets a value of its own, so a test can tell which key each field lands under.
 pub(crate) fn create_stats_for_ino(cx: &mut JsScope<'_>, ino: Ino, big: bool) -> JsResult<JSValue> {
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = bun_core::ffi::zeroed();
@@ -181,6 +182,18 @@ pub(crate) fn create_stats_for_ino(cx: &mut JsScope<'_>, ino: Ino, big: bool) ->
         Ino::Number(number) => JSValue::js_number(number).to_uint64_no_truncate(),
         Ino::Bigint(ino) => ino,
     };
+    stat_.dev = 1;
+    stat_.mode = 3;
+    stat_.nlink = 4;
+    stat_.uid = 5;
+    stat_.gid = 6;
+    stat_.rdev = 7;
+    stat_.size = 8;
+    stat_.blksize = 9;
+    stat_.blocks = 10;
+    stat_.mtim = Timespec { sec: 12, nsec: 0 };
+    stat_.ctim = Timespec { sec: 13, nsec: 0 };
+    stat_.birthtim = Timespec { sec: 14, nsec: 0 };
     Stats::init(&stat_, big).to_js_newly_created(cx.global())
 }
 

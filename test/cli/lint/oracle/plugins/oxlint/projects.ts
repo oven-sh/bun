@@ -1039,7 +1039,8 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/exports-itself-on-the-way",
-    about: "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    about:
+      "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
     config: noCycle({ maxDepth: 2 }),
     files: {
       "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,
@@ -4902,6 +4903,52 @@ const hand: Project[] = [
         `// lower`,
         `a();`,
         `// eslint-disable-next-line no-undef`,
+        `a();`,
+      ),
+    },
+  },
+  {
+    name: "capitalized-comments/ignore-pattern",
+    about: "oxlint_normalized",
+    config: rules([], {
+      "capitalized-comments": [
+        "error",
+        "always",
+        { ignorePattern: "^noinspection|late|^ pragma|^tail x$|^multi\\nLine$|^single$" },
+      ],
+    }),
+    files: {
+      // Each line is tested after its leading whitespace, one `*` and one space after the `*` are removed.
+      "a.js": lines(
+        `//noinspection NoSpace`,
+        `// noinspection WithSpace`,
+        `/* noinspection Block */`,
+        `/** noinspection Doc */`,
+        `/* * noinspection TwoStars */`,
+        `/*** noinspection ThreeStars */`,
+        `/*`,
+        ` * noinspection Multi`,
+        ` */`,
+        `/**  noinspection TwoSpaces */`,
+        `/*\t* noinspection Tab */`,
+        `// x noinspection Late`,
+        `// pragma`,
+        `// late x`,
+        `a();`,
+      ),
+      // The lines are joined with `\n`, a final line break starts no line, and a `\r` stays unless a `\n` follows it.
+      "b.js": lines(
+        `/** multi`,
+        ` * Line*/`,
+        `/** multi`,
+        ` * Line */`,
+        `/* single`,
+        `*/`,
+        `/* single */`,
+        `/*single*/`,
+        `/* tail x\r*/`,
+        `/* tail x\r\n*/`,
+        `/** multi\r\n * Line*/`,
         `a();`,
       ),
     },

@@ -438,6 +438,61 @@ C.propTypes = {
   });
 });
 
+describe.concurrent("capitalized-comments", () => {
+  /** Runs `bun lint -f unix` and returns the lines of its reports on `a.js`, from after the path. */
+  async function reports(files: Record<string, string>) {
+    using dir = tempDir("bun-lint-rules", files);
+    await using proc = spawn({ cmd: [bunExe(), "lint", "-f", "unix", "."], env, cwd: String(dir), stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lines = stdout.split("\n").filter(line => line.includes("a.js:"));
+    return { lines: lines.map(line => line.slice(line.indexOf("a.js:") + "a.js:".length)), exitCode };
+  }
+
+  test("an oxlint config's ignorePattern is tested against each line without its leading whitespace", async () => {
+    // oxlint trims each line and removes one `*` and one space after it before it tests the pattern. ESLint removes
+    // only the asterisks, so `^noinspection` matches `// noinspection` for oxlint alone, and `^ pragma` matches
+    // `// pragma` for ESLint alone. Neither trims the end: `$` fails on a trailing space in both.
+    const code = [
+      "//noinspection NoSpace",
+      "// noinspection WithSpace",
+      "/* noinspection Block */",
+      "/** noinspection Doc */",
+      "/* * noinspection TwoStars */",
+      "/*** noinspection ThreeStars */",
+      "/*",
+      " * noinspection Multi",
+      " */",
+      "/**  noinspection TwoSpaces */",
+      "/*\t* noinspection Tab */",
+      "// x noinspection Late",
+      "// pragma",
+      "/* tail x */",
+      "/*tail x*/",
+      "// late x",
+      "export const x = 1;",
+      "",
+    ].join("\n");
+    const pattern = "^noinspection|late|^ pragma|^tail x$";
+    const rules = { "capitalized-comments": ["error", "always", { ignorePattern: pattern }] };
+    const [inOxlint, inEslint] = await Promise.all([
+      reports({ "a.js": code, ".oxlintrc.json": JSON.stringify({ rules }) }),
+      reports({ "a.js": code, "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n` }),
+    ]);
+    expect(inOxlint).toEqual({
+      lines: [6, 7, 10, 12, 13, 14].map(
+        line => `${line}:1: Comments should not begin with a lowercase letter [Error/eslint(capitalized-comments)]`,
+      ),
+      exitCode: 1,
+    });
+    expect(inEslint).toEqual({
+      lines: [2, 3, 4, 5, 6, 7, 10, 11, 12, 14].map(
+        line => `${line}:1: Comments should not begin with a lowercase character. [Error/capitalized-comments]`,
+      ),
+      exitCode: 1,
+    });
+  });
+});
+
 // Most of the paths tried while resolving an import don't exist: `./b.tsx`, `./b.d.ts`, `./b/package.json`.
 test("looking up a missing file doesn't get slower as the directory gets larger", async () => {
   const count = 6_000;

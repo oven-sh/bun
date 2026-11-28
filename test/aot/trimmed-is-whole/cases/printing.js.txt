@@ -125,7 +125,7 @@ console.log(form);
 //// streams
 console.log(new ReadableStream(), new WritableStream(), new TransformStream());
 //// abort-signal-event-target
-console.log(new AbortController(), new EventTarget(), new Event("x"), new CustomEvent("y", { detail: 1 }), new MessageEvent("m", { data: 1 }), new ErrorEvent("e", { message: "m" }), new CloseEvent("c", { code: 1000 }));
+console.log(Bun.inspect([new AbortController(), new EventTarget(), new Event("x"), new CustomEvent("y", { detail: 1 }), new MessageEvent("m", { data: 1 }), new ErrorEvent("e", { message: "m" }), new CloseEvent("c", { code: 1000 })]).replace(/timeStamp: [\d.]+/g, "timeStamp: N"));
 //// process-objects
 console.log(typeof process.stdout, process.env.NOTHING, process.memoryUsage().rss > 0, process.hrtime().length, typeof process.hrtime.bigint());
 //// text-decoder-encoder

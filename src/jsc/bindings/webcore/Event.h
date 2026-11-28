@@ -31,7 +31,6 @@
 #include "EventOptions.h"
 #include "ExceptionOr.h"
 #include "ScriptWrappable.h"
-#include <wtf/MonotonicTime.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/AtomString.h>
 
@@ -82,7 +81,7 @@ public:
     bool cancelable() const { return m_cancelable; }
     bool composed() const { return m_composed; }
 
-    DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
+    DOMHighResTimeStamp timeStamp() const { return static_cast<double>(m_createTimeNs) / 1000000.0; }
 
     void setEventPath(const EventPath&);
     Vector<Ref<EventTarget>> composedPath() const;
@@ -118,11 +117,10 @@ public:
 protected:
     explicit Event(EventInterface, IsTrusted = IsTrusted::No);
     Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
-    Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, IsTrusted isTrusted = IsTrusted::Yes);
     Event(EventInterface, const AtomString& type, const EventInit&, IsTrusted);
 
 private:
-    explicit Event(EventInterface, MonotonicTime createTime, const AtomString& type, IsTrusted, CanBubble, IsCancelable, IsComposed);
+    explicit Event(EventInterface, uint64_t createTimeNs, const AtomString& type, IsTrusted, CanBubble, IsCancelable, IsComposed);
 
     void setCanceledFlagIfPossible();
 
@@ -146,7 +144,8 @@ private:
     RefPtr<EventTarget> m_currentTarget;
     const EventPath* m_eventPath { nullptr };
     RefPtr<EventTarget> m_target;
-    MonotonicTime m_createTime;
+    // Nanoseconds on the performance.now() timeline of the VM that created the event.
+    uint64_t m_createTimeNs;
 };
 
 inline void Event::preventDefault()

@@ -24,4 +24,5 @@ console.log(
   plain instanceof Event,
   typeof plain.timeStamp,
 );
-console.log(plain, message);
+// timeStamp is the creation time and differs between the two runs.
+console.log(Bun.inspect([plain, message]).replace(/timeStamp: [\d.]+/g, "timeStamp: <n>"));

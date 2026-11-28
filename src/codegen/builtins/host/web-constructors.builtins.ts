@@ -683,8 +683,7 @@ export default b.declarations(
       cancelable: readsStream(b.bool),
       defaultPrevented: readsStream(b.bool),
       composed: readsStream(b.bool),
-      // jsEvent_timeStampGetter: a global object without a context answers undefined.
-      timeStamp: readsStream(b.union(b.f64, b.undefined)),
+      timeStamp: readsStream(b.f64),
       target: targetOfEvent,
       currentTarget: targetOfEvent,
       srcElement: targetOfEvent,

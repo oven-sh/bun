@@ -34,11 +34,20 @@
 // #include "WorkerGlobalScope.h"
 #include <wtf/TZoneMallocInlines.h>
 
+extern "C" void* Bun__getVM();
+extern "C" uint64_t Bun__readOriginTimer(void*);
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Event);
 
-ALWAYS_INLINE Event::Event(EventInterface eventInterface, MonotonicTime createTime, const AtomString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
+// The same clock as performance.now(), so timeStamp equals performance.now() at creation.
+static inline uint64_t originTimerNow()
+{
+    return Bun__readOriginTimer(Bun__getVM());
+}
+
+ALWAYS_INLINE Event::Event(EventInterface eventInterface, uint64_t createTimeNs, const AtomString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
     : m_isInitialized { !type.isNull() }
     , m_canBubble { canBubble == CanBubble::Yes }
     , m_cancelable { cancelable == IsCancelable::Yes }
@@ -52,29 +61,23 @@ ALWAYS_INLINE Event::Event(EventInterface eventInterface, MonotonicTime createTi
     , m_eventPhase { NONE }
     , m_eventInterface { static_cast<unsigned>(eventInterface) }
     , m_type { type }
-    , m_createTime { createTime }
+    , m_createTimeNs { createTimeNs }
 {
 }
 
 Event::Event(EventInterface eventInterface, IsTrusted isTrusted)
-    : Event { eventInterface, MonotonicTime::now(), {}, isTrusted, CanBubble::No, IsCancelable::No, IsComposed::No }
+    : Event { eventInterface, originTimerNow(), {}, isTrusted, CanBubble::No, IsCancelable::No, IsComposed::No }
 {
 }
 
 Event::Event(EventInterface eventInterface, const AtomString& eventType, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed)
-    : Event { eventInterface, MonotonicTime::now(), eventType, IsTrusted::Yes, canBubble, isCancelable, isComposed }
-{
-    ASSERT(!eventType.isNull());
-}
-
-Event::Event(EventInterface eventInterface, const AtomString& eventType, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed, MonotonicTime timestamp, IsTrusted isTrusted)
-    : Event { eventInterface, timestamp, eventType, isTrusted, canBubble, isCancelable, isComposed }
+    : Event { eventInterface, originTimerNow(), eventType, IsTrusted::Yes, canBubble, isCancelable, isComposed }
 {
     ASSERT(!eventType.isNull());
 }
 
 Event::Event(EventInterface eventInterface, const AtomString& eventType, const EventInit& initializer, IsTrusted isTrusted)
-    : Event { eventInterface, MonotonicTime::now(), eventType, isTrusted,
+    : Event { eventInterface, originTimerNow(), eventType, isTrusted,
         initializer.bubbles ? CanBubble::Yes : CanBubble::No,
         initializer.cancelable ? IsCancelable::Yes : IsCancelable::No,
         initializer.composed ? IsComposed::Yes : IsComposed::No }
@@ -134,12 +137,6 @@ Vector<Ref<EventTarget>> Event::composedPath() const
     if (!m_eventPath)
         return Vector<Ref<EventTarget>>();
     return m_eventPath->computePathUnclosedToTarget(*m_currentTarget);
-}
-
-DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context) const
-{
-    // TODO:
-    return 0.0;
 }
 
 void Event::resetAfterDispatch()

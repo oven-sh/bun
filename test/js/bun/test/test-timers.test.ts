@@ -225,3 +225,17 @@ describe.each([
     }
   });
 });
+
+test("Event.timeStamp follows the fake performance.now() clock", () => {
+  jest.useFakeTimers();
+  try {
+    jest.advanceTimersByTime(1000);
+    const event = new Event("x");
+    expect(event.timeStamp).toBe(performance.now());
+    jest.advanceTimersByTime(500);
+    expect(new Event("y").timeStamp).toBe(event.timeStamp + 500);
+    expect(event.timeStamp).toBe(performance.now() - 500);
+  } finally {
+    jest.useRealTimers();
+  }
+});

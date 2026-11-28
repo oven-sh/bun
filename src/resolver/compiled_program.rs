@@ -869,9 +869,16 @@ impl CompiledProgram {
     }
 
     /// Where the root directory lies below the folder of this executable, wherever it is installed.
-    pub fn root_beside_executable(&self, executable: &[u8]) -> Option<Vec<u8>> {
+    pub fn root_beside_executable(&self) -> Option<Vec<u8>> {
         let root = self.root_from_executable?;
-        Some(Path::resolve(&[executable, b"..", root]).to_vec())
+        let executable;
+        let path = if let Some(file) = FILE_IN_PLACE_OF_EXECUTABLE.get() {
+            &file.path[..]
+        } else {
+            executable = bun_core::self_exe_path().ok()?;
+            executable.as_bytes()
+        };
+        Some(Path::resolve(&[path, b"..", root]).to_vec())
     }
 
     pub fn knows_root_on_disk(&self) -> bool {

@@ -184,6 +184,21 @@ impl Loader {
         })
     }
 
+    /// Exact inverse of `<&'static str>::from(loader)`: no alias, no leading `.`, no case folding.
+    pub fn from_label(label: &bun_core::String) -> Option<Loader> {
+        let mut labels = <Loader as strum::VariantNames>::VARIANTS.iter();
+        let label = label.to_encoded_slice();
+        // The encoding is tested once, so the 8-bit comparisons compile to one jump on the length.
+        let index = if label.is_16bit() {
+            let label = label.utf16_slice();
+            labels.position(|name| bun_core::strings::eql_comptime_utf16(label, name.as_bytes()))
+        } else {
+            let label = label.slice();
+            labels.position(|name| name.as_bytes() == label)
+        };
+        index.map(Loader::from_usize)
+    }
+
     #[inline]
     pub fn is_jsx(self) -> bool {
         self == Loader::Jsx || self == Loader::Tsx

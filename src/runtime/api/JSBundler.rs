@@ -1,6 +1,5 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
-use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
 use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
@@ -2070,32 +2069,59 @@ pub(crate) mod js_bundler {
         jsc::to_js_host_call(global, || load.on_defer(global))
     }
 
+    fn load_success_from_js(
+        global: &JSGlobalObject,
+        default_loader: bun_ast::Loader,
+        contents: JSValue,
+        loader: JSValue,
+    ) -> JsResult<LoadSuccess> {
+        let loader = if loader.is_undefined() {
+            default_loader
+        } else if loader.is_string_literal() {
+            let label = loader.to_js_string_view(global)?;
+            match bun_ast::Loader::from_label(&label) {
+                Some(loader) => loader,
+                None => {
+                    return Err(
+                        global.throw_type_error(format_args!("Loader {label} is not supported."))
+                    );
+                }
+            }
+        } else {
+            return Err(global.throw_type_error(format_args!(
+                "onLoad plugins must return an object with \"loader\" as a string"
+            )));
+        };
+        let source_code = crate::node::StringOrBuffer::from_js_to_owned_slice(global, contents)?;
+        Ok(LoadSuccess {
+            loader,
+            source_code: source_code.into(),
+        })
+    }
+
     #[unsafe(no_mangle)]
     extern "C" fn JSBundlerPlugin__onLoadAsync(
         mut this: Box<Load>,
         source_code_value: JSValue,
-        loader_as_int: JSValue,
+        loader_value: JSValue,
     ) {
         jsc::mark_binding();
         // As `onResolveAsync`: the request's one answer.
-        if source_code_value.is_empty_or_undefined_or_null()
-            || loader_as_int.is_empty_or_undefined_or_null()
-        {
+        if source_code_value.is_empty_or_undefined_or_null() {
             this.value = LoadValue::NoMatch;
         } else {
-            let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
             let plugin = bv2_plugin(this.bv2);
-            this.value = match crate::node::StringOrBuffer::from_js_to_owned_slice(
-                plugin.global_object(),
+            let global = plugin.global_object();
+            this.value = match load_success_from_js(
+                global,
+                this.default_loader,
                 source_code_value,
+                loader_value,
             ) {
-                Ok(source_code) => LoadValue::Success(LoadSuccess {
-                    loader: bun_ast::Loader::from_api(loader),
-                    source_code: source_code.into(),
-                }),
-                // Flattening a `contents` string can still throw.
+                Ok(success) => LoadValue::Success(success),
+                // No such loader, or flattening a string threw.
                 Err(err) => {
-                    let exception = plugin.global_object().take_exception(err);
+                    let exception = global.take_exception(err);
                     LoadValue::Err(plugin_msg_from_js(
                         plugin,
                         this.owner.path().text,

@@ -552,9 +552,7 @@ declare class ReadableStreamBYOBReader {
 
 // Inlining our enum types
 declare const $ImportKindIdToLabel: Array<import("bun").ImportKind>;
-declare const $ImportKindLabelToId: Record<import("bun").ImportKind, number>;
 declare const $LoaderIdToLabel: Array<import("bun").Loader>;
-declare const $LoaderLabelToId: Record<import("bun").Loader, number>;
 
 // not a builtin, but a build-time macro of our own
 /** Returns a not implemented error that points to a github issue. */

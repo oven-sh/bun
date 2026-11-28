@@ -1231,7 +1231,7 @@ pub mod bv2_impl {
             /// Task driving an onLoad plugin invocation for one source file.
             pub struct Load<'a> {
                 pub bv2: *mut BundleV2<'static>,
-                pub(crate) default_loader: Loader,
+                pub default_loader: Loader,
                 pub value: LoadValue,
                 pub owner: LoadOwner<'a>,
                 /// Defer may only be called once.

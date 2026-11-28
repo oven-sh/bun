@@ -212,6 +212,197 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The labels of `bun_ast::Loader`. An onLoad result names its loader by one of them, or names none.
+  const loaderLabels = [
+    ...["jsx", "js", "ts", "tsx", "css", "file", "json", "jsonc", "toml", "wasm", "napi", "base64", "dataurl"],
+    ...["text", "bunsh", "sqlite", "sqlite_embedded", "html", "yaml", "json5", "md", "xml"],
+  ];
+  // `build(answer)` bundles entry.txt.js with an onLoad that gives `answer`. `loaded` is what the bundle then imports
+  // from the file that the plugin loads.
+  const loaderFixtures = {
+    ...Object.fromEntries(
+      ["txt", "sh", "jsonc", "magic"].flatMap(extension => [
+        [`dep.${extension}`, `on disk`],
+        [`entry.${extension}.js`, `import value from "./dep.${extension}"; globalThis.loaded = value;`],
+      ]),
+    ),
+    "build.mjs": /* js */ `
+      import { basename } from "node:path";
+
+      export async function build(answer, options) {
+        const { success, logs, outputs } = await Bun.build({
+          entrypoints: ["./entry.txt.js"],
+          throw: false,
+          ...options,
+          plugins: [{ name: "loader", setup: build => void build.onLoad({ filter: /dep\\.\\w+$/ }, answer) }],
+        });
+        delete globalThis.loaded;
+        for (const output of outputs) if (output.kind === "entry-point") new Function(await output.text())();
+        return { success, logs: logs.map(show), loaded: globalThis.loaded };
+      }
+      const at = position => " at " + basename(position.file) + ":" + position.line + ":" + position.column;
+      export const show = ({ level, message, position }) => level + ": " + message + (position ? at(position) : "");
+      export const print = row => console.log(JSON.stringify(row));
+    `,
+  };
+  const refusedLoader = (loader: string) => ({
+    success: false,
+    logs: [`error: Loader ${loader.toWellFormed()} is not supported. at dep.txt:0:0`],
+  });
+  const loaderOfWrongType = {
+    success: false,
+    logs: [`error: onLoad plugins must return an object with "loader" as a string at dep.txt:0:0`],
+  };
+  async function runLoaderFixture(files: Record<string, string>) {
+    using dir = tempDir("plugin-onload-loader", { ...loaderFixtures, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { rows: stdout.split("\n").flatMap(line => (line ? [JSON.parse(line)] : [])), stderr, exitCode };
+  }
+
+  test.concurrent("plugin/onLoad fails the build for a loader that is no loader label", async () => {
+    const notLabels = [
+      // Every own property of Object.prototype.
+      ...["constructor", "__defineGetter__", "__defineSetter__", "hasOwnProperty", "__lookupGetter__"],
+      ...["__lookupSetter__", "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "__proto__"],
+      "toLocaleString",
+      // What `--loader` takes beside the labels.
+      ...["mjs", "txt", "node", "sh", ".js", "JS"],
+      ...["nope", "", "jś😀", "café", "a\uD800b"],
+    ];
+    const { rows, stderr, exitCode } = await runLoaderFixture({
+      "names.json": JSON.stringify({ notLabels }),
+      "fixture.mjs": /* js */ `
+        import { build, print, show } from "./build.mjs";
+        import { notLabels } from "./names.json";
+
+        const contents = "export default 1;";
+        for (const loader of notLabels) print({ loader, ...(await build(() => ({ contents, loader }))) });
+        for (const loader of ["constructor", "nope"]) {
+          print({ loader, async: true, ...(await build(async () => ({ contents, loader }))) });
+        }
+
+        const wrongTypes = {
+          null: null,
+          number: 5,
+          boolean: true,
+          object: {},
+          "String object": new String("js"),
+          symbol: Symbol("js"),
+        };
+        for (const type in wrongTypes) {
+          print({ type, ...(await build(() => ({ contents, loader: wrongTypes[type] }))) });
+        }
+
+        try {
+          await build(() => ({ contents, loader: "constructor" }), { throw: true });
+        } catch (error) {
+          print({ thrown: error.name, message: error.message, errors: error.errors.map(show) });
+        }
+
+        // The builtin has no table of loaders in which a name could be inherited.
+        for (const inherited of [5, null]) {
+          Object.defineProperty(Object.prototype, "nope", { value: inherited, configurable: true });
+          const built = await build(() => ({ contents, loader: "nope" }));
+          delete Object.prototype.nope;
+          print({ loader: "nope", inherited, ...built });
+        }
+      `,
+    });
+
+    expect({ rows, stderr }).toEqual({
+      rows: [
+        ...notLabels.map(loader => ({ loader, ...refusedLoader(loader) })),
+        { loader: "constructor", async: true, ...refusedLoader("constructor") },
+        { loader: "nope", async: true, ...refusedLoader("nope") },
+        ...["null", "number", "boolean", "object", "String object", "symbol"].map(type => ({
+          type,
+          ...loaderOfWrongType,
+        })),
+        { thrown: "AggregateError", message: "Bundle failed", errors: refusedLoader("constructor").logs },
+        { loader: "nope", inherited: 5, ...refusedLoader("nope") },
+        { loader: "nope", inherited: null, ...refusedLoader("nope") },
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("plugin/onLoad takes each loader label, and no loader for the loader of the extension", async () => {
+    // The text that the plugin gives for each file, and what the loader of its extension makes of it.
+    const byExtension = [
+      { extension: "txt", label: "text", contents: "export default 1;", loaded: "export default 1;" },
+      { extension: "sh", label: "bunsh", contents: "export default 1;", loaded: "" },
+      { extension: "jsonc", label: "jsonc", contents: `// a comment\n{ "a": [1] }`, loaded: { a: [1] } },
+      { extension: "magic", label: "js", contents: "export default 1;", loaded: 1 },
+    ];
+    const { rows, stderr, exitCode } = await runLoaderFixture({
+      "names.json": JSON.stringify({ loaderLabels, byExtension }),
+      "fixture.mjs": /* js */ `
+        import { isRope } from "bun:jsc";
+        import { build, print } from "./build.mjs";
+        import { loaderLabels, byExtension } from "./names.json";
+
+        // What each loader makes of the text is not compared: only whether the label names a loader.
+        const taken = [];
+        for (const loader of loaderLabels) {
+          const { logs } = await build(() => ({ contents: "export default 1;", loader }));
+          const refused = logs.some(log => log.includes("is not supported.") || log.includes('"loader" as a string'));
+          if (!refused) taken.push(loader);
+        }
+        print({ taken });
+
+        const [j, s] = "j,s".split(",");
+        const strings = {
+          "a rope": [j + s, "export default 1;"],
+          "a substring of a 16-bit string": [["\\u4e2d\\u6587", "file.json"].join("/").slice(-4), "[1]"],
+          "a 16-bit string": [new TextDecoder("utf-16le").decode(new Uint16Array([106, 115])), "export default 1;"],
+        };
+        for (const kind in strings) {
+          const [loader, contents] = strings[kind];
+          print({ kind, rope: isRope(loader), ...(await build(() => ({ contents, loader }))), loader });
+        }
+        print({ loader: "undefined", ...(await build(() => ({ contents: "export default 1;", loader: undefined }))) });
+        print({ loader: "object", ...(await build(() => ({ exports: { a: [1] }, loader: "object" }))) });
+
+        // \`args.loader\` is the label of the loader of the extension.
+        for (const { extension, contents } of byExtension) {
+          const entrypoints = ["./entry." + extension + ".js"];
+          let label;
+          const none = await build(args => ((label = args.loader), { contents }), { entrypoints });
+          const named = await build(args => ({ contents, loader: args.loader }), { entrypoints });
+          print({ extension, label, none, named });
+        }
+      `,
+    });
+
+    expect({ rows, stderr }).toEqual({
+      rows: [
+        { taken: loaderLabels },
+        { kind: "a rope", rope: true, success: true, logs: [], loaded: 1, loader: "js" },
+        { kind: "a substring of a 16-bit string", rope: true, success: true, logs: [], loaded: [1], loader: "json" },
+        { kind: "a 16-bit string", rope: false, success: true, logs: [], loaded: 1, loader: "js" },
+        { loader: "undefined", success: true, logs: [], loaded: "export default 1;" },
+        { loader: "object", success: true, logs: [], loaded: { a: [1] } },
+        ...byExtension.map(({ extension, label, loaded }) => ({
+          extension,
+          label,
+          none: { success: true, logs: [], loaded },
+          named: { success: true, logs: [], loaded },
+        })),
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {
       "index.ts": /* ts */ `
@@ -2204,6 +2395,65 @@ describe("bundler", () => {
       leaked: [],
       outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
       receivers: Array(6).fill("ERR_INVALID_THIS"),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("plugin/internal plugin object takes a label or undefined as the loader", async () => {
+    const { rows, stderr, exitCode } = await runLoaderFixture({
+      "fixture.mjs": /* js */ `
+        import { getProtectedObjects } from "bun:jsc";
+        import { build, print } from "./build.mjs";
+
+        const hasOwn = Object.prototype.hasOwnProperty;
+        // The plugin object of a build is a protected cell. Some other protected cells throw on property lookup.
+        const isPluginObject = object => {
+          try {
+            return object && typeof object === "object" && hasOwn.call(object, "onLoadAsync");
+          } catch {
+            return false;
+          }
+        };
+        // The callback answers its request through the plugin object. The ids of requests count up from 1.
+        const answer = loader => () => {
+          for (const plugin of getProtectedObjects().filter(isPluginObject)) {
+            for (let id = 1; id <= 4; id++) plugin.onLoadAsync(id, "export default 'direct';", loader);
+          }
+          // The request has its answer, so this one is dropped.
+          return { contents: "export default 'returned';", loader: "js" };
+        };
+
+        const wrongTypes = {
+          object: {},
+          function: Object,
+          "String object": new String("js"),
+          symbol: Symbol("js"),
+          null: null,
+          boolean: true,
+          // Before, a loader was a number here: 2 was "js", and 300 and -1 were "file".
+          "the number 2": 2,
+          "the number 300": 300,
+          "the number -1": -1,
+          "the number 2.5": 2.5,
+        };
+        for (const type in wrongTypes) print({ type, ...(await build(answer(wrongTypes[type]))) });
+        print({ loader: "undefined", ...(await build(answer(undefined))) });
+        print({ loader: "js", ...(await build(answer("js"))) });
+        print({ loader: "constructor", ...(await build(answer("constructor"))) });
+      `,
+    });
+
+    const wrongTypes = ["object", "function", "String object", "symbol", "null", "boolean"];
+    const numbers = ["the number 2", "the number 300", "the number -1", "the number 2.5"];
+    expect({ rows, stderr }).toEqual({
+      rows: [
+        ...[...wrongTypes, ...numbers].map(type => ({ type, ...loaderOfWrongType })),
+        // The loader of ".txt".
+        { loader: "undefined", success: true, logs: [], loaded: "export default 'direct';" },
+        { loader: "js", success: true, logs: [], loaded: "direct" },
+        { loader: "constructor", ...refusedLoader("constructor") },
+      ],
+      stderr: "",
     });
     expect(exitCode).toBe(0);
   });

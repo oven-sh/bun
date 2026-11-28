@@ -144,11 +144,10 @@ export function assertNoStoredFunctionBehindComma(source: string, file: string) 
   }
 }
 
-// These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
+// These enums map to $<enum>IdToLabel
 // Make sure to define in ./builtins.d.ts
 export const enums = {
-  // Ids are the `bun_options_types::schema::api::Loader` discriminants
-  // (JSBundler passes those numbers to BundlerPlugin.ts).
+  // Indexed by the `bun_ast::Loader` discriminant (JSBundler passes that number to BundlerPlugin.ts).
   Loader: [
     "jsx",
     "js",
@@ -219,7 +218,6 @@ export const define: Record<string, string> = {
 
 for (const [name, keys] of Object.entries(enums)) {
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map((k, i) => `"${k}": ${i + 1}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {

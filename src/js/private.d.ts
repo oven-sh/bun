@@ -843,12 +843,8 @@ declare namespace $Node {
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
-    /** `internalID`: the request's `BundlerPlugin::RequestID`. */
-    onLoadAsync(
-      internalID: number,
-      sourceCode: string | ArrayBufferView | ArrayBuffer | null,
-      loaderKey: number | null,
-    ): void;
+    /** `internalID`: the request's `BundlerPlugin::RequestID`. `loader`: the label of a loader, or `undefined` for the default loader. */
+    onLoadAsync(internalID: number, sourceCode: string | ArrayBufferView | ArrayBuffer | null, loader: unknown): void;
     onResolveAsync(
       internalID: number,
       path: string | null,

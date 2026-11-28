@@ -535,7 +535,6 @@ export function runOnLoadPlugins(
   defaultLoaderId: number,
   isServerSide: boolean,
 ) {
-  const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
   const generateDefer = () => this.generateDeferPromise(internalID);
@@ -578,7 +577,7 @@ export function runOnLoadPlugins(
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as any;
+        var { contents, loader } = result as any;
         if ((loader as any) === "object") {
           if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
@@ -595,16 +594,8 @@ export function runOnLoadPlugins(
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }
 
-        if (!(typeof loader === "string")) {
-          throw new TypeError('onLoad plugins must return an object with "loader" as a string');
-        }
-
-        const chosenLoader = LOADERS_MAP[loader];
-        if (chosenLoader === undefined) {
-          throw new TypeError(`Loader ${loader} is not supported.`);
-        }
-
-        this.onLoadAsync(internalID, contents as any, chosenLoader);
+        // Native code decides which loader `loader` names. `undefined` is the default loader.
+        this.onLoadAsync(internalID, contents as any, loader);
         return null;
       }
     }

@@ -23,6 +23,10 @@
 #include <unistd.h>
 #include <vector>
 
+#ifdef __APPLE__
+#include <malloc/malloc.h>
+#endif
+
 namespace {
 
 void writeLine(int fd, const char* first, const char* second)
@@ -33,11 +37,28 @@ void writeLine(int fd, const char* first, const char* second)
     static_cast<void>(written);
 }
 
-void reportDamage(const char* owner, const char* kind)
+void reportBlock(const char* owner, const char* kind, const char* fault)
 {
     char line[256];
     snprintf(line, sizeof(line), "%s: the block from %s", owner, kind);
-    writeLine(2, line, " does not hold the bytes that were written to it");
+    writeLine(2, line, fault);
+}
+
+void reportDamage(const char* owner, const char* kind)
+{
+    reportBlock(owner, kind, " does not hold the bytes that were written to it");
+}
+
+// On macOS the runtime's operator new serves the whole process, and an addon has to get a block of the system allocator
+// from it. That allocator knows the size of its own blocks and of no others.
+bool systemAllocatorOwns(const void* block)
+{
+#ifdef __APPLE__
+    return malloc_size(block) > 0;
+#else
+    static_cast<void>(block);
+    return true;
+#endif
 }
 
 void announceRelease(const char* place) { writeLine(1, "released by ", place); }
@@ -138,6 +159,15 @@ public:
         for (int i = 0; i < 3; i++)
             fill(m_alignedNewArray[i].bytes, sizeof(Aligned::bytes), seed + i);
 
+        m_smallAlignment[0] = ::operator new(m_size, smallAlignment);
+        m_smallAlignment[1] = ::operator new[](m_size, smallAlignment);
+        m_smallAlignment[2] = ::operator new(m_size, smallAlignment, std::nothrow);
+        m_smallAlignment[3] = ::operator new[](m_size, smallAlignment, std::nothrow);
+        for (void* block : m_smallAlignment) {
+            if (block)
+                fill(block, m_size, seed);
+        }
+
         // Members of std::string that the C++ library defines out of line.
         m_string.clear();
         m_string.shrink_to_fit();
@@ -223,6 +253,26 @@ public:
         check(!(reinterpret_cast<uintptr_t>(m_alignedNewArray) % 128) && holds(m_alignedNewArray[2].bytes, sizeof(Aligned::bytes), seed + 2), "aligned new[]");
         delete[] m_alignedNewArray;
 
+        static const char* const smallAlignmentKinds[] = {
+            "operator new with an alignment of 4",
+            "operator new[] with an alignment of 4",
+            "operator new (std::nothrow) with an alignment of 4",
+            "operator new[] (std::nothrow) with an alignment of 4",
+        };
+        for (size_t i = 0; i < std::size(m_smallAlignment); i++) {
+            void* block = m_smallAlignment[i];
+            if (!block)
+                reportBlock(m_owner, smallAlignmentKinds[i], " is null");
+            else if (!systemAllocatorOwns(block))
+                reportBlock(m_owner, smallAlignmentKinds[i], " is not the system allocator's");
+            else
+                check(holds(block, m_size, seed), smallAlignmentKinds[i]);
+        }
+        ::operator delete(m_smallAlignment[0], smallAlignment);
+        ::operator delete[](m_smallAlignment[1], smallAlignment);
+        ::operator delete(m_smallAlignment[2], smallAlignment);
+        ::operator delete[](m_smallAlignment[3], smallAlignment);
+
         check(m_string.size() == m_stringLength && !m_string.compare(0, m_text.size(), m_text), "std::string");
         std::string().swap(m_string);
         check(m_strings.size() == 40 && m_strings[39] == makeText(39 * 9, seed) + "39", "std::vector<std::string>");
@@ -246,6 +296,9 @@ public:
 
 private:
     static constexpr size_t largeSize = 3 * 1024 * 1024 + 100;
+    // What llvm::allocate_buffer passes for the buckets of a DenseMap of ints. operator new takes an alignment below
+    // sizeof(void*), and posix_memalign and malloc_zone_memalign refuse one.
+    static constexpr std::align_val_t smallAlignment { 4 };
 
     static bool isZero(const void* block, size_t size)
     {
@@ -287,6 +340,7 @@ private:
     unsigned char* m_nothrowNew = nullptr;
     Aligned* m_alignedNew = nullptr;
     Aligned* m_alignedNewArray = nullptr;
+    void* m_smallAlignment[4] = {};
     std::string m_text;
     std::string m_string;
     std::string m_streamed;

@@ -58,6 +58,12 @@ NEVER_INLINE void* moveSystemBlock(void* block, size_t newSize)
     return result;
 }
 
+// malloc_zone_memalign returns null for an alignment below sizeof(void*), which llvm::allocate_buffer passes.
+ALWAYS_INLINE void* allocateAlignedSystemBlock(size_t size, std::align_val_t alignment)
+{
+    return malloc_zone_memalign(malloc_default_zone(), std::max(static_cast<size_t>(alignment), sizeof(void*)), size);
+}
+
 // Where the executable's code is: it starts with the Mach-O header. `bun build --compile --trim` removes unused code and
 // keeps the rest at its address, which splits the code into several segments. Another image can be mapped into a gap
 // between them, so gapEdges records where each gap starts and ends, as ascending offsets from the header.
@@ -186,7 +192,7 @@ BUN_OPERATOR_NEW operator new(size_t size, std::align_val_t alignment)
 {
     if (BUN_CALLED_FROM_EXECUTABLE) [[likely]]
         return mi_new_aligned(size, static_cast<size_t>(alignment));
-    void* block = malloc_zone_memalign(malloc_default_zone(), static_cast<size_t>(alignment), size);
+    void* block = allocateAlignedSystemBlock(size, alignment);
     return block ? block : mi_new_aligned(size, static_cast<size_t>(alignment));
 }
 
@@ -194,7 +200,7 @@ BUN_OPERATOR_NEW operator new[](size_t size, std::align_val_t alignment)
 {
     if (BUN_CALLED_FROM_EXECUTABLE) [[likely]]
         return mi_new_aligned(size, static_cast<size_t>(alignment));
-    void* block = malloc_zone_memalign(malloc_default_zone(), static_cast<size_t>(alignment), size);
+    void* block = allocateAlignedSystemBlock(size, alignment);
     return block ? block : mi_new_aligned(size, static_cast<size_t>(alignment));
 }
 
@@ -202,14 +208,14 @@ BUN_OPERATOR_NEW operator new(size_t size, std::align_val_t alignment, const std
 {
     if (BUN_CALLED_FROM_EXECUTABLE) [[likely]]
         return mi_new_aligned_nothrow(size, static_cast<size_t>(alignment));
-    return malloc_zone_memalign(malloc_default_zone(), static_cast<size_t>(alignment), size);
+    return allocateAlignedSystemBlock(size, alignment);
 }
 
 BUN_OPERATOR_NEW operator new[](size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept
 {
     if (BUN_CALLED_FROM_EXECUTABLE) [[likely]]
         return mi_new_aligned_nothrow(size, static_cast<size_t>(alignment));
-    return malloc_zone_memalign(malloc_default_zone(), static_cast<size_t>(alignment), size);
+    return allocateAlignedSystemBlock(size, alignment);
 }
 
 #undef BUN_CALLED_FROM_EXECUTABLE

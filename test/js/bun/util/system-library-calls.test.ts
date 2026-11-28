@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, strictSystemAllocatorEnv } from "harness";
 import { join } from "path";
 import { groups } from "./system-library-calls-fixture";
@@ -8,6 +9,11 @@ const divisor = isDebug || isASAN ? "10" : "1";
 // The frameworks behind these write logs of their own to stdout and stderr.
 const logsOnMacOS = ["images", "web views", "secrets"];
 const complaint = /malloc|alloc|freed|corrupt|panic|crash|abort|signal|fault/i;
+// Homebrew's LLVM 23, which builds Bun on macOS. Its static initializers call
+// operator new(size, std::align_val_t(4), std::nothrow), and LLVM aborts with "LLVM ERROR: out of memory" on null.
+const libLLVM = ["/opt/homebrew", "/usr/local"]
+  .map(prefix => `${prefix}/opt/llvm@23/lib/libLLVM.dylib`)
+  .find(library => isMacOS && existsSync(library));
 
 describe.each([
   ["the system allocator as it is", { MallocDebugReport: "crash" }],
@@ -47,4 +53,25 @@ describe.each([
     },
     180_000,
   );
+
+  test.concurrent.skipIf(!libLLVM)("a library that calls operator new with an alignment of 4 loads", async () => {
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:ffi").dlopen(process.argv[1], { LLVMContextCreate: { returns: "ptr" } }); console.log("done");`,
+        libLLVM!,
+      ],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
+      stdout: "done\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

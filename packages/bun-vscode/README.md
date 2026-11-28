@@ -23,6 +23,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 
 - Live in-editor error messages (gif below)
 - Vscode test runner support
+- Format documents with Bun's built-in formatter
 - Debugger support
 - Run scripts from package.json
 - Visual lockfile viewer for old binary lockfiles (`bun.lockb`)
@@ -32,6 +33,33 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 Run and debug tests directly from VSCode's Testing panel. The extension automatically discovers test files, shows inline test status, and provides rich error messages with diffs.
 
 ![Test runner example](https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/packages/bun-vscode/assets/bun-test.gif)
+
+## Bun formatter integration
+
+The extension uses `bun fmt` to format supported JavaScript, TypeScript, JSON, CSS, HTML, Vue, Svelte, YAML, TOML, Markdown, GraphQL, and Handlebars documents. Select **Bun for Visual Studio Code** as your default formatter to use it with **Format Document**, **Format Selection**, or format-on-save:
+
+```json
+{
+  "editor.defaultFormatter": "oven.bun-vscode",
+  "editor.formatOnSave": true
+}
+```
+
+Bun discovers formatting configuration from the document's directory, just like `bun fmt` on the command line. If no configuration is found, Bun's default formatting options are used.
+
+To use a global formatter configuration instead, explicitly select it in your VS Code settings:
+
+```json
+{
+  "bun.fmt.bunfig": "~/.bunfig.toml"
+}
+```
+
+The nearest project `bunfig.toml` containing `[fmt]` takes precedence over `bun.fmt.bunfig`, making the configured file a global fallback. Relative paths are resolved from the workspace folder.
+
+The `Bun` status-bar item appears for supported documents. Select it to open the **Bun Formatter** output channel and inspect the active configuration, command, warnings, errors, and formatting duration.
+
+When formatting begins, the extension shows a notification when a `bunfig.toml` with a `[fmt]` section becomes active, or when no such Bun section is found. Other supported formatter configuration files may still apply. The notification is shown again only when the configuration state changes.
 
 ## In-editor error messages
 

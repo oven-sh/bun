@@ -605,6 +605,58 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
     expect(exitCode).toBe(0);
   });
+
+  describe.concurrent.each([
+    ["while the entry loads", `Promise.reject(new Error("boom"));`],
+    ["in a later turn", `setInterval(() => {}, 100000); setImmediate(() => Promise.reject(new Error("boom")));`],
+  ])("unhandled rejection %s", (_label, reject) => {
+    async function run(afterWrite: string, before = "") {
+      const workerSrc = `${before}
+        process.on("exit", code => {
+          process.stdout.write("exit handler " + code + " " + process.exitCode + "\\n");
+          ${afterWrite}
+        });
+        ${reject}`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("node:worker_threads");
+           const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
+           let out = "";
+           w.stdout.setEncoding("utf8").on("data", d => (out += d));
+           w.on("error", e => console.log("error " + e.message));
+           w.on("exit", c => console.log(JSON.stringify({ code: c, out })));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+
+    test("user 'exit' handler and the parent see code 1, whatever process.exitCode was", async () => {
+      expect(await run("", "process.exitCode = 5;")).toEqual({
+        stdout: `error boom\n${JSON.stringify({ code: 1, out: "exit handler 1 1\n" })}\n`,
+        exitCode: 0,
+      });
+    });
+
+    // Node emits no 'error' on the parent here. Only the code is this test's subject.
+    test("the parent sees code 1 when the user 'exit' handler calls process.exit()", async () => {
+      const { stdout, exitCode } = await run("process.exit();");
+      expect(stdout).toEndWith(`${JSON.stringify({ code: 1, out: "exit handler 1 1\n" })}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("the exitCode the user 'exit' handler sets wins", async () => {
+      expect(await run("process.exitCode = 42;")).toEqual({
+        stdout: `error boom\n${JSON.stringify({ code: 42, out: "exit handler 1 1\n" })}\n`,
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("worker event", () => {

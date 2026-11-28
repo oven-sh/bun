@@ -248,3 +248,39 @@ describe.concurrent("handler errors after server.upgrade()", () => {
     });
   });
 });
+
+// Under `bun run`, a fetch handler error with no error() handler is printed and the run fails. Node has no counterpart.
+test.concurrent.each([
+  ["its 'exit' listeners are told 1", "", "500\nbeforeExit 0 undefined\nexit 1 1\n"],
+  [
+    "process.exitCode = 0 afterwards does not hide it from them",
+    "process.exitCode = 0;",
+    "500\nbeforeExit 0 0\nexit 1 1\n",
+  ],
+])("a fetch handler error with no error() handler fails `bun run`: %s", async (_, afterwards, expectedStdout) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("beforeExit", code => console.log("beforeExit", code, process.exitCode));
+       process.on("exit", code => console.log("exit", code, process.exitCode));
+       const server = Bun.serve({
+         development: false,
+         port: 0,
+         fetch() {
+           throw new Error("Test failed successfully");
+         },
+       });
+       const res = await fetch(server.url);
+       console.log(res.status);
+       await server.stop(true);
+       ${afterwards}`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: Test failed successfully");
+  expect({ stdout, exitCode }).toEqual({ stdout: expectedStdout, exitCode: 1 });
+});

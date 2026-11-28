@@ -1110,8 +1110,8 @@ impl WebWorker {
         let promise = match vm.load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // A stop (process.exit(), a fatal error, terminate()) is not a failed load: its requester sets the code.
+                if !self.has_requested_terminate() {
                     vm.exit_handler.exit_code.set(1);
                 }
                 self.flush_logs(vm);
@@ -1362,6 +1362,8 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
+
+    vm.exit_handler.exit_code.set(1);
 
     // The realm that raised the error may be a node:vm context.
     let global_object = vm.global();

@@ -1638,6 +1638,10 @@ impl Run<'_> {
         if vm.unhandled_error_counter.get() > 0 {
             vm.exit_handler.requested.set(true);
         }
+        // The 'exit' listeners are told this code.
+        if ANY_UNHANDLED.load(Ordering::Relaxed) {
+            vm.exit_handler.exit_code.set(1);
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {

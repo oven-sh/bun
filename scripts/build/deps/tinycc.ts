@@ -27,7 +27,13 @@ export const tinycc: Dependency = {
     commit: TINYCC_COMMIT,
   }),
 
-  patches: ["patches/tinycc/tcc.h.patch"],
+  patches: [
+    "patches/tinycc/tcc.h.patch",
+    // normalized_PATHCMP() resolves into its own buffers: cc() gave the result of realpath(path, NULL), a block
+    // from libc's malloc, to mimalloc's free(). This is the diff of oven-sh/tinycc#7. When that is merged, bump
+    // TINYCC_COMMIT and delete the patch.
+    "patches/tinycc/pragma-once-realpath.patch",
+  ],
 
   build: cfg => {
     const sources = ["libtcc.c", "tccpp.c", "tccgen.c", "tccdbg.c", "tccelf.c", "tccasm.c", "tccrun.c"];

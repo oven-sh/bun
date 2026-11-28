@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { tinycc } from "./deps/tinycc.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -115,6 +116,27 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "tinycc-pragma-once-realpath",
+    issue: "https://github.com/oven-sh/tinycc/pull/7",
+    description:
+      "TinyCC's normalized_PATHCMP() gave the result of realpath(path, NULL), a block from libc's " +
+      "malloc, to mimalloc's free(). patches/tinycc/pragma-once-realpath.patch carries the fix " +
+      "until TINYCC_COMMIT contains it.",
+    // --local-deps compiles the checkout as it is: no patch is applied to it.
+    applies: cfg => cfg.tinycc && cfg.localDeps.tinycc === undefined,
+    expectedToBeFixed: cfg => {
+      // The pin that the patch was made for. This check cannot see whether a
+      // new pin contains oven-sh/tinycc#7. If it does not, put the new commit
+      // here. If it does, `git apply` rejects the patch.
+      const PIN_WITHOUT_FIX = "05f0fafaa3be31e31d7b4b5c17dc60f62c991171";
+      const source = tinycc.source(cfg);
+      return source.kind === "github-archive" && source.commit !== PIN_WITHOUT_FIX;
+    },
+    cleanup:
+      `Delete patches/tinycc/pragma-once-realpath.patch, its entry in \`patches\` in ` +
+      `scripts/build/deps/tinycc.ts, and this entry.`,
   },
 ];
 

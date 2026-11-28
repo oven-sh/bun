@@ -1375,32 +1375,54 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   }, 20_000);
 
-  test("exports neither take the connections of fetch() nor wait for them", async () => {
+  test("exports do not take the connections of fetch()", async () => {
+    let exports = 0;
+    const [exporting, fetched] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      routes: {
+        "/exporting": () => exporting.promise.then(() => new Response()),
+        "/fetch": () => (fetched.resolve(), new Response("ok")),
+      },
+      fetch() {
+        if (++exports === 2) exporting.resolve();
+        return fetched.promise.then(() => new Response());
+      },
+    });
+    const result = await run(
+      `Bun.otel.start({ exporters: [process.env.URL + "a", process.env.URL + "b"], instrumentations: [] });
+       const exporting = fetch(process.env.URL + "exporting");
+       Bun.otel.span("s", () => {});
+       Bun.otel.forceFlush();
+       await (await exporting).text();
+       console.log(await (await fetch(process.env.URL + "fetch")).text());`,
+      {
+        URL: server.url.href,
+        BUN_CONFIG_MAX_HTTP_REQUESTS: "2",
+        ...neverTimesOut,
+        OTEL_EXPORTER_OTLP_TIMEOUT: "600000",
+      },
+    );
+    expect(result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+
+  test("exports do not wait for the connections of fetch()", async () => {
     using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
       fetch: req => (req.url.endsWith("/hang") ? new Promise<Response>(() => {}) : new Response("ok")),
     });
-    const env = { URL: server.url.href, BUN_CONFIG_MAX_HTTP_REQUESTS: "2", OTEL_BSP_EXPORT_TIMEOUT: "100" };
-    const [hogged, starved] = await Promise.all([
-      run(
-        `Bun.otel.start({ endpoint: process.env.URL + "hang", instrumentations: [] });
-         for (let i = 0; i < 10; i++) { Bun.otel.span("s", () => {}); Bun.otel.forceFlush(); await Bun.sleep(1); }
-         console.log(await (await fetch(process.env.URL)).text());
-         process.exit(0);`,
-        env,
-      ),
-      run(
-        `Bun.otel.start({ endpoint: process.env.URL, instrumentations: [] });
-         for (let i = 0; i < 4; i++) fetch(process.env.URL + "hang");
-         Bun.otel.span("s", () => {});
-         await Bun.otel.forceFlush();
-         console.log(Bun.otel.stats().spansExported);
-         process.exit(0);`,
-        env,
-      ),
-    ]);
-    expect([hogged.stdout, starved.stdout]).toEqual(["ok\n", "1\n"]);
+    const { stdout } = await run(
+      `Bun.otel.start({ endpoint: process.env.URL, instrumentations: [] });
+       for (let i = 0; i < 4; i++) fetch(process.env.URL + "hang");
+       Bun.otel.span("s", () => {});
+       await Bun.otel.forceFlush();
+       console.log(Bun.otel.stats().spansExported);
+       process.exit(0);`,
+      { URL: server.url.href, BUN_CONFIG_MAX_HTTP_REQUESTS: "2", ...neverTimesOut },
+    );
+    expect(stdout).toBe("1\n");
   });
 
   test("a worker may end while the main thread is exiting", async () => {

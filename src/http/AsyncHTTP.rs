@@ -609,6 +609,7 @@ impl InFlightRequest {
         self.custom_ssl_ctx = None;
 
         let was_active = !core::mem::replace(&mut self.state.flags.left_transport, true);
+        let was_counted = was_active && !self.flags.ignores_request_limit;
         if was_active {
             self.trace_request_stage();
             if self.state.fail.is_none() {
@@ -629,7 +630,7 @@ impl InFlightRequest {
         } else {
             self.send_last_result();
         }
-        if !was_active {
+        if !was_counted {
             return;
         }
 
@@ -713,7 +714,9 @@ impl AsyncHTTP<'static> {
 
 impl<'a> AsyncHTTP<'a> {
     fn on_start(&mut self) {
-        let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+        if !self.client.flags.ignores_request_limit {
+            let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
 
         match self.original {
             Some(original) => self.reset_for_retry(original),

@@ -1570,11 +1570,10 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
   });
 
   // Nobody threw what an EventTarget reports here: a listener that cannot be called, and the reason
-  // a listener's thenable rejects with. The report belongs to the context it is made in, whatever
-  // another context threw and caught just before it. A rejection is reported from the listener's
-  // context, which is the target's. A listener that cannot be called is reported before that context
-  // is entered, so from the dispatcher's.
-  test("a listener error that an EventTarget reports belongs to the context that reports it, whatever another context caught before", async () => {
+  // a listener's thenable rejects with. What another context threw and caught just before is neither
+  // what is reported nor whose the report is. A rejection is reported from the listener's context,
+  // which is the target's.
+  test("a listener error that an EventTarget reports is not what another context caught before, and not that context's", async () => {
     const script = `
       const told = [];
       process.on("uncaughtException", error => told.push("host: " + error.message));
@@ -1614,6 +1613,10 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       console.log(JSON.stringify(out, null, 1));
     `;
     const { stdout, exitCode } = await runBun(["-e", script]);
+    // Whose these are when the dispatcher is not the target's maker is the todo below.
+    const ofTheHostOrTheGraph = expect.stringMatching(
+      /^(?:host|graph): 'handleEvent' property of event listener should be callable$/,
+    );
     expect(JSON.parse(stdout)).toEqual({
       "in the host: handleEvent is not callable, after the graph caught":
         "host: 'handleEvent' property of event listener should be callable",
@@ -1629,8 +1632,46 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       "the graph dispatches to the host's target: a listener's thenable rejects, after another graph caught":
         "host: the listener's reason",
       "the host dispatches to the graph's target: handleEvent is not callable, after another graph caught":
-        "host: 'handleEvent' property of event listener should be callable",
+        ofTheHostOrTheGraph,
       "the graph dispatches to the host's target: handleEvent is not callable, after another graph caught":
+        ofTheHostOrTheGraph,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // "An error that no code threw belongs to whoever opened the thing it happened to" (docs/runtime/module-graph.mdx).
+  // JSEventListener::handleEvent reports a listener that cannot be called before it enters the context of the
+  // listener's target, so the dispatcher gets these: the host, the graph, the host.
+  test.todo("a listener that cannot be called is reported to whoever made its target, whoever dispatches", async () => {
+    const script = `
+      const told = [];
+      process.on("uncaughtException", error => told.push("host: " + error.message));
+      const until = async condition => { while (!condition()) await new Promise(resolve => setImmediate(resolve)); };
+      const graph = new Bun.ModuleGraph({ onError: error => told.push("graph: " + error.message) });
+      const dispatchTo = (target, listener) => { target.addEventListener("a", listener, { once: true }); target.dispatchEvent(new Event("a")); };
+      const hostTarget = new EventTarget();
+      const graphTarget = graph.run(() => new EventTarget());
+      const { port1, port2 } = graph.run(() => new MessageChannel());
+      const cases = [
+        ["the host dispatches to the graph's target", () => dispatchTo(graphTarget, { handleEvent: 123 })],
+        ["the graph dispatches to the host's target", () => graph.run(dispatchTo, hostTarget, { handleEvent: 123 })],
+        ["the event loop dispatches to the graph's MessagePort", () => { port2.addEventListener("message", { handleEvent: 123 }); port2.start(); port1.postMessage(""); }],
+      ];
+      const out = {};
+      for (const [name, start] of cases) {
+        told.length = 0;
+        start();
+        await until(() => told.length > 0);
+        out[name] = told.join();
+      }
+      port1.close();
+      console.log(JSON.stringify(out, null, 1));
+    `;
+    const { stdout, exitCode } = await runBun(["-e", script]);
+    expect(JSON.parse(stdout)).toEqual({
+      "the host dispatches to the graph's target": "graph: 'handleEvent' property of event listener should be callable",
+      "the graph dispatches to the host's target": "host: 'handleEvent' property of event listener should be callable",
+      "the event loop dispatches to the graph's MessagePort":
         "graph: 'handleEvent' property of event listener should be callable",
     });
     expect(exitCode).toBe(0);

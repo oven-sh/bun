@@ -836,6 +836,20 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
     `  onRejected(42);`,
     `});`,
   ];
+  // A server stops the work of a request when its response closes. The work catches its AbortError in the
+  // tick drain that reports what the async listener threw.
+  const abortListenerOfHttpServerThrows = [
+    `const { createServer } = require("node:http");`,
+    `const { setTimeout: sleep } = require("node:timers/promises");`,
+    `const server = createServer((request, response) => {`,
+    `  const controller = new AbortController();`,
+    `  controller.signal.addEventListener("abort", async () => { throw new Error("thrown by the abort listener"); });`,
+    `  (async () => { try { await sleep(60_000, null, { signal: controller.signal }); } catch {} })();`,
+    `  response.on("close", () => controller.abort());`,
+    `  response.end("ok");`,
+    `});`,
+    `server.listen(0, "127.0.0.1", async () => { await (await fetch("http://127.0.0.1:" + server.address().port)).text(); });`,
+  ];
   // The pending tick makes the second async function catch its rejection before the tick that
   // reports the first one's.
   const asyncAttributeHandlerThrows = [
@@ -895,6 +909,11 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
       [onUncaughtException(`console.log(String(error));`), ...asyncAttributeHandlerThrows],
       "Error: thrown by onabort\n",
     ],
+    [
+      "an async abort listener of a node:http server throws",
+      [onUncaughtException(`console.log(String(error)); server.close();`), ...abortListenerOfHttpServerThrows],
+      "Error: thrown by the abort listener\n",
+    ],
   ])("uncaughtException receives it: %s", async (_, lines, stdout) => {
     expect(await run(lines)).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
@@ -933,24 +952,72 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
   });
 });
 
-// The dispatcher clears the termination that cut the first listener short, and goes on to the second listener.
-// A report made there would reach `bun test` as an unhandled error and fail this test.
-test("dispatchEvent reports no listener error while the timeout of a node:vm run is pending", () => {
-  const target = new EventTarget();
-  let entered = false;
-  target.addEventListener("a", () => {
-    entered = true;
+// The timeout of a node:vm run asks the VM to stop. The dispatcher calls the next listener after it cleared that
+// termination, or before anything took it. A report made then would reach `bun test` as an unhandled error.
+describe("dispatchEvent does not report a handleEvent that is not callable while the timeout of a node:vm run is pending", () => {
+  function dispatchUnderTimeout(target) {
+    const context = createContext({ dispatch: () => target.dispatchEvent(new Event("a")) });
+    const script = new Script("dispatch()");
+    try {
+      script.runInContext(context, { timeout: 50 });
+    } catch (error) {
+      return error.code;
+    }
+  }
+  function spin() {
     const end = Date.now() + 5000;
     while (Date.now() < end);
-  });
-  target.addEventListener("a", { handleEvent: 123 });
-  const context = createContext({ dispatch: () => target.dispatchEvent(new Event("a")) });
-  const script = new Script("dispatch()");
-  let code;
-  try {
-    script.runInContext(context, { timeout: 50 });
-  } catch (error) {
-    code = error.code;
   }
-  expect({ entered, code }).toEqual({ entered: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT" });
+
+  test("after the listener that the timeout cut short", () => {
+    const target = new EventTarget();
+    const entered = [];
+    target.addEventListener("a", () => {
+      entered.push("first");
+      spin();
+    });
+    target.addEventListener("a", { handleEvent: 123 });
+    expect({ code: dispatchUnderTimeout(target), entered }).toEqual({
+      code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      entered: ["first"],
+    });
+  });
+
+  test("after a listener that the dispatcher entered since", () => {
+    const target = new EventTarget();
+    const entered = [];
+    let spins = false;
+    target.addEventListener("a", () => {
+      if (!spins) return;
+      entered.push("first");
+      spin();
+    });
+    target.addEventListener("a", () => {});
+    // Both listeners have run once, so the second one is entered again after the timeout cut the first one short.
+    target.dispatchEvent(new Event("a"));
+    target.addEventListener("a", { handleEvent: 123 });
+    spins = true;
+    expect({ code: dispatchUnderTimeout(target), entered }).toEqual({
+      code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      entered: ["first"],
+    });
+  });
+
+  test("when the deadline passed inside its getter", () => {
+    const target = new EventTarget();
+    const entered = [];
+    target.addEventListener("a", {
+      get handleEvent() {
+        entered.push("getter");
+        // The deadline has to pass inside one native call, with nothing after it that polls for the termination:
+        // a loop polls, and the termination interrupts Atomics.wait.
+        Bun.sleepSync(200);
+        return 123;
+      },
+    });
+    expect({ code: dispatchUnderTimeout(target), entered }).toEqual({
+      code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      entered: ["getter"],
+    });
+  });
 });

@@ -346,10 +346,6 @@ impl Lookup {
                 }
             }
 
-            if index >= source_map.external_source_names.len() {
-                return None;
-            }
-
             let name: &[u8] = &source_map.external_source_names[index];
 
             let path = path_of_source(base_filename, name);

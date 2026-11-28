@@ -1642,3 +1642,102 @@ test.concurrent("a Worker thread that sets up node:cluster does not take the mes
   expect({ stdout, stderr }).toEqual({ stdout: "listening\nexit 0 null\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// The peer is unblocked when a close that does not wait is done. Windows goes on writing after the write in progress.
+test.concurrent.skipIf(isWindows).each([
+  {
+    side: "primary",
+    primary: `
+      await ask(first, "start");
+      await fill(first);
+      const reply = request();
+      await accepted;
+      first.process.disconnect();
+      setImmediate(unblock);
+    `,
+    worker: `process.send("blocked", block);`,
+  },
+  {
+    side: "worker",
+    primary: `
+      first.send("start");
+      block();
+      const reply = request();
+    `,
+    worker: `
+      const other = net.createServer().listen({ port: 0, host: "127.0.0.1", exclusive: true }, async () => {
+        await fill(process);
+        process.send("handle", other);
+        process.disconnect();
+        process.on("exit", unblock);
+        setImmediate(unblock);
+      });
+    `,
+  },
+])("one worker accepts a connection if the $side disconnects with a queued handle", async ({ primary, worker }) => {
+  using dir = tempDir("cluster-queued-handle", {
+    "index.js": `
+      const cluster = require("node:cluster");
+      const { once } = require("node:events");
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const unblock = () => fs.writeFileSync("go", "");
+      const block = () => {
+        const deadline = Date.now() + 120_000;
+        while (!fs.existsSync("go") && Date.now() < deadline) Bun.sleepSync(1);
+      };
+      // For a peer that is blocked.
+      const fill = async channel => {
+        let written;
+        do {
+          written = false;
+          channel.send(Buffer.alloc(2 << 20, "x").toString(), () => (written = true));
+          await new Promise(setImmediate);
+        } while (written);
+      };
+      if (cluster.isPrimary) {
+        cluster.schedulingPolicy = cluster.SCHED_RR;
+        // The first to listen is the first to get a connection.
+        const first = cluster.fork();
+        await once(first, "listening");
+        const second = cluster.fork();
+        const [{ port }] = await once(second, "listening");
+        const gone = Promise.all([once(first, "disconnect"), once(first, "exit")]);
+        const ask = (worker, message) => (worker.send(message), once(worker, "message"));
+        const accepted = new Promise(resolve => {
+          require("node:diagnostics_channel").subscribe("net.server.socket", () => setImmediate(resolve));
+        });
+        const request = () =>
+          new Promise(resolve => {
+            let reply = "";
+            const socket = net.connect(port, "127.0.0.1").setEncoding("utf8");
+            socket.on("data", data => (reply += data)).on("error", () => {});
+            socket.on("close", () => resolve("reply " + reply));
+          });
+        ${primary}
+        console.log(await reply);
+        await gone;
+        // Behind whatever the primary has passed on.
+        await ask(second, "sync");
+        console.log("accepted by " + fs.readFileSync("accepted", "utf8"));
+        process.exit(0);
+      } else {
+        const id = String(cluster.worker.id);
+        net.createServer(socket => (fs.appendFileSync("accepted", id), socket.end(id))).listen(0, "127.0.0.1");
+        process.on("message", message => {
+          if (message === "sync") process.send("synced");
+          if (message === "start") { ${worker} }
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "reply 2\naccepted by 2\n", stderr: "", exitCode: 0 });
+});

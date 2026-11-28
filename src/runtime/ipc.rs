@@ -822,6 +822,8 @@ pub(crate) struct WindowsState {
     /// libuv's until `windows_on_write_complete`.
     pub(crate) windows_write: Option<*mut WindowsWrite>,
     pub(crate) try_close_after_write: bool,
+    /// To the handle that is being written: it can be read before libuv reports the write.
+    early_reply: Option<AckNack>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1190,16 +1192,30 @@ impl SendQueue {
         self.close_socket_next_tick(true);
     }
 
-    /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
+    /// User disconnect(): reports disconnected now but, like node, closes only once the handles are acked. What is queued behind goes out first.
+    /// A cluster channel waits only for a handle that is written.
     pub(crate) fn disconnect(&self) {
         if self.socket_is_open()
             && !self.pending_close.get()
-            && self.waiting_for_ack.get().is_some()
+            && (self.waiting_for_ack.get().is_some()
+                || (self.has_queued_handle() && !self.is_cluster_channel()))
         {
             self.close_after_flush.set(true);
             return;
         }
         self.close_socket_next_tick(true);
+    }
+
+    fn has_queued_handle(&self) -> bool {
+        self.queue.get().iter().any(|item| item.handle.is_some())
+    }
+
+    /// A worker can take a connection while a close waits. The primary gets no answer, and gives it to a second worker.
+    fn is_cluster_channel(&self) -> bool {
+        self.owner.get().is_some_and(|owner| match owner {
+            SendQueueOwner::Subprocess(_) => self.internal_msg_queue.get().is_ready(),
+            SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
+        })
     }
 
     fn start_message(
@@ -1269,6 +1285,13 @@ impl SendQueue {
             Some(item) => Some(item.handle.is_some()),
         });
         let Some(has_handle) = waiting else {
+            #[cfg(windows)]
+            if self.write_in_progress.get()
+                && (self.queue.get().front()).is_some_and(|first| first.handle.is_some())
+            {
+                self.windows.with_mut(|w| w.early_reply = Some(ack_nack));
+                return;
+            }
             log!("onAckNack: ack received but not waiting for ack");
             return;
         };
@@ -1739,7 +1762,10 @@ impl SendQueue {
         // socket_closed if not); every method takes `&self`.
         let this = unsafe { &*this };
         let _alive = this.hold_owner();
-        this.windows.with_mut(|w| w.windows_write = None);
+        let early_reply = this.windows.with_mut(|w| {
+            w.windows_write = None;
+            w.early_reply.take()
+        });
         this.with_pipe(|pipe| pipe.unref()); // write complete; unref
         let n = if status.to_error(bun_sys::Tag::write).is_some() {
             -1
@@ -1747,10 +1773,16 @@ impl SendQueue {
             i32::try_from(write_len).expect("int cast")
         };
         let global = this.get_global_this();
-        if this.on_write_complete(n) {
-            this.continue_send(&global, ContinueSendReason::OnWritable);
-        } else {
+        if !this.on_write_complete(n) {
             this.update_ref(&global);
+        } else if let Some(reply) = early_reply
+            && this.waiting_for_ack.get().is_some()
+            && !this.pending_close.get()
+            && !this.windows.get().try_close_after_write
+        {
+            this.on_ack_nack(&global, reply);
+        } else {
+            this.continue_send(&global, ContinueSendReason::OnWritable);
         }
 
         if this.windows.get().try_close_after_write {

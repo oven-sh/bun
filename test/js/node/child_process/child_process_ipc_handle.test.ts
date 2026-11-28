@@ -321,6 +321,7 @@ while (!require("node:fs").existsSync("waited") && Date.now() < deadline) Bun.sl
 const fs = require("node:fs");
 const { getEventLoopStats } = require("bun:internal-for-testing");
 process.on("disconnect", () => server.close());
+process.on("exit", () => fs.writeFileSync("waited", ""));
 const server = require("node:net").createServer().listen(0, "127.0.0.1", () => process.send("open", () => {
   for (const length of [1000, ${length}]) {
     try {
@@ -331,6 +332,7 @@ const server = require("node:net").createServer().listen(0, "127.0.0.1", () => p
   }
   process.send("server", server);
   const { iteration } = getEventLoopStats();
+  // No event says that the channel did not close and the loop did not spin.
   setTimeout(() => {
     console.log("connected", process.connected, "spins", getEventLoopStats().iteration - iteration > 50);
     fs.writeFileSync("waited", "");
@@ -811,7 +813,9 @@ process.on('message', (m, sock) => {
     });
     expect(exitCode).toBe(0);
   });
+});
 
+describe("process.send(message, handle), then disconnect()", () => {
   // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
   // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
   // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
@@ -920,5 +924,125 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
+  });
+
+  // "big" does not fit in the buffer of the channel, so what follows is still queued.
+  test.concurrent.each([
+    { from: "parent", serialization: "json", sends: ["big", "a+handle", "b"] },
+    { from: "parent", serialization: "advanced", sends: ["big", "a+handle", "b"] },
+    { from: "parent", serialization: "json", sends: ["big+handle", "a"] },
+    { from: "parent", serialization: "json", sends: ["big", "a+handle", "b", "c+handle", "d"] },
+    { from: "child", serialization: "json", sends: ["big", "a+handle", "b"] },
+    { from: "child", serialization: "advanced", sends: ["big", "a+handle", "b"] },
+  ])("the $from delivers $sends ($serialization)", async ({ from, serialization, sends }) => {
+    using dir = tempDir("ipc-handle-queued-disconnect", {
+      "index.js": `
+const isChild = process.argv[2] === "child";
+const open = () => isChild ? process : require("node:child_process").fork(__filename, ["child"], { serialization: "${serialization}" });
+const log = [];
+process.on("exit", () => console.log(JSON.stringify(log)));
+if (isChild === ${from === "child"}) {
+  const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+    const channel = open();
+    channel.on("disconnect", () => server.close());
+    for (const send of ${JSON.stringify(sends)}) {
+      const [name, handle] = send.split("+");
+      const message = { name, pad: Buffer.alloc(name === "big" ? 2 << 20 : 0, "x").toString() };
+      channel.send(message, handle && server, error => log.push("sent " + send + " " + error));
+    }
+    channel.disconnect();
+    log.push("connected " + channel.connected);
+  });
+} else {
+  open().on("message", ({ name }, handle) => {
+    log.push(name + (handle ? "+handle" : ""));
+    handle?.close();
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const logs = stdout.trim().split("\n").sort();
+    const sender = ["connected false", ...sends.map(send => `sent ${send} null`)];
+    expect({ logs, stderr }).toEqual({ logs: [JSON.stringify(sends), JSON.stringify(sender)], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(isWindows)("a handle that found the channel full arrives", async () => {
+    using dir = tempDir("ipc-handle-full-channel", {
+      "parent.js": `
+const child = require("node:child_process").fork("child.js");
+child.on("message", (message, handle) => handle?.close(() => console.log(message)));
+const deadline = Date.now() + 120_000;
+while (!require("node:fs").existsSync("full") && Date.now() < deadline) Bun.sleepSync(1);
+`,
+      "child.js": `
+const fs = require("node:fs");
+const server = require("node:net").createServer().listen(0, "127.0.0.1", () => process.send("open", () => {
+  for (const line of ['"' + Buffer.alloc(1000, "x") + '"\\n', "0\\n"]) {
+    try {
+      for (;;) fs.writeSync(3, line);
+    } catch (error) {
+      if (error.code !== "EAGAIN") throw error;
+    }
+  }
+  process.send("server", server);
+  process.disconnect();
+  server.close();
+  fs.writeFileSync("full", "");
+}));
+process.on("exit", () => fs.writeFileSync("full", ""));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-orphans", "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "server\n", stderr: "", exitCode: 0 });
+  });
+
+  // The child never reads the channel. Windows waits for the write in progress before it closes a pipe.
+  test.concurrent.each([
+    { ends: "when the peer is killed", handle: "server", turns: 10, log: "kill\ndisconnect\n" },
+    ...(isWindows ? [] : [{ ends: "at once without a handle", handle: undefined, turns: 0, log: "disconnect\n" }]),
+  ])("the wait ends $ends", async ({ handle, turns, log }) => {
+    using dir = tempDir("ipc-handle-queued-disconnect-ends", {
+      "parent.js": `
+const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+  const child = require("node:child_process").fork("child.js", { stdio: ["pipe", "inherit", "inherit", "ipc"] });
+  child.on("disconnect", () => { console.log("disconnect"); child.kill("SIGKILL"); server.close(); });
+  child.send(Buffer.alloc(2 << 20, "x").toString());
+  child.send("a", ${handle});
+  child.disconnect();
+  let turns = ${turns};
+  if (turns) setImmediate(function turn() {
+    if (--turns) return setImmediate(turn);
+    console.log("kill");
+    child.kill("SIGKILL");
+  });
+});
+`,
+      "child.js": `require("node:fs").readSync(0, Buffer.alloc(1));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: log, stderr: "", exitCode: 0 });
   });
 });

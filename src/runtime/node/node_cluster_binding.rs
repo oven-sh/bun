@@ -37,8 +37,8 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     // SAFETY: `RacyCell::get` returns `*mut Option<_>` into this thread's
-    // storage, which outlives every caller on this thread. Aliasing: each of the three callers borrows for a single
-    // statement/block with no nested call to this fn.
+    // storage, which outlives every caller on this thread. Aliasing: no caller uses its borrow after a call that
+    // can get here again.
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 

@@ -4244,6 +4244,9 @@ fn make_or_find_private_folder(path: &[u8], _uid: u32) -> bool {
 fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::O;
 
+    // Every load in this process finds the same copies.
+    static PROCESS_SUFFIX: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let addon = graph.find_library(addon_path)?;
     let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
@@ -4258,16 +4261,23 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
 
     let uid = extract_owner_uid();
     let name = format!(".bun-{uid}-{hash:x}");
+    let tmpdir = Fs::RealFS::tmpdir_path();
     let persistent_folder =
-        bun_paths::Path::from_parts(&[Fs::RealFS::tmpdir_path(), name.as_bytes()]).to_vec();
+        bun_paths::Path::resolve(&[bun_core::top_level_dir(), tmpdir, name.as_bytes()]).to_vec();
     let per_process_folder = [
         &persistent_folder[..],
-        format!("-{:x}", bun_core::fast_random()).as_bytes(),
+        format!("-{:x}", *PROCESS_SUFFIX.get_or_init(bun_core::fast_random)).as_bytes(),
     ]
     .concat();
-    let folder = [persistent_folder, per_process_folder]
-        .into_iter()
-        .find(|folder| make_or_find_private_folder(folder, uid))?;
+    // As in `resolve_embedded_file`: a relative one is in the working directory, where a folder of ours can have any author.
+    let may_reuse = bun_paths::is_absolute(tmpdir);
+    let folder = [
+        may_reuse.then_some(persistent_folder),
+        Some(per_process_folder),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|folder| make_or_find_private_folder(folder, uid))?;
     let written_path = |path: &[u8]| {
         let mut written = bun_paths::Path::from(&folder);
         match cfg!(windows) {

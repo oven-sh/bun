@@ -924,6 +924,29 @@ test.skipIf(!systemCC).each(Object.keys(untrustedFolderSetups))(
   120_000,
 );
 
+test.skipIf(!systemCC)(
+  "extracted libraries are not loaded from a folder that lies in the working directory",
+  async () => {
+    using dir = tempDir("aot-in-place-relative-temporary", { "work/temporary/.keep": "" });
+    const { executable, plain } = await buildAddonWithLibraryInPlace();
+    const work = join(String(dir), "work");
+    const temporary = join(work, "temporary");
+    const folders = () => readdirSync(temporary).filter(name => name.startsWith(".bun-"));
+    // What the executable would reuse, as a checkout or an archive can bring it.
+    expect(await run(work, [executable], { ...bunEnv, BUN_TMPDIR: temporary })).toEqual(plain);
+    const [reused, ...others] = folders();
+    expect(others).toEqual([]);
+    const planted = readdirSync(join(temporary, reused), { recursive: true, withFileTypes: true })
+      .filter(entry => entry.isFile())
+      .map(entry => join(entry.parentPath, entry.name));
+    expect(planted.length).toBe(2);
+    for (const file of planted) writeFileSync(file, Buffer.alloc(statSync(file).size, "planted"));
+
+    expect(await run(work, [executable], { ...bunEnv, BUN_TMPDIR: "temporary" })).toEqual(plain);
+    expect(folders().length).toBe(2);
+  },
+);
+
 // Without a C compiler the scene has no addon, and its test is skipped.
 const writtenAddon = !systemCC
   ? undefined

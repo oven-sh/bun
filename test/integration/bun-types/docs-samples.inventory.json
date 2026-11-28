@@ -1,0 +1,320 @@
+{
+  "docs/bundler/fullstack.mdx": {
+    "086b443f71b4": "TS2339 | const { name, email } = await req.json();",
+    "1f1fa6ac3bbf": "TS2339 | const { name, email } = await req.json();",
+    "5eb0cd8142c0": "TS2345 | Bun.serve({",
+    "6c0075f37ece": "TS2345 | Bun.serve({",
+    "cafb8ac19233": "TS2339 | await deleteUser(req.params.id);",
+    "d1d8a4a8628a": "TS18046 | alert(error.error);",
+    "fbcd69a64a47": "TS1005 | \"/api/users\": {"
+  },
+  "docs/bundler/hot-reloading.mdx": {
+    "c57b2d0d2b7f": "TS2339 | import.meta.hot.prune(() => {"
+  },
+  "docs/bundler/index.mdx": {
+    "10ba082a53ce": "TS2345 | const build = await Bun.build({/* */});",
+    "166ad7802e40": "TS2749 | loader: Loader;",
+    "1f8af5da52ff": "TS2345 | const build = await Bun.build({/* */});",
+    "5128e4d8f506": "TS2532 | const output = await result.outputs[0].text();",
+    "84bb19cc1ff1": "TS2345 | const build = await Bun.build({/* */});",
+    "df170e23e5f6": "TS2322 | \".png\": \"dataurl\",",
+    "e96fe4fbc2b7": "TS2322 | metafile: \"./dist/meta.json\",",
+    "f532c0bc395e": "TS2353 | outfile: \"./mycli\","
+  },
+  "docs/bundler/loaders.mdx": {
+    "bcd6b3344afd": "TS18048 TS7053 | console.log(doc.config[\"@version\"]);"
+  },
+  "docs/bundler/macros.mdx": {
+    "4e906f888e26": "TS7053 | if (name) meta[name] = element.getAttribute(\"content\");"
+  },
+  "docs/bundler/minifier.mdx": {
+    "2d3e2e468a34": "TS2349 | `hello ${123}`",
+    "40604947930e": "TS2695 | -(a, b)",
+    "4bbc1d769e09": "TS2349 | `Hello World`",
+    "4dac76b5b3b2": "TS2869 TS2871 | null ?? x",
+    "8110fd963f2e": "TS1109 | ['a', , 'c'][1]",
+    "84f59b5a92f1": "TS2349 | a + (b * c)",
+    "a20be88c8a5d": "TS2349 | 'He said \"hello\"'",
+    "a211e5ea683d": "TS2349 | `a${123}b`",
+    "a74dc73e3a6a": "TS2362 | +123",
+    "ab659556eab8": "TS1109 | [...[a, b]]",
+    "b60262ebe3ce": "TS2395 | export enum Color { Red, Green, Blue }",
+    "c6ba67c124c4": "TS2695 | (0, x)",
+    "d21167741754": "TS1005 | { x: x, y: y }"
+  },
+  "docs/bundler/plugins.mdx": {
+    "13a9eb460682": "TS1005 | onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;",
+    "862488e4eef0": "TS1005 | onStart(callback: () => void | Promise<void>): void;",
+    "a060ccba170e": "TS1005 | args: { filter: RegExp; namespace?: string },",
+    "ac5304dd74b4": "TS1005 | args: { filter: RegExp; namespace?: string },",
+    "e7bc294d827b": "TS1005 | args: { filter: RegExp; namespace?: string },"
+  },
+  "docs/bundler/standalone-html.mdx": {
+    "61ec9cb49ca5": "TS2532 | console.log(\"Built:\", result.outputs[0].path);",
+    "cd827f3cf6f0": "TS2532 | const html = await result.outputs[0].text();"
+  },
+  "docs/compiler/executables.mdx": {
+    "a5378f3a3726": "TS1005 | outfile: \"./myapp\",",
+    "cd9b53d3a594": "TS2689 | embeddedFiles: ReadonlyArray<Blob>;",
+    "cecf1cc0ae74": "TS2339 | const name = blob.name.replace(/-[a-z0-9]+\\./, \".\");",
+    "d8d45e1d7bee": "TS2532 | console.log(\"Build successful:\", result.outputs[0].path);",
+    "d93dd0f0e716": "TS2339 | console.log(`${blob.name} - ${blob.size} bytes`);",
+    "f6f666efee57": "TS2769 | const template = await file(templatePath).text();"
+  },
+  "docs/format/index.mdx": {
+    "e393a4409b13": "TS2657 | <a className=\"p-4 flex m-2\" /> // [!code --]"
+  },
+  "docs/guides/binary/buffer-to-readablestream.mdx": {
+    "3dd3e3ac57ee": "TS2554 | const stream = blob.stream(1024);"
+  },
+  "docs/guides/binary/dataview-to-string.mdx": {
+    "e34e3f62e09a": "TS1109 | const dv: DataView = ...;"
+  },
+  "docs/guides/binary/typedarray-to-buffer.mdx": {
+    "de284e6798b0": "TS1109 | const arr: Uint8Array = ..."
+  },
+  "docs/guides/binary/typedarray-to-dataview.mdx": {
+    "80d6ad666237": "TS1109 | const arr: Uint8Array = ..."
+  },
+  "docs/guides/binary/typedarray-to-readablestream.mdx": {
+    "9265bb606ea2": "TS2554 | const stream = blob.stream(1024);"
+  },
+  "docs/guides/ecosystem/gel.mdx": {
+    "00a3497be586": "TS2819 | module default {"
+  },
+  "docs/guides/ecosystem/mongoose.mdx": {
+    "9b5e748a392b": "TS2339 | console.log(`${this.sound}!`);"
+  },
+  "docs/guides/ecosystem/tanstack-start.mdx": {
+    "738e823fdb75": "TS2345 | if (raw.length === 1) return new Bun.Glob(raw[0])"
+  },
+  "docs/guides/process/ipc.mdx": {
+    "0aaae634526d": "TS2722 | process.send(\"Hello from child as string\");",
+    "0e66335e88ad": "TS2722 | process.send(\"Hello from child as string\");"
+  },
+  "docs/guides/runtime/delete-directory.mdx": {
+    "cda365fee8e4": "TS18046 | if (error.code === \"ENOENT\") {"
+  },
+  "docs/guides/runtime/import-json5.mdx": {
+    "5405e25f1e93": "TS18046 | console.log(data.name); // => \"John Doe\"",
+    "9c7edd05a4ed": "TS2305 | import { database, server, features } from \"./config.json5\";"
+  },
+  "docs/guides/runtime/import-xml.mdx": {
+    "10836634d937": "TS18048 TS2339 TS7053 | doc.config[\"@env\"]; // => \"production\"",
+    "1f96cce17137": "TS2305 | import { config } from \"./config.xml\";",
+    "2b2c57ebd6b1": "TS18048 TS2339 TS7053 | console.log(data.user.name); // => \"John Doe\""
+  },
+  "docs/guides/runtime/import-yaml.mdx": {
+    "ebf7b9949f36": "TS2305 | import { database, server, features } from \"./config.yaml\";",
+    "f802ab2402b7": "TS18046 | console.log(data.name); // => \"John Doe\""
+  },
+  "docs/guides/test/skip-tests.mdx": {
+    "87102a417a3c": "TS2339 | expect(Bun.isAwesome()).toBe(true);"
+  },
+  "docs/guides/test/svelte-test.mdx": {
+    "028b15767f99": "TS18046 | throw new Error(`Failed to compile Svelte component: ${err.message}`);"
+  },
+  "docs/guides/test/testing-library.mdx": {
+    "087a017c2b98": "TS2339 | expect(myComponent).toBeInTheDocument();"
+  },
+  "docs/guides/websocket/compression.mdx": {
+    "3e2599c2ce54": "TS2345 | const server = Bun.serve({",
+    "7f97c469d60e": "TS2345 | Bun.serve({",
+    "e9bca05f49e8": "TS2345 | Bun.serve({"
+  },
+  "docs/guides/write-file/stream.mdx": {
+    "10bede286804": "TS1109 | const stream: ReadableStream = ...;"
+  },
+  "docs/project/benchmarking.mdx": {
+    "5be42c425a50": "TS1005 | heapCapacity: 2872775,"
+  },
+  "docs/project/bindgen.mdx": {
+    "1e9bd890bf5b": "TS1005 | internalFields: { failReason: b.any, pipeDone: b.cell(\"JSC::JSPromise\", \"JavaScriptCore/JSPromise.h\") },",
+    "43165e281fc7": "TS1128 | read: { args: { target: b.any }, returns: b.any.returning(\"number\"), uses: { target: [table.writesContents()] }, ...js },",
+    "9f03b93fbf11": "TS1003 | order: { .. },"
+  },
+  "docs/runtime/child-process.mdx": {
+    "0aaae634526d": "TS2722 | process.send(\"Hello from child as string\");",
+    "0e66335e88ad": "TS2722 | process.send(\"Hello from child as string\");",
+    "2c20c9a353f4": "TS18048 | console.log(`Max memory used: ${usage.maxRSS} bytes`);",
+    "5de8436438de": "TS2694 | spawn(command: string[], options?: SpawnOptions.OptionsObject): Subprocess;",
+    "fb57678a89f0": "TS18048 | proc.terminal.write(\"echo hello\\n\");"
+  },
+  "docs/runtime/cookies.mdx": {
+    "4f24d6404f70": "TS1005 | new Bun.Cookie(name: string, value: string);"
+  },
+  "docs/runtime/debugger.mdx": {
+    "85e06486fd5c": "TS1109 | 2 | const err = new Error(\"Something went wrong\");",
+    "909d7f31ec5c": "TS18046 TS2769 | console.log(err.stack);"
+  },
+  "docs/runtime/ffi.mdx": {
+    "44d094486454": "TS1005 | CString(ptr: number, byteOffset?: number, byteLength?: number): string;",
+    "6c596d8379f5": "TS2554 | deallocatorContext,",
+    "75562cac9cab": "TS2345 | if (search(ptr(str), searchIterator)) {",
+    "9a1d05391a1f": "TS1109 | const getVersion = new CFunction({",
+    "ec2ce5dcdd74": "TS2554 | myDataView.getUint8(0, true),"
+  },
+  "docs/runtime/file-io.mdx": {
+    "534ba10213da": "TS2345 | const path = resolve(process.argv.at(-1));"
+  },
+  "docs/runtime/file-system-router.mdx": {
+    "1bc27e330f39": "TS1005 | kind: \"dynamic\",",
+    "2530a3ce317e": "TS1131 | class FileSystemRouter {",
+    "2c4e9f0ee12c": "TS1005 | kind: \"exact\",",
+    "a34a6039e2c1": "TS1005 | kind: \"exact\","
+  },
+  "docs/runtime/file-types.mdx": {
+    "6a400aa275fb": "TS2664 | declare module \"*.svg\" {",
+    "bcd6b3344afd": "TS18048 TS7053 | console.log(doc.config[\"@version\"]);"
+  },
+  "docs/runtime/hashing.mdx": {
+    "42e93befb64a": "TS2345 | const hash = await Bun.password.hash(password, {/* config */});",
+    "72ce91f964c9": "TS2345 | const hash = Bun.password.hashSync(password, {/* config */});",
+    "9ae46387d162": "TS2345 TS2554 | Bun.hash.wyhash(\"data\", 1234); // equivalent to Bun.hash()"
+  },
+  "docs/runtime/http/routing.mdx": {
+    "1cccfdf06afe": "TS18047 | return new Response(`Your IP is ${ip.address}`);",
+    "526c090e4cdb": "TS2531 TS2532 | const [start = 0, end = Infinity] = req.headers"
+  },
+  "docs/runtime/http/server.mdx": {
+    "b4c481852e2e": "TS2322 | const post: Omit<Post, \"id\" | \"created_at\"> = await req.json();",
+    "f631bf376de2": "TS2698 | return Response.json({ created: true, ...body });"
+  },
+  "docs/runtime/http/tls.mdx": {
+    "03cd7d3e535c": "TS2345 | Bun.serve({",
+    "10bc27618f0b": "TS2345 | Bun.serve({",
+    "12c1916a192a": "TS2345 | Bun.serve({",
+    "2159e7565aeb": "TS2345 | Bun.serve({",
+    "31c3c4822a5c": "TS2345 | Bun.serve({",
+    "45d31b42f909": "TS2345 | Bun.serve({",
+    "76300a59cef1": "TS2345 | Bun.serve({",
+    "8ce4e0e15ffe": "TS2345 | Bun.serve({",
+    "b85186f151b3": "TS2345 | Bun.serve({"
+  },
+  "docs/runtime/json5.mdx": {
+    "0555739cdd5f": "TS2305 | import { server, features } from \"./config.json5\";",
+    "791ced3d5870": "TS2305 | import { database, features } from \"./config.json5\";",
+    "cad8dd2e187e": "TS18046 | console.error(\"Failed to parse JSON5:\", error.message);"
+  },
+  "docs/runtime/jsx.mdx": {
+    "128411132d51": "TS1005 | return <div {className} />;"
+  },
+  "docs/runtime/markdown.mdx": {
+    "fa1fe3c830b7": "TS2322 | pre: Code,"
+  },
+  "docs/runtime/module-resolution.mdx": {
+    "480da9ac96f0": "TS2395 | export const hello = \"world\";",
+    "9bd6d695bb65": "TS2561 | entryPoints: [\"./app/foo/route.js\"],"
+  },
+  "docs/runtime/networking/dns.mdx": {
+    "4bae7f0231b4": "TS2693 | cacheHitsCompleted: number; // Cache hits completed",
+    "9ad9257dc335": "TS1005 | dns.prefetch(hostname: string, port?: number): void;"
+  },
+  "docs/runtime/networking/fetch.mdx": {
+    "5f86e18d601e": "TS18046 | if (error.code === \"ERR_PROXY_TUNNEL\") {",
+    "6fd19f390999": "TS18047 | const reader = stream.getReader();",
+    "aca30eb005ee": "TS18047 | for await (const chunk of response.body) {"
+  },
+  "docs/runtime/networking/tcp.mdx": {
+    "093aebce38d2": "TS2769 | const server = Bun.listen({/* config*/});",
+    "15fff711b689": "TS2353 TS2769 | const socket = await Bun.connect({/* config */});",
+    "1d96c2881903": "TS2339 | if (wrote < data.byteLength) {",
+    "81fc13e28331": "TS2769 | const server = Bun.listen({/* config */});",
+    "9528dc62f4e6": "TS2769 | Bun.listen({",
+    "cb0e0def013c": "TS2769 | const socket = await Bun.connect({"
+  },
+  "docs/runtime/plugins.mdx": {
+    "445f0408bfe5": "TS1005 | args: { filter: RegExp; namespace?: string },",
+    "862488e4eef0": "TS1005 | onStart(callback: () => void | Promise<void>): void;",
+    "a060ccba170e": "TS1005 | args: { filter: RegExp; namespace?: string },",
+    "e7bc294d827b": "TS1005 | args: { filter: RegExp; namespace?: string },"
+  },
+  "docs/runtime/redis.mdx": {
+    "41927219e2f8": "TS18046 | if (error.code === \"ERR_REDIS_CONNECTION_CLOSED\") {",
+    "9468e2ace417": "TS2769 | await redis.set(\"counter\", 0);"
+  },
+  "docs/runtime/s3.mdx": {
+    "f981b715f56b": "TS2430 TS2749 | interface S3File extends Blob {"
+  },
+  "docs/runtime/secrets.mdx": {
+    "4cc8991cb28f": "TS2554 | const password = await Bun.secrets.get(\"my-app\", \"alice@example.com\");"
+  },
+  "docs/runtime/sql.mdx": {
+    "2170a85ff091": "TS18046 | if (error.errno === 1062) {",
+    "d7eb85c990a7": "TS18046 | if (error.code === \"SQLITE_CONSTRAINT_PRIMARYKEY\") {",
+    "e15fef8dda84": "TS1005 | password: async () => await signer.getAuthToken(),"
+  },
+  "docs/runtime/sqlite.mdx": {
+    "06091d77a9f5": "TS18046 | console.log(e.message);",
+    "88b210efeee2": "TS18046 | console.log(result.max_int);",
+    "cc100e654582": "TS18046 | console.log(result.max_int);"
+  },
+  "docs/runtime/streams.mdx": {
+    "b6082f5ffaf2": "TS7057 | const controller = yield \"hello\";"
+  },
+  "docs/runtime/toml.mdx": {
+    "38fbda0cbc8d": "TS18046 | console.error(\"Failed to parse TOML:\", error.message);",
+    "565a8e4bc170": "TS2339 | doc.created; // Temporal.Instant (an offset date-time specifies an instant;",
+    "7f26b76fe80c": "TS2305 | import { server, features } from \"./config.toml\";",
+    "9f5daf5a3dc4": "TS2305 | import config, { database, features } from \"./config.toml\";",
+    "cae3bcdfd965": "TS2305 | import { database, redis, features } from \"./config.toml\";"
+  },
+  "docs/runtime/transpiler.mdx": {
+    "809d536c7735": "TS1005 | class Bun.Transpiler {",
+    "cbbe23dfae9f": "TS2683 | }, undefined, false, undefined, this);"
+  },
+  "docs/runtime/utils.mdx": {
+    "136f345dd7b9": "TS2345 | await Bun.readableStreamToArrayBuffer(stream);",
+    "3837aaeb242d": "TS1127 | ❯ bun string-width.mjs",
+    "c74dab504bd0": "TS2339 | expect(peek(rejected).message).toBe(\"Successfully tested promise rejection\");"
+  },
+  "docs/runtime/watch-mode.mdx": {
+    "0995fe1d969c": "TS7017 | globalThis.count ??= 0;"
+  },
+  "docs/runtime/webview.mdx": {
+    "a9851765304c": "TS2339 | const { root } = await view.cdp(\"DOM.getDocument\");"
+  },
+  "docs/runtime/workers.mdx": {
+    "4320a643ff02": "TS1005 | postMessage({ prop: 11 chars string, ...9 more props }) - 648ns"
+  },
+  "docs/runtime/xml.mdx": {
+    "254fc90f50b9": "TS2305 | import { config } from \"./config.xml\";",
+    "4682917870ea": "TS18046 | console.error(error.message); // \"XML Parse error: Expected closing tag </b> but found </a>\"",
+    "7ec43662e76a": "TS2305 | import { config } from \"./config.xml\";",
+    "b17b323b8fd4": "TS18048 TS2339 TS7053 | console.log(doc.config[\"@env\"]); // \"production\""
+  },
+  "docs/runtime/yaml.mdx": {
+    "09f50622ef3d": "TS18046 | console.error(\"Failed to parse YAML:\", error.message);",
+    "0c91135459a6": "TS2305 | import { features } from \"./features.yaml\";",
+    "2f2efb2887a5": "TS2305 | import { database, redis, features } from \"./config.yaml\";",
+    "4262103943df": "TS2305 | import config, { database, features } from \"./config.yaml\";",
+    "a7fc74789587": "TS2305 | import { server, features } from \"./config.yaml\";",
+    "c1e7c3599d88": "TS2305 | import { connections, migrations } from \"./database.yaml\";"
+  },
+  "docs/test/dates-times.mdx": {
+    "1c643ae1b39a": "TS2339 | expect(jest.now()).toBe(1577836800000); // Same value"
+  },
+  "docs/test/dom.mdx": {
+    "c41561181d2f": "TS2339 | expect(screen.getByRole('button')).toHaveTextContent('Click me');",
+    "c7c52fd3955d": "TS7017 | global.ResizeObserver = class ResizeObserver {"
+  },
+  "docs/test/index.mdx": {
+    "9bf6826d4386": "TS2769 | expect(input).toBe(0); // This test is expected to fail for each input"
+  },
+  "docs/test/lifecycle.mdx": {
+    "4ae67f6e2a03": "TS7005 TS7034 | let connection;",
+    "7dfe37b75db6": "TS7005 TS7034 | let server;"
+  },
+  "docs/test/runtime-behavior.mdx": {
+    "428528cef525": "TS7017 | global.myGlobalVar = undefined;",
+    "52c0423551c7": "TS2769 | expect(import.meta.env.PROD).toBe(true);",
+    "d074e6510167": "TS2769 | expect(import.meta.env.DEV).toBe(true);"
+  },
+  "docs/test/snapshots.mdx": {
+    "dd79c3672821": "TS1005 | expect(render(<Button variant=\"primary\">Click</Button>))"
+  },
+  "docs/test/writing-tests.mdx": {
+    "9df1f74f96e3": "TS7005 TS7034 | let testUser;",
+    "c32eacb23918": "TS18046 | if (a instanceof Volume && b instanceof Volume) return a.equals(b);"
+  }
+}

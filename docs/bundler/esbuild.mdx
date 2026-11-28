@@ -204,11 +204,11 @@ const myPlugin: BunPlugin = {
     builder.onStart(() => {
       /* called when the bundle starts */
     });
-    builder.onResolve({/* onResolve.options */}, args => {
-      return {/* onResolve.results */};
+    builder.onResolve({ filter: /^my-module$/ /* onResolve.options */ }, args => {
+      return { path: args.path, namespace: "my-namespace" /* onResolve.results */ };
     });
-    builder.onLoad({/* onLoad.options */}, args => {
-      return {/* onLoad.results */};
+    builder.onLoad({ filter: /.*/, namespace: "my-namespace" /* onLoad.options */ }, args => {
+      return { contents: "export default 42;", loader: "js" /* onLoad.results */ };
     });
     builder.onEnd(result => {
       /* called when the bundle is complete */

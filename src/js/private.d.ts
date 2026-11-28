@@ -2130,6 +2130,7 @@ declare namespace $Bindgen {
       writeResult: Uint32Array,
       writeCallback: (uncounted?: number) => void,
       dictionary: $Node.AnyView | undefined,
+      rejectGarbageAfterEnd?: boolean,
     ): void;
   }
   interface NativeBrotli extends CompressionStream {
@@ -2147,6 +2148,7 @@ declare namespace $Bindgen {
       writeResult: Uint32Array,
       writeCallback: (uncounted?: number) => void,
       dictionary?: $Node.AnyView,
+      rejectGarbageAfterEnd?: boolean,
     ): void;
   }
   interface CompressionStreamConstructor<T> {

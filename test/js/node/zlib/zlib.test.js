@@ -122,6 +122,12 @@ describe("zlib", () => {
     }
   });
 
+  it("a stream has an own _rejectGarbageAfterEnd only if the option is set", () => {
+    expect(Object.keys(zlib.createGunzip())).not.toContain("_rejectGarbageAfterEnd");
+    expect(Object.keys(zlib.createGunzip({ rejectGarbageAfterEnd: false }))).not.toContain("_rejectGarbageAfterEnd");
+    expect(Object.keys(zlib.createGunzip({ rejectGarbageAfterEnd: true }))).toContain("_rejectGarbageAfterEnd");
+  });
+
   describe('library: "libdeflate"', () => {
     const library = "libdeflate";
 

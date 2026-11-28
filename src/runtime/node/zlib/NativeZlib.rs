@@ -51,6 +51,7 @@ mod _impl {
             write_state: JsLocal<'_>,
             process_callback: JsLocal<'_>,
             dictionary: JsLocal<'_>,
+            reject_garbage_after_end: bool,
         ) -> JsResult<()> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -128,6 +129,7 @@ mod _impl {
                 mem_level,
                 strategy,
                 dictionary,
+                reject_garbage_after_end,
             );
             if result.is_err() {
                 self.close();
@@ -172,6 +174,8 @@ pub(crate) struct Context {
     /// `None` until `init()`: what needs it fails with `Z_STREAM_ERROR`.
     state: Option<State>,
     flush: Flush,
+    /// `options.rejectGarbageAfterEnd`: what follows a gzip member stays in the input, and `zlib.ts` refuses it.
+    reject_garbage_after_end: bool,
     dictionary: Vec<u8>,
     gzip_id_bytes_read: u8,
     write_result: Result<[usize; 2], Error>,
@@ -205,6 +209,7 @@ impl Context {
             mode,
             state: None,
             flush: Flush::None,
+            reject_garbage_after_end: false,
             dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
             write_result: Ok([0, 0]),
@@ -218,10 +223,12 @@ impl Context {
         mem_level: c_int,
         strategy: c_int,
         dictionary: &[u8],
+        reject_garbage_after_end: bool,
     ) -> bun_zlib::Result<()> {
         use NodeMode::*;
         self.flush = Flush::None;
         self.dictionary = dictionary.to_vec();
+        self.reject_garbage_after_end = reject_garbage_after_end;
 
         let window_bits = match self.mode {
             GZIP | GUNZIP => window_bits.saturating_add(16),
@@ -346,6 +353,7 @@ impl Context {
                 // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
                 inflate::Status::StreamEnd
                     if self.mode == NodeMode::GUNZIP
+                        && !self.reject_garbage_after_end
                         && input.first().is_some_and(|&byte| byte != 0) =>
                 {
                     inflater.reset();

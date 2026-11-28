@@ -27,6 +27,7 @@ const owner_symbol = Symbol("owner_symbol");
 const {
   checkRangesOrGetDefault,
   clampZlibChunkSize,
+  validateBoolean,
   validateFunction,
   validateFiniteNumber,
 } = require("internal/validators");
@@ -145,9 +146,14 @@ function zlibBufferSync(engine: $Node.ZlibBase, buffer: ZlibInput) {
 function zlibOnError(this: ZlibHandle, message: string, errno: number, code: string) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
-  const error: ZlibError = new Error(message);
-  error.errno = errno;
-  error.code = code;
+  let error: ZlibError;
+  if (code === "ERR_TRAILING_JUNK_AFTER_STREAM_END") {
+    error = $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+  } else {
+    error = new Error(message);
+    error.errno = errno;
+    error.code = code;
+  }
   self.destroy(error);
   self[kError] = error;
 }
@@ -176,7 +182,7 @@ interface ZlibHandle extends $Bindgen.CompressionStream {
   [owner_symbol]: $Node.ZlibBase;
   /** Set only while a write is on the threadpool. */
   buffer: (View & { [kAfterFlush]?: () => void }) | null;
-  cb: () => void;
+  cb: (error?: Error) => void;
   afterWrite?: (() => void) | null;
   availOutBefore: number;
   availInBefore: number;
@@ -202,6 +208,7 @@ interface ZlibOptions extends Omit<$Node.TransformOptions, "flush" | "encoding">
   dictionary?: View | ArrayBuffer | SharedArrayBuffer;
   info?: boolean;
   maxOutputLength?: number;
+  rejectGarbageAfterEnd?: boolean;
   params?: Record<string, number | boolean>;
   pledgedSrcSize?: number;
 }
@@ -222,6 +229,7 @@ declare global {
       _defaultFullFlushFlag: number;
       _info: boolean | undefined;
       _maxOutputLength: number;
+      _rejectGarbageAfterEnd: boolean;
       reset(): void;
       flush(kind?: number | (() => void), callback?: () => void): void;
       close(callback?: () => void): void;
@@ -284,6 +292,8 @@ function ZlibBase(
     finishFlush = checkRangesOrGetDefault(opts.finishFlush, "options.finishFlush", FLUSH_BOUND[flushBoundIdx][0], FLUSH_BOUND[flushBoundIdx][1], finishFlush);
     // prettier-ignore
     maxOutputLength = checkRangesOrGetDefault(opts.maxOutputLength, "options.maxOutputLength", 1, kMaxLength, kMaxLength);
+    const rejectGarbageAfterEnd = opts.rejectGarbageAfterEnd;
+    if (rejectGarbageAfterEnd !== undefined) validateBoolean(rejectGarbageAfterEnd, "options.rejectGarbageAfterEnd");
 
     if (opts.encoding || opts.objectMode || opts.writableObjectMode) {
       opts = { ...opts };
@@ -309,9 +319,13 @@ function ZlibBase(
   this._defaultFullFlushFlag = fullFlush;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
+
+  if (opts?.rejectGarbageAfterEnd === true) this._rejectGarbageAfterEnd = true;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 ZlibBase.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL];
+// Node.js stores this on every stream. Here a stream gets a new enumerable key only if the option is set (#46270).
+ZlibBase.prototype._rejectGarbageAfterEnd = false;
 
 ObjectDefineProperty(ZlibBase.prototype, "_closed", {
   configurable: true,
@@ -523,6 +537,11 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
     }
   }
 
+  if (availInAfter > 0 && self._rejectGarbageAfterEnd) {
+    _close(self);
+    throw $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+  }
+
   self.bytesWritten = inputRead;
   _close(self);
 
@@ -652,6 +671,13 @@ function processCallback(this: ZlibHandle, uncounted = 0) {
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
 
+    if (self._rejectGarbageAfterEnd) {
+      const err = $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+      self.destroy(err);
+      this.cb(err);
+      return;
+    }
+
     self.push(null);
   }
 
@@ -718,7 +744,16 @@ function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
 
   const handle = new NativeZlib(mode);
   this._writeState = new Uint32Array(2);
-  handle.init(windowBits, level, memLevel, strategy, this._writeState, processCallback, dictionary);
+  handle.init(
+    windowBits,
+    level,
+    memLevel,
+    strategy,
+    this._writeState,
+    processCallback,
+    dictionary,
+    opts?.rejectGarbageAfterEnd === true,
+  );
 
   ZlibBase.$apply(this, [opts, mode, handle, zlibDefaultOpts]);
 
@@ -943,7 +978,14 @@ class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
     const handle = new NativeZstd(mode);
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, opts?.pledgedSrcSize, writeState, processCallback, dictionary);
+    handle.init(
+      initParamsArray,
+      opts?.pledgedSrcSize,
+      writeState,
+      processCallback,
+      dictionary,
+      opts?.rejectGarbageAfterEnd === true,
+    );
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

@@ -474,6 +474,10 @@ void us_loop_run(struct us_loop_t *loop) {
 
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
+extern int Bun__JSC_onQuietWait(void * _Nonnull jsc_vm);
+#ifdef LIBUS_USE_EPOLL
+extern unsigned int Bun__JSC_quietWaitMs(void * _Nonnull jsc_vm);
+#endif
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -508,8 +512,36 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
      * if it had none to share. Nothing measures a deadline against it. */
     int released_heap_access = 0;
+    /* Not 0: if nothing is ready after this many milliseconds, the thread is idle (Bun__JSC_onQuietWait). */
+    unsigned int quiet_ms = 0;
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
+        quiet_ms = Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
+#ifdef LIBUS_USE_EPOLL
+    /* After a wakeup the hook is skipped, yet epoll_pwait2 blocks if the tick before already drained the eventfd. */
+    else if (had_wakeups != 0 && (!timeout || timeout->tv_nsec != 0 || timeout->tv_sec != 0) && loop->data.jsc_vm)
+        quiet_ms = Bun__JSC_quietWaitMs(loop->data.jsc_vm);
+#endif
+    /* The wait then ends after quiet_ms at the latest, and `rest` is what is left of the caller's timeout. */
+    const struct timespec *rest = NULL;
+    struct timespec quiet_ts, rest_ts;
+    if (UNLIKELY(quiet_ms != 0)) {
+        quiet_ts.tv_sec = quiet_ms / 1000;
+        quiet_ts.tv_nsec = (long) (quiet_ms % 1000) * 1000000L;
+        if (timeout) {
+            rest_ts.tv_sec = timeout->tv_sec - quiet_ts.tv_sec;
+            rest_ts.tv_nsec = timeout->tv_nsec - quiet_ts.tv_nsec;
+            if (rest_ts.tv_nsec < 0) {
+                rest_ts.tv_sec--;
+                rest_ts.tv_nsec += 1000000000L;
+            }
+            rest = &rest_ts;
+        }
+        /* The caller's timeout ends first: nothing to do. */
+        if (rest && (rest_ts.tv_sec < 0 || (rest_ts.tv_sec == 0 && rest_ts.tv_nsec == 0)))
+            quiet_ms = 0;
+        else
+            timeout = &quiet_ts;
+    }
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
@@ -517,7 +549,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
      * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
+    int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
@@ -545,6 +577,18 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
         timeout);
 #endif
+    if (UNLIKELY(quiet_ms != 0) && loop->num_ready_polls == 0) {
+        /* Before anything can allocate again, as below. */
+        if (handed_off)
+            mi_on_thread_idle_end();
+        released_heap_access = Bun__JSC_onQuietWait(loop->data.jsc_vm);
+        handed_off = mi_on_thread_idle_start();
+#ifdef LIBUS_USE_EPOLL
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, rest);
+#else
+        loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, rest);
+#endif
+    }
 
     /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
     loop->current_ready_poll = 0;

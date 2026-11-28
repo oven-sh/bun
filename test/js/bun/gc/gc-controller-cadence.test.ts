@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { availableParallelism } from "os";
 import { join } from "path";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
@@ -341,6 +342,310 @@ describe("idle release", () => {
     },
     15_000, // It fills 350 MB and waits for the collection.
   );
+});
+
+// The JS thread conducts the collections it requests, and such a collection goes on only at that thread's polls. When
+// marking is not done by the end of the first pause, the thread resumes itself, and a program with nothing else to do
+// waits in the event loop. Helper threads mark meanwhile, but a heap with one GC marker has none (`bun -e`,
+// BUN_JSC_numberOfGCMarkers=1): its collection stayed as it was for as long as the program allocated nothing, later
+// requests were subsumed by it, and nothing that the program had dropped was freed. When such a wait has lasted 10 ms
+// with nothing ready, the JS thread now gives up heap access for the rest of it, and the heap's collector thread ends
+// the collection.
+//
+// Each child keeps objects alive so that marking outlasts the first pause, and stays until its stdin closes, so that a
+// failure leaves no process behind. Most drop 64 objects and exit with 0 when a FinalizationRegistry callback for one
+// of them runs, which takes a collection that began after the drop and ended. Before, that callback never ran.
+// Only where the collector thread takes over. Not on Windows: libuv dispatches inside its poll, so the loop cannot take
+// heap access back in time. Not with one CPU: the collector thread would mark on the JS thread's.
+const collectorThreadTakesOver = (isLinux || isMacOS) && availableParallelism() > 1;
+describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection ends while the program waits", () => {
+  const env = {
+    ...bunEnv,
+    // Full collections only: the first that begins after a drop and ends frees what was dropped.
+    BUN_JSC_useGenerationalGC: "0",
+    // The scheduled idle collections already go to the collector thread, and what is unfinished then goes with them.
+    BUN_IDLE_GC_SECONDS: "0",
+    // The CI runner sets 1, which makes some runtime paths request collections.
+    BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+  };
+  const ticking = { ...env, BUN_GC_TIMER_DISABLE: undefined, BUN_GC_TIMER_INTERVAL: "100" };
+  const timerOff = { ...env, BUN_GC_TIMER_DISABLE: "1" };
+  const oneMarker = { BUN_JSC_numberOfGCMarkers: "1" };
+
+  // Enough for marking to outlast the first pause. A debug build marks far slower.
+  const live = isDebug ? 2_000 : 100_000;
+  const keep = `
+  globalThis.live = new Map();
+  for (let i = 0; i < ${live}; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i], extra: { a: i, c: [i, i + 1] } });
+`;
+  const stay = `
+  process.stdin.on("end", () => process.exit(1)).resume();
+`;
+  // Each scenario starts in a timer, after the full collection that follows a script's entry point: that one frees
+  // what the script drops sooner, and ends a collection that the script begins sooner. A script cannot see it end.
+  const afterStartup = 50;
+  const drop = (finalized: string) => `
+  const registry = new FinalizationRegistry(() => { ${finalized} });
+  setTimeout(() => { for (let i = 0; i < 64; i++) registry.register({ i }, i); }, ${afterStartup});
+`;
+  const request = `
+  setInterval(() => Bun.gc(false), 100);
+`;
+  // A request is served at the thread's next poll, and an allocation has one: the collection begins here.
+  const begin = `
+  Bun.gc(false);
+  globalThis.young = Array.from({ length: 2_000 }, (_, i) => ({ i }));
+`;
+
+  async function exitCode(cmd: string[], env: Record<string, string | undefined>, cwd?: string) {
+    await using proc = Bun.spawn({ cmd, env, cwd, stdin: "pipe", stdout: "ignore", stderr: "inherit" });
+    return await proc.exited;
+  }
+
+  test.concurrent("requested by the GC timer, in `bun -e`", async () => {
+    expect(await exitCode([bunExe(), "-e", keep + stay + drop("process.exit(0)")], ticking)).toBe(0);
+  });
+
+  test.concurrent("requested by the GC timer, with BUN_JSC_numberOfGCMarkers=1", async () => {
+    using dir = tempDir("gc-parked-ticks", { "main.js": keep + stay + drop("process.exit(0)") });
+    expect(await exitCode([bunExe(), "main.js"], { ...ticking, ...oneMarker }, String(dir))).toBe(0);
+  });
+
+  test.concurrent("requested by the program", async () => {
+    const script = keep + stay + drop("process.exit(0)") + request;
+    expect(await exitCode([bunExe(), "-e", script], { ...timerOff, ...oneMarker })).toBe(0);
+  });
+
+  // An eden collection marks what was allocated since the collection before it and is still alive.
+  test.concurrent("of the young generation", async () => {
+    const script = `
+      const registry = new FinalizationRegistry(() => process.exit(0));
+      setTimeout(() => {
+        globalThis.cache = new Map();
+        for (let i = 0; i < ${live}; i++) cache.set("k" + i, { i, s: "x" + i, t: [i] });
+        for (let i = 0; i < 64; i++) registry.register({ i }, i);
+      }, ${afterStartup});
+    `;
+    const generational = { ...ticking, ...oneMarker, BUN_JSC_useGenerationalGC: undefined };
+    expect(await exitCode([bunExe(), "-e", keep + stay + script], generational)).toBe(0);
+  });
+
+  test.concurrent("in a Worker", async () => {
+    using dir = tempDir("gc-parked-worker", {
+      "worker.js": keep + drop(`postMessage("finalized")`) + request,
+      "main.js":
+        stay +
+        `
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      worker.onmessage = () => process.exit(0);
+    `,
+    });
+    expect(await exitCode([bunExe(), "main.js"], { ...timerOff, ...oneMarker }, String(dir))).toBe(0);
+  });
+
+  // A wakeup from another thread is still counted when the loop comes back to wait, and the loop does not call its park
+  // hook then: it expects the wait to return at once. With epoll the wait blocks if the wakeup was already consumed, and
+  // an unfinished collection waited through it. Five messages, so that what they allocate stays far below what makes
+  // the JS thread finish the marking by itself.
+  test.concurrent("begun in a callback that another thread's wakeup delivered", async () => {
+    using dir = tempDir("gc-parked-wakeup", {
+      "worker.js": `
+      let sent = 0;
+      const timer = setInterval(() => { postMessage(sent); if (++sent === 5) clearInterval(timer); }, 200);
+      setTimeout(() => {}, 2 ** 31 - 1);
+    `,
+      "main.js":
+        keep +
+        stay +
+        drop("process.exit(0)") +
+        `
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      worker.onmessage = () => { ${begin} };
+    `,
+    });
+    expect(await exitCode([bunExe(), "main.js"], { ...timerOff, ...oneMarker }, String(dir))).toBe(0);
+  });
+
+  // Bun.build() waits for a plugin's setup() inside the call, so the loop runs below the caller's frame. What only that
+  // frame refers to has to survive a collection that the collector thread ends meanwhile. `held` and `twin` are
+  // reachable through WeakMap entries, which are marked last, until the collection has begun.
+  test.concurrent("inside a call that waits for a promise", async () => {
+    using dir = tempDir("gc-parked-nested", {
+      "entry.js": `export default 1;`,
+      "main.js":
+        keep +
+        stay +
+        `
+      const entries = new WeakMap(), heldKey = {}, twinKey = {};
+      let twinFinalized = () => {};
+      const registry = new FinalizationRegistry(token => { if (token === "held") process.exit(3); twinFinalized(); });
+      let heldRef;
+      (function () {
+        const graph = () => ({ leaves: Array.from({ length: 200 }, (_, j) => ({ j, s: "leaf-" + j })) });
+        const held = graph(), twin = graph();
+        entries.set(heldKey, held);
+        entries.set(twinKey, twin);
+        registry.register(held, "held");
+        registry.register(twin, "twin");
+        heldRef = new WeakRef(held);
+      })();
+      setTimeout(() => {
+        ${begin}
+        const held = entries.get(heldKey);
+        entries.delete(heldKey);
+        entries.delete(twinKey);
+        const again = setInterval(() => Bun.gc(false), 100);
+        Bun.build({
+          entrypoints: [require("path").join(import.meta.dir, "entry.js")],
+          plugins: [{ name: "wait", async setup() { await new Promise(resolve => (twinFinalized = resolve)); } }],
+        }).catch(() => {});
+        clearInterval(again);
+        process.exit(heldRef.deref() === held && held.leaves.length === 200 ? 0 : 2);
+      }, ${afterStartup});
+    `,
+    });
+    expect(await exitCode([bunExe(), "main.js"], { ...timerOff, ...oneMarker }, String(dir))).toBe(0);
+  });
+
+  // Only the JS thread runs the epilogue of a collection. The collector thread wakes the JS thread for it: nothing else
+  // in this child does. The request comes a second in, when the sweeper that start-up's own collection left on a
+  // 100 ms timer has finished. `C` is the collector thread in JSC's GC log.
+  test.concurrent("and the JS thread is woken for its epilogue", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", keep + stay + `setTimeout(() => Bun.gc(false), 1000);`],
+      env: { ...timerOff, ...oneMarker, BUN_JSC_logGC: "1" },
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let log = "";
+    // False if the child's log ends first.
+    async function logHas(found: () => boolean) {
+      while (!found()) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        log += decoder.decode(value, { stream: true });
+      }
+      return true;
+    }
+    let ended = -1;
+    expect(await logHas(() => (ended = log.search(/^\[GC<[^>]*>: C .*END\]$/m)) !== -1), log).toBe(true);
+    expect(await logHas(() => log.includes("epilogue", ended)), log).toBe(true);
+  });
+
+  // The JS thread gives up heap access only in a wait that has lasted 10 ms with nothing ready. The echo leaves no such
+  // wait, and allocates far less than what makes the JS thread finish the marking by itself: the collection ends after
+  // it, when the program waits. Nothing tells that it will not be handed over, so the echo goes on for 400 ms, which is
+  // many times what a hand-over and the collection take.
+  test.concurrent("but not while the loop has something ready", async () => {
+    const script = `
+      let busy = false;
+      const registry = new FinalizationRegistry(() => process.exit(busy ? 2 : 0));
+      setTimeout(() => {
+        for (let i = 0; i < 64; i++) registry.register({ i }, i);
+        ${begin}
+        busy = true;
+        const until = performance.now() + 400;
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(socket, chunk) { socket.write(chunk); } } });
+        Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: {
+          open(socket) { socket.write("x"); },
+          data(socket, chunk) {
+            if (performance.now() < until) return void socket.write(chunk);
+            busy = false;
+            socket.end();
+            server.stop(true);
+          },
+        } });
+      }, ${afterStartup});
+    `;
+    const echo = {
+      ...timerOff,
+      ...oneMarker,
+      // JSC's other scheduler, its choice below 4 cores, lets the JS thread mark in slices at its polls.
+      BUN_JSC_useStochasticMutatorScheduler: "1",
+      // The JS thread also finishes the marking when it has allocated a share of the heap's size meanwhile.
+      BUN_JSC_concurrentGCMaxHeadroom: "100",
+    };
+    expect(await exitCode([bunExe(), "-e", keep + stay + script], echo)).toBe(0);
+  });
+
+  // The collector thread cannot stop a thread that runs JS. When marking ends while a callback runs, it leaves the last
+  // phase to the JS thread, which runs it at its next poll: in the loop, before a wait whose timeout is already chosen.
+  // That phase arms the sweeper's timer, so the loop comes around for it. Before, what the collection freed stayed
+  // until something else woke the loop. The garbage is dropped a second and a half in, when the sweeper that start-up's
+  // own collections left on a timer has finished: that timer would turn the loop too.
+  // Linux: it reads /proc. ASAN and debug builds take too long to fill the heap.
+  (!isLinux || isASAN || isDebug ? test.skip : test.concurrent)(
+    "and is swept when the JS thread ends it at a poll of the loop",
+    async () => {
+      const script = `
+        globalThis.garbage = [];
+        for (let i = 0; i < 1_500_000; i++) garbage.push({ i, s: "g" + i, t: [i, i + 1] });
+        Bun.gc(true);
+        console.log("full");
+        setTimeout(() => {
+          globalThis.garbage = null;
+          ${begin}
+          // Runs while the collector thread marks, which begins 10 ms in, and polls nowhere.
+          setTimeout(() => { const until = performance.now() + 300; while (performance.now() < until); }, 15);
+        }, 1500);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", keep + stay + script],
+        env: { ...timerOff, ...oneMarker },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const resident = () =>
+        Number(/^VmRSS:\s+(\d+) kB/m.exec(readFileSync(`/proc/${proc.pid}/status`, "utf8"))![1]) >> 10;
+      await proc.stdout.getReader().read();
+      const full = resident();
+      expect(full).toBeGreaterThan(250);
+      // The sweep comes 2.2 s in, and later on a loaded machine. Outside CI the default timeout ends the wait first.
+      const deadline = performance.now() + 6000;
+      let now = full;
+      while (now >= full - 150 && performance.now() < deadline) {
+        await Bun.sleep(50);
+        now = resident();
+      }
+      expect(now).toBeLessThan(full - 150);
+    },
+  );
+
+  // Where the collector thread does not take over, the collection stays with the JS thread. Nothing tells that it will
+  // not be handed over, so the child waits for 300 ms, which is many times what a hand-over takes, and then ends the
+  // collection itself.
+  test.concurrent.each([
+    ["with helper threads", { BUN_JSC_numberOfGCMarkers: "2" }],
+    ["with one CPU", { WTF_numberOfProcessorCores: "1" }],
+    ["with an inspector", { ...oneMarker, BUN_INSPECT_CONNECT_TO: "unix:///no-such-socket" }],
+  ])("but not %s", async (_, gate) => {
+    const script = `
+      setTimeout(() => {
+        console.error("REQUESTED");
+        ${begin}
+        setTimeout(() => { Bun.gc(true); process.exit(0); }, 300);
+      }, ${afterStartup});
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", keep + stay + script],
+      env: { ...timerOff, BUN_JSC_logGC: "1", ...gate },
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const log = stderr.slice(stderr.indexOf("REQUESTED"));
+    expect({
+      // The collection was unfinished when the JS thread resumed: its first line ends like this.
+      unfinished: /^\[GC<[^>]*>: START .*$/m.exec(log)?.[0].endsWith("...]"),
+      byCollectorThread: /^\[GC<[^>]*>: (START )?C /m.test(log),
+      exitCode,
+    }).toEqual({ unfinished: true, byCollectorThread: false, exitCode: 0 });
+  });
 });
 
 // Before the last idle collection the controller asks JSC to let go of what it gets back cheaply

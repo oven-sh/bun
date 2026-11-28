@@ -560,7 +560,10 @@ test("fetch takes a context of its own per tls.DEFAULT_CIPHERS, and none while n
     await request(); // the server's context and the default one of fetch
     const created = [];
     for (const list of [undefined, undefined, "ECDHE-RSA-AES256-GCM-SHA384", undefined, "ECDHE-RSA-AES128-GCM-SHA256", undefined]) {
-      if (list) tls.DEFAULT_CIPHERS = list;
+      if (list) {
+        tls.DEFAULT_CIPHERS = list;
+        Bun.gc(true); // the context the setter validates the list with
+      }
       const before = sslCtxLiveCount();
       await request();
       created.push(sslCtxLiveCount() - before);

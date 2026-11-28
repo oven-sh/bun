@@ -15,6 +15,7 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/PrelinkedModuleGraph.h>
 #include <wtf/MainThread.h>
+#include <wtf/NumberOfCores.h>
 
 #include "JSDOMConstructorBase.h"
 
@@ -27,6 +28,31 @@
 #include "ConsoleObject.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
+
+namespace Bun {
+
+CollectionEndWake::CollectionEndWake(JSC::Heap& heap, WebCore::JSVMClientData& clientData)
+    : m_heap(heap)
+    , m_clientData(clientData)
+{
+    if (m_clientData.handsOverUnfinishedCollections)
+        m_heap.addObserver(this);
+}
+
+CollectionEndWake::~CollectionEndWake()
+{
+    if (m_clientData.handsOverUnfinishedCollections)
+        m_heap.removeObserver(this);
+}
+
+void CollectionEndWake::didGarbageCollect(JSC::CollectionScope)
+{
+    // The JS thread can end a collection that it handed over at its loop's own poll, after that wait chose its timeout.
+    if (m_clientData.handedOverCollection.exchange(false) || !m_heap.vm().currentThreadIsHoldingAPILock())
+        Bun__VmHandle__wake(m_clientData.vmHandle.get());
+}
+
+}
 
 namespace WebCore {
 using namespace JSC;
@@ -56,7 +82,23 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
     , m_heapSizeAfterLastCollection(vm.heap)
+    , m_collectionEndWake(vm.heap, *this)
 {
+}
+
+bool JSVMClientData::canHandOverUnfinishedCollections()
+{
+#if OS(LINUX) || OS(DARWIN)
+    // With helper threads the collector thread waits for them while the JS thread has heap access (#49314).
+    bool marksAlone = JSC::Options::numberOfGCMarkers() == 1;
+    // With one CPU it would mark on the JS thread's, while that thread has events to answer.
+    bool hasOwnCPU = WTF::numberOfProcessorCores() > 1;
+    // Not a compiled image: JSC hands the conn over differently there (Heap::waitForCollector). Untried.
+    return marksAlone && hasOwnCPU && !JSC::Options::runsCompiledImage();
+#else
+    // Windows: the libuv loop dispatches inside its poll, so it cannot take heap access back first. FreeBSD: untried.
+    return false;
+#endif
 }
 
 #undef CLIENT_ISO_SUBSPACE_INIT

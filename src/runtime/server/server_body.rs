@@ -973,13 +973,13 @@ impl ServePlugins {
         }
         let plugin_js_array =
             bun_string_jsc::to_js_array(global, StringView::as_strings(&bunstring_array))?;
-        // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
-        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get().get() {
-            let mut iter = config_plugins.array_iterator(global)?;
-            while let Some(config_plugin) = iter.next()? {
-                plugin_js_array.push(global, config_plugin)?;
-            }
-        }
+        // `bun bake`: the plugin objects of `bake.config.ts`. The builtin reads this list: reading it here can run user code.
+        let config_plugins = global
+            .bun_vm()
+            .bake_config_plugins
+            .get()
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
@@ -989,16 +989,18 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        let result = {
-            let _entered = global.bun_vm().enter_event_loop_scope();
-            jsc::host_fn::from_js_host_call(global, || {
-                match &self.state {
-                    ServePluginsState::Pending { plugin, .. } => plugin,
-                    _ => unreachable!(),
-                }
-                .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
-            })?
-        };
+        // No `enter_event_loop_scope()` here: the outermost exit is a microtask checkpoint, and the caller is a request handler.
+        let result = jsc::host_fn::from_js_host_call(global, || {
+            match &self.state {
+                ServePluginsState::Pending { plugin, .. } => plugin,
+                _ => unreachable!(),
+            }
+            .load_and_resolve_plugins_for_serve(
+                plugin_js_array,
+                bunfig_folder_bunstr,
+                config_plugins,
+            )
+        })?;
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1007,39 +1009,25 @@ impl ServePlugins {
         }
 
         if !result.is_empty_or_undefined_or_null() {
-            // handle the case where js returns a promise
+            // The builtin awaits before it runs any user code, so its promise settles on a later checkpoint.
             if let Some(promise) = result.as_any_promise() {
-                match promise.status() {
-                    // promise not fulfilled yet
-                    jsc::js_promise::Status::Pending => {
-                        // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
-                        self.ref_();
-                        let promise_value = promise.as_value();
-                        if let ServePluginsState::Pending {
-                            promise: pending_promise,
-                            ..
-                        } = &mut self.state
-                        {
-                            pending_promise.set(global, promise_value);
-                        }
-                        promise_value.then(
-                            global,
-                            std::ptr::from_mut::<Self>(self),
-                            BunServe__onResolvePlugins,
-                            BunServe__onRejectPlugins,
-                        );
-                        return Ok(());
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        self.handle_on_resolve();
-                        return Ok(());
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        let value = promise.result(global.vm());
-                        self.handle_on_reject(global, value);
-                        return Ok(());
-                    }
+                // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
+                self.ref_();
+                let promise_value = promise.as_value();
+                if let ServePluginsState::Pending {
+                    promise: pending_promise,
+                    ..
+                } = &mut self.state
+                {
+                    pending_promise.set(global, promise_value);
                 }
+                promise_value.then(
+                    global,
+                    std::ptr::from_mut::<Self>(self),
+                    BunServe__onResolvePlugins,
+                    BunServe__onRejectPlugins,
+                );
+                return Ok(());
             }
 
             if let Some(e) = result.to_error() {

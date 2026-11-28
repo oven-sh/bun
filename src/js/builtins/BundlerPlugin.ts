@@ -45,6 +45,7 @@ export function loadAndResolvePluginsForServe(
   plugins: Array<string | $Node.BundlerPlugin.Plugin>,
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
+  configPlugins: $Node.BundlerPlugin.Plugin[] | undefined,
 ) {
   // Same config as created in HTMLBundle.init
   let config: $Node.BundlerPlugin.Config = {
@@ -54,21 +55,30 @@ export function loadAndResolvePluginsForServe(
     root: bunfig_folder,
   };
 
-  class InvalidBundlerPluginError extends TypeError {
-    pluginName: string;
-    constructor(pluginName: string, reason: string) {
-      super(`"${pluginName}" is not a valid bundler plugin: ${reason}`);
-      this.pluginName = pluginName;
-    }
-  }
-
   let bundlerPlugin = this;
   let promiseResult = (async (
     plugins: Array<string | $Node.BundlerPlugin.Plugin>,
+    configPlugins: $Node.BundlerPlugin.Plugin[] | undefined,
     bunfig_folder: string,
     runSetupFn: typeof runSetupFunction,
     bundlerPlugin: $Node.BundlerPlugin,
   ) => {
+    // The caller is inside a request handler, so no user code runs before this await: a promise operand would read its `constructor`.
+    await undefined; // oxlint-disable-line unicorn/no-unnecessary-await
+
+    class InvalidBundlerPluginError extends TypeError {
+      pluginName: string;
+      constructor(pluginName: string, reason: string) {
+        super(`"${pluginName}" is not a valid bundler plugin: ${reason}`);
+        this.pluginName = pluginName;
+      }
+    }
+
+    // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
+    if (configPlugins !== undefined) {
+      for (let i = 0, length = configPlugins.length; i < length; i++) $arrayPush(plugins, configPlugins[i]);
+    }
+
     let onstart_promises_array: Promise<unknown>[] | undefined = undefined;
     for (let i = 0; i < plugins.length; i++) {
       const entry = plugins[i];
@@ -99,7 +109,7 @@ export function loadAndResolvePluginsForServe(
     if (onstart_promises_array !== undefined) {
       await Promise.all(onstart_promises_array);
     }
-  })(plugins, bunfig_folder, runSetupFn, bundlerPlugin);
+  })(plugins, configPlugins, bunfig_folder, runSetupFn, bundlerPlugin);
 
   return promiseResult;
 }

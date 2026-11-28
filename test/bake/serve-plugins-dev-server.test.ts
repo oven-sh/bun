@@ -195,6 +195,511 @@ test.concurrent.each([
   },
 );
 
+// The first request to an HTML route starts the plugin load, and the load runs user code: the
+// plugin module, its setup(), and what a Bun.plugin() hook or an accessor adds to them. All of it
+// runs after the handler of that request has returned, so it can stop the server and it can run
+// the event loop. `parked` is server.pendingRequests when that code starts: the handler has parked
+// the request by then. A dev server does not count a parked page there.
+const loadFixture = {
+  "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+  "index.html": indexHtml,
+  "other.html": indexHtml,
+  "entry.ts": `console.log("unused");`,
+  "render.ts": `export function render() { return new Response("rendered"); }`,
+  "routes/index.ts": `export default {};`,
+  "routes/other.ts": `export default {};`,
+  // Each kind of server whose first request starts the plugin load. The two HTML routes without
+  // a dev server start it in html_bundle::Route::schedule_bundle.
+  "serve.ts": /* ts */ `
+    import html from "./index.html";
+    import other from "./other.html";
+
+    const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+    const barrier = { "/barrier": new Response("barrier") };
+    const routes = { "/": html, "/other": other, ...barrier };
+    const kinds = {
+      "dev-server-page": { development: true, routes },
+      "dev-server-framework-route": {
+        development: true,
+        routes: barrier,
+        app: { framework: { fileSystemRouterTypes: [fsr] } },
+      },
+      "html-route": { development: false, routes },
+      "html-route-without-hmr": { development: { hmr: false }, routes },
+    };
+    export const serve = kind => Bun.serve({ port: 0, ...kinds[kind] });
+  `,
+};
+const parkedIn = (kind: string) => (kind === "dev-server-page" ? 0 : 1);
+
+async function runServer(cwd: string, args: string[], env = bunEnv) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts", ...args],
+    env,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.split("\n").find(line => line.startsWith("{"));
+  return { report: line === undefined ? undefined : JSON.parse(line), exitCode, stderr };
+}
+
+// A server in a process of its own: the test sends the requests and reads what the server prints.
+function spawnServer(cwd: string, cmd: string[], env = bunEnv) {
+  const proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env, cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  return {
+    proc,
+    // The match, or null when the process closes its stdout first.
+    async waitFor(pattern: RegExp) {
+      for (;;) {
+        const match = stdout.match(pattern);
+        if (match) return match;
+        const { value, done } = await reader.read();
+        if (done) return null;
+        stdout += decoder.decode(value, { stream: true });
+      }
+    },
+  };
+}
+const closed = (url: string | URL) =>
+  fetch(url).then(
+    res => "status " + res.status,
+    () => "closed",
+  );
+
+// `how` is what lets the load reach setup() with no turn of the event loop: server.ts imports
+// the plugin module first, NODE_COMPILE_CACHE is set, or an earlier server imported the module.
+test.concurrent.each([
+  { kind: "dev-server-page", mode: "stop", how: "imported" },
+  { kind: "dev-server-page", mode: "stop-in-a-promise-reaction", how: "imported" },
+  { kind: "dev-server-page", mode: "stop-and-run-the-event-loop", how: "imported" },
+  { kind: "dev-server-framework-route", mode: "stop", how: "imported" },
+  { kind: "html-route", mode: "stop", how: "imported" },
+  { kind: "html-route-without-hmr", mode: "stop", how: "imported" },
+  { kind: "dev-server-page", mode: "stop", how: "compile-cache" },
+  { kind: "html-route", mode: "stop", how: "compile-cache" },
+  { kind: "html-route", mode: "stop", how: "second-server" },
+])("stop(true) from the setup() of a plugin ($kind, $mode, $how)", async ({ kind, mode, how }) => {
+  using dir = tempDir("serve-plugins-setup-stop", {
+    ...loadFixture,
+    "plugin.ts": /* ts */ `
+      export default {
+        name: "stop-plugin",
+        setup() {
+          const test = globalThis.__test;
+          if (test.mode === "nothing") return;
+          test.parked = test.server.pendingRequests;
+          if (test.mode === "stop-in-a-promise-reaction") return test.setupRan.resolve();
+          test.stopped = test.server.stop(true);
+          if (test.mode === "stop-and-run-the-event-loop") {
+            // Bun.build() runs the event loop until the setup() of this plugin settles.
+            let inSetup = true;
+            const turn = resolve => setImmediate(() => resolve((test.loopRanInSetup = inSetup)));
+            const wait = { name: "wait", setup: () => new Promise(turn) };
+            Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"], plugins: [wait] }).catch(() => {});
+            inSetup = false;
+          }
+          test.setupRan.resolve();
+        },
+      };
+    `,
+    "server.ts": /* ts */ `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { getCompileCacheDir } from "node:module";
+      import { serve } from "./serve.ts";
+
+      const [kind, mode, how] = process.argv.slice(2);
+      const test = (globalThis.__test = { mode: "nothing", setupRan: Promise.withResolvers() });
+      if (how === "imported") await import("./plugin.ts");
+      if (how === "second-server") {
+        const earlier = (test.server = serve(kind));
+        await fetch(earlier.url).then(res => res.text());
+        await earlier.stop(true);
+      }
+
+      const deinits = getDevServerDeinitCount();
+      const server = (test.server = serve(kind));
+      test.mode = mode;
+      test.setupRan.promise.then(() => void (test.stopped ??= server.stop(true)));
+      const request = await fetch(server.url).then(
+        res => "status " + res.status,
+        err => err.code,
+      );
+      // Bun.build() in setup() runs this file too: the report waits for setup() to return.
+      await test.setupRan.promise;
+      await test.stopped;
+      console.log(
+        JSON.stringify({
+          request,
+          parked: test.parked,
+          loopRanInSetup: test.loopRanInSetup,
+          compileCache: getCompileCacheDir() !== undefined,
+          deinits: getDevServerDeinitCount() - deinits,
+        }),
+      );
+    `,
+  });
+
+  const env = how === "compile-cache" ? { ...bunEnv, NODE_COMPILE_CACHE: join(String(dir), "cache") } : bunEnv;
+  const { report, exitCode, stderr } = await runServer(String(dir), [kind, mode, how], env);
+  expect({ report, exitCode }, stderr).toEqual({
+    report: {
+      request: "ECONNRESET",
+      parked: parkedIn(kind),
+      loopRanInSetup: mode === "stop-and-run-the-event-loop" ? true : undefined,
+      compileCache: how === "compile-cache",
+      deinits: kind.startsWith("dev-server") ? 1 : 0,
+    },
+    exitCode: 0,
+  });
+});
+
+// The plugin is not imported. The load reaches this user code before it reaches setup().
+test.concurrent.each([
+  { kind: "dev-server-page", trigger: "onResolve" },
+  { kind: "html-route", trigger: "onResolve" },
+  { kind: "html-route", trigger: "TypeError" },
+  { kind: "html-route", trigger: "Promise.prototype.constructor" },
+])("stop(true) from user code that the plugin load reaches ($kind, $trigger)", async ({ kind, trigger }) => {
+  using dir = tempDir("serve-plugins-load-stop", {
+    ...loadFixture,
+    "plugin.ts": `export default { name: "plugin", setup() {} };`,
+    "server.ts": /* ts */ `
+      import { serve } from "./serve.ts";
+
+      const [kind, trigger] = process.argv.slice(2);
+      const server = serve(kind);
+      let armed = false;
+      function reached() {
+        if (!armed) return;
+        armed = false;
+        const parked = server.pendingRequests;
+        server.stop(true);
+        setImmediate(() => console.log(JSON.stringify({ parked })));
+      }
+      if (trigger === "onResolve") {
+        // Bun.resolve() of the plugin name calls this hook.
+        Bun.plugin({
+          name: "hook",
+          setup(build) {
+            build.onResolve({ filter: /plugin\\.ts$/ }, () => void reached());
+          },
+        });
+      } else if (trigger === "TypeError") {
+        // The load makes a subclass of TypeError for its errors.
+        const original = TypeError;
+        Object.defineProperty(globalThis, "TypeError", { configurable: true, get: () => (reached(), original) });
+      } else {
+        // An await of a promise reads its constructor.
+        const original = Promise;
+        Object.defineProperty(Promise.prototype, "constructor", { configurable: true, get: () => (reached(), original) });
+      }
+      // No code of this file runs after the callback, so the request is the next thing that runs the accessors.
+      setImmediate(() => {
+        console.log("url: " + server.url.href);
+        armed = true;
+      });
+    `,
+  });
+
+  const { proc, waitFor } = spawnServer(String(dir), ["server.ts", kind, trigger]);
+  await using _ = proc;
+  const url = (await waitFor(/url: (http:\/\/\S+)\s/))?.[1];
+  expect(url).toBeDefined();
+  const request = await closed(url!);
+  const report = (await waitFor(/^\{.*\}$/m))?.[0];
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ request, report: report && JSON.parse(report), exitCode }, stderr).toEqual({
+    request: "closed",
+    report: { parked: parkedIn(kind) },
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each(["dev-server-page", "html-route"])(
+  "a client that disconnects while the setup() of an imported plugin runs the event loop (%s)",
+  async kind => {
+    using dir = tempDir("serve-plugins-setup-disconnect", {
+      ...loadFixture,
+      "plugin.ts": /* ts */ `
+        export default {
+          name: "disconnect-plugin",
+          setup() {
+            const test = globalThis.__test;
+            test.setups++;
+            test.parked = test.server.pendingRequests;
+            // The client of the first request goes away. Bun.build() runs the event loop until the
+            // setup() of this plugin settles: the server has read the close when it answers a
+            // connection made later.
+            test.abort();
+            let inSetup = true;
+            const ran = () => void (test.loopRanInSetup = inSetup);
+            const wait = { name: "wait", setup: () => test.barrier().then(ran) };
+            Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"], plugins: [wait] }).catch(() => {});
+            inSetup = false;
+          },
+        };
+      `,
+      "server.ts": /* ts */ `
+        import "./plugin.ts";
+        import { serve } from "./serve.ts";
+
+        const controller = new AbortController();
+        const server = serve(process.argv[2]);
+        const test = (globalThis.__test = {
+          server,
+          setups: 0,
+          abort: () => controller.abort(),
+          barrier: () => fetch(new URL("/barrier", server.url)).then(res => res.text()),
+        });
+
+        const first = await fetch(server.url, { signal: controller.signal }).then(
+          res => "status " + res.status,
+          err => err.name,
+        );
+        const second = await fetch(server.url).then(res => res.status);
+        await server.stop(true);
+        const { setups, parked, loopRanInSetup } = test;
+        console.log(JSON.stringify({ first, second, setups, parked, loopRanInSetup }));
+      `,
+    });
+
+    const { report, exitCode, stderr } = await runServer(String(dir), [kind]);
+    expect({ report, exitCode }, stderr).toEqual({
+      report: { first: "AbortError", second: 200, setups: 1, parked: parkedIn(kind), loopRanInSetup: true },
+      exitCode: 0,
+    });
+  },
+);
+
+// A parked framework request counts in server.pendingRequests. So `parked` shows that the event
+// loop in setup() read the other two requests: it is the first request and those two.
+test.concurrent.each([
+  { kind: "dev-server-page", parked: 0 },
+  { kind: "dev-server-framework-route", parked: 3 },
+])(
+  "two more requests while the setup() of an imported plugin runs the event loop ($kind)",
+  async ({ kind, parked }) => {
+    using dir = tempDir("serve-plugins-setup-requests", {
+      ...loadFixture,
+      "plugin.ts": /* ts */ `
+        export default {
+          name: "event-loop-plugin",
+          setup() {
+            const test = globalThis.__test;
+            test.setups++;
+            // Bun.build() runs the event loop until the setup() of this plugin settles: the server
+            // has read the other two requests when it answers a connection made later.
+            let inSetup = true;
+            const ran = () => void (test.loopRanInSetup = inSetup);
+            const wait = { name: "wait", setup: () => test.barrier().then(ran) };
+            Bun.build({ entrypoints: [import.meta.dir + "/entry.ts"], plugins: [wait] }).catch(() => {});
+            inSetup = false;
+            test.parked = test.server.pendingRequests;
+          },
+        };
+      `,
+      "server.ts": /* ts */ `
+        import "./plugin.ts";
+        import { serve } from "./serve.ts";
+
+        const server = serve(process.argv[2]);
+        const test = (globalThis.__test = {
+          server,
+          setups: 0,
+          barrier: () => fetch(new URL("/barrier", server.url)).then(res => res.text()),
+        });
+
+        const get = path => fetch(new URL(path, server.url)).then(res => res.status);
+        const statuses = await Promise.all([get("/"), get("/other"), get("/")]);
+        await server.stop(true);
+        const { setups, parked, loopRanInSetup } = test;
+        console.log(JSON.stringify({ statuses, setups, parked, loopRanInSetup }));
+      `,
+    });
+
+    const { report, exitCode, stderr } = await runServer(String(dir), [kind]);
+    expect({ report, exitCode }, stderr).toEqual({
+      report: { statuses: [200, 200, 200], setups: 1, parked, loopRanInSetup: true },
+      exitCode: 0,
+    });
+  },
+);
+
+// These loads need no turn of the event loop to fail. They answer like a load that fails later:
+// the request that waits for the load gets 500, and the error is reported once.
+test.concurrent.each([
+  { kind: "dev-server-page", failure: "the name does not resolve", second: "200 Plugin Error" },
+  { kind: "dev-server-framework-route", failure: "the name does not resolve", second: "200 Plugin Error" },
+  { kind: "html-route", failure: "the name does not resolve", second: "200 " },
+  { kind: "html-route-without-hmr", failure: "the name does not resolve", second: "200 " },
+  { kind: "dev-server-page", failure: "setup() throws", second: "200 Plugin Error" },
+  { kind: "html-route", failure: "setup() throws", second: "200 " },
+])("a plugin load that can fail with no turn of the event loop ($kind, $failure)", async ({ kind, ...row }) => {
+  const throws = row.failure === "setup() throws";
+  using dir = tempDir("serve-plugins-load-fails", {
+    ...loadFixture,
+    "bunfig.toml": `[serve.static]\nplugins = ["${throws ? "./plugin.ts" : "./missing.ts"}"]\n`,
+    "plugin.ts": `export default { name: "plugin", setup() { throw new Error("setup failed on purpose"); } };`,
+    "server.ts": /* ts */ `
+      import { serve } from "./serve.ts";
+
+      if (process.argv[3] === "true") await import("./plugin.ts");
+      const server = serve(process.argv[2]);
+      const get = () => fetch(server.url).then(async res => res.status + " " + (await res.text()));
+      const first = await get();
+      const second = await get();
+      await server.stop(true);
+      console.log(JSON.stringify({ first, second }));
+    `,
+  });
+
+  const { report, exitCode, stderr } = await runServer(String(dir), [kind, String(throws)]);
+  expect({ report, errors: stderr.match(/^error: /gm)?.length, exitCode }, stderr).toEqual({
+    report: { first: "500 ", second: row.second },
+    // "Failed to load plugins for Bun.serve:", then the error.
+    errors: 2,
+    exitCode: 0,
+  });
+});
+
+// `bun bake` gives the plugin objects of bake.config.ts to the plugin load: it has no module to
+// import for them.
+const bakeFiles = {
+  "app/server.ts": /* ts */ `
+    export default {
+      fetch(req, server) {
+        globalThis.server = server;
+        return new Response("api");
+      },
+    };
+  `,
+};
+const bakePage = { "app/pages/index.html": `<!DOCTYPE html><html><body></body></html>` };
+const bakeFrameworkRoute = {
+  "src/routes/index.ts": `export default () => "home";`,
+  "render/server.ts": `export function render(request, meta) { return new Response(meta.pageModule.default()); }`,
+};
+const bakeFramework = /* ts */ `framework: {
+  fileSystemRouterTypes: [
+    { root: "src/routes", style: "nextjs-pages", serverEntryPoint: "./render/server.ts", extensions: [".ts"] },
+  ],
+},`;
+const bakeEnv = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" };
+
+// The first request is for /api, which gives the server to bake.config.ts. The second one is
+// for the route, and it starts the plugin load.
+async function requestBakeRoute(cwd: string) {
+  const { proc, waitFor } = spawnServer(cwd, ["bake", "--port=0"], bakeEnv);
+  await using _ = proc;
+  const url = (await waitFor(/url: (http:\/\/\S+)\s/))?.[1];
+  expect(url).toBeDefined();
+  expect(await fetch(new URL("/api", url)).then(res => res.text())).toBe("api");
+  const request = await closed(url!);
+  // The user code prints its two lines after it has closed the connection of the request.
+  if (request === "closed") await waitFor(/^next turn$/m);
+  proc.kill("SIGKILL");
+  const parked = (await waitFor(/^parked: (\d+)$/m))?.[1];
+  const nextTurn = (await waitFor(/^next turn$/m))?.[0];
+  return { request, parked, nextTurn, stderr: await proc.stderr.text() };
+}
+
+// bake.config.ts with one plugin. `reached()` is the user code that stops the server.
+const bakeConfig = (framework: string, setup: string, rest = "") => /* ts */ `
+  function reached() {
+    console.log("parked: " + globalThis.server.pendingRequests);
+    globalThis.server.stop(true);
+    // A turn of the event loop that starts after the frame that reached this code is done.
+    setImmediate(() => console.log("next turn"));
+  }
+  const plugin = {
+    name: "stop-plugin",
+    ${framework}
+    setup() {
+      ${setup}
+    },
+  };
+  ${rest}
+  export default { plugins: [plugin] };
+`;
+
+test.concurrent.each([
+  { route: "page", files: bakePage, framework: "", parked: "0" },
+  { route: "framework-route", files: bakeFrameworkRoute, framework: bakeFramework, parked: "1" },
+])("stop(true) from the setup() of a bake.config.ts plugin ($route)", async ({ files, framework, parked }) => {
+  using dir = tempDir("serve-plugins-bake-config-stop", {
+    ...bakeFiles,
+    ...files,
+    "bake.config.ts": bakeConfig(framework, "reached();"),
+  });
+
+  const { stderr, ...result } = await requestBakeRoute(String(dir));
+  expect(result, stderr).toEqual({ request: "closed", parked, nextTurn: "next turn" });
+});
+
+// A store of the plugin object at index 0 of an array that has no such property calls this setter.
+test.concurrent("the plugin load calls no setter of Array.prototype for a bake.config.ts plugin", async () => {
+  using dir = tempDir("serve-plugins-bake-config-setter", {
+    ...bakeFiles,
+    ...bakeFrameworkRoute,
+    "bake.config.ts": bakeConfig(
+      bakeFramework,
+      "",
+      /* ts */ `
+        Object.defineProperty(Array.prototype, "0", {
+          configurable: true,
+          set(value) {
+            Object.defineProperty(this, "0", { value, writable: true, enumerable: true, configurable: true });
+            if (value === plugin && globalThis.server) reached();
+          },
+        });
+      `,
+    ),
+  });
+
+  const { stderr, ...result } = await requestBakeRoute(String(dir));
+  expect(result, stderr).toEqual({ request: "status 200", parked: undefined, nextTurn: undefined });
+});
+
+test.concurrent("bun bake answers every request when the setup() of a bake.config.ts plugin throws", async () => {
+  using dir = tempDir("serve-plugins-bake-config-throws", {
+    ...bakePage,
+    "bake.config.ts": /* ts */ `
+      export default {
+        plugins: [
+          {
+            name: "throwing-plugin",
+            setup() {
+              throw new Error("setup failed on purpose");
+            },
+          },
+        ],
+      };
+    `,
+  });
+
+  const { proc, waitFor } = spawnServer(String(dir), ["bake", "--port=0"], bakeEnv);
+  await using _ = proc;
+  const url = (await waitFor(/url: (http:\/\/\S+)\s/))?.[1];
+  expect(url).toBeDefined();
+  const get = () =>
+    fetch(url!).then(
+      async res => res.status + " " + (await res.text()),
+      () => "closed",
+    );
+  const answers = [await get(), await get(), await get()];
+  proc.kill("SIGKILL");
+  const stderr = await proc.stderr.text();
+  expect({ answers, errors: stderr.match(/^error: setup failed on purpose$/gm)?.length }, stderr).toEqual({
+    answers: ["500 ", "200 Plugin Error", "200 Plugin Error"],
+    errors: 1,
+  });
+});
+
 const parkedPlugin = /* ts */ `
   export default {
     name: "parked-plugin",
@@ -210,7 +715,8 @@ const parkedPlugin = /* ts */ `
   };
 `;
 
-test.concurrent.each(["kept", "collected"])(
+// With a compile cache, the load reaches the parked setup() with no turn of the event loop.
+test.concurrent.each(["kept", "collected", "kept, with a compile cache"])(
   "stop(true) releases a request waiting on a plugin load that settles later (server %s)",
   async mode => {
     using dir = tempDir(`serve-plugins-devserver-stop-${mode}`, {
@@ -258,8 +764,8 @@ test.concurrent.each(["kept", "collected"])(
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "server.ts", mode],
-      env: bunEnv,
+      cmd: [bunExe(), "server.ts", mode.split(",")[0]],
+      env: mode.endsWith("cache") ? { ...bunEnv, NODE_COMPILE_CACHE: join(String(dir), "cache") } : bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

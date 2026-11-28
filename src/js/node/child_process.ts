@@ -1332,6 +1332,7 @@ class ChildProcess extends EventEmitter {
             const pipe = require("internal/streams/native-readable").constructNativeReadable(
               value as ReadableStream,
               {},
+              true,
             );
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());

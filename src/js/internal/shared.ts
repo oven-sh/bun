@@ -502,6 +502,7 @@ export default {
   guardCallback,
   reportUncaughtException,
   isInsideNodeModules,
+  reportUncaughtException,
   resistStopPropagation,
 
   hasObserver,

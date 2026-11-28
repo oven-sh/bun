@@ -4,6 +4,10 @@ use bun_sema::resolve::basename;
 use bun_sema::util::ShardedMap;
 
 const START_OF_QUERY: &[u8] = b"%3f";
+// No byte is written as one of these.
+const LATER_QUESTION_MARK: &[u8] = b"%_q";
+const MARK_OF_TAKEN_PATH: &[u8] = b"%_x";
+const MARK_OF_TEXT: &[u8] = b"%_t";
 
 pub(crate) struct ModuleWithQuery {
     pub file: Vec<u8>,
@@ -17,13 +21,15 @@ pub(crate) struct ModulesWithQueries {
 }
 
 impl ModulesWithQueries {
-    pub(crate) fn add(&self, file: &[u8], query: &[u8]) -> Vec<u8> {
+    pub(crate) fn add(
+        &self,
+        file: &[u8],
+        query: &[u8],
+        is_file: &dyn Fn(&[u8]) -> bool,
+    ) -> Vec<u8> {
         debug_assert!(query.starts_with(b"?"));
-        let mut path = create_path(file, query);
         let constructor = find_worker_constructor(query);
-        if constructor.is_some() {
-            path.extend_from_slice(b".mjs");
-        }
+        let path = create_free_path(file, query, constructor.is_some(), is_file);
         if self.modules.get_ref(path.as_slice()).is_none() {
             let module = ModuleWithQuery {
                 file: file.to_vec(),
@@ -35,8 +41,14 @@ impl ModulesWithQueries {
         path
     }
 
-    pub(crate) fn add_text(&self, file: &[u8], specifier: &[u8], text: Vec<u8>) {
-        let (query, path) = create_path_of_text(file, specifier);
+    pub(crate) fn add_text(
+        &self,
+        file: &[u8],
+        specifier: &[u8],
+        text: Vec<u8>,
+        is_file: &dyn Fn(&[u8]) -> bool,
+    ) {
+        let (query, path) = create_path_of_text(file, specifier, is_file);
         if self.modules.get_ref(path.as_slice()).is_none() {
             let module = ModuleWithQuery {
                 file: file.to_vec(),
@@ -47,8 +59,13 @@ impl ModulesWithQueries {
         }
     }
 
-    pub(crate) fn find_text(&self, file: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
-        let (_, path) = create_path_of_text(file, specifier);
+    pub(crate) fn find_text(
+        &self,
+        file: &[u8],
+        specifier: &[u8],
+        is_file: &dyn Fn(&[u8]) -> bool,
+    ) -> Option<Vec<u8>> {
+        let (_, path) = create_path_of_text(file, specifier, is_file);
         let is_made = self.modules.get_ref(path.as_slice()).is_some();
         is_made.then_some(path)
     }
@@ -104,27 +121,58 @@ fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-fn create_path_of_text(file: &[u8], specifier: &[u8]) -> (Vec<u8>, Vec<u8>) {
+fn create_path_of_text(
+    file: &[u8],
+    specifier: &[u8],
+    is_file: &dyn Fn(&[u8]) -> bool,
+) -> (Vec<u8>, Vec<u8>) {
     let query = [b"?", specifier].concat();
-    let path = [&create_path(file, &query)[..], b".mjs"].concat();
+    let path = create_free_path(file, &query, true, is_file);
     (query, path)
 }
 
-fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {
+/// The path of a module is the path of no file, or whoever imports that file gets the module.
+fn create_free_path(
+    file: &[u8],
+    query: &[u8],
+    is_text: bool,
+    is_file: &dyn Fn(&[u8]) -> bool,
+) -> Vec<u8> {
+    let mut marks = 0;
+    loop {
+        let path = create_path(file, query, is_text, marks);
+        if !is_file(&path) {
+            return path;
+        }
+        marks += 1;
+    }
+}
+
+/// In front of the first `.` of the name, the last `%3f` is the mark of the query, so no two modules have one path.
+fn create_path(file: &[u8], query: &[u8], is_text: bool, marks: usize) -> Vec<u8> {
     let name_start = file.len() - basename(file).len();
     let name = &file[name_start..];
     let stem_end = name_start + strings::index_of_char_usize(name, b'.').unwrap_or(name.len());
     let mut path = Vec::with_capacity(file.len() + 3 * query.len());
     path.extend_from_slice(&file[..stem_end]);
-    for &byte in query {
+    for (place, &byte) in query.iter().enumerate() {
         if matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
             path.push(byte);
+        } else if byte == b'?' && place > 0 {
+            path.extend_from_slice(LATER_QUESTION_MARK);
         } else {
             let [high_digit, low_digit] = hex_byte_lower(byte);
             path.extend_from_slice(&[b'%', high_digit, low_digit]);
         }
     }
+    path.extend_from_slice(&MARK_OF_TAKEN_PATH.repeat(marks));
+    if is_text {
+        path.extend_from_slice(MARK_OF_TEXT);
+    }
     path.extend_from_slice(&file[stem_end..]);
+    if is_text {
+        path.extend_from_slice(b".mjs");
+    }
     path
 }
 
@@ -132,8 +180,12 @@ fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    fn no_file(_: &[u8]) -> bool {
+        false
+    }
+
     fn path(file: &str, query: &str) -> String {
-        String::from_utf8(create_path(file.as_bytes(), query.as_bytes())).unwrap()
+        String::from_utf8(create_path(file.as_bytes(), query.as_bytes(), false, 0)).unwrap()
     }
 
     #[test]
@@ -147,14 +199,16 @@ mod tests {
             "/p/a%3fv%3d1%2ed%2f%2e%2e%2fb.ts"
         );
         assert_ne!(path("/p/a.ts", "?A"), path("/p/a.ts", "?a"));
+        assert_ne!(path("/p/a.ts", "?x?y"), path("/p/a%3fx.ts", "?y"));
+        assert_ne!(path("/p/a", "?x?y"), path("/p/a%3fx", "?y"));
     }
 
     #[test]
     fn same_file_and_query_are_one_module() {
         let modules = ModulesWithQueries::default();
-        let first = modules.add(b"/p/a.ts", b"?x");
-        assert_eq!(modules.add(b"/p/a.ts", b"?x"), first);
-        assert_ne!(modules.add(b"/p/a.ts", b"?y"), first);
+        let first = modules.add(b"/p/a.ts", b"?x", &no_file);
+        assert_eq!(modules.add(b"/p/a.ts", b"?x", &no_file), first);
+        assert_ne!(modules.add(b"/p/a.ts", b"?y", &no_file), first);
         assert_eq!(modules.file_behind(&first), b"/p/a.ts");
         assert_eq!(modules.find(&first).unwrap().query, b"?x");
         assert_eq!(modules.file_behind(b"/p/a.ts"), b"/p/a.ts");
@@ -162,21 +216,43 @@ mod tests {
     }
 
     #[test]
+    fn module_has_the_path_of_no_file() {
+        let on_disk: [&[u8]; 3] = [
+            b"/p/a%3fx.ts",
+            b"/p/a%3fx%_x.ts",
+            b"/p/lib/job%3fworker%_t.ts.mjs",
+        ];
+        let is_file = |path: &[u8]| on_disk.contains(&path);
+        let modules = ModulesWithQueries::default();
+        let added = modules.add(b"/p/a.ts", b"?x", &is_file);
+        assert_eq!(added, b"/p/a%3fx%_x%_x.ts");
+        assert_eq!(modules.add(b"/p/a.ts", b"?x", &is_file), added);
+        let worker = modules.add(b"/p/lib/job.ts", b"?worker", &is_file);
+        assert_eq!(worker, b"/p/lib/job%3fworker%_x%_t.ts.mjs");
+        for path in on_disk {
+            assert!(modules.find(path).is_none());
+        }
+        modules.add_text(b"/p/a.ts", b"worker", b"1".to_vec(), &no_file);
+        let found = modules.find_text(b"/p/a.ts", b"worker", &no_file);
+        assert_eq!(found, Some(b"/p/a%3fworker%_t.ts.mjs".to_vec()));
+    }
+
+    #[test]
     fn a_worker_by_its_suffix_runs_a_wrapper_in_place_of_the_file() {
         let modules = ModulesWithQueries::default();
-        let wrapper = modules.add(b"/p/lib/job.ts", b"?worker");
-        assert_eq!(wrapper, b"/p/lib/job%3fworker.ts.mjs");
+        let wrapper = modules.add(b"/p/lib/job.ts", b"?worker", &no_file);
+        assert_eq!(wrapper, b"/p/lib/job%3fworker%_t.ts.mjs");
         let text = modules.text_in_place_of_file(&wrapper).unwrap();
         let text = core::str::from_utf8(text).unwrap();
         let start = "new Worker(new URL(\"./job.ts\", import.meta.url), {";
         assert!(text.contains(start), "{text}");
-        let odd = modules.add(b"/p/lib/a#b.ts", b"?sharedworker");
+        let odd = modules.add(b"/p/lib/a#b.ts", b"?sharedworker", &no_file);
         let text = modules.text_in_place_of_file(&odd).unwrap();
         let text = core::str::from_utf8(text).unwrap();
         let start = "new SharedWorker(import.meta.dir + \"/a#b.ts\", {";
         assert!(text.contains(start), "{text}");
         assert_eq!(modules.file_behind(&wrapper), b"/p/lib/job.ts");
-        let again = modules.add(b"/p/lib/job.ts", b"?again");
+        let again = modules.add(b"/p/lib/job.ts", b"?again", &no_file);
         assert_eq!(modules.text_in_place_of_file(&again), None);
         assert_eq!(modules.text_in_place_of_file(b"/p/lib/job.ts"), None);
         for (query, constructor) in [

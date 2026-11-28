@@ -102,7 +102,7 @@ fn write_document(
         false => Cow::Borrowed(text),
     };
     let tree = YAML::parse_as_written(&without_nul, |documents, tokens| {
-        ast::build(text, documents, tokens, &stack)
+        ast::build(text, documents, tokens, options.flavor.is_oxfmt(), &stack)
     })
     .map_err(|(error, at)| to_format_error(error, at.min(text.len())))?
     .map_err(|error| to_error(&stack, error))?;

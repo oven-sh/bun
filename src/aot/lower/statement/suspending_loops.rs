@@ -238,30 +238,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(in crate::lower) fn reads_only_variables(&self, expression: ExprId) -> bool {
+    pub(in crate::lower) fn reads_only_variables(&self, mut expression: ExprId) -> bool {
         let hir = self.file.hir;
-        match hir[expression].kind {
-            ExprKind::Ident(_)
-            | ExprKind::This
-            | ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_) => true,
-            ExprKind::Unary {
-                op: UnOp::Not | UnOp::Typeof | UnOp::Void,
-                operand,
-            }
-            | ExprKind::NonNull(operand)
-            | ExprKind::AsConst(operand)
-            | ExprKind::As { expr: operand, .. }
-            | ExprKind::Satisfies { expr: operand, .. } => self.reads_only_variables(operand),
-            ExprKind::Binary { op, left, right } => {
-                !matches!(op, BinOp::In | BinOp::Instanceof)
-                    && self.reads_only_variables(left)
-                    && self.reads_only_variables(right)
-            }
-            _ => false,
+        loop {
+            expression = match hir[expression].kind {
+                ExprKind::Ident(_)
+                | ExprKind::This
+                | ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_) => return true,
+                ExprKind::Unary {
+                    op: UnOp::Not | UnOp::Typeof | UnOp::Void,
+                    operand,
+                }
+                | ExprKind::NonNull(operand)
+                | ExprKind::AsConst(operand)
+                | ExprKind::As { expr: operand, .. }
+                | ExprKind::Satisfies { expr: operand, .. } => operand,
+                // A chain of operators leans left, as deep as it is long.
+                ExprKind::Binary { op, left, right }
+                    if !matches!(op, BinOp::In | BinOp::Instanceof)
+                        && self.reads_only_variables(right) =>
+                {
+                    left
+                }
+                _ => return false,
+            };
         }
     }
 

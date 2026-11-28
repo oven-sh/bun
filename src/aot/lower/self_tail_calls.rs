@@ -3,10 +3,11 @@ use bun_sema::bind::{Binding, Bound, Decl, PatParent, SymbolId, has_simple_param
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
     self, BinOp, Branches, Call, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NodeData,
-    PatKind, StmtKind, VarKind,
+    PatKind, StmtKind, VarDeclId, VarKind,
 };
 use bun_sema::import_sites::is_exported;
-use smallvec::SmallVec;
+use rustc_hash::FxHashSet;
+use smallvec::{SmallVec, smallvec};
 
 use crate::ir::{BlockId, LocalVariable, PositionFlags, ValueId};
 use crate::lower::call::Arguments;
@@ -112,33 +113,47 @@ fn is_arithmetic(hir: &hir::File<'_>, value: ExprId) -> bool {
     }
 }
 
-fn is_quotient(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> bool {
-    let value = hir.skip_type_assertions(value);
-    match hir[value].kind {
-        ExprKind::Binary { op: BinOp::Div, .. } => true,
-        ExprKind::Binary {
-            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Rem | BinOp::Pow,
-            left,
-            right,
-        } => is_quotient(hir, bound, left) || is_quotient(hir, bound, right),
-        ExprKind::Ident(_) => {
-            let Binding::Symbol(symbol) = bound.binding(value) else {
-                return false;
-            };
-            let Some(Decl::Var(name)) = bound.initializing_declaration(symbol) else {
-                return false;
-            };
-            let PatParent::Var(declaration) = bound.pat_parent[name.idx()] else {
-                return false;
-            };
-            let initializer = hir[declaration].init;
-            matches!(bound.variable_kind(hir, declaration), VarKind::Const)
-                && initializer.is_some()
-                && hir[initializer].end <= hir[value].pos
-                && is_quotient(hir, bound, initializer)
+/// Each `const` is followed once, whichever arguments read it: `const b = a + a` doubles the paths
+/// to what `a` is made of.
+fn is_quotient(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    value: ExprId,
+    followed: &mut FxHashSet<VarDeclId>,
+) -> bool {
+    let mut pending: SmallVec<[ExprId; 8]> = smallvec![value];
+    while let Some(value) = pending.pop() {
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Binary { op: BinOp::Div, .. } => return true,
+            ExprKind::Binary {
+                op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Rem | BinOp::Pow,
+                left,
+                right,
+            } => pending.extend([right, left]),
+            ExprKind::Ident(_) => {
+                let Binding::Symbol(symbol) = bound.binding(value) else {
+                    continue;
+                };
+                let Some(Decl::Var(name)) = bound.initializing_declaration(symbol) else {
+                    continue;
+                };
+                let PatParent::Var(declaration) = bound.pat_parent[name.idx()] else {
+                    continue;
+                };
+                let initializer = hir[declaration].init;
+                if matches!(bound.variable_kind(hir, declaration), VarKind::Const)
+                    && initializer.is_some()
+                    && hir[initializer].end <= hir[value].pos
+                    && followed.insert(declaration)
+                {
+                    pending.push(initializer);
+                }
+            }
+            _ => {}
         }
-        _ => false,
     }
+    false
 }
 
 fn push_tail_calls(
@@ -303,6 +318,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         calls.sort_unstable();
         let mut computes_argument = false;
         let mut passes_quotient = false;
+        let mut followed = FxHashSet::default();
         for &call in &calls {
             let ExprKind::Call(site) = hir[call].kind else {
                 continue;
@@ -313,8 +329,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let is_passed_on = self.is_passed_on(argument, parameters[index].0);
                 is_modified[index] |= !is_passed_on;
                 computes_argument |= argument.is_some_and(|argument| is_arithmetic(hir, argument));
-                passes_quotient |=
-                    argument.is_some_and(|argument| is_quotient(hir, bound, argument));
+                passes_quotient |= argument
+                    .is_some_and(|argument| is_quotient(hir, bound, argument, &mut followed));
                 let default = hir[parameter].default;
                 if default.is_some() {
                     let held = if is_passed_on {

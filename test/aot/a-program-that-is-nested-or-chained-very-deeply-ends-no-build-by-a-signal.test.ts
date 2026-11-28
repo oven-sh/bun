@@ -16,6 +16,21 @@ const shapes: Record<string, [string, (n: number) => string]> = {
   "a sum of texts": ["js", n => `const x = "a"${' + "a"'.repeat(n)};\nconsole.log(x.length);`],
   "a chain of &&": ["js", n => `let a = 1;\nconst x = a${" && a".repeat(n)};\nconsole.log(x);`],
   "a chain of commas": ["js", n => `let a = 1;\nconst x = (a${", a".repeat(n)});\nconsole.log(x);`],
+  "a sum that an asynchronous loop asks for": [
+    "js",
+    n =>
+      `let a = 1;\nasync function f(n) {\n  for (let i = 0; i < n; i++) {\n    if (a${" + a".repeat(n)} || g()) continue;\n    await 1;\n  }\n}\nfunction g() {}\nf(1);`,
+  ],
+  "a sum that a function passes to itself": [
+    "js",
+    n =>
+      `"use strict";\nfunction f(x) {\n  const a = x;\n  return x > 5 ? x : f(a${" + a".repeat(n)});\n}\nconsole.log(f(6));`,
+  ],
+  "appends with commas to a piece of a string": [
+    "js",
+    n =>
+      `function f(list) {\n  let whole = "";\n  for (const a of list) {\n    let s = "";\n    s += a${", s += a".repeat(n)};\n    whole += s;\n  }\n  return whole;\n}\nconsole.log(f([1]).length);`,
+  ],
   "calls": ["js", n => `const f = v => v;\nconst x = ${"f(".repeat(n)}0${")".repeat(n)};\nconsole.log(x);`],
   "arrays": ["js", n => `const x = ${"[".repeat(n)}${"]".repeat(n)};\nconsole.log(x.length);`],
   "parentheses": ["js", n => `const x = ${"(".repeat(n)}1${")".repeat(n)};\nconsole.log(x);`],
@@ -109,8 +124,11 @@ const shallow = 500;
 const deep = 200_000;
 // It is compiled in full, which at `deep` takes twenty seconds of processor time.
 // It is checked at `deep` and built at a depth at which every fault of this kind so far would have shown.
-const builtLessDeep: Record<string, number> = {
+const builtAtDepth: Record<string, number> = {
   "callers": 50_000,
+  "appends with commas to a piece of a string": 20_000,
+  // Deeper: its frames were small, and 200,000 of them fit.
+  "a sum that an asynchronous loop asks for": 400_000,
   // The front end bears it, and the engine follows the sum from the head of each loop to the head around it.
   "loops round a sum": 3_000,
 };
@@ -121,8 +139,8 @@ test.concurrent.each(Object.entries(shapes))(
     using dir = tempDir("aot-deep-programs", {
       "package.json": `{ "name": "p" }`,
       [`shallow.${extension}`]: program(shallow) + "\n",
-      [`deep.${extension}`]: program(builtLessDeep[name] ?? deep) + "\n",
-      ...(name in builtLessDeep ? { [`checked.${extension}`]: program(deep) + "\n" } : {}),
+      [`deep.${extension}`]: program(builtAtDepth[name] ?? deep) + "\n",
+      ...(name in builtAtDepth ? { [`checked.${extension}`]: program(deep) + "\n" } : {}),
     });
     const cwd = String(dir);
     const plain = await ended([bunExe(), `./shallow.${extension}`], cwd);
@@ -151,7 +169,7 @@ test.concurrent.each(Object.entries(shapes))(
     if (refused.exitCode !== 0 && !isParsedInALoop.has(name)) expect(refused.stderr).toMatch(saysWhere);
 
     const checked = await ended(
-      [bunExe(), "check", `./${name in builtLessDeep ? "checked" : "deep"}.${extension}`],
+      [bunExe(), "check", `./${name in builtAtDepth ? "checked" : "deep"}.${extension}`],
       cwd,
     );
     expect(checked.signal).toBeNull();

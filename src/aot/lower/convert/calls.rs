@@ -240,7 +240,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::TaggedTemplate(site) => (site, 1),
             _ => return,
         };
-        let expressions = hir.ids(hir[site].args);
+        let expressions = hir.ids::<ExprId>(hir.written_args(site));
         if expressions.len() + first_parameter != arguments.len() {
             debug_assert!(false, "each argument expression has one value");
             return;
@@ -289,7 +289,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (ExprKind::Call(site) | ExprKind::New(site)) = hir[call].kind else {
             return;
         };
-        let mut arguments = hir.ids(hir[site].args).enumerate();
+        let mut arguments = hir.ids::<ExprId>(hir.written_args(site)).enumerate();
         let spread =
             arguments.find(|&(_, argument)| matches!(hir[argument].kind, ExprKind::Spread(_)));
         let Some((first_spread, spread)) = spread else {

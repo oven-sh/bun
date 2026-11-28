@@ -9,10 +9,15 @@ use rustc_hash::FxHashSet;
 
 use super::function::{EntryArguments, create_header_of_copy};
 use super::member::PropertyName;
+use super::statement::place_in_list;
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
 use crate::ir::{FunctionId, FunctionKey, PropertyKeyId, ValueId};
 use crate::known_helpers::{Helper, KnownReference, Shape};
+
+/// How many calls and declarations are looked at in front of one call: a list of `n` calls would be
+/// looked through `n` times.
+const MOST_LOOKED_AT: u32 = 4096;
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_shape_of_helper_called(&self, callee: ExprId) -> Option<Shape> {
@@ -99,7 +104,12 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_statement_in_order(&self, expression: ExprId, target: SymbolId) -> Option<StmtId> {
+    fn find_statement_in_order(
+        &self,
+        expression: ExprId,
+        target: SymbolId,
+        left_to_look_at: &mut u32,
+    ) -> Option<StmtId> {
         let hir = self.hir;
         let mut expression = expression;
         loop {
@@ -110,7 +120,10 @@ impl FileLowering<'_, '_, '_, '_> {
                             op: BinOp::Comma,
                             left,
                             ..
-                        } => left == expression || self.calls_helpers_alone(left, target),
+                        } => {
+                            left == expression
+                                || self.calls_helpers_alone(left, target, left_to_look_at)
+                        }
                         _ => hir.type_assertion_operand(outer) == Some(expression),
                     };
                     if !is_in_order {
@@ -128,18 +141,37 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn calls_helpers_alone(&self, expression: ExprId, target: SymbolId) -> bool {
+    fn calls_helpers_alone(
+        &self,
+        mut expression: ExprId,
+        target: SymbolId,
+        left_to_look_at: &mut u32,
+    ) -> bool {
         let hir = self.hir;
-        let expression = self.skip_type_syntax(expression);
-        if let ExprKind::Binary {
-            op: BinOp::Comma,
-            left,
-            right,
-        } = hir[expression].kind
-        {
-            return self.calls_helpers_alone(left, target)
-                && self.calls_helpers_alone(right, target);
+        // A chain of commas leans left, as deep as it is long.
+        loop {
+            let Some(left) = left_to_look_at.checked_sub(1) else {
+                return false;
+            };
+            *left_to_look_at = left;
+            expression = self.skip_type_syntax(expression);
+            let ExprKind::Binary {
+                op: BinOp::Comma,
+                left,
+                right,
+            } = hir[expression].kind
+            else {
+                return self.is_call_of_helper_for_other(expression, target);
+            };
+            if !self.calls_helpers_alone(right, target, left_to_look_at) {
+                return false;
+            }
+            expression = left;
         }
+    }
+
+    fn is_call_of_helper_for_other(&self, expression: ExprId, target: SymbolId) -> bool {
+        let hir = self.hir;
         let Some(call) = self.find_plain_call(expression) else {
             return false;
         };
@@ -159,11 +191,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn leaves_names_alone(&self, statement: StmtId, target: SymbolId) -> bool {
+    fn leaves_names_alone(
+        &self,
+        statement: StmtId,
+        target: SymbolId,
+        left_to_look_at: &mut u32,
+    ) -> bool {
         let hir = self.hir;
         match hir[statement].kind {
             StmtKind::Directive { .. } | StmtKind::Empty | StmtKind::Fn(_) => true,
             StmtKind::Var(declarations) => {
+                let Some(left) = left_to_look_at.checked_sub(declarations.len() as u32) else {
+                    return false;
+                };
+                *left_to_look_at = left;
                 let mut values = declarations.iter().map(|declaration| hir[declaration].init);
                 values.all(|value| {
                     value.is_none()
@@ -171,7 +212,9 @@ impl FileLowering<'_, '_, '_, '_> {
                         || matches!(hir[value].kind, ExprKind::Fn(_))
                 })
             }
-            StmtKind::Expr(expression) => self.calls_helpers_alone(expression, target),
+            StmtKind::Expr(expression) => {
+                self.calls_helpers_alone(expression, target, left_to_look_at)
+            }
             _ => false,
         }
     }
@@ -205,11 +248,13 @@ impl FileLowering<'_, '_, '_, '_> {
             return false;
         }
         let declared = bound.var_stmt[declaration.idx()];
-        if !self.leaves_names_alone(declared, target) {
+        let mut most = MOST_LOOKED_AT;
+        let left = &mut most;
+        if !self.leaves_names_alone(declared, target, left) {
             return false;
         }
         let home = bound.parent_of_stmt(declared);
-        let mut used = self.find_statement_in_order(call, target);
+        let mut used = self.find_statement_in_order(call, target, left);
         loop {
             let Some(statement) = used else {
                 return false;
@@ -219,14 +264,19 @@ impl FileLowering<'_, '_, '_, '_> {
                 return false;
             };
             let is_home = parent == home;
-            let ahead = hir
-                .ids(statements)
-                .take_while(|&it: &StmtId| it != statement);
-            let mut ahead = ahead.skip_while(|&it| is_home && it != declared);
-            if is_home && ahead.next() != Some(declared) {
+            let first = match is_home {
+                true => place_in_list(hir, statements, declared).map(|place| place + 1),
+                false => Some(0),
+            };
+            let (Some(first), Some(end)) = (first, place_in_list(hir, statements, statement))
+            else {
+                return false;
+            };
+            if first > end {
                 return false;
             }
-            if !ahead.all(|it| self.leaves_names_alone(it, target)) {
+            let mut ahead = (first..end).map(|place| hir.id_at(statements, place as usize));
+            if !ahead.all(|it| self.leaves_names_alone(it, target, left)) {
                 return false;
             }
             if is_home {
@@ -261,7 +311,7 @@ impl FileLowering<'_, '_, '_, '_> {
             if !is_call.is_some_and(|it| it.callee == callee && it.args.is_empty()) {
                 return false;
             }
-            used = self.find_statement_in_order(around, target);
+            used = self.find_statement_in_order(around, target, left);
         }
     }
 
@@ -344,12 +394,14 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn runs_helpers_alone(&self, target: SymbolId, declared: StmtId, copied_by: StmtId) -> bool {
         let hir = self.hir;
-        let mut between = hir
-            .ids(hir.body)
-            .skip_while(|&it: &StmtId| it != declared)
-            .take_while(|&it| it != copied_by);
+        let mut left = MOST_LOOKED_AT;
+        let places = [declared, copied_by].map(|it| place_in_list(hir, hir.body, it));
+        let [Some(first), Some(end)] = places else {
+            return false;
+        };
+        let mut between = (first..end).map(|place| hir.id_at(hir.body, place as usize));
         between.all(|statement| {
-            if self.leaves_names_alone(statement, target) {
+            if self.leaves_names_alone(statement, target, &mut left) {
                 return true;
             }
             let StmtKind::Expr(expression) = hir[statement].kind else {
@@ -401,12 +453,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let declared = bound.var_stmt[declaration.idx()];
         let runs_helpers_alone = self.runs_helpers_alone(target, declared, copied_by);
         let mut literals: Vec<(u32, ExprId)> = Vec::new();
-        for mention in (0..hir.exprs.len() as u32).map(ExprId) {
-            if !bound.is_evaluated_ident(mention)
-                || bound.binding(mention) != Binding::Symbol(target)
-                || self.decisions().is_dead_expr(mention)
-                || (runs_helpers_alone && hir[mention].pos >= hir[copied_by].loc.end)
-            {
+        for &(_, mention) in self.queries.references_of_binding(target) {
+            if runs_helpers_alone && hir[mention].pos >= hir[copied_by].loc.end {
                 continue;
             }
             let argument = bound.outermost_type_assertion(hir, mention);

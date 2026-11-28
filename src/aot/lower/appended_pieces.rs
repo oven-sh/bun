@@ -1,13 +1,16 @@
 use bun_sema::bind::{Binding, CodeUnit, Decl, Parent, PatParent, SymbolId};
 use bun_sema::fold::{Decision, TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, FnBody, IdList, NodeData, PatKind, Span, StmtId, StmtKind,
-    VarDeclId, VarKind,
+    BinOp, Branches, ExprId, ExprKind, FnBody, FnId, IdList, NodeData, PatKind, Span, StmtId,
+    StmtKind, VarDeclId, VarKind,
 };
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::ir::ValueId;
 use crate::lower::member::KeyConversion;
 use crate::lower::scope::{BindingRef, Storage};
+use crate::lower::statement::place_in_list;
 use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone)]
@@ -19,6 +22,28 @@ pub(in crate::lower) struct AppendedPiece {
     last_statement: StmtId,
 }
 
+/// Work that the search for pieces may do in a function, in nodes looked at for each node of it.
+const STEPS_FOR_EACH_NODE: usize = 256;
+
+#[derive(Copy, Clone)]
+struct Join {
+    statement: StmtId,
+    join: ExprId,
+    whole: ExprId,
+}
+
+pub(in crate::lower) struct SearchForPieces {
+    function: FnId,
+    /// In the order of the text.
+    mentions: FxHashMap<SymbolId, SmallVec<[ExprId; 4]>>,
+    /// The statement that puts a piece into the whole, and no other does. `None` if several do.
+    joins: FxHashMap<SymbolId, Option<Join>>,
+    always_holds_string: FxHashMap<SymbolId, bool>,
+    is_only_appended_to: FxHashMap<(SymbolId, StmtId), bool>,
+    has_class: bool,
+    steps_left: usize,
+}
+
 struct PieceScan<'x, 'a, 'c, 'p, 's> {
     file: &'x FileLowering<'a, 'c, 'p, 's>,
     piece: SymbolId,
@@ -27,6 +52,7 @@ struct PieceScan<'x, 'a, 'c, 'p, 's> {
     may_have_appended: bool,
     loops: u32,
     break_targets: u32,
+    steps_left: &'x mut usize,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -93,14 +119,14 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_join_of_piece(&self, statement: StmtId, piece: SymbolId) -> Option<(ExprId, ExprId)> {
+    fn find_join(&self, statement: StmtId) -> Option<(SymbolId, Join)> {
         let hir = self.hir;
         let StmtKind::Expr(join) = hir[statement].kind else {
             return None;
         };
         let ExprKind::Assign {
             op: Some(BinOp::Add),
-            target,
+            target: whole,
             value,
         } = hir[join].kind
         else {
@@ -115,7 +141,12 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             front = left;
         }
-        (self.local_named_by(front) == Some(piece)).then_some((join, target))
+        let join = Join {
+            statement,
+            join,
+            whole,
+        };
+        Some((self.local_named_by(front)?, join))
     }
 
     fn is_string_literal(&self, value: ExprId) -> bool {
@@ -194,36 +225,16 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn visit_names(
-        &self,
-        mut pending: Vec<TreeNode>,
-        mut visit: impl FnMut(ExprId) -> bool,
-    ) -> bool {
-        while let Some(node) = pending.pop() {
-            match node {
-                TreeNode::Function(_) => continue,
-                TreeNode::Class(_) => return false,
-                TreeNode::Expr(expression) => match self.hir[expression].kind {
-                    ExprKind::Ident(_) if !visit(expression) => return false,
-                    _ => {}
-                },
-                TreeNode::Stmt(_) | TreeNode::Pattern(_) => {}
-            }
-            push_children(self.hir, node, &mut pending);
-        }
-        true
-    }
-
     fn names(&self, name: ExprId, symbol: SymbolId) -> bool {
         matches!(self.bound.binding(name), Binding::Symbol(named) if named == symbol)
     }
 
-    fn is_only_appended_to(&self, symbol: SymbolId, loop_statement: StmtId) -> bool {
+    fn is_only_appended_to(&self, mentions: &[ExprId], loop_statement: StmtId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        self.visit_names(vec![TreeNode::Stmt(loop_statement)], |name| {
-            if !self.names(name, symbol) {
-                return true;
-            }
+        let (start, end) = (hir[loop_statement].start, hir[loop_statement].loc.end);
+        let first = mentions.partition_point(|&it| hir[it].pos < start);
+        let mut inside = (mentions[first..].iter()).take_while(|it| hir[**it].pos < end);
+        inside.all(|&name| {
             let Parent::Expr(append) = bound.parent_of_expr(name) else {
                 return false;
             };
@@ -232,21 +243,50 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    fn number_of_mentions(&self, symbol: SymbolId) -> Option<usize> {
+    fn begin_search_for_pieces(&self, function: FnId) -> SearchForPieces {
         let (hir, bound) = (self.hir, self.bound);
-        let CodeUnit::Function(function) = bound.code_unit(bound.symbol_scope(symbol)) else {
-            return None;
+        let mut search = SearchForPieces {
+            function,
+            mentions: FxHashMap::default(),
+            joins: FxHashMap::default(),
+            always_holds_string: FxHashMap::default(),
+            is_only_appended_to: FxHashMap::default(),
+            has_class: false,
+            steps_left: 0,
         };
         let FnBody::Block(statements) = hir[function].body else {
-            return None;
+            return search;
         };
-        let mut mentions = 0;
-        let pending = hir.ids(statements).map(TreeNode::Stmt).collect();
-        self.visit_names(pending, |name| {
-            mentions += usize::from(self.names(name, symbol));
-            true
-        })
-        .then_some(mentions)
+        let mut pending: Vec<TreeNode> = hir.ids(statements).map(TreeNode::Stmt).collect();
+        while let Some(node) = pending.pop() {
+            search.steps_left += STEPS_FOR_EACH_NODE;
+            match node {
+                TreeNode::Function(_) => continue,
+                TreeNode::Class(_) => {
+                    search.has_class = true;
+                    break;
+                }
+                TreeNode::Expr(expression) => {
+                    if let ExprKind::Ident(_) = hir[expression].kind
+                        && let Binding::Symbol(symbol) = bound.binding(expression)
+                    {
+                        search.mentions.entry(symbol).or_default().push(expression);
+                    }
+                }
+                TreeNode::Stmt(statement) => {
+                    if let Some((piece, join)) = self.find_join(statement) {
+                        let joins = search.joins.entry(piece);
+                        joins.and_modify(|it| *it = None).or_insert(Some(join));
+                    }
+                }
+                TreeNode::Pattern(_) => {}
+            }
+            push_children(hir, node, &mut pending);
+        }
+        for mentions in search.mentions.values_mut() {
+            mentions.sort_unstable_by_key(|&it| hir[it].pos);
+        }
+        search
     }
 
     fn find_appended_piece(
@@ -254,20 +294,35 @@ impl FileLowering<'_, '_, '_, '_> {
         statements: IdList<StmtId>,
         index: u32,
         piece: SymbolId,
+        search: &mut Option<SearchForPieces>,
     ) -> Option<AppendedPiece> {
         let hir = self.hir;
-        let (behind, (join, whole)) = (index + 1..statements.len).find_map(|behind| {
-            let statement = hir.id_at(statements, behind as usize);
-            Some((behind, self.find_join_of_piece(statement, piece)?))
-        })?;
+        self.own_variable(piece)?;
+        let CodeUnit::Function(function) = self.bound.code_unit(self.bound.symbol_scope(piece))
+        else {
+            return None;
+        };
+        let search = search.get_or_insert_with(|| self.begin_search_for_pieces(function));
+        if search.function != function || search.has_class {
+            return None;
+        }
+        let Join {
+            statement,
+            join,
+            whole,
+        } = (*search.joins.get(&piece)?)?;
+        let behind = place_in_list(hir, statements, statement)?;
+        if behind <= index {
+            return None;
+        }
         let first_statement = hir.id_at(statements, index as usize);
         let last_statement = hir.id_at(statements, behind as usize);
         let whole_symbol = self.local_named_by(whole)?;
         let declaration = self.own_variable(whole_symbol)?;
         if whole_symbol == piece
             || self.decisions().is_dead_stmt(last_statement)
-            || self.own_variable(piece).is_none()
-            || !self.always_holds_string(whole_symbol, declaration)
+            || !*(search.always_holds_string.entry(whole_symbol))
+                .or_insert_with(|| self.always_holds_string(whole_symbol, declaration))
         {
             return None;
         }
@@ -280,19 +335,27 @@ impl FileLowering<'_, '_, '_, '_> {
             may_have_appended: false,
             loops: 0,
             break_targets: 0,
+            steps_left: &mut search.steps_left,
         };
         let between = index + 1..behind;
         if !between
             .map(|at| hir.id_at(statements, at as usize))
             .all(|it| scan.statement(it))
             || !scan.parts_of_join(join)
-            || !self.is_only_appended_to(whole_symbol, loop_statement)
         {
+            return None;
+        }
+        let mentions_of = |symbol: SymbolId| search.mentions.get(&symbol).map_or(&[][..], |it| it);
+        let is_only_appended_to = *search
+            .is_only_appended_to
+            .entry((whole_symbol, loop_statement))
+            .or_insert_with(|| self.is_only_appended_to(mentions_of(whole_symbol), loop_statement));
+        if !is_only_appended_to {
             return None;
         }
         let mentions_at_start = usize::from(matches!(hir[first_statement].kind, StmtKind::Expr(_)));
         let mentions = scan.mentions_of_piece + mentions_at_start;
-        (self.number_of_mentions(piece) == Some(mentions)).then_some(AppendedPiece {
+        (mentions_of(piece).len() == mentions).then_some(AppendedPiece {
             piece,
             join,
             whole,
@@ -307,9 +370,13 @@ impl PieceScan<'_, '_, '_, '_, '_> {
         value.is_none() || self.nodes(vec![TreeNode::Expr(value)])
     }
 
-    fn nodes(&self, mut pending: Vec<TreeNode>) -> bool {
+    fn nodes(&mut self, mut pending: Vec<TreeNode>) -> bool {
         let (hir, file) = (self.file.hir, self.file);
         while let Some(node) = pending.pop() {
+            let Some(steps_left) = self.steps_left.checked_sub(1) else {
+                return false;
+            };
+            *self.steps_left = steps_left;
             match node {
                 TreeNode::Function(_) => continue,
                 TreeNode::Class(_) => return false,
@@ -330,8 +397,20 @@ impl PieceScan<'_, '_, '_, '_, '_> {
         true
     }
 
-    fn effect(&mut self, expression: ExprId) -> bool {
+    fn effect(&mut self, mut expression: ExprId) -> bool {
         let hir = self.file.hir;
+        // A chain of commas leans left, as deep as it is long.
+        while let Some(ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            right,
+        }) = expression.some().map(|it| hir[it].kind)
+        {
+            if !self.effect(right) {
+                return false;
+            }
+            expression = left;
+        }
         if expression.is_none() {
             return true;
         }
@@ -346,11 +425,6 @@ impl PieceScan<'_, '_, '_, '_, '_> {
                 self.may_have_appended = true;
                 appends
             }
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                left,
-                right,
-            } => self.effect(left) && self.effect(right),
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,
                 left,
@@ -487,7 +561,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.file.counted_places.is_some() {
             return;
         }
-        let Some(mut found) = self.file.find_appended_piece(statements, index, piece) else {
+        let search = &mut self.search_for_pieces;
+        let found = self
+            .file
+            .find_appended_piece(statements, index, piece, search);
+        let Some(mut found) = found else {
             return;
         };
         let around = self.appended_pieces.iter();
@@ -509,7 +587,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn whole_strings_of(
         &self,
         stored: &[BindingRef],
-    ) -> smallvec::SmallVec<[BindingRef; 2]> {
+    ) -> SmallVec<[BindingRef; 2]> {
         let pieces = self.appended_pieces.iter();
         pieces
             .filter(|piece| stored.contains(&BindingRef::Symbol(piece.piece)))
@@ -546,7 +624,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let reference = self.lower_reference(whole, KeyConversion::Once);
         let mut updated = self.get_reference(&reference);
-        let mut parts: smallvec::SmallVec<[(ExprId, ExprId); 4]> = smallvec::SmallVec::new();
+        let mut parts: SmallVec<[(ExprId, ExprId); 4]> = SmallVec::new();
         let mut front = value;
         while let ExprKind::Binary { left, right, .. } = hir[front].kind {
             parts.push((front, right));

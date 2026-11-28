@@ -4,7 +4,7 @@ mod loose_loops;
 mod suspending_loops;
 
 use bun_sema::bind::{Decl, ScopeId};
-use bun_sema::hir::{ExprId, ExprKind, IdList, PatKind, StmtId, StmtKind, UnOp};
+use bun_sema::hir::{self, ExprId, ExprKind, IdList, PatKind, StmtId, StmtKind, UnOp};
 
 pub(in crate::lower) use self::loose_loops::LooseLoop;
 pub(in crate::lower) use self::suspending_loops::{SuspendingArm, SuspendingPart};
@@ -13,6 +13,23 @@ use super::{FunctionLowering, commonjs, dispose, module, scope};
 use crate::builtins::SourceDialect;
 use crate::ir::BlockId;
 use crate::modules::Member;
+
+/// The statements of a list lie in the order of the text.
+pub(in crate::lower) fn place_in_list(
+    hir: &hir::File<'_>,
+    list: IdList<StmtId>,
+    statement: StmtId,
+) -> Option<u32> {
+    let (mut low, mut high) = (0, list.len);
+    while low < high {
+        let middle = low.midpoint(high);
+        match hir[hir.id_at(list, middle as usize)].start < hir[statement].start {
+            true => low = middle + 1,
+            false => high = middle,
+        }
+    }
+    (low < list.len && hir.id_at(list, low as usize) == statement).then_some(low)
+}
 
 pub(in crate::lower) fn statements_behind(list: IdList<StmtId>, index: u32) -> IdList<StmtId> {
     let passed = index + 1;

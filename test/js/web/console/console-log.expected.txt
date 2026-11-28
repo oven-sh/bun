@@ -186,6 +186,29 @@ myCustomName {
   "1": 42,
   length: 1,
 }
+Result(0) []
+Result(1) [
+  {
+    "?column?": 1,
+  }
+]
+Result(1) [
+  {
+    "?column?": 1,
+  }
+]
+Result(1) [
+  {
+    "?column?": 1,
+  }
+]
+[
+  Result(1) [
+    {
+      "?column?": 1,
+    }
+  ], Result(2) [ 1, 2, shown: true ]
+]
 {
   "": "",
 }

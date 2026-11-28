@@ -1,9 +1,9 @@
 //! node-semver's `Range` and `subset`, which eslint-plugin-n uses, built on `bun install`'s semver implementation.
 
-use bun_core::{handle_oom, strings};
-use bun_semver::query::{self, Group};
+use bun_core::handle_oom;
+use bun_semver::Version;
+use bun_semver::query::{self, Group, NpmRange};
 use bun_semver::range::{Comparator, Op};
-use bun_semver::{SlicedString, Version};
 
 #[derive(Clone)]
 pub(crate) struct Range {
@@ -45,15 +45,11 @@ fn any_of(ranges: impl Iterator<Item = bun_semver::Range>) -> Group {
 impl Range {
     /// `None` where `new Range(text)` throws.
     pub(crate) fn parse(text: &[u8]) -> Option<Range> {
-        let raw = strings::split_any(text, b" \t\n\r\x0B\x0C")
-            .filter(|it| !it.is_empty())
-            .collect::<Vec<_>>()
-            .join(&b" "[..]);
-        let group = handle_oom(query::parse(&raw, SlicedString::init(&raw, &raw)));
-        if group.has_skipped() {
-            return None;
-        }
-        Some(Range { raw, group })
+        let NpmRange { raw, group } = handle_oom(query::parse_npm(text))?;
+        Some(Range {
+            raw: raw.into_owned(),
+            group,
+        })
     }
 
     /// `^a || ^b || >=latest`. The first of `versions` must be the latest.

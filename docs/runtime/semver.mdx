@@ -34,7 +34,7 @@ semver.satisfies("1.0.0", "1.0.0 - 2.0.0"); // true
 semver.satisfies("1.0.0", "1.0.0 - 1.0.1"); // true
 ```
 
-`satisfies` returns `false` if `version` is invalid, or if either argument contains a non-ASCII character. Bun ignores the parts of `range` that it cannot parse. A `range` with no parseable part behaves like `*`.
+`satisfies` returns `false` if `version` is invalid, or if either argument contains a non-ASCII character. It also returns `false` if `range` has text that the parser cannot read as a comparator, such as `latest`, `foo || 1.2.3` or `>=1.0.0 && <2.0.0`. An empty `range` behaves like `*`.
 
 A major, minor, or patch number above 2^64 - 1 makes a version invalid. No version satisfies a `range` that has such a number before any wildcard.
 

@@ -4,6 +4,7 @@ use core::cmp::Ordering;
 
 use bun_core::strings;
 use bun_jsc::bindgen::{self, JsHeap};
+use bun_semver::query::NpmRange;
 use bun_semver::{SlicedString, Version, query};
 
 pub(crate) fn order<'a>(
@@ -45,13 +46,15 @@ pub(crate) fn satisfies<'a>(version: &'a [u8], range: &'a [u8]) -> bindgen::Resu
         return Ok(false);
     };
 
-    let group = query::parse(range, SlicedString::init(range, range))?;
+    let Some(NpmRange { raw, group }) = query::parse_npm(range)? else {
+        return Ok(false);
+    };
 
     if let Some(exact_version) = group.get_exact_version() {
         return Ok(parsed_version.eql(exact_version));
     }
 
-    Ok(group.satisfies(parsed_version, range, version))
+    Ok(group.satisfies(parsed_version, &raw, version))
 }
 
 /// `bun:internal-for-testing`: `Group::intersects` on two range strings.

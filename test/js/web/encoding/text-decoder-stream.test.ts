@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readableStreamFromArray } from "harness";
+import { compose, Duplex, Writable } from "node:stream";
 
 {
   // META: global=window,worker
@@ -313,4 +314,66 @@ test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", a
   } finally {
     TextDecoder.prototype.decode = original;
   }
+});
+
+// The stream is set up with a readable highWaterMark of 0
+// (https://streams.spec.whatwg.org/#transformstream-set-up): a chunk is decoded when a read asks
+// for it, so nothing is taken from the source ahead of the first read.
+test("pipeThrough(new TextDecoderStream()) pulls its source once before any read", async () => {
+  let pulls = 0;
+  const { promise: pulledTwice, resolve } = Promise.withResolvers<void>();
+  const source = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (++pulls === 2) resolve();
+        controller.enqueue(new Uint8Array([65]));
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const decoded = source.pipeThrough(new TextDecoderStream());
+  expect(await Promise.race([pulledTwice.then(() => "twice"), Bun.sleep(0).then(() => "once")])).toBe("once");
+  expect(pulls).toBe(1);
+  await decoded.cancel();
+});
+
+// Node.js sets the stream up the same way. So a write through a node:stream adapter completes
+// when the readable side is read, not before it (Node.js v26.3.0).
+describe("TextDecoderStream behind a node:stream adapter", () => {
+  const nextData = (readable: NodeJS.ReadableStream) =>
+    new Promise<Buffer>((resolve, reject) => {
+      readable.once("data", resolve);
+      readable.once("error", reject);
+      readable.once("close", () => reject(new Error("the stream closed before any data")));
+    });
+  test.each([
+    [
+      "Writable.fromWeb(stream.writable)",
+      (stream: TextDecoderStream) => ({
+        writable: Writable.fromWeb(stream.writable, { decodeStrings: false }),
+        read: async () => (await stream.readable.getReader().read()).value!,
+      }),
+    ],
+    [
+      "Duplex.fromWeb(stream)",
+      (stream: TextDecoderStream) => {
+        const duplex = Duplex.fromWeb(stream, { decodeStrings: false });
+        return { writable: duplex, read: () => nextData(duplex) };
+      },
+    ],
+    [
+      "compose(stream)",
+      (stream: TextDecoderStream) => {
+        const duplex = compose(stream);
+        return { writable: duplex, read: () => nextData(duplex) };
+      },
+    ],
+  ])("%s: the first write completes when the readable side is read", async (_label, adapt) => {
+    const { writable, read } = adapt(new TextDecoderStream());
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    writable.write(Buffer.from("a"), error => (error ? reject(error) : resolve()));
+    expect(await Promise.race([written.then(() => "completed"), Bun.sleep(0).then(() => "pending")])).toBe("pending");
+    expect(String(await read())).toBe("a");
+    await written;
+  });
 });

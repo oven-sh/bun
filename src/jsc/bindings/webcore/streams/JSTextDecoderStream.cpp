@@ -108,7 +108,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     if (utf8FastPath)
         stream->m_utf8State.bomSeen = ignoreBOM;
 
-    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder, transformStreamSetUpReadableHighWaterMark);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(stream);

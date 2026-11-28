@@ -114,7 +114,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     auto* stream = JSDecompressionStream::create(vm, structure);
     stream->m_coder = WTF::move(coder);
 
-    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression, codecReadableHighWaterMark);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(stream);

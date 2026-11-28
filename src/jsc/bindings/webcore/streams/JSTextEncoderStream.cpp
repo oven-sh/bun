@@ -75,7 +75,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConst
     auto* stream = JSTextEncoderStream::create(vm, structure);
     stream->m_encoder.reset(TextEncoderStreamEncoder__createForStream());
 
-    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextEncoder);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextEncoder, transformStreamSetUpReadableHighWaterMark);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(stream);

@@ -77,7 +77,7 @@ pub struct EventLoop {
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    /// the loop poll). Promoted into `tasks` before the loop polls, like immediates.
     yield_tasks: Cell<Vec<Task>>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
@@ -1016,7 +1016,7 @@ impl EventLoop {
         self.yield_tasks.len() > 0
     }
 
-    /// `auto_tick`, before it polls: last iteration's yielded tasks become
+    /// Before the loop polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&self) -> bool {
         if !self.has_yield_tasks() {
@@ -1306,16 +1306,21 @@ impl EventLoop {
         }
 
         vm.gc_controller.process_gc_timer();
-        // `tick()` below can start work (e.g. a --hot reload) whose only wake
-        // source is a cross-thread `wakeup()`; bound the park, same as the GC
-        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-            uws::NOW_NS_UNKNOWN,
-        );
+        // An earlier poll can have taken the wakeup of work that is already here.
+        self.tick_concurrent();
+        let has_yielded_tasks = self.promote_yield_tasks();
+        if has_yielded_tasks || self.has_pending_tasks() || vm.is_event_loop_alive() {
+            // Still a poll: a yielded task waits for one before it continues.
+            loop_.tick_without_idle();
+        } else {
+            // Bounded: a backstop for work that does not wake the loop. libuv's `tick_with_timeout` ignores the argument.
+            loop_.tick_with_timeout(
+                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+                uws::NOW_NS_UNKNOWN,
+            );
+        }
 
         vm.on_after_event_loop();
-        self.tick_concurrent();
         self.tick();
     }
 

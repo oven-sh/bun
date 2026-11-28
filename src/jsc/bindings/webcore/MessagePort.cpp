@@ -28,6 +28,8 @@
 #include "MessagePort.h"
 #include <wtf/SetForScope.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/StrongInlines.h>
 
 #include "EventNames.h"
 #include "GlobalEventScope.h"
@@ -35,6 +37,7 @@
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
 #include "MessageWithMessagePorts.h"
+#include "ModuleGraph.h"
 #include "StructuredSerializeOptions.h"
 #include "WebCoreOpaqueRoot.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -42,6 +45,28 @@
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
 namespace WebCore {
+
+class MessagePortAsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(MessagePortAsyncContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    MessagePortAsyncContextScope(JSC::JSGlobalObject* globalObject, JSC::JSValue context)
+        : m_globalObject(globalObject)
+        , m_previous(globalObject->vm(), globalObject->m_asyncContextData.get()->getInternalField(0))
+    {
+        globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, context);
+    }
+
+    ~MessagePortAsyncContextScope()
+    {
+        m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous.get());
+    }
+
+private:
+    JSC::JSGlobalObject* m_globalObject;
+    JSC::Strong<JSC::Unknown> m_previous;
+};
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
 
@@ -56,6 +81,7 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
     : ActiveDOMObject(&context)
     , m_pipe(WTF::move(pipe))
     , m_side(side)
+    , m_asyncContext(context.globalObject() ? context.globalObject()->m_asyncContextData.get()->getInternalField(0) : JSC::jsUndefined())
 {
     // The WeakPtrFactory must be initialized on the owning thread.
     EventTarget::initializeWeakPtrFactory();
@@ -228,11 +254,13 @@ void MessagePort::close()
     // observes it and close(cb) interleaves with other listeners.
     if (isContextStopped()) {
         removeAllEventListeners();
+        m_asyncContext.clear();
         return;
     }
     queueTaskKeepingObjectAlive(*this, TaskSource::PostedMessageQueue, [](MessagePort& port) {
         port.dispatchCloseEvent();
         port.removeAllEventListeners();
+        port.m_asyncContext.clear();
     });
 }
 
@@ -247,8 +275,11 @@ void MessagePort::dispatchCloseEvent()
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
     // close task runs after m_isDetached is set.
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running
+        && !Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, m_asyncContext.getValue())) {
+        MessagePortAsyncContextScope asyncContextScope(globalObject, m_asyncContext.getValue());
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    }
 }
 
 void MessagePort::peerClosed()
@@ -267,6 +298,7 @@ void MessagePort::peerClosed()
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
     dispatchCloseEvent();
+    m_asyncContext.clear();
     jsUnref();
 }
 
@@ -295,6 +327,7 @@ TransferredMessagePort MessagePort::disentangle()
         context->willDestroyDestructionObserver(*this);
     }
     observeContext(nullptr);
+    m_asyncContext.clear();
 
     return TransferredMessagePort { m_pipe.copyRef(), m_side };
 }
@@ -320,6 +353,9 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
+    if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, m_asyncContext.getValue()))
+        return;
+
     auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
     if (scope.exception()) [[unlikely]] {
         RELEASE_ASSERT(vm->hasPendingTerminationException());
@@ -329,6 +365,9 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3): if
     // deserializing throws, catch it and fire messageerror instead.
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
+    // Node deserializes before MakeCallback restores the receiver's creation context:
+    // https://github.com/nodejs/node/blob/v24.21.0/src/node_messaging.cc#L811-L884
+    MessagePortAsyncContextScope asyncContextScope(globalObject, m_asyncContext.getValue());
     if (scope.exception()) [[unlikely]] {
         if (vm->hasPendingTerminationException())
             return;
@@ -372,6 +411,7 @@ void MessagePort::contextDestroyed()
     // close() can drop the last reference if no stop phase ran first, e.g. for a collected ShadowRealm.
     Ref protectedThis { *this };
     close();
+    m_asyncContext.clear();
     ActiveDOMObject::contextDestroyed();
 }
 

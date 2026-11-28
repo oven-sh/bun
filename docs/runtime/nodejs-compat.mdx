@@ -107,7 +107,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 `AsyncLocalStorage` and `AsyncResource` are implemented. `createHook`, `executionAsyncId`, `triggerAsyncId` and `executionAsyncResource` are stubs: Bun does not invoke hooks, apart from `init` for `process.nextTick`, and async ids are always `0`. Node.js [strongly discourages](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks) these APIs in favor of `AsyncLocalStorage`. Bun does not propagate `AsyncLocalStorage` context into `MessagePort`, `BroadcastChannel` or `Worker` events.
+🟡 `AsyncLocalStorage` and `AsyncResource` are implemented. `createHook`, `executionAsyncId`, `triggerAsyncId` and `executionAsyncResource` are stubs: Bun does not invoke hooks, apart from `init` for `process.nextTick`, and async ids are always `0`. Node.js [strongly discourages](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks) these APIs in favor of `AsyncLocalStorage`. Bun does not propagate `AsyncLocalStorage` context into `BroadcastChannel` or `Worker` events.
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
@@ -170,6 +170,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 🟡 Partially implemented. `WASI` supports `args`, `env`, `preopens`, `wasiImport` and `start()`, and `bun ./program.wasm` runs a WASI command directly. Missing `getImportObject()` (use `wasiImport`), `initialize()` and the `sock_accept` import. Bun ignores the `version`, `returnOnExit`, `stdin`, `stdout` and `stderr` options, so `proc_exit` exits the Bun process.
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
+
+`MessagePort` message and close events run in the port's creation `AsyncLocalStorage` context. Transferred endpoints capture the context active during deserialization. Synchronous `dispatchEvent()` uses the caller's context.
 
 🟡 `Worker` ignores the `resourceLimits` and `trackUnmanagedFds` options. Some `execArgv` flags take effect in the worker, for example `--no-addons`, `--stack-trace-limit` and `--tls-min-v1.3`. Others, for example `--conditions` and `--no-deprecation`, only set `process.execArgv`. `worker.performance.eventLoopUtilization()` is a stub. Missing `moveMessagePortToContext` and `locks`.
 

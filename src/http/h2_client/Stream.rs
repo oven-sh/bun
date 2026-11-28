@@ -38,8 +38,13 @@ pub struct Stream {
     /// per §5.4.2) and so RST(NO_ERROR) can be told apart from a clean close.
     pub(crate) rst_done: bool,
     /// Set once a non-1xx HEADERS block has been decoded and is awaiting
-    /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
+    /// delivery. Subsequent HEADERS are trailers.
     pub(crate) headers_ready: bool,
+    /// The request has `te: trailers`. Otherwise trailers are decoded-then-dropped.
+    pub(crate) wants_trailers: bool,
+    pub(crate) trailers: Option<Box<Headers>>,
+    /// Content-Length, where the response has to go on to END_STREAM for its trailers.
+    pub(crate) length_before_trailers: Option<usize>,
     pub(crate) headers_end_stream: bool,
     /// Expect: 100-continue is in effect: hold the request body until a 1xx
     /// or final status arrives.
@@ -94,6 +99,9 @@ impl Stream {
             state: State::Open,
             rst_done: false,
             headers_ready: false,
+            wants_trailers: false,
+            trailers: None,
+            length_before_trailers: None,
             headers_end_stream: false,
             awaiting_continue: false,
             fatal_error: None,

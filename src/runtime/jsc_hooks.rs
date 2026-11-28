@@ -1760,7 +1760,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
         && !(loader.is_java_script_like()
             || matches!(
                 loader,
-                L::Toml | L::Yaml | L::Json5 | L::Xml | L::Text | L::Json | L::Jsonc
+                L::Toml | L::Yaml | L::Json5 | L::Xml | L::Text | L::Json | L::Jsonc | L::Proto
             ))
     {
         return Ok(ResolvedSource {
@@ -1784,7 +1784,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
         | L::Json5
         | L::Xml
         | L::Text
-        | L::Md => {
+        | L::Md
+        | L::Proto => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
@@ -3123,6 +3124,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         20 => Some(L::Json5),
         21 => Some(L::Md),
         22 => Some(L::Xml),
+        23 => Some(L::Proto),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }
@@ -3460,7 +3462,8 @@ fn what_loading_gives(loader: Loader) -> Loaded {
         | Loader::Wasm
         | Loader::Napi
         | Loader::Bunsh
-        | Loader::Md => Loaded::Code,
+        | Loader::Md
+        | Loader::Proto => Loaded::Code,
         Loader::Sqlite | Loader::SqliteEmbedded | Loader::Html => Loaded::HostObject,
         Loader::Css
         | Loader::File

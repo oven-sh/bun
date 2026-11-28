@@ -36,6 +36,29 @@ export function greet(options: Options): string {
 };
 
 describe.concurrent("bun build --dts", () => {
+  test("writes the declaration file that TypeScript looks for beside a .proto file", async () => {
+    using dir = tempDir("build-dts", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `export { Line } from "./line.proto";\n`,
+      "src/line.proto": `syntax = "proto3";\nimport "point.proto";\n// Straight.\nmessage Line { Point from = 1; }\n`,
+      "src/point.proto": `syntax = "proto3";\nmessage Point { int64 x = 1; }\n`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "out")).sort()).toEqual([
+      "index.aot.ts",
+      "index.d.ts",
+      "index.js",
+      "line.proto.d.ts",
+      "point.proto.d.ts",
+    ]);
+    const read = (name: string) => readFileSync(join(String(dir), "out", name), "utf8");
+    expect(read("index.d.ts")).toBe(`export { Line } from "./line.proto.js";\n`);
+    expect(read("line.proto.d.ts")).toContain("/**\n * Straight.\n */\nexport interface Line {");
+    expect(read("index.aot.ts")).toContain("decode($bytes: Uint8Array): Line {");
+    expect(read("point.proto.d.ts")).toContain("x?: bigint | number | undefined;");
+  });
+
   test("writes the bundle, its declaration files and the bundle with its types kept", async () => {
     using dir = tempDir("build-dts", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");

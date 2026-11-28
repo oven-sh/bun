@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package fixture.shared;
+
+import public "shared/point.proto";
+
+enum Unit {
+  UNIT_UNSPECIFIED = 0;
+  METER = 1;
+}

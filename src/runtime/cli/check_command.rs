@@ -635,9 +635,8 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let cwd = working_directory();
     // `--loader`, `--conditions`
     let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
-    let loaders = args.and_then(|args| args.loaders.as_ref());
-    let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
-    let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
+    let loaders = loaders_of_the_runtime();
+    let by_extension = script_kinds_by_extension(&loaders);
     let Some((paths, script_kinds)) = paths_to_check(&cwd, entry_points, &by_extension) else {
         return true;
     };
@@ -649,6 +648,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     }
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
+        schema_extensions: schema_extensions(&loaders),
         before_read,
         ..Default::default()
     };
@@ -688,6 +688,17 @@ fn script_kinds_by_extension(loaders: &bun_ast::LoaderHashTable) -> Vec<(Vec<u8>
         .filter(|(extension, script_kind)| script_kind.differs_from_name(extension))
         .map(|(extension, script_kind)| (extension.to_vec(), script_kind))
         .collect()
+}
+
+fn loaders_of_the_runtime() -> bun_ast::LoaderHashTable {
+    let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
+    let loaders = args.and_then(|args| args.loaders.as_ref());
+    loaders_from_transform_options(loaders, bun_ast::Target::Bun).unwrap_or_default()
+}
+
+fn schema_extensions(loaders: &bun_ast::LoaderHashTable) -> Option<Vec<Vec<u8>>> {
+    let schemas = loaders.iter().filter(|it| *it.1 == bun_ast::Loader::Proto);
+    Some(schemas.map(|(extension, _)| extension.to_vec()).collect())
 }
 
 /// True if `has_types`, or if `by_extension` lists the path's extension.
@@ -758,6 +769,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
+        schema_extensions: schema_extensions(loaders),
         ..Default::default()
     };
     // Excludes files like `App.svelte`, which a plugin turns into TypeScript.
@@ -940,6 +952,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
     bun_removable_features::removable_definition!(Check, check_project_before);
     let provided = Provided {
+        schema_extensions: schema_extensions(&loaders_of_the_runtime()),
         before_read,
         ..Default::default()
     };

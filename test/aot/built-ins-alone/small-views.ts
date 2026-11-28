@@ -3,6 +3,7 @@
 // of views, and sees the move by what the cell weighs. A row that takes bytes in a place that may be any object is called where `routes` has a call for it.
 //
 //   bun small-views.ts <aot_builtin_table.json> [<path>]      the last line that it prints is `SmallViewsFound` below, as JSON; the rows of <path> are read as if they did not write TypedArrayStorage
+import { Channel, route } from "bun:grpc";
 import { deserialize, estimateShallowMemoryUsageOf, serialize } from "bun:jsc";
 import { readTable, type Entry, type Overload, type Parameter, type TableType } from "./table";
 
@@ -151,7 +152,17 @@ const timingSafeEqual: Route[] = [
   [view => nodeCrypto.timingSafeEqual(eight(), view)],
 ];
 const crc32: Route[] = [[view => require("node:zlib").crc32(view)]];
+function answerOverGrpc(responseStream: boolean): Route {
+  async function call(view: Uint8Array) {
+    const answer = route(false, responseStream, () => (responseStream ? [0] : 0) as never, () => view);
+    await using server = Bun.serve({ port: 0, http2: true, routes: { "/a": answer } });
+    await new Channel(server.url).call("/a", new Uint8Array(5));
+  }
+  return [call, () => new Uint8Array(5)];
+}
 const routes: Record<string, Route[]> = {
+  "%GrpcCall%.prototype.end": [answerOverGrpc(false)],
+  "%GrpcCall%.prototype.write": [answerOverGrpc(true)],
   "native:Bindgen:Crypto.bind.ts:timingSafeEqual": timingSafeEqual,
   "%NativeFunctions%.CryptoBindTsTimingSafeEqual": timingSafeEqual,
   "native:Bindgen:node_zlib_binding.bind.ts:crc32": crc32,
@@ -296,16 +307,16 @@ for (const entry of entries.values()) {
     }
   }
   if (!isOfTheKind) continue;
-  (routes[entry.path] ?? []).forEach(([call, make = eight], index) => {
+  for (const [index, [call, make = eight]] of (routes[entry.path] ?? []).entries()) {
     const view = make();
     const weight = estimateShallowMemoryUsageOf(view);
     try {
-      call(view);
+      await call(view);
       cameBack = true;
     } catch {}
     if (estimateShallowMemoryUsageOf(view) < weight)
       (saysSo ? found.saysSo : found.silent).push(`${entry.path} by hand ${index}`);
-  });
+  }
   ++found.paths;
   if (cameBack) ++found.called;
   else if (!(entry.path in notCalled) && !isForTestsOfBunAlone(entry.path)) found.notHeld.push(entry.path);

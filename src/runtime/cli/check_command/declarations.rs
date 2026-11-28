@@ -11,8 +11,8 @@ use bun_threading::Guarded;
 
 use super::typed_files::NotedModuleTypes;
 use super::{
-    Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
-    script_kinds_by_extension, with_pages,
+    Entries, Paths, already_read, has_types_with, log_data_of, request, schema_extensions,
+    script_kind_of, script_kinds_by_extension, with_pages,
 };
 
 /// A package without a configuration file is written for every runtime: it gets the globals that all of them have.
@@ -57,6 +57,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
+        schema_extensions: schema_extensions(loaders),
         ..Default::default()
     };
     let is_source = |path: &&[u8]| {

@@ -13,6 +13,7 @@ use bun_removable_features::{Feature, is_removed};
 use bun_url::URL;
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
+use super::grpc_call::{GrpcMethod, GrpcRoute};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
@@ -180,6 +181,7 @@ impl ServerConfig {
 pub(crate) struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
+    pub(crate) grpc: Option<GrpcMethod>,
 }
 
 pub(crate) enum RouteMethod {
@@ -203,6 +205,7 @@ impl Default for RouteDeclaration {
         Self {
             path: ZBox::default(),
             method: RouteMethod::Any,
+            grpc: None,
         }
     }
 }
@@ -755,12 +758,28 @@ impl ServerConfig {
                     continue;
                 }
 
+                if let Some(route) = value.as_class_ref::<GrpcRoute>() {
+                    validate_route_name(global, &path)?;
+                    let start = GrpcRoute::start(value)
+                        .map_or(value, |start| start.with_async_context_if_needed(global));
+                    args.user_routes_to_build.push(UserRouteBuilder {
+                        route: RouteDeclaration {
+                            path: ZBox::from_bytes(&*path),
+                            method: RouteMethod::Specific(Method::POST),
+                            grpc: Some(route.method),
+                        },
+                        callback: Strong::create(start, global),
+                    });
+                    continue;
+                }
+
                 if value.is_callable() {
                     validate_route_name(global, &path)?;
                     args.user_routes_to_build.push(UserRouteBuilder {
                         route: RouteDeclaration {
                             path: ZBox::from_bytes(&*path),
                             method: RouteMethod::Any,
+                            grpc: None,
                         },
                         callback: Strong::create(
                             value.with_async_context_if_needed(global),
@@ -799,6 +818,7 @@ impl ServerConfig {
                                     route: RouteDeclaration {
                                         path: ZBox::from_bytes(&*path),
                                         method: RouteMethod::Specific(method),
+                                        grpc: None,
                                     },
                                     callback: Strong::create(callback, global),
                                 });
@@ -808,6 +828,7 @@ impl ServerConfig {
                                             route: RouteDeclaration {
                                                 path: ZBox::from_bytes(&*path),
                                                 method: RouteMethod::Specific(Method::HEAD),
+                                                grpc: None,
                                             },
                                             callback: Strong::create(callback, global),
                                         });

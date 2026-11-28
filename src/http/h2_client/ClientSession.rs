@@ -1,4 +1,4 @@
-//! One TCP+TLS connection running the HTTP/2 protocol for `fetch()`. Owns the
+//! One connection running the HTTP/2 protocol for `fetch()`. Owns the
 //! socket, the connection-scoped HPACK tables, and a map of active `Stream`s.
 
 use core::cell::Cell;
@@ -15,7 +15,7 @@ use bun_ptr::{AliasableBox, RefPtr};
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
-use crate::http_context::{HTTPSocket, PeerVerification};
+use crate::http_context::{HTTPSocket, PeerVerification, Transport};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::{HTTPStage, TransportEnd};
@@ -27,8 +27,23 @@ use crate::{
     RequestBuffer,
 };
 
-/// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
-pub type Socket = HTTPSocket<true>;
+/// The socket, and a BACKREF to its context, which outlives and registers the session.
+#[derive(Clone, Copy)]
+enum Connection {
+    /// ALPN selected "h2".
+    Tls(HTTPSocket<true>, *mut NewHTTPContext<true>),
+    /// Prior knowledge (RFC 9113 §3.3).
+    Cleartext(HTTPSocket<false>, *mut NewHTTPContext<false>),
+}
+
+macro_rules! on_connection {
+    ($session:expr, |$socket:pat_param, $ctx:pat_param| $body:expr) => {
+        match $session.connection {
+            Connection::Tls($socket, $ctx) => $body,
+            Connection::Cleartext($socket, $ctx) => $body,
+        }
+    };
+}
 
 const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
 
@@ -51,12 +66,12 @@ pub struct ClientSession {
 
     pub(crate) encoder: bun_hpack::Encoder,
     pub(crate) decoder: bun_hpack::Decoder,
-    pub(crate) socket: Socket,
-    pub(crate) ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
+    connection: Connection,
 
     /// Pool key. Owned copy so the session can outlive the originating client.
     pub(crate) hostname: Box<[u8]>,
     pub(crate) port: u16,
+    transport: Transport,
     pub(crate) ssl_config: Option<ssl_config::SharedPtr>,
     pub(crate) did_have_handshaking_error: bool,
     /// How the TLS peer was authenticated; carried into the keepalive pool and
@@ -263,20 +278,34 @@ impl ClientSession {
         self.write_frame(wire::FrameType::HTTP_FRAME_RST_STREAM, 0, stream.id, &value);
     }
 
-    /// For a socket whose ALPN just selected h2: `tag_as_h2`, `register_h2` and [`Self::attach_leader`] follow.
-    pub(crate) fn create(
-        ctx: *mut NewHTTPContext<true>,
-        socket: Socket,
+    /// For a socket that starts to speak h2: `tag_as_h2`, `register_h2` and [`Self::attach_leader`] follow.
+    pub(crate) fn create<const SSL: bool>(
+        ctx: *mut NewHTTPContext<SSL>,
+        socket: HTTPSocket<SSL>,
         client: &HTTPClient,
     ) -> RefPtr<Self> {
-        let this = RefPtr::new(ClientSession {
+        let connection = match SSL {
+            true => Connection::Tls(socket.assume_ssl(), ctx.cast()),
+            false => Connection::Cleartext(socket.assume_tcp(), ctx.cast()),
+        };
+        Self::new(connection, client)
+    }
+
+    fn new(connection: Connection, client: &HTTPClient) -> RefPtr<ClientSession> {
+        let url = &client.connected_url;
+        let (hostname, port, transport) = match client.unix_socket_path {
+            b"" => (url.hostname, url.get_port_auto(), Transport::Tcp),
+            path => (path, 0, Transport::Unix),
+        };
+        super::live_sessions.fetch_add(1, Ordering::Relaxed);
+        RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
             encoder: bun_hpack::Encoder::new(),
             decoder: bun_hpack::Decoder::new(),
-            socket,
-            ctx,
-            hostname: Box::<[u8]>::from(client.connected_url.hostname),
-            port: client.connected_url.get_port_auto(),
+            connection,
+            hostname: Box::<[u8]>::from(hostname),
+            port,
+            transport,
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             verification: client.socket_verification(),
@@ -310,9 +339,7 @@ impl ClientSession {
             conn_send_window: wire::DEFAULT_WINDOW_SIZE as i32,
             conn_unacked_bytes: 0,
             registry_index: Cell::new(u32::MAX),
-        });
-        super::live_sessions.fetch_add(1, Ordering::Relaxed);
-        this
+        })
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
@@ -328,6 +355,7 @@ impl ClientSession {
         &self,
         hostname: &[u8],
         port: u16,
+        transport: Transport,
         ssl_config: Option<*const ssl_config::SSLConfig>,
         pool_id: u64,
     ) -> bool {
@@ -336,13 +364,14 @@ impl ClientSession {
             .as_ref()
             .map(|p| std::ptr::from_ref(p.get()));
         self.port == port
+            && self.transport == transport
             && self.pool.id == pool_id
             && mine == ssl_config
             && strings::eql_long(&self.hostname, hostname)
     }
 
     fn adopt_client(&mut self, mut client: InFlightRequest) {
-        client.register_abort_tracker::<true>(self.socket);
+        on_connection!(self, |socket, _| client.register_abort_tracker(socket));
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -381,7 +410,7 @@ impl ClientSession {
     /// Park a coalesced request until the server's SETTINGS arrive. Abort
     /// is routed via the session socket so `abortByHttpId` can find it.
     fn park(&mut self, mut client: InFlightRequest) {
-        client.register_abort_tracker::<true>(self.socket);
+        on_connection!(self, |socket, _| client.register_abort_tracker(socket));
         self.pending_attach.push(client);
         self.rearm_timeout();
     }
@@ -533,7 +562,9 @@ impl ClientSession {
             HTTPStage::Body
         };
         client.state.response_stage = HTTPStage::Headers;
-        client.trace_socket(self.socket, &mut self.endpoints);
+        on_connection!(self, |socket, _| {
+            client.trace_socket(socket, &mut self.endpoints)
+        });
         client.trace_request_stage();
         stream_ref.client = Some(client);
 
@@ -627,7 +658,7 @@ impl ClientSession {
                 self.ping_cap_armed = true;
             }
         }
-        self.socket.set_timeout(want);
+        on_connection!(self, |socket, _| socket.set_timeout(want));
     }
 
     /// O(1) lookup in the `by_http_id` secondary index. Returns the raw
@@ -726,7 +757,7 @@ impl ClientSession {
 
     pub(crate) fn flush(&mut self) -> Result<bool, Error> {
         // Captured as `bun_ptr::RawSlice` (encapsulated outlives-holder
-        // invariant) so the loop can borrow `self.socket` while still
+        // invariant) so the loop can borrow `self.connection` while still
         // subslicing `write_buffer`. The buffer is not reallocated until
         // `wrote()` after the loop.
         let pending = bun_ptr::RawSlice::new(self.write_buffer.slice());
@@ -736,7 +767,7 @@ impl ClientSession {
         let len = pending.len();
         let mut total: usize = 0;
         while total < len {
-            let wrote = self.socket.write(&pending.slice()[total..]);
+            let wrote = on_connection!(self, |socket, _| socket.write(&pending.slice()[total..]));
             if wrote < 0 {
                 return Err(crate::Error::WriteFailed);
             }
@@ -898,7 +929,8 @@ impl ClientSession {
         // failure → fail_all() while connect() still holds `&mut HTTPContext`,
         // so route through the raw-ptr helper instead of forming a second
         // aliased `&mut NewHTTPContext` via autoref.
-        let registry_ref = unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        let registry_ref =
+            unsafe { on_connection!(self, |_, ctx| NewHTTPContext::unregister_h2_raw(ctx, self)) };
         debug_assert!(registry_ref.is_some(), "h2 session torn down twice");
         for client in core::mem::take(&mut self.pending_attach) {
             client.fail(err);
@@ -917,20 +949,25 @@ impl ClientSession {
 
     fn fail_all(&mut self, err: Error) {
         self.fatal_error = Some(self.fatal_error.unwrap_or(err));
-        let sock = self.socket;
         // RFC 9113 §5.4.1: an endpoint that encounters a connection error
         // SHOULD first send GOAWAY. Best-effort only; the socket may already
         // be dead.
-        if !sock.is_closed_or_has_error() {
+        if !self.is_socket_lost() {
             let mut goaway = [0u8; 8];
             goaway[0..4].copy_from_slice(&0u32.to_be_bytes());
             goaway[4..8].copy_from_slice(&dispatch::error_code_for(err).0.to_be_bytes());
             self.write_frame(wire::FrameType::HTTP_FRAME_GOAWAY, 0, 0, &goaway);
             let _ = self.flush();
         }
-        NewHTTPContext::<true>::mark_socket_as_dead(sock);
+        on_connection!(self, |socket, _| NewHTTPContext::mark_socket_as_dead(
+            socket
+        ));
         self.fail_streams(err);
-        sock.close(bun_uws::CloseKind::Failure);
+        on_connection!(self, |socket, _| socket.close(bun_uws::CloseKind::Failure));
+    }
+
+    fn is_socket_lost(&self) -> bool {
+        on_connection!(self, |socket, _| socket.is_closed_or_has_error())
     }
 
     /// RST_STREAMs (or unparks and fails) the one aborted request; siblings
@@ -1010,11 +1047,12 @@ impl ClientSession {
         // connect() still holds `&mut HTTPContext<true>`, so we MUST NOT
         // materialise a second `&mut NewHTTPContext` from the backref —
         // unregister_h2_raw operates via raw-ptr place projection instead.
-        let registry_ref = unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        let registry_ref =
+            unsafe { on_connection!(self, |_, ctx| NewHTTPContext::unregister_h2_raw(ctx, self)) };
         if registry_ref.is_none() {
             return;
         }
-        if self.can_pool() && !self.socket.is_closed_or_has_error() {
+        if self.can_pool() && !self.is_socket_lost() {
             // Pool stores the live *ClientSession so a later fetch can resume
             // the multiplexed connection; the registry's ref moves to it.
             // ctx back-ref is valid for the session's lifetime. Unlike
@@ -1026,24 +1064,30 @@ impl ClientSession {
             // ancestor frame holds `&mut NewHTTPContext` here and forming one
             // from the backref is sound — route through the centralised
             // [`HTTPClient::ssl_ctx_mut`] accessor (same set-once invariant).
-            HTTPClient::ssl_ctx_mut(self.ctx).release_socket(
-                self.socket,
-                self.did_have_handshaking_error,
-                self.verification,
-                &self.hostname,
-                self.port,
-                self.ssl_config.as_ref(),
-                None,
-                b"",
-                0,
-                0,
-                registry_ref,
-                b"",
-                self.pool,
-                None,
-            );
+            let unix_path: &[u8] = match self.transport {
+                Transport::Tcp => b"",
+                Transport::Unix => &self.hostname,
+            };
+            on_connection!(self, |socket, ctx| {
+                HTTPClient::ssl_ctx_mut(ctx).release_socket(
+                    socket,
+                    self.did_have_handshaking_error,
+                    self.verification,
+                    &self.hostname,
+                    self.port,
+                    self.ssl_config.as_ref(),
+                    None,
+                    b"",
+                    0,
+                    0,
+                    registry_ref,
+                    unix_path,
+                    self.pool,
+                    None,
+                )
+            });
         } else {
-            NewHTTPContext::<true>::close_socket(self.socket);
+            on_connection!(self, |socket, _| NewHTTPContext::close_socket(socket));
         }
     }
 
@@ -1081,7 +1125,7 @@ impl ClientSession {
 
         if stream.headers_ready {
             stream.headers_ready = false;
-            let (result, response) = match client
+            let (mut result, response) = match client
                 .apply_multiplexed_headers(stream.status_code, &mut stream.decoded_headers)
             {
                 Ok(r) => r,
@@ -1097,6 +1141,14 @@ impl ClientSession {
                 return client.do_redirect_multiplexed();
             }
             client.store_metadata(response);
+            if stream.wants_trailers {
+                let declared = client.state.content_length.take();
+                stream.length_before_trailers = match result {
+                    HeaderResult::Finished => Some(0),
+                    HeaderResult::HasBody => declared,
+                };
+                result = HeaderResult::HasBody;
+            }
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
             if result == HeaderResult::Finished
                 || (stream.remote_closed() && stream.body_buffer.is_empty())
@@ -1166,8 +1218,9 @@ impl ClientSession {
     /// §8.1.1 — mismatch is malformed) and finish the request.
     /// `total_body_received` is clamped at content_length by the body handler,
     /// so compare the raw DATA byte count instead — that catches overshoot too.
-    fn finish_stream(stream: &Stream, client: InFlightRequest) {
-        if let Some(cl) = client.state.content_length {
+    fn finish_stream(stream: &mut Stream, mut client: InFlightRequest) {
+        client.state.trailers = stream.trailers.take();
+        if let Some(cl) = (client.state.content_length).or(stream.length_before_trailers) {
             if stream.data_bytes_received != cl as u64 {
                 return client.fail(crate::Error::HTTP2ContentLengthMismatch);
             }

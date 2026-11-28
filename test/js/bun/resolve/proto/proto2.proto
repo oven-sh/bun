@@ -1,0 +1,55 @@
+syntax = "proto2";
+
+package fixture.v2;
+
+enum Closed {
+  ONE = 1;
+  TWO = 2;
+  FOUR = 4;
+}
+
+enum ClosedFromZero {
+  ZERO = 0;
+  FIVE = 5;
+}
+
+message Defaults {
+  optional int32 i32 = 1 [default = -5];
+  optional uint64 u64 = 2 [default = 0xFFFFFFFFFFFFFFFF];
+  optional float f = 3 [default = 0.1];
+  optional double d = 4 [default = -inf];
+  optional double nan = 5 [default = nan];
+  optional string s = 6 [default = "a\"\n\303\251" 'b'];
+  optional bytes by = 7 [default = "\000\xff"];
+  optional Closed closed = 8 [default = TWO];
+  optional bool b = 9 [default = true];
+  optional int32 none = 10;
+}
+
+message Required {
+  required string id = 1;
+  optional Required next = 2;
+}
+
+message Legacy {
+  optional Closed closed = 1;
+  repeated Closed expanded = 2;
+  repeated Closed packed = 3 [packed = true];
+  map<int32, ClosedFromZero> by_number = 4;
+  optional group Result = 5 {
+    optional int32 x = 6;
+    repeated group Item = 7 {
+      optional string name = 8;
+    }
+  }
+  oneof value {
+    Closed chosen = 9;
+    int32 other = 10;
+  }
+  optional string unchecked = 11;
+  extensions 100 to max;
+}
+
+extend Legacy {
+  optional int32 extension = 100;
+}

@@ -3719,10 +3719,7 @@ impl<'h> Resolver<'h> {
             }
             // According to the host, the file with exactly this name is a source file. For a name that TypeScript
             // knows, `a.ts` and `a.d.ts` come before `a.js`, whatever language that is.
-            let is_source_file = ScriptKind::from_file_name(path).is_none()
-                && self.host.script_kind(path).is_some()
-                && self.is_file(path);
-            let resolved_from_file = match is_source_file {
+            let resolved_from_file = match self.is_source_file_to_host_alone(path) {
                 true => Some(path.to_vec()),
                 false => self.file(path, look),
             };
@@ -3895,6 +3892,12 @@ impl<'h> Resolver<'h> {
         self.with_extensions(path, b"", look)
     }
 
+    fn is_source_file_to_host_alone(&self, path: &[u8]) -> bool {
+        ScriptKind::from_file_name(path).is_none()
+            && self.host.script_kind(path).is_some()
+            && self.is_file(path)
+    }
+
     /// `loadModuleFromFileNoImplicitExtensions`: the extension in the specifier is removed, and the
     /// extensions it maps to are tried in its place.
     fn load_module_from_file_no_implicit_extensions(
@@ -3906,6 +3909,9 @@ impl<'h> Resolver<'h> {
         let name = path.strip_suffix(b"/").unwrap_or(path);
         let base = strings::last_index_of_char(name, b'/').map_or(0, |i| i + 1);
         let dot = base + strings::last_index_of_char(&name[base..], b'.')?;
+        if look.typescript && self.is_source_file_to_host_alone(path) {
+            return Some(path.to_vec());
+        }
         // `RemoveFileExtension`: `.d.ts` is removed as a whole.
         let extension = SUPPORTED_DECLARATION_EXTENSIONS
             .into_iter()

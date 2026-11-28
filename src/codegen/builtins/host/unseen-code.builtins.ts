@@ -159,6 +159,8 @@ const prototypesWithoutConstructor = [
   "%FFICallback%.prototype",
   "%FSWatcher%.prototype",
   "%FileInternalReadableStreamSource%.prototype",
+  "%GrpcCall%.prototype",
+  "%GrpcRoute%.prototype",
   "%HTMLBundle%.prototype",
   "%HTMLRewriterTransform%.prototype",
   "%HTTPSServer%.prototype",
@@ -189,6 +191,7 @@ const prototypesWithoutConstructor = [
 
 const moduleNamespaces = [
   "abort-controller",
+  "bun:grpc",
   "bun:jsc",
   "bun:sqlite",
   "bun:test",

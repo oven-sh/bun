@@ -461,7 +461,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     pub(crate) fn register_h2(&mut self, session: RefPtr<h2::ClientSession>) {
-        debug_assert!(SSL && session.registry_index() == u32::MAX);
+        debug_assert!(session.registry_index() == u32::MAX);
         session.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
         self.active_h2_sessions.push(session);
     }
@@ -471,20 +471,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// onto a leader's in-flight TLS connect) never registered a socket,
     /// so it can only be found by scanning here.
     pub(crate) fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
-        if !SSL {
-            return false;
-        }
-        for pc in &mut self.pending_h2_connects {
-            let pos = pc
-                .waiters
-                .iter()
-                .position(|w| w.async_http_id == async_http_id);
-            if let Some(i) = pos {
-                pc.waiters.swap_remove(i).fail(crate::Error::Aborted);
-                return true;
-            }
-        }
-        false
+        h2::PendingConnect::abort_waiter(&mut self.pending_h2_connects, async_http_id)
     }
 
     /// Take `session` out of `active_h2_sessions`, returning the registry's
@@ -960,8 +947,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         None
     }
 
-    pub(crate) fn connect_socket(&mut self, mut client: InFlightRequest) {
+    pub(crate) fn connect_socket(&mut self, client: InFlightRequest) {
         let socket_path = client.unix_socket_path;
+        let Some(mut client) = self.join_h2(client, socket_path, 0, Transport::Unix) else {
+            return;
+        };
         client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
             if let Some(found) = self.existing_socket(
@@ -974,15 +964,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 client.unix_tls_hostname::<SSL>(),
                 0,
                 0,
-                AlpnOffer::H1,
+                client.alpn_offer(),
                 Transport::Unix,
                 client.pool.id,
             ) {
                 let sock = found.socket;
                 debug_assert!(found.tunnel.is_none());
-                debug_assert!(found.h2_session.is_none());
                 client.flags.reused_socket_verification = found.verification;
                 client.allow_retry = true;
+                if let Some(session) = found.h2_session {
+                    return self.resume_h2(session, sock, client);
+                }
                 let slot = Self::ext_slot(&sock).expect("connected");
                 return Self::run_on_socket(client, sock, slot, |c| c.on_reuse::<SSL>(sock));
             }
@@ -1001,6 +993,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
             dead_socket::<SSL>().ptr(),
             false, // dont allow half-open sockets
         );
+        if connected.is_ok() {
+            self.lead_h2_connect(&mut client, socket_path, 0, Transport::Unix);
+        }
         Self::on_connecting(client, connected);
     }
 
@@ -1022,42 +1017,80 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Self::put_request(Self::ext_slot(&socket).expect("connecting"), client);
     }
 
-    /// Connects to `client.connected_url.hostname`.
-    pub(crate) fn connect(&mut self, mut client: InFlightRequest, port: u16) {
-        let hostname = client.connected_url.hostname;
-
-        if SSL {
-            if client.can_offer_h2() {
-                let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
-                // Listed sessions are kept alive by the registry's ref. The
-                // scan only reads; `adopt` runs after the iteration is over
-                // because it may end by unregistering the session it was
-                // given (swap-removing it from this Vec) and releasing it.
-                let reusable = self
-                    .active_h2_sessions
-                    .iter()
-                    .find(|s| {
-                        s.has_headroom()
-                            && s.matches(hostname, port, cfg, client.pool.id)
-                            // Same guard as the pool path (`existing_socket`).
-                            && client.socket_verification().admits(s.verification)
-                    })
-                    .cloned();
-                if let Some(session) = reusable {
-                    return session.adopt(client);
-                }
-                let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
-                for pc in &mut self.pending_h2_connects {
-                    // Same guard as the active-session loop above, applied to
-                    // an in-flight connect before its session exists.
-                    if pc.matches(hostname, port, cfg_nn, client.pool.id)
-                        && client.socket_verification().admits(pc.verification)
-                    {
-                        return pc.waiters.push(client);
-                    }
-                }
+    /// Gives `client` back if it has no HTTP/2 connection to share, established or on its way.
+    fn join_h2(
+        &mut self,
+        client: InFlightRequest,
+        hostname: &[u8],
+        port: u16,
+        transport: Transport,
+    ) -> Option<InFlightRequest> {
+        if !client.can_offer_h2() {
+            return Some(client);
+        }
+        let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
+        // Listed sessions are kept alive by the registry's ref. The
+        // scan only reads; `adopt` runs after the iteration is over
+        // because it may end by unregistering the session it was
+        // given (swap-removing it from this Vec) and releasing it.
+        let reusable = self
+            .active_h2_sessions
+            .iter()
+            .find(|s| {
+                s.has_headroom()
+                    && s.matches(hostname, port, transport, cfg, client.pool.id)
+                    // Same guard as the pool path (`existing_socket`).
+                    && (!SSL || client.socket_verification().admits(s.verification))
+            })
+            .cloned();
+        if let Some(session) = reusable {
+            session.adopt(client);
+            return None;
+        }
+        let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
+        for pc in &mut self.pending_h2_connects {
+            // Same guard as the active-session loop above, applied to
+            // an in-flight connect before its session exists.
+            if pc.matches(hostname, port, transport, cfg_nn, client.pool.id)
+                && (!SSL || client.socket_verification().admits(pc.verification))
+            {
+                pc.waiters.push(client);
+                return None;
             }
         }
+        Some(client)
+    }
+
+    fn resume_h2(
+        &mut self,
+        session: RefPtr<h2::ClientSession>,
+        socket: HTTPSocket<SSL>,
+        client: InFlightRequest,
+    ) {
+        self.register_h2(session.clone());
+        Self::tag_as_h2(socket, session.as_ptr());
+        session.adopt(client);
+    }
+
+    fn lead_h2_connect(
+        &mut self,
+        client: &mut InFlightRequest,
+        hostname: &[u8],
+        port: u16,
+        transport: Transport,
+    ) {
+        if client.can_offer_h2() {
+            let pending = h2::PendingConnect::led_by(client, hostname, port, transport);
+            self.pending_h2_connects.push(pending);
+        }
+    }
+
+    /// Connects to `client.connected_url.hostname`.
+    pub(crate) fn connect(&mut self, client: InFlightRequest, port: u16) {
+        let hostname = client.connected_url.hostname;
+        let Some(mut client) = self.join_h2(client, hostname, port, Transport::Tcp) else {
+            return;
+        };
 
         client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
@@ -1088,11 +1121,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 target_hostname,
                 target_port,
                 proxy_auth_hash,
-                if SSL {
-                    client.alpn_offer()
-                } else {
-                    AlpnOffer::H1
-                },
+                client.alpn_offer(),
                 Transport::Tcp,
                 client.pool.id,
             ) {
@@ -1100,11 +1129,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 client.flags.reused_socket_verification = found.verification;
                 client.allow_retry = true;
                 if let Some(session) = found.h2_session.take() {
-                    debug_assert!(SSL);
-                    h2_session_mut(&session).socket = sock.assume_ssl();
-                    self.register_h2(session.clone());
-                    Self::tag_as_h2(sock, session.as_ptr());
-                    return session.adopt(client);
+                    return self.resume_h2(session, sock, client);
                 }
                 client.trace_socket(sock, &mut found.endpoints);
                 let slot = Self::ext_slot(&sock).expect("connected");
@@ -1138,26 +1163,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
             dead_socket::<SSL>().ptr(),
             false,
         );
-        if SSL {
-            if connected.is_ok() && client.can_offer_h2() {
-                let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref())
-                    .and_then(|p| NonNull::new(p.cast_mut()));
-                let mut pc = h2::PendingConnect::new(h2::PendingConnect {
-                    hostname: Box::<[u8]>::from(hostname),
-                    port,
-                    ssl_config: cfg,
-                    verification: client.socket_verification(),
-                    pool_id: client.pool.id,
-                    ..Default::default()
-                });
-                // `client.pending_h2 = pc` stores a *borrowed* backref into the
-                // Vec-owned allocation so `resolve_pending_h2` can dispatch
-                // coalesced waiters once ALPN resolves. Ownership stays with
-                // `pending_h2_connects`; the Box address is stable across the
-                // Vec push.
-                client.pending_h2 = Some(NonNull::from(&mut *pc));
-                self.pending_h2_connects.push(pc);
-            }
+        if connected.is_ok() {
+            self.lead_h2_connect(&mut client, hostname, port, Transport::Tcp);
         }
         Self::on_connecting(client, connected);
     }

@@ -7,10 +7,30 @@
 #include <wtf/Vector.h>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 namespace uWS {
 
 struct Http2Response;
+
+/* Fields buffered until they go out as one HEADERS frame. Names are
+ * lowercased on append (RFC 9113 §8.2.1). */
+struct Http2FieldSection {
+    WTF::Vector<char, 256> buf;
+    WTF::Vector<HeaderRef, 16> refs;
+
+    void append(const char *name, unsigned nlen, const char *value, unsigned vlen) {
+        size_t off = buf.size();
+        buf.grow(off + nlen + vlen);
+        char *dst = buf.mutableSpan().data() + off;
+        for (unsigned i = 0; i < nlen; i++) {
+            char c = name[i];
+            dst[i] = (char)(c | ((unsigned char)(c - 'A') < 26 ? 0x20 : 0));
+        }
+        memcpy(dst + nlen, value, vlen);
+        refs.append({(uint32_t) off, nlen, (uint32_t)(off + nlen), vlen});
+    }
+};
 
 /* Per-stream response state. Same shape and bit values as
  * Http3ResponseData / HttpResponseData so the C ABI and uws_res_state()
@@ -40,11 +60,10 @@ struct Http2ResponseData {
     OnDataCallback inStream = nullptr;
     OnTimeoutCallback onTimeout = nullptr;
 
-    /* Outgoing headers buffered until the first body write/end so they go
-     * out as one HEADERS frame. Names are lowercased on append (RFC 9113
-     * §8.2.1). */
-    WTF::Vector<char, 256> hdrBuf;
-    WTF::Vector<HeaderRef, 16> hdrs;
+    /* Sent by the first body write/end. */
+    Http2FieldSection headers;
+    /* If there are any, they carry END_STREAM. */
+    std::unique_ptr<Http2FieldSection> trailers;
 
     /* Body bytes the stream/connection window or socket couldn't take yet. */
     BackPressure backpressure;
@@ -52,18 +71,6 @@ struct Http2ResponseData {
 
     uint64_t offset = 0;
     uint8_t state = HTTP_RESPONSE_PENDING;
-
-    void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
-        size_t off = hdrBuf.size();
-        hdrBuf.grow(off + nlen + vlen);
-        char *dst = hdrBuf.mutableSpan().data() + off;
-        for (unsigned i = 0; i < nlen; i++) {
-            char c = name[i];
-            dst[i] = (char)(c | ((unsigned char)(c - 'A') < 26 ? 0x20 : 0));
-        }
-        memcpy(dst + nlen, value, vlen);
-        hdrs.append({(uint32_t) off, nlen, (uint32_t)(off + nlen), vlen});
-    }
 };
 
 }

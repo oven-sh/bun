@@ -181,6 +181,7 @@ use crate::socket::upgraded_duplex::UpgradedDuplex;
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
 use crate::socket::{DuplexUpgradeContext, DuplexUpgradeContextFree};
 
+use crate::server::grpc_call::GrpcCall;
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
@@ -1138,6 +1139,11 @@ pub(crate) unsafe fn fire_timer(
         EventLoopTimerTag::WorkerWaitsForRoom => {
             feature_timer_arm!([WorkerConstructor], WebWorker, room_timer, |c, _now, vm| {
                 (*c).on_room_timer(vm)
+            })
+        }
+        EventLoopTimerTag::GrpcDeadline => {
+            feature_timer_arm!([ServeHttp2], GrpcCall, deadline, |c, _now, _vm| {
+                RefPtr::init_ref(c).on_deadline()
             })
         }
         EventLoopTimerTag::GcRepeating => {

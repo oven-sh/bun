@@ -173,7 +173,7 @@ const BUILT_IN: &[u8] = br#"[
             "parserOptions": { "ecmaFeatures": { "jsx": true } }
         },
         "settings": {
-            "import/core-modules": ["bun", "bun:ffi", "bun:jsc", "bun:sqlite", "bun:test"],
+            "import/core-modules": ["bun", "bun:ffi", "bun:grpc", "bun:jsc", "bun:sqlite", "bun:test"],
             "import/extensions": [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"],
             "import/external-module-folders": ["node_modules", "node_modules/@types"],
             "import/parsers": { "@typescript-eslint/parser": [".ts", ".mts", ".cts", ".tsx"] },

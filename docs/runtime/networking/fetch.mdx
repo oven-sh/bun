@@ -302,10 +302,15 @@ const response = await fetch("http://example.com", {
   // Disable connection reuse for this request
   keepalive: false,
 
+  // Require an HTTP version: "http1.1", "http2" or "http3"
+  protocol: "http2",
+
   // Debug logging level
   verbose: true, // or "curl" for more detailed output
 });
 ```
+
+With `protocol: "http2"` and an `http://` URL, Bun starts the connection with the HTTP/2 preface ("prior knowledge"). The request fails with `HTTP2Unsupported` if the server answers with HTTP/1.1, or if the request has to go through a proxy.
 
 #### Incomplete compressed responses
 

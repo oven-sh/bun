@@ -36,6 +36,9 @@ pub(crate) mod jsc {
 }
 
 // ─── compiling submodules ────────────────────────────────────────────────────
+pub(crate) mod grpc_binding;
+#[path = "GrpcCall.rs"]
+pub(crate) mod grpc_call;
 #[path = "HTTPStatusText.rs"]
 pub(crate) mod http_status_text;
 pub(crate) use http_status_text as HTTPStatusText;
@@ -2043,9 +2046,44 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let websocket_ptr = self.config.get().websocket.as_ref();
         let user_routes = self.user_routes.get();
 
+        if let Some(h2_app) = self.h2_app()
+            && user_routes.iter().any(|it| it.route.grpc.is_some())
+            && !(user_routes.iter())
+                .any(|it| it.route.grpc.is_some() && it.route.path.as_bytes() == b"/*")
+        {
+            // A wildcard with a name of its own goes before `/*` and is not replaced by it.
+            const BEFORE_STAR: &[u8] = b"/*grpc";
+            let h2_app = bun_opaque::opaque_deref_mut(h2_app);
+            h2_app.any(BEFORE_STAR, self_ptr, Self::on_unknown_grpc_method);
+            let star_is_registered_by_method =
+                user_routes.iter().any(|it| {
+                    it.route.path.as_bytes() == b"/*" && it.route.method.specific().is_some()
+                }) || self.config.get().static_routes.iter().any(|it| {
+                    &*it.path == b"/*"
+                        && matches!(it.method, server_config::MethodOptional::Method(_))
+                });
+            if star_is_registered_by_method {
+                h2_app.post(BEFORE_STAR, self_ptr, Self::on_unknown_grpc_method);
+            }
+        }
+
         for user_route in user_routes {
             let ud: *mut c_void = core::ptr::from_ref(user_route).cast_mut().cast();
             let path = user_route.route.path.as_bytes();
+            if user_route.route.grpc.is_some() {
+                app.post(path, Some(trampoline::on_grpc_over_http1::<SSL>), ud);
+                if Self::HAS_H3
+                    && let Some(h3_app) = self.h3_app()
+                {
+                    bun_opaque::opaque_deref_mut(h3_app).post(path, self_ptr, |_, _, resp| {
+                        grpc_call::refuse_version(core::ptr::from_mut(resp).into());
+                    });
+                }
+                if let Some(h2_app) = self.h2_app() {
+                    bun_opaque::opaque_deref_mut(h2_app).post(path, ud.cast(), Self::on_grpc_call);
+                }
+                continue;
+            }
             let is_star_path = path == b"/*";
             if is_star_path {
                 has_any_user_route_for_star_path = true;
@@ -3009,6 +3047,14 @@ mod trampoline {
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
+    }
+
+    pub(super) extern "C" fn on_grpc_over_http1<const SSL: bool>(
+        res: *mut uws_res,
+        _req: *mut UwsRequest,
+        _user_data: *mut c_void,
+    ) {
+        grpc_call::refuse_version(any_response_from::<SSL>(res.cast()));
     }
 
     pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(

@@ -1665,12 +1665,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn invalidate(
         &mut self,
         paths: &[Box<[u8]>],
+        is_schema: &dyn Fn(&[u8]) -> bool,
         entry_points: &mut EntryPointList,
     ) -> Result<(), crate::Error> {
-        for path in paths {
-            let Some(index) = self.bundled_files.get_index(path) else {
-                continue;
-            };
+        let of_paths = paths.iter().filter(|path| !is_schema(path));
+        let mut changed: Vec<usize> = of_paths
+            .filter_map(|path| self.bundled_files.get_index(path))
+            .collect();
+        // What a schema compiles to depends on the schemas it imports, even if it fails.
+        if paths.iter().any(|path| is_schema(path)) {
+            let files = self.bundled_files.keys().iter().enumerate();
+            changed.extend(files.filter(|(_, path)| is_schema(path)).map(|(at, _)| at));
+        }
+        for index in changed {
             self.stale_files.set(index);
             // Store the graph-owned key, not the incoming `path` (which may be
             // freed before `entry_points` is consumed).

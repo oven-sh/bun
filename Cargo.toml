@@ -58,6 +58,7 @@ members = [
   "src/clap_macros",
   "src/crash_handler",
   "src/cron",
+  "src/protobuf",
   "src/csrf",
   "src/css_jsc",
   "src/dns",
@@ -443,6 +444,7 @@ bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
 bun_crash_handler = { path = "src/crash_handler" }
 bun_cron = { path = "src/cron" }
+bun_protobuf = { path = "src/protobuf" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }

@@ -1,0 +1,296 @@
+---
+title: gRPC
+description: Import a .proto file and serve or call its services with Bun.serve and fetch
+---
+
+<Warning>gRPC support is experimental.</Warning>
+
+Import a `.proto` file to get its messages, enums and services. Each service has a `Client` class that uses `fetch()`, and a `routes()` function for `Bun.serve()`. You don't need `protoc` or a generation step.
+
+```proto helloworld.proto
+syntax = "proto3";
+
+package helloworld;
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+service Greeter {
+  rpc SayHello(HelloRequest) returns (HelloReply);
+}
+```
+
+```ts server.ts icon="/icons/typescript.svg"
+import * as helloworld from "./helloworld.proto";
+
+Bun.serve({
+  port: 50051,
+  http2: true,
+  routes: helloworld.Greeter.routes({
+    sayHello: request => ({ message: `Hello ${request.name}` }),
+  }),
+});
+```
+
+```ts client.ts icon="/icons/typescript.svg"
+import * as helloworld from "./helloworld.proto";
+
+const client = new helloworld.Greeter.Client("http://localhost:50051");
+const reply = await client.sayHello({ name: "Bun" });
+console.log(reply.message); // "Hello Bun"
+```
+
+Named imports such as `import { Greeter } from "./helloworld.proto"` work too.
+
+Bun compiles the schema to a TypeScript module with an encoder and a decoder for each message, and a method and a route for each `rpc`. `bun run`, `bun test`, `bun build`, `bun build --compile` and `bun build --compile --aot` all treat that module like code you wrote. The bundler removes the messages you don't use, and `--aot` compiles the rest to machine code. `Client` and `routes()` need `--target=bun`.
+
+---
+
+## Server
+
+`routes(server, options)` returns an object for [`routes`](/runtime/http/routing). The server needs [`http2: true`](/runtime/http/server). Spread the object to serve several services, or other routes, on one port.
+
+```ts
+Bun.serve({
+  http2: true,
+  tls: { key: Bun.file("./key.pem"), cert: Bun.file("./cert.pem") },
+  routes: {
+    ...Greeter.routes(greeter),
+    ...Chat.routes(chat),
+    "/health": new Response("OK"),
+  },
+});
+```
+
+The path of a method is `/package.Service/Method`, so services from different packages can have the same name. On a server that has gRPC routes, a call of an unknown service or method fails with `UNIMPLEMENTED`. It does not reach `fetch` or a `/*` route.
+
+Bun matches the path, reads the messages, and enforces limits and deadlines in native code. It creates no `Request` or `Response` for a call.
+
+A stream of requests is an async iterable. For a stream of responses, return an iterable or an async iterable.
+
+```ts
+RouteGuide.routes({
+  // rpc GetFeature(Point) returns (Feature)
+  async getFeature(point) {
+    return await find(point);
+  },
+  // rpc ListFeatures(Rectangle) returns (stream Feature)
+  async *listFeatures(rectangle) {
+    for (const feature of inside(rectangle)) yield feature;
+  },
+  // rpc RecordRoute(stream Point) returns (RouteSummary)
+  async recordRoute(points) {
+    let pointCount = 0;
+    for await (const point of points) pointCount++;
+    return { pointCount };
+  },
+  // rpc RouteChat(stream RouteNote) returns (stream RouteNote)
+  async *routeChat(notes) {
+    for await (const note of notes) yield note;
+  },
+});
+```
+
+Bun asks for the next response only when the client has room for it. A call of a method that you leave out fails with `UNIMPLEMENTED`.
+
+To write the handlers as a class, implement the `Server` interface of the service.
+
+```ts
+class Greetings implements Greeter.Server {
+  sayHello(request: HelloRequest) {
+    return { message: `Hello ${request.name}` };
+  }
+}
+
+Greeter.routes(new Greetings());
+```
+
+### Context
+
+The second argument of a handler describes the call.
+
+| Member             | Description                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `headers`          | The metadata from the client                                                                                      |
+| `responseHeaders`  | Metadata to send before the first message                                                                         |
+| `responseTrailers` | Metadata to send with the status                                                                                  |
+| `signal`           | Aborts with a `GrpcError` when the client cancels the call, the deadline passes, or Bun refuses a request message |
+| `path`             | For example `"/helloworld.Greeter/SayHello"`                                                                      |
+| `host`             | The host and port that the client asked for                                                                       |
+| `server`           | The `Server`                                                                                                      |
+| `requestIP()`      | The address of the client                                                                                         |
+| `timeout(seconds)` | Replaces `idleTimeout` for this call                                                                              |
+
+Metadata is a `Headers` object. The value of a key that ends in `-bin` is base64, which you encode and decode yourself.
+
+### Errors
+
+Throw a `GrpcError` to choose the status.
+
+```ts
+import { GrpcError, Status } from "bun:grpc";
+
+throw new GrpcError(Status.NOT_FOUND, `No user has the id ${id}`, {
+  trailers: { "x-request-id": requestId },
+});
+```
+
+A message longer than 4 KiB is cut short. If a handler lets the error of a call to another server propagate, the client receives its code and message, and not its trailers.
+
+For any other error, the client receives `UNKNOWN` without the message, and Bun prints the error with `console.error`. Pass `onError` to handle it yourself. If it returns a `GrpcError`, the client receives that.
+
+```ts
+Greeter.routes(greeter, {
+  onError(error, context) {
+    if (error instanceof ValidationError) return new GrpcError(Status.INVALID_ARGUMENT, error.message);
+    report(error);
+  },
+});
+```
+
+### Limits
+
+`maxReceiveMessageLength` limits each request message, after decompression. The default is 4 MiB.
+
+`maxRequestBodySize` also limits each request message. It does not limit their sum, so a stream of requests can be any length.
+
+[`idleTimeout`](/runtime/http/server#idletimeout) closes a connection on which no call has sent or received a message for 10 seconds. A call that has a deadline extends that to its deadline, up to 255 seconds. For a call that can be silent for longer, turn the timeout off in its handler.
+
+```ts
+Greeter.routes({
+  async *watch(request, context) {
+    context.timeout(0);
+    yield* changes(context.signal);
+  },
+});
+```
+
+---
+
+## Client
+
+`new Client(url, options)` takes an `https://` URL, or an `http://` URL for HTTP/2 without TLS. Calls to one origin share connections.
+
+```ts
+const feature = await client.getFeature({ latitude: 1, longitude: 2 });
+
+for await (const feature of client.listFeatures(rectangle)) {
+  console.log(feature.name);
+}
+
+const summary = await client.recordRoute([pointA, pointB]);
+
+for await (const note of client.routeChat(notes())) {
+  console.log(note.message);
+}
+```
+
+A call that streams responses starts when you ask for the first one. Leaving the loop cancels the call.
+
+A call that fails rejects with a `GrpcError`. If the iterable of requests throws, Bun cancels the call and rejects with that error. Bun does not retry a call that the server has started.
+
+### Options
+
+| Client option             | Description                                                                |
+| ------------------------- | -------------------------------------------------------------------------- |
+| `headers`                 | Metadata for every call                                                    |
+| `timeout`                 | The default timeout. Without one, a call has no deadline                   |
+| `tls`                     | As for [`fetch()`](/runtime/networking/fetch#tls)                          |
+| `unix`                    | The path of a Unix socket. Requires an `http://` URL                       |
+| `maxReceiveMessageLength` | The limit for each response message, after decompression. 4 MiB by default |
+| `fetch`                   | Sends each request. Must return the `Response` from Bun's `fetch()`        |
+
+```ts
+await client.sayHello(
+  { name: "Bun" },
+  {
+    headers: { authorization: `Bearer ${token}` },
+    timeout: 1000, // milliseconds, DEADLINE_EXCEEDED after that
+    signal: controller.signal, // CANCELLED when it aborts
+    onHeaders(headers) {},
+    onTrailers(trailers) {},
+  },
+);
+```
+
+Use `fetch` to change every request, or to give the client its own connections.
+
+```ts
+using session = new Bun.FetchSession();
+
+const client = new Greeter.Client(url, {
+  async fetch(url, init) {
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${await token()}`);
+    return session.fetch(url, { ...init, headers });
+  },
+});
+```
+
+---
+
+## Messages
+
+Each message has `encode()` and `decode()`. They don't depend on Bun, so they work in bundles for browsers and Node.js.
+
+```ts
+import { HelloRequest } from "./helloworld.proto";
+
+const bytes: Uint8Array = HelloRequest.encode({ name: "Bun" });
+const message: HelloRequest = HelloRequest.decode(bytes);
+```
+
+`encode()` takes a `HelloRequest.Init`, in which every field but a `required` one is optional. It throws a `TypeError` for a value that does not fit its field. `decode()` returns a plain object that has every field, and throws a `RangeError` for malformed bytes.
+
+| Schema                                            | TypeScript                                          |
+| ------------------------------------------------- | --------------------------------------------------- |
+| `double`, `float` and 32-bit integers             | `number`                                            |
+| 64-bit integers                                   | `bigint`. `encode()` also takes a safe integer      |
+| `bool`, `string`, `bytes`                         | `boolean`, `string`, `Uint8Array`                   |
+| A message field, or a scalar that tracks presence | `T \| undefined`                                    |
+| A field with `[default = ...]`                    | `T`, set to the default if the field is absent      |
+| `repeated T`                                      | `T[]`                                               |
+| `map<K, V>`                                       | An object without a prototype, keyed by `String(K)` |
+| `oneof choice`                                    | `choice: { case, value } \| undefined`              |
+| `enum Color`                                      | A `Color` object and a `Color` type of numbers      |
+| `message Outer { message Inner {} }`              | `Outer` and `Outer_Inner`                           |
+
+Fields and methods are in `lowerCamelCase`. A name that collides with another name, or with a property that objects inherit such as `constructor`, ends in `$`.
+
+### Imports
+
+Bun looks for an imported schema in the directory of the importing file, then in each directory above it. The well-known types `any`, `api`, `duration`, `empty`, `field_mask`, `source_context`, `struct`, `timestamp`, `type` and `wrappers` are built in, as plain messages. An import that is not found is an error only if a type is missing, so files that declare only options, such as `google/api/annotations.proto`, can be absent.
+
+### Types in your editor
+
+`bun check`, `bun build --check` and `--aot` read the types from the schema. `bun check` prefers a `.proto.d.ts` file beside it. `tsc` and editors need declaration files. Write them with `--dts`, and add the directory to `rootDirs`.
+
+```sh terminal icon="terminal"
+bun build --dts --target=bun --root . --outdir .types ./protos/*.proto
+```
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "rootDirs": [".", "./.types"]
+  },
+  "exclude": [".types"]
+}
+```
+
+---
+
+## Limitations
+
+- `decode()` drops unknown fields and extensions. Custom options have no effect.
+- There is no JSON mapping, text format or descriptor, so there is no server reflection.
+- Bun accepts messages compressed with `gzip` or `deflate`, and does not compress what it sends.
+- The client ignores proxy environment variables and has no load balancing, retry policy or keepalive pings.
+- An open call counts toward the [limit on simultaneous `fetch()` requests](/runtime/networking/fetch#simultaneous-connection-limit).
+- Like other HTTP/2 servers, `Bun.serve()` closes a connection whose client cancels more than 1000 calls in a burst, or more than 33 per second after that.
+- gRPC-Web and the Connect protocol are not supported.

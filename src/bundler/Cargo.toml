@@ -48,6 +48,7 @@ lol_html.workspace = true
 bun_md.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
+bun_protobuf.workspace = true
 bun_perf.workspace = true
 bun_sema.workspace = true
 bun_sema_driver.workspace = true

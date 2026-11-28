@@ -423,7 +423,8 @@ impl<'a> LoadHost<'a> {
         let extra_extensions = load.loaders.iter().filter_map(|(extension, loader)| {
             let kind = script_kind_of(*loader)?;
             let file_name = [b"x", extension.as_slice()].concat();
-            let is_extra = ScriptKind::from_file_name(&file_name).is_none();
+            let is_extra =
+                *loader != Loader::Proto && ScriptKind::from_file_name(&file_name).is_none();
             is_extra.then(|| (extension.clone(), kind))
         });
         LoadHost {
@@ -788,6 +789,12 @@ impl<'a> LoadHost<'a> {
         contains(&self.background_reads.lock(), path)
     }
 
+    fn is_source_as_on_disk(&self, path: &[u8]) -> bool {
+        !self.plugins.was_read(path)
+            && !self.is_background_read(path)
+            && self.default_loader(path) != Loader::Proto
+    }
+
     fn refuse(&self, feature: &[u8]) {
         let messages = self.input.messages;
         messages.with_log(|log| log_diagnostic(log, Code::UnsupportedOption, &[feature]));
@@ -957,7 +964,7 @@ impl Host for LoadHost<'_> {
         }
         let path = self.modules_with_queries.file_behind(path);
         let is_on_disk = matches!(self.served_by(path), ServedBy::Disk);
-        if is_on_disk && !self.plugins.was_read(path) && !self.is_background_read(path) {
+        if is_on_disk && self.is_source_as_on_disk(path) {
             return self.disk.read_source(path);
         }
         if self.loader_in_place_of_typed_file(path).is_some() {
@@ -980,9 +987,7 @@ impl Host for LoadHost<'_> {
         let path = self.modules_with_queries.file_behind(path);
         match self.served_by(path) {
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Some(FileStamp::IMMUTABLE),
-            ServedBy::Disk if !self.plugins.was_read(path) && !self.is_background_read(path) => {
-                self.disk.file_stamp(path)
-            }
+            ServedBy::Disk if self.is_source_as_on_disk(path) => self.disk.file_stamp(path),
             _ => None,
         }
     }
@@ -1327,7 +1332,8 @@ impl CodeHost for LoadHost<'_> {
         }
         let text = self.read(path);
         let loader = self.default_loader(path);
-        let is_code = text.is_some_and(|text| parses_as_program(path, &text, loader));
+        let is_code = text
+            .is_some_and(|text| loader == Loader::Proto || parses_as_program(path, &text, loader));
         let mut asked = self.files_asked_whether_code.lock();
         asked.insert(path.to_vec(), is_code);
         is_code
@@ -1693,10 +1699,11 @@ impl CodeHost for LoadHost<'_> {
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
             // The text was read as the file's name says, with its byte order mark taken off.
             let reads_raw_bytes = crate::load::loaders::reads_raw_bytes;
+            let default_loader = self.default_loader(path);
             let is_decoded = !is_from_plugin
                 && !is_background_read
-                && reads_raw_bytes(loader)
-                && !reads_raw_bytes(self.default_loader(path));
+                && (default_loader == Loader::Proto
+                    || reads_raw_bytes(loader) && !reads_raw_bytes(default_loader));
             let file = self.modules_with_queries.file_behind(path);
             let bytes = is_decoded
                 .then(|| self.plugins.read_file(file, loader))
@@ -1808,6 +1815,20 @@ impl CodeHost for LoadHost<'_> {
                     ..ParsedSource::new(SourceKind::Program, Loader::Js)
                 })),
             };
+        };
+        let is_read_as_schema =
+            plugin_loader.unwrap_or_else(|| self.default_loader(path)) == Loader::Proto;
+        if is_read_as_schema != (loader == Loader::Proto) {
+            let what = b"a \"type\" attribute that decides whether a file is a Protocol Buffers schema. Use --loader";
+            self.refuse_file(what, path);
+        }
+        let loader = match loader {
+            Loader::Proto => {
+                let file = self.modules_with_queries.file_behind(path);
+                self.plugins.say_why_schema_failed(file);
+                Loader::Ts
+            }
+            loader => loader,
         };
         let compile_options = CompileParseOptions {
             path,

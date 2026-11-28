@@ -1,0 +1,30 @@
+// Copyright 2008 Google Inc. BSD-3-Clause: https://github.com/protocolbuffers/protobuf/blob/main/LICENSE
+syntax = "proto3";
+package google.protobuf;
+message DoubleValue {
+  double value = 1;
+}
+message FloatValue {
+  float value = 1;
+}
+message Int64Value {
+  int64 value = 1;
+}
+message UInt64Value {
+  uint64 value = 1;
+}
+message Int32Value {
+  int32 value = 1;
+}
+message UInt32Value {
+  uint32 value = 1;
+}
+message BoolValue {
+  bool value = 1;
+}
+message StringValue {
+  string value = 1;
+}
+message BytesValue {
+  bytes value = 1;
+}

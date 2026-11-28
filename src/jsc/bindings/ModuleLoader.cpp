@@ -346,6 +346,8 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
                     loader = BunLoaderTypeMD;
                 } else if (loaderString == "xml"_s) {
                     loader = BunLoaderTypeXML;
+                } else if (loaderString == "proto"_s) {
+                    loader = BunLoaderTypeProto;
                 } else if (loaderString == "text"_s) {
                     loader = BunLoaderTypeText;
                 } else if (loaderString == "css"_s) {
@@ -356,7 +358,7 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
     }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"text\", \"md\", or \"css\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"text\", \"md\", \"proto\", or \"css\""_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;

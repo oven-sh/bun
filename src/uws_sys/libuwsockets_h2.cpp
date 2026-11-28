@@ -67,6 +67,13 @@ H2_ROUTE(trace, trace)
 H2_ROUTE(any, any)
 #undef H2_ROUTE
 
+void uws_h2_req_for_each_header(uws_h3_req_t* req, void (*handler)(const char*, size_t, const char*, size_t, void*), void* user_data)
+{
+    ((Http2Request*)req)->forEachHeader([&](std::string_view name, std::string_view value) {
+        handler(name.data(), name.size(), value.data(), value.size(), user_data);
+    });
+}
+
 /* ───── response ───── */
 
 int uws_h2_res_state(uws_h2_res_t* res) { return ((Http2Response*)res)->getHttpResponseData()->state; }
@@ -116,6 +123,7 @@ void uws_h2_res_end_without_body(uws_h2_res_t* res, bool close_connection)
 }
 
 void uws_h2_res_grow_request_window(uws_h2_res_t* res) { ((uWS::Http2Response*)res)->growReceiveWindow(); }
+void uws_h2_res_hold_request_window(uws_h2_res_t* res, bool hold) { ((Http2Response*)res)->holdReceiveWindow(hold); }
 void uws_h2_res_pause(uws_h2_res_t* res) { ((Http2Response*)res)->pause(); }
 void uws_h2_res_resume(uws_h2_res_t* res) { ((Http2Response*)res)->resume(); }
 void uws_h2_res_write_continue(uws_h2_res_t* res) { ((Http2Response*)res)->writeContinue(); }
@@ -129,6 +137,12 @@ void uws_h2_res_write_header(uws_h2_res_t* res, const char* key, size_t key_len,
     const char* value, size_t value_len)
 {
     ((Http2Response*)res)->writeHeader(h2sv(key, key_len), h2sv(value, value_len));
+}
+
+void uws_h2_res_write_trailer(uws_h2_res_t* res, const char* key, size_t key_len,
+    const char* value, size_t value_len)
+{
+    ((Http2Response*)res)->writeTrailer(h2sv(key, key_len), h2sv(value, value_len));
 }
 
 void uws_h2_res_write_header_int(uws_h2_res_t* res, const char* key, size_t key_len, uint64_t value)

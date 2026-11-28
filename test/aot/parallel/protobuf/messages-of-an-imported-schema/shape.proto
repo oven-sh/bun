@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "point.proto";
+
+enum Kind {
+  NONE = 0;
+  NEGATIVE = -1;
+}
+
+message Shape {
+  string name = 1;
+  Kind kind = 2;
+  int64 id = 3;
+  double area = 4;
+  uint32 size = 5;
+  repeated Point points = 6;
+  repeated float weights = 7;
+  map<int32, string> labels = 8;
+  oneof fill {
+    string color = 9;
+    Shape inner = 10;
+  }
+  bytes raw = 11;
+  google.protobuf.Timestamp made = 12;
+}

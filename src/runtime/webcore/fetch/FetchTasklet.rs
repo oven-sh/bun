@@ -605,6 +605,9 @@ impl FetchTasklet {
 
         // body can be marked as used but we still need to pipe the data
         if !self.result.has_more {
+            if let Some(response) = self.native_response.get().as_deref() {
+                response.trailers.set(self.result.trailers.take());
+            }
             // Unhook before the final delivery so it cannot signal a producer that is done;
             // release after it so the bytes land in memory we still pin.
             if let Some(bytes) = self.response_stream.take() {
@@ -1865,6 +1868,7 @@ impl FetchTasklet {
     fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
         let response = RefPtr::new(self.to_response());
+        response.trailers.set(self.result.trailers.take());
         // The fetch() promise is about to resolve; from here the paused
         // transport should not by itself keep the event loop alive. The body
         // consumer hooks (`on_start_streaming_http_response_body_callback`,

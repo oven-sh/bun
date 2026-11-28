@@ -172,6 +172,7 @@ dependencies = [
  "bun_js_parser",
  "bun_options_types",
  "bun_paths",
+ "bun_protobuf",
  "bun_react_compiler",
  "bun_removable_features",
  "bun_resolve_builtins",
@@ -355,6 +356,7 @@ dependencies = [
  "bun_parsers",
  "bun_paths",
  "bun_perf",
+ "bun_protobuf",
  "bun_ptr",
  "bun_react_compiler",
  "bun_removable_features",
@@ -1531,6 +1533,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_protobuf"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_core",
+ "bun_paths",
+ "bun_sys",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
@@ -1820,6 +1834,7 @@ dependencies = [
  "bun_core",
  "bun_parsers",
  "bun_paths",
+ "bun_protobuf",
  "bun_sema",
  "bun_sema_parser",
  "bun_sema_standalone",

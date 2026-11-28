@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+// Ends a comment */ in TypeScript.
+message Object {
+  string constructor = 1;
+  string to_string = 2;
+  string then = 3;
+  string __proto__ = 4;
+  string class = 5;
+  string _1 = 6;
+}
+
+message default {
+  Object value = 1;
+}
+
+message A {
+  message B {
+    int32 nested = 1;
+  }
+}
+
+message A_B {
+  int32 flat = 1;
+}
+
+message Empty {}
+
+enum Uint8Array {
+  toString = 0;
+}
+
+message Symbol {
+  map<string, string> entries = 1;
+}
+
+message Client {}
+
+message Server {}
+
+message request {}
+
+message options {}
+
+service Promise {
+  rpc Client(stream .Client) returns (stream Server);
+  rpc Channel(request) returns (options);
+}
+
+service Routes {
+  rpc Routes(Empty) returns (Empty);
+}
+
+service Names {
+  rpc GetHTTPThing(google.protobuf.Empty) returns (Empty);
+  rpc snake_case(stream Object) returns (stream A.B);
+  rpc Then(A_B) returns (A_B);
+}

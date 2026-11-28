@@ -99,6 +99,8 @@ pub(crate) struct PluginModules<'a> {
     deferred: Guarded<Vec<DeferredModule>>,
     holds_failures: AtomicBool,
     failed_loads: Guarded<Vec<(Vec<u8>, Log)>>,
+    /// The TypeScript for what has the loader `Proto`, or the error until `say_why_schema_failed` takes it.
+    schemas: ShardedMap<Vec<u8>, OnceLock<Result<Vec<u8>, Guarded<Option<Log>>>>>,
 }
 
 impl<'a> PluginModules<'a> {
@@ -108,6 +110,7 @@ impl<'a> PluginModules<'a> {
             self.modules,
             self.virtual_modules,
             self.paths_asked_for_load_plugin,
+            self.schemas,
         ))
     }
 
@@ -134,6 +137,7 @@ impl<'a> PluginModules<'a> {
             deferred: Guarded::new(Vec::new()),
             holds_failures: AtomicBool::new(false),
             failed_loads: Guarded::new(Vec::new()),
+            schemas: ShardedMap::default(),
         }
     }
 
@@ -263,7 +267,54 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn read(&self, path: &[u8], default_loader: Loader) -> ModuleText {
-        self.read_from_disk_as(path, default_loader, default_loader)
+        match self.read_from_disk_as(path, default_loader, default_loader) {
+            ModuleText::Text(text) => ModuleText::Text(self.compile_if_schema(path, text)),
+            other => other,
+        }
+    }
+
+    fn compile_if_schema(&self, path: &[u8], text: Cow<'static, [u8]>) -> Cow<'static, [u8]> {
+        if !(self.loaded(path)).is_some_and(|module| module.loader == Loader::Proto) {
+            return text;
+        }
+        let cell = match self.schemas.get_ref(path) {
+            Some(cell) => cell,
+            None => self.schemas.insert_ref(path.to_vec(), OnceLock::new()),
+        };
+        let compiled = cell.get_or_init(|| {
+            let read = |path: &[u8]| match self.disk.read(&from_native(path)) {
+                Some(text) => Ok(Some(text.into_owned())),
+                None => bun_protobuf::read_from_disk(path),
+            };
+            let mut log = Log::init();
+            let options = bun_protobuf::Options {
+                target: bun_protobuf::Target::Bun,
+                read: &read,
+                is_schema_by_name: &|_| true,
+            };
+            bun_protobuf::compile_or_log(self.provider_path(path), &text, &options, &mut log)
+                .ok_or_else(|| Guarded::new(Some(log)))
+        });
+        match compiled {
+            Ok(module) => Cow::Owned(module.clone()),
+            Err(_) => Cow::Borrowed(b"export {};"),
+        }
+    }
+
+    /// For who loads `path` as a schema. Who loads it as text or as a file has no use for the error.
+    pub(crate) fn say_why_schema_failed(&self, path: &[u8]) {
+        if let Some(Err(log)) = self.schemas.get_ref(path).and_then(OnceLock::get)
+            && let Some(log) = log.lock().take()
+        {
+            self.say_of_load(path, true, log);
+        }
+    }
+
+    fn say_of_load(&self, path: &[u8], has_failed: bool, mut log: Log) {
+        match has_failed && self.holds_failures.load(atomic::Ordering::Relaxed) {
+            true => self.failed_loads.lock().push((path.to_vec(), log)),
+            false => self.messages.say(&mut log),
+        }
     }
 
     /// What a plugin answers for a file that is carried unparsed, else the file's own bytes. The plugin is told the loader
@@ -293,10 +344,7 @@ impl<'a> PluginModules<'a> {
             };
             let mut log = Log::init();
             let loaded = self.provider.load(&request, &mut log);
-            match loaded.is_err() && self.holds_failures.load(atomic::Ordering::Relaxed) {
-                true => self.failed_loads.lock().push((path.to_vec(), log)),
-                false => self.messages.say(&mut log),
-            }
+            self.say_of_load(path, loaded.is_err(), log);
             match loaded {
                 Ok(Loaded::Source {
                     contents,
@@ -363,6 +411,7 @@ impl<'a> PluginModules<'a> {
                     is_from_plugin,
                 }) => {
                     cell.get_or_init(|| Some(StoredModule::new(&contents, loader, is_from_plugin)));
+                    let contents = self.compile_if_schema(host_path, contents);
                     reads.texts.push((host_path.clone(), contents));
                 }
                 Ok(Loaded::NotFound) => {

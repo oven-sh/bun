@@ -41,6 +41,20 @@ describe("bundler files option", () => {
     expect(output).toContain("42");
   });
 
+  test("an in-memory schema imports another", async () => {
+    using dir = tempDir("files-proto", {});
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.ts`],
+      check: true,
+      files: {
+        [`${dir}/entry.ts`]: `import { A } from "./app/a.proto"; export const kind: 0 | 1 = A.decode(new Uint8Array()).kind;`,
+        [`${dir}/app/a.proto`]: `syntax = "proto3"; import "kind.proto"; message A { Kind kind = 1; }`,
+        [`${dir}/kind.proto`]: `syntax = "proto3"; enum Kind { ZERO = 0; ONE = 1; }`,
+      },
+    });
+    expect(await result.outputs[0].text()).toContain("kind: 0");
+  });
+
   test("in-memory file with relative imports (same directory)", async () => {
     const result = await Bun.build({
       entrypoints: ["/entry.js"],

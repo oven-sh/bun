@@ -226,6 +226,7 @@ struct Http2Response {
     /* inStream has been given its fin=true call. */
     bool finDelivered = false;
     bool paused = false;
+    bool windowHeld = false;
     /* Linked in conn->writable. */
     bool wantsWrite = false;
     /* setTimeout(): this stream's idle budget in seconds; 0 = never time
@@ -248,7 +249,7 @@ struct Http2Response {
         if (data.state & Http2ResponseData::HTTP_STATUS_CALLED) return this;
         data.state |= Http2ResponseData::HTTP_STATUS_CALLED;
         std::string_view code = status.size() >= 3 ? status.substr(0, 3) : std::string_view{"200"};
-        data.appendHeader(":status", 7, code.data(), (unsigned) code.size());
+        data.headers.append(":status", 7, code.data(), (unsigned) code.size());
         return this;
     }
 
@@ -256,7 +257,7 @@ struct Http2Response {
         writeStatus("200");
         /* §8.2.2: connection-specific fields must not appear in an HTTP/2 message. */
         if (isConnectionSpecificResponseField(key, value)) return this;
-        data.appendHeader(key.data(), (unsigned) key.size(), value.data(), (unsigned) value.size());
+        data.headers.append(key.data(), (unsigned) key.size(), value.data(), (unsigned) value.size());
         return this;
     }
 
@@ -264,6 +265,12 @@ struct Http2Response {
         char buf[utils::U64_MAX_DIGITS];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
         return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
+    }
+
+    void writeTrailer(std::string_view key, std::string_view value) {
+        if (isConnectionSpecificResponseField(key, value)) return;
+        if (!data.trailers) data.trailers = std::make_unique<Http2FieldSection>();
+        data.trailers->append(key.data(), (unsigned) key.size(), value.data(), (unsigned) value.size());
     }
 
     inline void writeMark();
@@ -285,6 +292,8 @@ struct Http2Response {
 
     inline Http2Response *pause();
     inline Http2Response *resume();
+    /* pause() / resume() with the idle timeout left running. */
+    inline void holdReceiveWindow(bool hold);
     /* The handler started consuming the body: widen this stream's window. */
     inline void growReceiveWindow();
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
@@ -476,7 +485,12 @@ public:
     }
 
     inline uint32_t maxHeaderListSize();
-    inline void writeHeaderBlock(Http2Response *stream, bool endStream);
+    inline void writeFieldSection(Http2Response *stream, Http2FieldSection &fields, bool endStream);
+    void writeHeaderBlock(Http2Response *stream, bool endStream) {
+        bool hasTrailers = !!stream->data.trailers;
+        writeFieldSection(stream, stream->data.headers, endStream && !hasTrailers);
+        if (endStream && hasTrailers) writeEndStream(stream);
+    }
     inline void writeInformational(Http2Response *stream, std::string_view status);
 
     /* How many body bytes `stream` may put on the wire right now: the
@@ -496,6 +510,11 @@ public:
     /* Frame up to the current allowance of `body` as DATA. END_STREAM rides on
      * the last frame only when everything fit. Returns bytes consumed. */
     size_t writeData(Http2Response *stream, const char *body, size_t length, bool endStream) {
+        if (endStream && stream->data.trailers) {
+            size_t sent = length ? writeData(stream, body, length, false) : 0;
+            if (sent == length) writeEndStream(stream);
+            return sent;
+        }
         size_t allowed = std::min(length, sendAllowance(stream));
         if (length && !allowed) return 0;
         out->reserve(out->length() + allowed + http2::FRAME_HEADER_SIZE * (allowed / peerMaxFrameSize + 1));
@@ -514,6 +533,7 @@ public:
     }
 
     void writeEndStream(Http2Response *stream) {
+        if (stream->data.trailers) return writeFieldSection(stream, *stream->data.trailers, true);
         writeFrame(http2::DATA, http2::END_STREAM, stream->id, nullptr, 0);
         stream->localClosed = true;
     }
@@ -1022,12 +1042,11 @@ inline void Http2Connection::scheduleFlush() {
     ctx->scheduleSweep(this);
 }
 
-inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStream) {
+inline void Http2Connection::writeFieldSection(Http2Response *stream, Http2FieldSection &fields, bool endStream) {
     wroteStreamBytes = true;
-    Http2ResponseData *d = &stream->data;
-    std::span<const char> block = hpack.encode(ctx->encodeBuffer, d->hdrBuf.span(), d->hdrs.span(), Hpack::Indexing::Allowed);
-    d->hdrBuf.shrink(0);
-    d->hdrs.shrink(0);
+    std::span<const char> block = hpack.encode(ctx->encodeBuffer, fields.buf.span(), fields.refs.span(), Hpack::Indexing::Allowed);
+    fields.buf.shrink(0);
+    fields.refs.shrink(0);
 
     /* HEADERS then CONTINUATIONs, each ≤ the peer's frame size. No other
      * frame may interleave, which holds since the block is appended at once. */
@@ -1057,7 +1076,7 @@ inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32
     stream->unackedReceive += bytes;
     /* A stream not yet granted the wide window keeps only its initial
      * allowance: that is what bounds body bytes parked per stream. */
-    if (stream->wide && !stream->paused && stream->unackedReceive >= stream->receiveWindow / 2) {
+    if (stream->wide && !stream->windowHeld && stream->unackedReceive >= stream->receiveWindow / 2) {
         writeWindowUpdate(stream->id, stream->unackedReceive);
         stream->unackedReceive = 0;
     }
@@ -1699,7 +1718,8 @@ inline bool Http2Response::internalEnd(std::string_view body, uint64_t totalSize
     if (!(data.state & Http2ResponseData::HTTP_WRITE_CALLED)) {
         writeStatus("200");
         writeMark();
-        if (!(data.state & Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+        /* A peer may take the last byte of a declared length for the end and not wait for trailers. */
+        if (!data.trailers && !(data.state & Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
             writeHeader("content-length", totalSize);
             data.state |= Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         }
@@ -1787,6 +1807,7 @@ inline bool Http2Response::drain() {
 inline Http2Response *Http2Response::pause() {
     if (paused) return this;
     paused = true;
+    holdReceiveWindow(true);
     /* Like HTTP/1: a request the app has paused doesn't idle out. */
     pausedTimeoutS = timeoutS;
     timeoutS = 0;
@@ -1799,12 +1820,17 @@ inline Http2Response *Http2Response::resume() {
     paused = false;
     timeoutS = pausedTimeoutS;
     conn->recomputeIdleTimeout();
-    if (!dead && !remoteClosed && unackedReceive) {
+    holdReceiveWindow(false);
+    return this;
+}
+
+inline void Http2Response::holdReceiveWindow(bool hold) {
+    windowHeld = hold;
+    if (!hold && !dead && !remoteClosed && unackedReceive) {
         conn->writeWindowUpdate(id, unackedReceive);
         unackedReceive = 0;
         conn->scheduleFlush();
     }
-    return this;
 }
 
 inline void Http2Response::growReceiveWindow() {

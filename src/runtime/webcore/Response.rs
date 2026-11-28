@@ -96,6 +96,8 @@ pub(crate) struct Response {
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
+    /// See `HTTPClientResult::trailers`.
+    pub(crate) trailers: Cell<Option<Box<bun_http::Headers>>>,
     /// The JS wrapper, fetch (so a discarded JS Response can still resolve
     /// its body) and HTMLRewriter each hold a ref.
     ref_count: Cell<u32>,
@@ -120,6 +122,7 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
+            trailers: Cell::new(None),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),

@@ -14,6 +14,26 @@ use bun_ptr::{AnyRefCounted, RefPtr};
 
 pub use crate::h3::Request;
 
+/// Names are in lower case, and `:authority` comes as `host`.
+pub fn for_each_header<F: FnMut(&[u8], &[u8])>(request: &mut Request, mut handler: F) {
+    extern "C" fn cb<F: FnMut(&[u8], &[u8])>(
+        name: *const u8,
+        name_len: usize,
+        value: *const u8,
+        value_len: usize,
+        handler: *mut c_void,
+    ) {
+        // SAFETY: `handler` is the `F` below, and both slices last as long as the request.
+        unsafe {
+            (*handler.cast::<F>())(
+                thunk::c_slice(name, name_len),
+                thunk::c_slice(value, value_len),
+            );
+        }
+    }
+    c::uws_h2_req_for_each_header(request, cb::<F>, (&raw mut handler).cast());
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Response
 // ──────────────────────────────────────────────────────────────────────────
@@ -68,6 +88,13 @@ impl Response {
             c::uws_h2_res_write_header(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
         }
     }
+    /// Sent when the response ends.
+    pub fn write_trailer(&mut self, key: &[u8], value: &[u8]) {
+        // SAFETY: self is a live FFI handle; key/value ptr+len valid for read
+        unsafe {
+            c::uws_h2_res_write_trailer(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
+        }
+    }
     pub(crate) fn write_header_int(&mut self, key: &[u8], value: u64) {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h2_res_write_header_int(self, key.as_ptr(), key.len(), value) }
@@ -94,6 +121,10 @@ impl Response {
     /// receive window from the small initial value.
     pub fn grow_request_window(&mut self) {
         c::uws_h2_res_grow_request_window(self)
+    }
+    /// `pause` or `resume`, with the idle timeout left running.
+    pub fn hold_request_window(&mut self, hold: bool) {
+        c::uws_h2_res_hold_request_window(self, hold)
     }
     pub(crate) fn pause(&mut self) {
         c::uws_h2_res_pause(self)
@@ -591,6 +622,11 @@ mod c {
             h: Handler,
             ud: *mut c_void,
         );
+        pub(super) safe fn uws_h2_req_for_each_header(
+            req: &mut Request,
+            cb: unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void),
+            ud: *mut c_void,
+        );
         pub(super) safe fn uws_h2_res_state(res: &mut Response) -> State;
         pub(super) fn uws_h2_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
         pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
@@ -606,10 +642,18 @@ mod c {
         ) -> bool;
         pub(super) safe fn uws_h2_res_end_without_body(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_grow_request_window(res: &mut Response);
+        pub(super) safe fn uws_h2_res_hold_request_window(res: &mut Response, hold: bool);
         pub(super) safe fn uws_h2_res_pause(res: &mut Response);
         pub(super) safe fn uws_h2_res_resume(res: &mut Response);
         pub(super) fn uws_h2_res_write_status(res: *mut Response, p: *const u8, n: usize);
         pub(super) fn uws_h2_res_write_header(
+            res: *mut Response,
+            kp: *const u8,
+            kn: usize,
+            vp: *const u8,
+            vn: usize,
+        );
+        pub(super) fn uws_h2_res_write_trailer(
             res: *mut Response,
             kp: *const u8,
             kn: usize,

@@ -51,6 +51,7 @@ pub enum Loader {
     Json5 = 19,
     Md = 20,
     Xml = 21,
+    Proto = 22,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -63,7 +64,7 @@ bun_core::assert_ffi_discr!(
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
-    Yaml = 18, Json5 = 19, Md = 20, Xml = 21,
+    Yaml = 18, Json5 = 19, Md = 20, Xml = 21, Proto = 22,
 );
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
@@ -100,6 +101,7 @@ bun_core::comptime_string_map! {
         b"html" => Loader::Html,
         b"md" => Loader::Md,
         b"markdown" => Loader::Md,
+        b"proto" => Loader::Proto,
     };
 }
 
@@ -164,6 +166,7 @@ impl Loader {
             Loader::Bunsh => "input.sh",
             Loader::Html => "input.html",
             Loader::Md => "input.md",
+            Loader::Proto => "input.proto",
             _ => "",
         }
     }

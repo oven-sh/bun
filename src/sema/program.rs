@@ -3838,6 +3838,15 @@ fn is_among_imports(visited: &[(u32, u32, bool)], atoms: &Interner, u: &Specifie
     })
 }
 
+fn is_only_imported_as_text_or_file(hir: &hir::File, atoms: &Interner, spec: Atom) -> bool {
+    let as_text_or_file = hir.imports.iter().filter(|it| {
+        let loader = (it.attributes.some()).and_then(|it| hir.import_attribute(it, known::r#type));
+        it.spec == spec && loader.is_some_and(|it| matches!(atoms.bytes(it), b"text" | b"file"))
+    });
+    let uses = hir.specifier_uses.iter().filter(|it| it.spec == spec);
+    as_text_or_file.count() == uses.count()
+}
+
 /// `file.ModuleAugmentations` (`collectModuleReferences`), as the declarations whose names they are.
 fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
     let mut augmentations = Vec::new();
@@ -8104,6 +8113,11 @@ impl<'s> Files<'s> {
                 let is_governed = build.is_some() && !std::ptr::eq(resolver, program_resolver);
                 let program = is_governed.then_some(program_resolver)?;
                 program.resolve_module_name(text, from, mode)
+            });
+            let resolved = resolved.filter(|it| {
+                ScriptKind::from_file_name(it.file_name).is_some()
+                    || host.script_kind(it.file_name).is_none()
+                    || !is_only_imported_as_text_or_file(hir, atoms, spec)
             });
             let Some(resolved) = resolved else {
                 if let Some(code) = code.as_deref_mut() {

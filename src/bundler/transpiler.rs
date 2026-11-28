@@ -1080,7 +1080,7 @@ impl<'a> Transpiler<'a> {
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
         let path = this_parse.path;
-        let loader = this_parse.loader;
+        let mut loader = this_parse.loader;
         // Every `Log` access in this function body goes through the `log`
         // binding below (the resolver fs/js caches reached via
         // `self.resolver.caches.*` do not touch `resolver.log`), so this is
@@ -1095,7 +1095,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        let source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
+        let mut source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone_in(arena);
             }
@@ -1213,6 +1213,23 @@ impl<'a> Transpiler<'a> {
                 ..Default::default()
             }
         });
+
+        if !DATA_ONLY && loader == options::Loader::Proto {
+            let watcher = self.resolver.watcher.as_deref();
+            let schema_options = bun_protobuf::Options {
+                target: self.options.target.into(),
+                read: &|path| options::read_imported_schema(path, watcher),
+                is_schema_by_name: &|path| self.options.is_schema_by_name(path),
+            };
+            let module =
+                bun_protobuf::compile_or_log(path.text, &source.contents, &schema_options, log)?;
+            source = arena.alloc(bun_ast::Source {
+                path: source.path,
+                contents: std::borrow::Cow::Borrowed(arena.alloc_slice_copy(&module)),
+                ..Default::default()
+            });
+            loader = options::Loader::Ts;
+        }
 
         if RETURN_FILE_ONLY {
             return Some(ParseResult::empty_with(
@@ -1527,6 +1544,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Ts
             | options::Loader::Tsx
             | options::Loader::Md
+            | options::Loader::Proto
             | options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64
@@ -2570,7 +2588,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Json5
             | options::Loader::Xml
             | options::Loader::Text
-            | options::Loader::Md => {
+            | options::Loader::Md
+            | options::Loader::Proto => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
                 let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);

@@ -1,0 +1,7 @@
+// Copyright 2008 Google Inc. BSD-3-Clause: https://github.com/protocolbuffers/protobuf/blob/main/LICENSE
+syntax = "proto3";
+package google.protobuf;
+message Duration {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}

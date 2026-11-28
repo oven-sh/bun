@@ -1,0 +1,22 @@
+// Copyright 2008 Google Inc. BSD-3-Clause: https://github.com/protocolbuffers/protobuf/blob/main/LICENSE
+syntax = "proto3";
+package google.protobuf;
+message Struct {
+  map<string, Value> fields = 1;
+}
+message Value {
+  oneof kind {
+    NullValue null_value = 1;
+    double number_value = 2;
+    string string_value = 3;
+    bool bool_value = 4;
+    Struct struct_value = 5;
+    ListValue list_value = 6;
+  }
+}
+enum NullValue {
+  NULL_VALUE = 0;
+}
+message ListValue {
+  repeated Value values = 1;
+}

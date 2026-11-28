@@ -714,7 +714,7 @@ declare module "bun" {
       statCache?: boolean;
     }
 
-    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
+    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions | import("bun:grpc").Route;
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:

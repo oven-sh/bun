@@ -1326,6 +1326,7 @@ pub mod parse_worker {
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
+            Loader::Proto => unreachable!("run_with_source_code compiles a schema to TypeScript"),
             // TODO:
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
@@ -2129,7 +2130,7 @@ pub mod parse_worker {
         step: &mut Step,
         log: &mut Log,
         bump: &'static Bump,
-        contents: &'static [u8],
+        mut contents: &'static [u8],
     ) -> core::result::Result<Success<'static>, AnyError> {
         let worker_ctx = this.ctx;
 
@@ -2160,7 +2161,7 @@ pub mod parse_worker {
         // SAFETY: `transpiler` just derived from a live `&mut`.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
         let file_path = &mut task.path;
-        let loader = task
+        let mut loader = task
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
@@ -2168,7 +2169,7 @@ pub mod parse_worker {
 
         *step = Step::Parse;
 
-        let is_empty = strings::is_all_whitespace(contents);
+        let is_empty = loader != Loader::Proto && strings::is_all_whitespace(contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
         // disjoint `options` field — never the whole struct — so the raw `resolver`
@@ -2211,6 +2212,22 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
         // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
+
+        if loader == Loader::Proto {
+            let read = |path: &[u8]| match worker_ctx.file_map.and_then(|files| files.get(path)) {
+                Some(contents) => Ok(Some(contents.to_vec())),
+                None => options::read_imported_schema(path, worker_ctx.bun_watcher.as_deref()),
+            };
+            let schema_options = bun_protobuf::Options {
+                target: topts.target.into(),
+                read: &read,
+                is_schema_by_name: &|path| topts.is_schema_by_name(path),
+            };
+            let module =
+                bun_protobuf::compile_or_log(file_path.text, contents, &schema_options, log);
+            contents = bump.alloc_slice_copy(&module.ok_or(AnyError::ParserError)?);
+            loader = Loader::Ts;
+        }
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
         // `&'bump Source<'bump>` parameter is satisfied (`bump` is the same arena).

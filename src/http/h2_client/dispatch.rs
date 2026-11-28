@@ -40,7 +40,11 @@ pub(crate) fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
         // (we never advertise above the 16384 default) is a connection
         // FRAME_SIZE_ERROR. Bounding here also caps `read_buffer` growth.
         if length > wire::DEFAULT_MAX_FRAME_SIZE {
-            session.fatal_error = Some(crate::Error::HTTP2FrameSizeError);
+            let is_http1 = !session.settings_received && remaining.starts_with(b"HTTP/1.");
+            session.fatal_error = Some(match is_http1 {
+                true => crate::Error::HTTP2Unsupported,
+                false => crate::Error::HTTP2FrameSizeError,
+            });
             break;
         }
         let frame_len = wire::FrameHeader::BYTE_SIZE + length as usize;
@@ -503,6 +507,13 @@ fn dispatch_frame(
                 x if x == wire::ErrorCode::REFUSED_STREAM.0 => {
                     Some(crate::Error::HTTP2RefusedStream)
                 }
+                x if x == wire::ErrorCode::CANCEL.0 => Some(crate::Error::HTTP2Cancel),
+                x if x == wire::ErrorCode::ENHANCE_YOUR_CALM.0 => {
+                    Some(crate::Error::HTTP2EnhanceYourCalm)
+                }
+                x if x == wire::ErrorCode::INADEQUATE_SECURITY.0 => {
+                    Some(crate::Error::HTTP2InadequateSecurity)
+                }
                 _ => Some(crate::Error::HTTP2StreamReset),
             };
         }
@@ -619,7 +630,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             continue;
         }
         seen_regular = true;
-        if stream.status_code != 0 || malformed {
+        if (stream.status_code != 0 && !stream.wants_trailers) || malformed {
             continue;
         }
         if is_malformed_response_field(result.name) || is_malformed_response_value(result.value) {
@@ -650,6 +661,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     if stream.status_code != 0 {
         if !stream.headers_end_stream {
             stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
+        } else if stream.wants_trailers {
+            stream.trailers = Some(Box::new(headers));
         }
         return;
     }

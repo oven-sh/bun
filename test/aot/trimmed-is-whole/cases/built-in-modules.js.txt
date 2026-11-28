@@ -53,6 +53,12 @@ console.log(execFileSync("/bin/echo", ["hi"]).toString().trim());
 //// net
 import net from "node:net";
 console.log(net.isIP("127.0.0.1"), net.isIPv6("::1"));
+//// grpc
+import { Channel, route } from "bun:grpc";
+const routes = { "/s/m": route(false, false, request => request[0] + 1, byte => new Uint8Array([0, 0, 0, 0, 1, byte])) };
+const server = Bun.serve({ port: 0, http2: true, routes });
+console.log(await new Channel(server.url).call("/s/m", new Uint8Array([0, 0, 0, 0, 1, 7])));
+await server.stop(true);
 //// http
 import http from "node:http";
 const server = http.createServer((request, response) => response.end("ok"));

@@ -404,6 +404,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "filesystem_router.bind.ts":
     "typeof Bun & { FrameworkFileSystemRouter: Class<{ match(path: string): any; toJSON(): any }> }",
   "fmt_jsc.bind.ts": null,
+  "grpc_binding.bind.ts": null,
   "h2_frame_parser.bind.ts": null,
   "headers_jsc.bind.ts": null,
   "histogram.bind.ts": null,

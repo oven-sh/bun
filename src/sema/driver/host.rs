@@ -351,6 +351,9 @@ pub struct Disk {
     pub(crate) script_kinds: Vec<(Vec<u8>, ScriptKind)>,
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
+    /// `Provided::schema_extensions`
+    pub(crate) schema_extensions: Vec<Vec<u8>>,
+    pub(crate) schema_errors: bun_threading::Guarded<Vec<crate::Diagnostic>>,
     pub before_read: Option<BeforeRead>,
     /// `Host::extended_config`. The projects of a build often extend the same file.
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
@@ -377,6 +380,8 @@ pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
+    /// The extensions that have the loader `proto`, if they aren't `.proto` alone.
+    pub schema_extensions: Option<Vec<Vec<u8>>>,
     /// A script's text keeps the UTF-8 byte order mark at the start of the file, which TypeScript drops. The parser
     /// treats it as whitespace. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
@@ -625,6 +630,8 @@ impl Disk {
             bundled_libs: None,
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
+            schema_extensions: Vec::new(),
+            schema_errors: Default::default(),
             before_read: None,
             scripts_of_page: None,
         }
@@ -1468,28 +1475,41 @@ fn chunk_len_for(count: usize) -> usize {
     if count > 1024 { 16 } else { 1 }
 }
 
-impl Host for Disk {
-    fn extended_config(&self, path: &[u8]) -> Option<CachedConfig> {
-        self.extended_configs.lock().get(path).cloned()
+impl Disk {
+    pub(crate) fn is_schema(&self, path: &[u8]) -> bool {
+        let extension = bun_paths::extension(path);
+        self.schema_extensions.iter().any(|it| it == extension)
     }
-    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> CachedConfig) {
-        self.extended_configs.lock().insert(path.to_vec(), parsed());
+
+    fn has_declaration_file_beside(&self, path: &[u8]) -> bool {
+        let extension = bun_paths::extension(path);
+        let stem = &path[..path.len() - extension.len()];
+        self.is_file(&[path, b".d.ts"].concat())
+            || self.is_file(&[stem, b".d", extension, b".ts"].concat())
     }
-    fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths> {
-        let mut interned = self.paths.lock();
-        if let Some(equal) = interned.get(&paths) {
-            return Arc::clone(equal);
+
+    fn compile_schema(&self, path: &[u8], text: &[u8]) -> Cow<'static, [u8]> {
+        // `already_read` has what a schema compiles to, not the schema.
+        let read = |path: &[u8]| match self.read_as_written(&from_native(path)) {
+            Some(text) => Ok(Some(text.into_owned())),
+            None => bun_protobuf::read_from_disk(path),
+        };
+        let options = bun_protobuf::Options {
+            target: bun_protobuf::Target::Bun,
+            read: &read,
+            is_schema_by_name: &|_| true,
+        };
+        match bun_protobuf::compile(to_native(path), text, &options) {
+            Ok(module) => Cow::Owned(module),
+            Err(error) => {
+                let diagnostic = crate::diagnostic_of_schema(path, text, &error);
+                self.schema_errors.lock().push(diagnostic);
+                Cow::Borrowed(b"export {};")
+            }
         }
-        interned.insert(Arc::clone(&paths));
-        paths
     }
-    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        if !self.already_read.is_empty()
-            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
-        {
-            crate::did_read_source(text.len());
-            return Some(Cow::Owned(text.clone()));
-        }
+
+    fn read_as_written(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         if is_bundled(path) {
             let (libs, name) = self.bundled(path)?;
             return (libs.read)(name);
@@ -1535,6 +1555,36 @@ impl Host for Disk {
             decoded(bytes, keeps_mark)
         })
     }
+}
+
+impl Host for Disk {
+    fn extended_config(&self, path: &[u8]) -> Option<CachedConfig> {
+        self.extended_configs.lock().get(path).cloned()
+    }
+    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> CachedConfig) {
+        self.extended_configs.lock().insert(path.to_vec(), parsed());
+    }
+    fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths> {
+        let mut interned = self.paths.lock();
+        if let Some(equal) = interned.get(&paths) {
+            return Arc::clone(equal);
+        }
+        interned.insert(Arc::clone(&paths));
+        paths
+    }
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        if !self.already_read.is_empty()
+            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
+        {
+            crate::did_read_source(text.len());
+            return Some(Cow::Owned(text.clone()));
+        }
+        let text = self.read_as_written(path)?;
+        Some(match self.is_schema(path) {
+            true => self.compile_schema(path, &text),
+            false => text,
+        })
+    }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_else(|| {
             self.unreadable.lock().push(path.to_vec());
@@ -1549,6 +1599,10 @@ impl Host for Disk {
             && (self.already_read).contains_key(&*to_path(path, self.case_sensitive));
         if is_in_memory || is_bundled(path) {
             return Some(FileStamp::IMMUTABLE);
+        }
+        // What a schema compiles to depends on the files that it imports.
+        if self.is_schema(path) {
+            return None;
         }
         stamp_on_disk(path)
     }
@@ -1602,6 +1656,9 @@ impl Host for Disk {
         &self.script_kinds_by_extension
     }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
+        if self.is_schema(path) && !self.has_declaration_file_beside(path) {
+            return Some(ScriptKind::Ts);
+        }
         if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() {
             return None;
         }

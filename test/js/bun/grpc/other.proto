@@ -1,0 +1,12 @@
+syntax = "proto3";
+package test.v2;
+
+import "echo.proto";
+
+service Echo {
+  rpc Unary(test.v1.Message) returns (test.v1.Message);
+}
+
+service Health {
+  rpc Check(test.v1.Message) returns (test.v1.Message);
+}

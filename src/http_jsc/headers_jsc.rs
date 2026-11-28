@@ -29,12 +29,17 @@ pub fn from_fetch_headers(
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
 ) -> JsResult<Headers> {
+    try_from_fetch_headers(fetch_headers, body_content_type)
+        .ok_or_else(|| throw_headers_too_large(global))
+}
+
+/// `None` where [`from_fetch_headers`] throws.
+pub fn try_from_fetch_headers(
+    fetch_headers: Option<&FetchHeaders>,
+    body_content_type: Option<&[u8]>,
+) -> Option<Headers> {
     let (fetch_header_count, buf_len_before_content_type) =
-        match fetch_headers.map(FetchHeaders::count) {
-            None => (0, 0),
-            Some(Some(counts)) => counts,
-            Some(None) => return Err(throw_headers_too_large(global)),
-        };
+        fetch_headers.map_or(Some((0, 0)), FetchHeaders::count)?;
     let (mut header_count, mut buf_len) = (fetch_header_count, buf_len_before_content_type);
     let mut headers = Headers {
         entries: EntryList::default(),
@@ -45,15 +50,9 @@ pub fn from_fetch_headers(
             let has_ct_header =
                 fetch_headers.is_some_and(|h| h.fast_has_(HTTPHeaderName::ContentType as u8));
             if !has_ct_header {
-                let Some((new_count, new_len)) = header_count.checked_add(1).zip(
-                    u32::try_from(b"Content-Type".len() + body_ct.len())
-                        .ok()
-                        .and_then(|ct_len| buf_len.checked_add(ct_len)),
-                ) else {
-                    return Err(throw_headers_too_large(global));
-                };
-                header_count = new_count;
-                buf_len = new_len;
+                let ct_len = u32::try_from(b"Content-Type".len() + body_ct.len()).ok()?;
+                header_count = header_count.checked_add(1)?;
+                buf_len = buf_len.checked_add(ct_len)?;
                 break 'brk true;
             }
         }
@@ -91,7 +90,7 @@ pub fn from_fetch_headers(
         };
     }
 
-    Ok(headers)
+    Some(headers)
 }
 
 pub(crate) fn h2_live_counts() -> H2LiveCounts {

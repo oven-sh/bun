@@ -22,6 +22,17 @@ fn cli_start_time() -> i128 {
     crate::cli::start_time()
 }
 
+fn warn_about_schemas_as_entry_points(args: &api::TransformOptions) {
+    let mut chosen = args.loaders.iter().flat_map(|it| &it.extensions);
+    if args.entry_points.iter().any(|it| it.ends_with(b".proto"))
+        && !chosen.any(|it| **it == *b".proto")
+    {
+        bun_core::warn!(
+            "A .proto entry point is compiled to a module. To embed the file instead, pass --loader=.proto:file"
+        );
+    }
+}
+
 pub(crate) fn has_only_html_entry_points(entry_points: &[Box<[u8]>]) -> bool {
     !entry_points.is_empty() && entry_points.iter().all(|path| path.ends_with(b".html"))
 }
@@ -69,6 +80,10 @@ impl BuildCommand {
 
         if ctx.bundler_options.library {
             super::compile_command::configure_library(ctx);
+        }
+
+        if ctx.bundler_options.compile {
+            warn_about_schemas_as_entry_points(&ctx.args);
         }
 
         if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {

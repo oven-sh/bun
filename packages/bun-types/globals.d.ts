@@ -2174,7 +2174,9 @@ interface BunFetchRequestInit extends RequestInit {
    * default (h2 is offered iff the flag is on). `"h2"`, `"h3"` and `"h1"`
    * are aliases.
    *
-   * Requires `https`. Not part of the Fetch API specification.
+   * With an `http://` URL, `"http2"` starts the connection with HTTP/2 and
+   * no upgrade (h2c with prior knowledge). `"http3"` requires `https`.
+   * Not part of the Fetch API specification.
    * @experimental
    */
   protocol?: "http2" | "http1.1" | "http3" | "h2" | "h1" | "h3";

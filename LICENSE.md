@@ -124,4 +124,5 @@ The type declarations of these packages are embedded into Bun's binary. `bun bui
 ## Additional credits
 
 - Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
+- The schemas of the well-known types in Bun's `.proto` loader are from [Protocol Buffers](https://github.com/protocolbuffers/protobuf), Copyright 2008 Google Inc., under the [BSD 3-Clause license](https://github.com/protocolbuffers/protobuf/blob/main/LICENSE).
 - Credit to [@kipply](https://github.com/kipply) for the name "Bun"!

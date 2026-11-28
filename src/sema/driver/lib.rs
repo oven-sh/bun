@@ -1608,6 +1608,17 @@ impl Report {
             .count()
     }
 
+    fn drop_diagnostics(&mut self, is_dropped: impl Fn(&Diagnostic) -> bool) {
+        let mut end = self.diagnostics.len();
+        for task in self.tasks.iter_mut().rev() {
+            let start = end.saturating_sub(task.diagnostics);
+            let of_task = self.diagnostics[start..end].iter();
+            task.diagnostics -= of_task.filter(|it| is_dropped(it)).count();
+            end = start;
+        }
+        self.diagnostics.retain(|it| !is_dropped(it));
+    }
+
     /// Adds the result of checking another project. The diagnostics are left unsorted.
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
@@ -1687,6 +1698,17 @@ fn without_code(text: &[&[u8]]) -> Diagnostic {
         text,
         ..global(18003, &[""; 0])
     }
+}
+
+fn diagnostic_of_schema(path: &[u8], text: &[u8], error: &bun_protobuf::Error) -> Diagnostic {
+    let (path, text) = match &error.imported_file {
+        Some((path, text)) => (host::from_native(path), &text[..]),
+        None => (path.to_vec(), text),
+    };
+    let (start, end) = (error.start as u32, (error.start + error.len) as u32);
+    let reported = without_code(&[error.message.as_bytes()]);
+    let starts = compute_ecma_line_starts(text);
+    located(&path, text, &starts, start, end, reported)
 }
 
 /// `NewCompilerDiagnostic`
@@ -1872,6 +1894,7 @@ pub fn check_provided_then<R>(
         host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
+    disk.schema_extensions = (provided.schema_extensions).unwrap_or_else(|| vec![b".proto".into()]);
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     disk.ends_the_process = provided.ends_the_process;
     if let Libs::Bundled(libs) = request.libs {
@@ -1887,6 +1910,11 @@ pub fn check_provided_then<R>(
     let lent = disk.caches.lend();
     let report = check_request(&disk, request);
     let then = |mut report: Report| {
+        // Nobody can edit what a schema compiles to, so an old `target` or `lib` is not held against it.
+        report.drop_diagnostics(|it| disk.is_schema(&it.path));
+        let mut schema_errors = std::mem::take(&mut *disk.schema_errors.lock());
+        sort_and_deduplicate(&mut schema_errors);
+        report.diagnostics.splice(..0, schema_errors);
         report.is_case_sensitive = disk.is_case_sensitive();
         report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
         report.not_installed =

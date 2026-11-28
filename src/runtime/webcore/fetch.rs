@@ -1427,6 +1427,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if proxy.is_none()
                 && !env_proxy_is_tls
                 && compress.is_none()
+                && forced_protocol != Some(http::Protocol::Http2)
                 && http::SendFile::is_eligible(&url)
             {
                 'use_sendfile: {

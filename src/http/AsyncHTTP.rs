@@ -688,6 +688,7 @@ impl InFlightRequest {
         let mut result = this.client.to_result();
         if result.is_success() {
             result.body_owned = core::mem::take(&mut this.client.state.decoded_body.list);
+            result.trailers = this.client.state.trailers.take();
         }
         this.client.state = InternalState::default();
 

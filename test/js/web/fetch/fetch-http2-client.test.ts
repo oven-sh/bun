@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, nodeExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, nodeExe, tempDir, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import https from "node:https";
@@ -2568,26 +2568,84 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
-  test('protocol: "http2" on a plain http:// URL fails with HTTP2Unsupported', async () => {
-    // h2c is out of scope; without an explicit check the request would
-    // silently complete over HTTP/1.1.
-    await using proc = await spawnCapped({
-      cmd: [
-        bunExe(),
-        "--no-warnings",
-        "-e",
-        `try {
-           await fetch("http://127.0.0.1:1/", { protocol: "http2" });
-           console.log("unexpected-ok");
-         } catch (e) { console.log(e.code || String(e)); }`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+  describe('protocol: "http2" on a plain http:// URL', () => {
+    async function listen(target: number | string) {
+      const seen = { sessions: 0 };
+      const server = http2.createServer(async (req, res) => {
+        let length = 0;
+        for await (const chunk of req) length += chunk.length;
+        if (req.url === "/redirect") return void res.writeHead(307, { location: "/" }).end();
+        res.end(`${req.httpVersion} ${req.scheme} ${length}`);
+      });
+      server.on("session", () => seen.sessions++);
+      await once(server.listen(target), "listening");
+      const session = new Bun.FetchSession();
+      return {
+        seen,
+        url: `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port ?? 80}`,
+        text: async (url: string, init?: BunFetchRequestInit) =>
+          (await session.fetch(url, { protocol: "http2", ...init })).text(),
+        [Symbol.dispose]: () => (session.close(), void server.close()),
+      };
+    }
+
+    test("starts with the preface and shares the connection", async () => {
+      using it = await listen(0);
+      expect(await Promise.all([it.text(it.url), it.text(it.url), it.text(it.url)])).toEqual(
+        Array(3).fill("2.0 http 0"),
+      );
+      expect(await it.text(it.url + "/redirect", { method: "POST", body: "abc" })).toBe("2.0 http 3");
+      expect(it.seen.sessions).toBe(1);
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toContain("HTTP2Unsupported");
-    expect(exitCode).toBe(0);
+
+    test("sends a file that HTTP/1.1 would send with sendfile()", async () => {
+      using dir = tempDir("h2c-file", { file: Buffer.alloc(100_000) });
+      using it = await listen(0);
+      expect(await it.text(it.url, { method: "POST", body: Bun.file(join(String(dir), "file")) })).toBe(
+        "2.0 http 100000",
+      );
+    });
+
+    test.skipIf(isWindows)("over a Unix socket", async () => {
+      using dir = tempDir("h2c-unix", {});
+      const unix = join(String(dir), "s");
+      using it = await listen(unix);
+      expect(await Promise.all([it.text(it.url, { unix }), it.text(it.url, { unix })])).toEqual(
+        Array(2).fill("2.0 http 0"),
+      );
+      expect(await it.text(it.url, { unix })).toBe("2.0 http 0");
+      expect(it.seen.sessions).toBe(1);
+    });
+
+    test("does not share a connection with HTTP/1.1", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        http2: true,
+        fetch: (req, server) => new Response(String(server.requestIP(req)!.port)),
+      });
+      using session = new Bun.FetchSession();
+      const ports: string[] = [];
+      for (const protocol of ["http1.1", "http2", undefined, "http2"] as const) {
+        ports.push(await (await session.fetch(server.url, { protocol })).text());
+      }
+      expect(ports).toEqual([ports[0], ports[1], ports[0], ports[1]]);
+      expect(ports[0]).not.toBe(ports[1]);
+    });
+
+    test("fails with HTTP2Unsupported against an h1-only server, and through a proxy", async () => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("h1") });
+      const proxy = { url: server.url.href, respectNoProxy: false };
+      for (const init of [{}, { proxy }]) {
+        const error = await fetch(server.url, { protocol: "http2", ...init }).catch(error => error);
+        expect(error.code).toBe("HTTP2Unsupported");
+      }
+    });
+
+    test("every request that waits for one connection fails with it", async () => {
+      const url = "http://127.0.0.1:1/";
+      const codes = Array.from({ length: 3 }, () => fetch(url, { protocol: "http2" }).catch(error => error.code));
+      expect(await Promise.all(codes)).toEqual(Array(3).fill("ECONNREFUSED"));
+    });
   });
 
   test("abort while coalesced onto an in-flight TLS connect resolves promptly", async () => {

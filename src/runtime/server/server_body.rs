@@ -15,6 +15,7 @@ use crate::generated_bindgen::server_body::{
 };
 use crate::node::types::PathLikeExt as _;
 use crate::server::ServerLike as _;
+use crate::server::grpc_call::GrpcCall;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -2246,6 +2247,38 @@ where
         );
     }
 
+    pub(super) fn on_grpc_call(
+        user_route: &UserRoute<SSL, DEBUG>,
+        req: &mut uws::H3::Request,
+        resp: &mut uws_sys::h2::Response,
+    ) {
+        // SAFETY: `UserRoute.server` is the owning server, which outlives every route it registered.
+        let server = unsafe { &*user_route.server };
+        let Some(server_js) = server.js_value_for_dispatch() else {
+            return respond_stopped_503(resp);
+        };
+        if server.should_add_timeout_handler_for_warning() {
+            resp.on_timeout_warn(did_send_idletimeout_warning_once().as_ptr().cast());
+        }
+        let route_list = Self::js_route_list_get_cached(server_js).unwrap();
+        GrpcCall::accept(
+            server.as_any_server(),
+            server_js,
+            user_route.route.grpc.expect("registered as a gRPC route"),
+            Bun__ServerRouteList__callbackAt(route_list, user_route.id),
+            req,
+            resp,
+        );
+    }
+
+    pub(super) fn on_unknown_grpc_method(
+        &self,
+        req: &mut uws::H3::Request,
+        resp: &mut uws_sys::h2::Response,
+    ) {
+        super::grpc_call::on_unknown_method(req, resp);
+    }
+
     pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
@@ -3217,6 +3250,8 @@ unsafe extern "C" {
         request_object: &mut JSValue,
         req: *mut c_void,
     ) -> JSValue;
+
+    safe fn Bun__ServerRouteList__callbackAt(route_list_object: JSValue, index: u32) -> JSValue;
 
     // `global` is the live VM global; `callbacks`/`paths` are the ptr/len of
     // local scratch `Vec`s that C++ reads (and copies) synchronously.

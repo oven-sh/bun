@@ -435,7 +435,9 @@ impl HttpThread {
     }
 
     fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
-        if self.https_context.abort_pending_h2_waiter(async_http_id) {
+        if self.https_context.abort_pending_h2_waiter(async_http_id)
+            || self.http_context.abort_pending_h2_waiter(async_http_id)
+        {
             return true;
         }
         for entry in custom_ssl_context_map().values_mut() {
@@ -486,7 +488,7 @@ impl HttpThread {
                     held.fail(crate::Error::Aborted);
                 } else {
                     // No socket for this id. It may be a request coalesced onto a
-                    // leader's in-flight h2 TLS connect (parked in `pc.waiters`
+                    // leader's in-flight h2 connect (parked in `pc.waiters`
                     // with no abort-tracker entry); scan those first so the abort
                     // doesn't wait for the leader's connect to resolve.
                     if self.abort_pending_h2_waiter(http.async_http_id) {

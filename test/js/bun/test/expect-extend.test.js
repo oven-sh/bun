@@ -717,6 +717,12 @@ describe("MatcherContext", () => {
         '+   "a" => 2,',
         ...counts(1, 1),
       ]);
+      // A line ending is part of the value: "\r\n" against "\n" is a difference, and a row shows the "\r" as "␍".
+      expect(marked({ a: "b\nc" }, { a: "b\r\nc" })).toEqual(['- "b', '+ "b␍', ...counts(1, 1)]);
+      expect(marked("b\nc", "b\r\nc")).toEqual(["- b", "+ b␍", ...counts(1, 1)]);
+      expect(Bun.stripANSI(utils.diff({ a: "b\r\nc" }, { a: "b\r\nc" }))).toBe(
+        "Compared values have no visual difference.",
+      );
       expect(marked({ a: 1 }, { a: 2 }, { expand: false, contextLines: 0 })).toEqual([
         '-   "a": 1,',
         '+   "a": 2,',

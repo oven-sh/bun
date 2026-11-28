@@ -1,0 +1,16 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`snapshots a snapshot file stores the same line ends 1`] = `
+<a
+  title="1
+2
+3"
+>
+  1
+2
+3
+  <!--1
+2
+3-->
+</a>
+`;

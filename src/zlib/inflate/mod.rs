@@ -3,6 +3,7 @@
 mod bits;
 mod codes;
 mod dynamic;
+mod matches;
 mod output;
 mod tables;
 mod window;
@@ -13,7 +14,7 @@ use bun_core::strings;
 use bun_core::vec::BorrowedCursor;
 use bun_deflate::format::{DYNAMIC, MAX_MATCH_LEN, STATIC, STORED};
 use bun_deflate::gzip;
-use bun_highway::{adler32, crc32};
+use bun_hash::{adler32, crc32};
 
 use crate::checksum::Checksum;
 use crate::error::{Damage, Error, Result};
@@ -22,7 +23,7 @@ use crate::format::{
     ZLIB_PRESET_DICTIONARY,
 };
 use bits::{BitReader, HeldBits};
-use codes::{FAST_INPUT, FAST_ROOM, Lap, LongestMatch, NoMatch, Reach, Step, Stop, Tape};
+use codes::{FAST_INPUT, FAST_ROOM, Lap, LongestMatch, NoMatch, Reach, Reel, Step, Stop};
 use dynamic::{Counts, DynamicCodes};
 use output::{Growing, Output, Target};
 use tables::Tables;
@@ -417,6 +418,7 @@ impl Inflater {
         end.is_some()
     }
 
+    #[inline(always)]
     fn run(
         &mut self,
         bits: &mut BitReader<'_>,
@@ -815,6 +817,7 @@ impl Inflater {
     }
 
     /// As in zlib, a full output does not keep it from reading up to the first symbol that there is no room for.
+    #[inline(always)]
     fn decode_codes(
         &mut self,
         bits: &mut BitReader<'_>,

@@ -1,12 +1,11 @@
 //! A row of macroblocks on its way through the loop filter to RGBA.
 
-use bun_highway::webp::{self as kernels, FilterStrength, ROW_STEP};
-
 use super::header::FilterType;
 use super::reconstruct::Samples;
 use crate::alpha;
 use crate::array::At;
 use crate::error::Result;
+use crate::simd::{self, FilterStrength, ROW_STEP};
 use crate::slice::{InBounds, known};
 use crate::vec;
 
@@ -45,8 +44,8 @@ impl Plane<'_> {
         Some(())
     }
 
-    fn for_filter(&mut self) -> kernels::Plane<'_> {
-        kernels::Plane {
+    fn for_filter(&mut self) -> simd::Plane<'_> {
+        simd::Plane {
             start: self.start(),
             stride: self.stride,
             samples: self.samples,
@@ -89,7 +88,7 @@ impl Upsampled<'_> {
     #[inline(always)]
     fn fill(&mut self, plane: &Plane, rows: [usize; 2]) {
         let to = self.rows.each_mut().map(|row| &mut **row);
-        kernels::upsample(rows.map(|row| plane.row(row, 1)), to, self.pairs);
+        simd::upsample(rows.map(|row| plane.row(row, 1)), to, self.pairs);
     }
 
     /// The first sample is outside of the picture.
@@ -128,7 +127,7 @@ impl<'a> Planes<'a> {
                 let (rows, pixels) = alpha::decoder::Rows::new(chunk, width, height)?;
                 (Some(rows), pixels)
             }
-            None => (None, vec::with_room(width * height)?),
+            None => (None, vec::with_room(width * height + ROW_STEP)?),
         };
         let padded = width.next_multiple_of(ROW_STEP);
         // What the filter reads across an edge. The first of them is final, and shared by pixels above and below it.
@@ -185,10 +184,10 @@ impl<'a> Planes<'a> {
     pub(super) fn finish_row(&mut self, y: usize, strengths: &[FilterStrength]) {
         match self.filter_type {
             FilterType::None => {}
-            FilterType::Simple => kernels::filter_simply(self.y.for_filter(), strengths, y > 0),
+            FilterType::Simple => simd::filter_simply(&mut self.y.for_filter(), strengths, y > 0),
             FilterType::Normal => {
-                let planes = [&mut self.y, &mut self.u, &mut self.v].map(Plane::for_filter);
-                kernels::filter_normally(planes, strengths, y > 0);
+                let mut planes = [&mut self.y, &mut self.u, &mut self.v].map(Plane::for_filter);
+                simd::filter_normally(&mut planes, strengths, y > 0);
             }
         }
         let bottom = 16 * (y + 1);
@@ -229,7 +228,7 @@ impl<'a> Planes<'a> {
                 self.upsampled_v.row(is_lower),
                 alpha.unwrap_or(self.opaque),
             ];
-            kernels::yuv_to_rgba(yuva, &mut self.pixels, start, self.width);
+            put(yuva, &mut self.pixels, start, self.width);
         }
     }
 
@@ -256,11 +255,20 @@ impl<'a> Planes<'a> {
             .as_mut()
             .and_then(|it| known(it.next(count, pixels)));
         let yuva = [&luma, &u, &v, alpha.unwrap_or(self.opaque)];
-        kernels::yuv_to_rgba(yuva, &mut self.pixels, start, count);
+        put(yuva, &mut self.pixels, start, count);
     }
 
     pub(super) fn into_pixels(self) -> Vec<[u8; 4]> {
         self.pixels
+    }
+}
+
+/// `count` pixels from `start` on, in the place of those that are there or behind the last.
+#[inline(always)]
+fn put(yuva: [&[u8]; 4], pixels: &mut Vec<[u8; 4]>, start: usize, count: usize) {
+    match pixels.get_mut(start..start + count) {
+        Some(there) => simd::replace_rgba(yuva, there),
+        None => simd::append_rgba(yuva, pixels, count),
     }
 }
 

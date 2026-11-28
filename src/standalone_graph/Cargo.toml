@@ -25,7 +25,7 @@ bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_exe_format.workspace = true
-bun_highway.workspace = true
+bun_simd_kernels.workspace = true
 bun_http.workspace = true
 bun_parsers.workspace = true
 bun_archive.workspace = true
@@ -43,6 +43,5 @@ bun_zlib.workspace = true
 bun_zstd.workspace = true
 
 [dev-dependencies]
-bun_highway = { workspace = true, features = ["test_support"] }
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
 bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }

@@ -38,6 +38,12 @@ pub enum Feature {
     /// embedded PAC check. Unlike PACIASP/AUTIASP/BTI (which are HINT-space
     /// and NOP on older CPUs by design), these *fault* on non-PAC hardware.
     PacNonHint,
+    /// AESE/AESD/AESMC/AESIMC, and PMULL of 64 bits.
+    Aes,
+    /// SHA1* and SHA256*.
+    Sha2,
+    /// EOR3, BCAX, XAR, RAX1, SHA512*, and SM3*/SM4*, which share the encoding group.
+    Sha3,
 }
 
 impl Feature {
@@ -50,6 +56,9 @@ impl Feature {
             Feature::Jscvt => "JSCVT",
             Feature::Rdm => "RDM",
             Feature::PacNonHint => "PAC(non-hint)",
+            Feature::Aes => "AES",
+            Feature::Sha2 => "SHA2",
+            Feature::Sha3 => "SHA3",
         }
     }
 }
@@ -157,14 +166,24 @@ pub fn classify(w: u32) -> Option<Feature> {
         return Some(Feature::Jscvt);
     }
 
+    // ---- Crypto ----
+    //   aese : 4e284820  pmull .1q : 0ee2e020  (pmull .8h, v8.0: 0e22e020 → size=00)
+    if w & 0xFFFFCC00 == 0x4E284800 || w & 0xBFE0FC00 == 0x0EE0E000 {
+        return Some(Feature::Aes);
+    }
+    //   sha256h : 5e024020  sha1h : 5e280820  (mov b0, v1.b[0], v8.0: 5e010420 → [10]=1)
+    if w & 0xFFE08C00 == 0x5E000000 || w & 0xFFFFCC00 == 0x5E280800 {
+        return Some(Feature::Sha2);
+    }
+    //   eor3 : ce020c20  Nothing in ARMv8.0-A has this top byte.
+    if w >> 24 == 0xCE {
+        return Some(Feature::Sha3);
+    }
+
     // Deliberately NOT matched:
     //   - PACIASP/AUTIASP/BTI and other hint-form PAC: HINT-space (d503xxxx),
     //     architecturally defined to NOP on CPUs that don't recognize the
     //     specific op2:CRm. Safe everywhere.
-    //   - ARMv8 Crypto Extension (AESE/AESD/SHA1*/SHA256*/PMULL): post-baseline
-    //     (+aes/+sha2 not in armv8-a+crc). Every known emitter (BoringSSL) is
-    //     runtime-dispatched via getauxval(AT_HWCAP). Add a Feature::Crypto
-    //     variant if an unconditional use ever shows up.
     //   - FP16 arithmetic: genuinely post-v8.0 but the encoding overlaps the
     //     NEON space in a way that requires tracking the `size` field across
     //     many opcode families. Deferred until it shows up in a real scan.
@@ -178,6 +197,9 @@ pub fn classify(w: u32) -> Option<Feature> {
 pub fn rough_mnemonic(w: u32, feat: Feature) -> &'static str {
     match feat {
         Feature::Sve => "<sve>",
+        Feature::Aes => "<aes>",
+        Feature::Sha2 => "<sha2>",
+        Feature::Sha3 => "<sha3>",
         Feature::Rcpc => "ldapr",
         Feature::Jscvt => "fjcvtzs",
         Feature::PacNonHint => {
@@ -291,6 +313,21 @@ mod tests {
     fn flags_pac_nonhint() {
         assert_eq!(classify(0xf8200420), Some(Feature::PacNonHint)); // ldraa
         assert_eq!(classify(0xf8a00c20), Some(Feature::PacNonHint)); // ldrab
+    }
+
+    #[test]
+    fn flags_crypto() {
+        assert_eq!(classify(0x4e284820), Some(Feature::Aes)); // aese
+        assert_eq!(classify(0x4e287820), Some(Feature::Aes)); // aesimc
+        assert_eq!(classify(0x0ee2e020), Some(Feature::Aes)); // pmull .1q
+        assert_eq!(classify(0x4ee2e020), Some(Feature::Aes)); // pmull2 .1q
+        assert_eq!(classify(0x5e024020), Some(Feature::Sha2)); // sha256h
+        assert_eq!(classify(0x5e280820), Some(Feature::Sha2)); // sha1h
+        assert_eq!(classify(0xce020c20), Some(Feature::Sha3)); // eor3
+        assert_eq!(classify(0xce628020), Some(Feature::Sha3)); // sha512h
+        assert_eq!(classify(0x0e22e020), None); // pmull .8h
+        assert_eq!(classify(0x5e010420), None); // mov b0, v1.b[0]
+        assert_eq!(classify(0x4e204820), None); // cls
     }
 
     #[test]

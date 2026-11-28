@@ -304,26 +304,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     if (dirname(src) === resolve(cfg.cwd, "packages/bun-usockets/src")) noPchSources.add(src);
   }
 
-  // highway_json.cpp is compiled -O2 even in debug profiles (see its
-  // fileOverrides entry in flags.ts); a TU at a different -O level than the
-  // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled
-  // file"). It only includes highway + libc headers anyway.
-  if (cfg.debug) {
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_byte_set.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_jpeg.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_decoder.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_encoder.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_checksums.cpp"));
-    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zlib.cpp"));
-  }
-  // Nor can one with other CPU features, which this one has in some release builds.
-  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
-  // Nor one with SafeStack, which this one has in hardened builds.
-  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zstd.cpp"));
-
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the

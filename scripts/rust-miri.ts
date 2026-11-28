@@ -50,28 +50,38 @@ const MIRI_CRATES = [
   "bun_dispatch",
   "bun_errno",
   "bun_event_loop",
-  "bun_highway",
   "bun_http_types",
   "bun_icu_data",
-  "bun_jpeg",
   "bun_md",
   "bun_pod",
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_semver",
   "bun_shell_parser",
+  "bun_sourcemap",
   "bun_threading",
   "bun_url",
   "bun_wyhash",
 ];
 
+// These take long but need little memory. They run last, next to the end of
+// bun_sema, which needs the most.
+const MIRI_LAST = ["bun_simd_kernels", "bun_image_ops", "bun_jpeg"];
+
 // Crates of which Miri runs only the unit tests under these paths. The rest of
 // their tests start other programs, call vendored C, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
-  bun_core: ["c_str_list", "scoped::tests", "util::tests"],
+  bun_core: ["c_str_list", "scoped::tests", "util::tests", "immutable::tests::simd_"],
   bun_io: ["fd_wait", "max_buf"],
+  bun_zlib: ["match_is_appended", "literals_are_appended"],
 };
+
+// Of bun_simd, what writes to memory that is not initialized.
+const MIRI_SIMD = [
+  ..."--features slow-tests --test matches --test pieces_exact --test rooms --".split(" "),
+  ...["bytes", "words", "pixels", "on_all_targets", "stay_inside"].map(test => `--skip=${test}`),
+];
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
@@ -123,7 +133,7 @@ if (extraArgs.length > 0) {
 // Default set: Miri interprets one test at a time per process, so a single
 // `cargo miri test -p a -p b ...` is serial end to end. Build everything once,
 // then run one `cargo miri test -p <crate>` per crate concurrently.
-const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
+const allCrates = [...MIRI_CRATES, ...MIRI_LAST].flatMap(c => ["-p", c]);
 console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
 if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
 for (const crate of Object.keys(MIRI_UNIT_TESTS)) {
@@ -138,7 +148,7 @@ function testCrate(crate: string): Promise<Result> {
     const started = Date.now();
     const chunks: Buffer[] = [];
     const paths = MIRI_UNIT_TESTS[crate];
-    const only = paths ? ["--lib", "--", ...paths] : [];
+    const only = crate === "bun_simd" ? MIRI_SIMD : paths ? ["--lib", "--", ...paths] : [];
     const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always", ...only], { cwd: repo, env });
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
@@ -151,7 +161,7 @@ function testCrate(crate: string): Promise<Result> {
   });
 }
 
-const queue = [...MIRI_CRATES, ...Object.keys(MIRI_UNIT_TESTS)];
+const queue = [...MIRI_CRATES, ...Object.keys(MIRI_UNIT_TESTS), "bun_simd", ...MIRI_LAST];
 const width = Math.max(1, Math.min(availableParallelism(), queue.length));
 console.log(`\x1b[36m[miri]\x1b[0m ${queue.length} crates, ${width} at a time`);
 const results: Result[] = [];

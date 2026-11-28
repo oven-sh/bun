@@ -10,6 +10,7 @@ use super::tiles::Tiles;
 use crate::array::At;
 use crate::error::Result;
 use crate::lossless::{Argb, color_cache_key, subsampled};
+use crate::simd::{EightColors, count_rests};
 use crate::slice::InBounds;
 use crate::vec;
 
@@ -55,17 +56,6 @@ impl Multipliers {
 }
 
 const MAX_TILE_LEN: usize = 1 << (2 * MAX_TILE_BITS);
-const LANES: usize = 8;
-
-/// Some of the colors of a tile.
-struct Lanes {
-    /// Both in the high byte.
-    green: [i16; LANES],
-    red: [i16; LANES],
-    blue: [i16; LANES],
-    /// How many pixels have it.
-    count: [u16; LANES],
-}
 
 /// How much to take from another channel for `color`, which is in the high byte: a 32nd of the product.
 #[inline(always)]
@@ -80,7 +70,7 @@ struct Colors {
     len: usize,
     /// By hash, where in `pixels` a color may be.
     indices: Box<[u16; 2 * MAX_TILE_LEN]>,
-    lanes: Vec<Lanes>,
+    lanes: Vec<EightColors>,
 }
 
 impl Colors {
@@ -114,8 +104,8 @@ impl Colors {
     fn finish(&mut self) {
         self.lanes.clear();
         let (pixels, counts) = (self.pixels.as_chunks().0, self.counts.as_chunks_mut().0);
-        let used = pixels.iter().zip(counts).take(self.len.div_ceil(LANES));
-        self.lanes.extend(used.map(|(pixels, counts)| Lanes {
+        let used = pixels.iter().zip(counts).take(self.len.div_ceil(8));
+        self.lanes.extend(used.map(|(pixels, counts)| EightColors {
             green: pixels.map(|pixel: Argb| (pixel & 0xff00) as i16),
             red: pixels.map(|pixel| (pixel >> 8 & 0xff00) as i16),
             blue: pixels.map(|pixel| (pixel & 0xff) as i16),
@@ -125,31 +115,11 @@ impl Colors {
     }
 
     // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/predictor_enc.c#L854
-    #[inline(always)]
-    fn cost(&self, totals: &Totals, channel: impl Fn(&Lanes, usize) -> i16) -> i64 {
+    fn cost<const RED: bool>(&self, totals: &Totals, from_green: i8, from_red: i8) -> i64 {
         const BIAS: Bias = Bias::new(3, 240);
         let mut counts: Counts = [0; 256];
-        for lanes in &self.lanes {
-            let values: [i16; LANES] = core::array::from_fn(|i| channel(lanes, i));
-            for (value, count) in values.into_iter().zip(lanes.count) {
-                *counts.at_mut(usize::from(value as u8)) += count;
-            }
-        }
+        count_rests::baseline::<RED>(&self.lanes, from_green, from_red, &mut counts);
         totals.entropy_with(&counts) + BIAS.cost(&counts)
-    }
-
-    fn red_cost(&self, totals: &Totals, from_green: i8) -> i64 {
-        self.cost(totals, |lanes, i| {
-            (*lanes.red.at(i) >> 8) - delta(from_green, *lanes.green.at(i))
-        })
-    }
-
-    fn blue_cost(&self, totals: &Totals, from_green: i8, from_red: i8) -> i64 {
-        self.cost(totals, |lanes, i| {
-            *lanes.blue.at(i)
-                - delta(from_green, *lanes.green.at(i))
-                - delta(from_red, *lanes.red.at(i))
-        })
     }
 }
 
@@ -163,7 +133,7 @@ fn bonus(multiplier: i8, nearby: [i8; 2]) -> i64 {
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/enc/predictor_enc.c#L888
 fn best_for_red(tile: &Colors, totals: &Totals, nearby: [Multipliers; 2]) -> i8 {
     let nearby = nearby.map(|it| it.green_to_red);
-    let cost = |from_green| tile.red_cost(totals, from_green) - bonus(from_green, nearby);
+    let cost = |from_green| tile.cost::<true>(totals, from_green, 0) - bonus(from_green, nearby);
     let (mut best, mut least) = (0, cost(0));
     for step in [32, 16, 8, 4, 2] {
         for candidate in [best - step, best + step] {
@@ -192,7 +162,7 @@ fn best_for_blue(tile: &Colors, totals: &Totals, nearby: [Multipliers; 2]) -> [i
     ];
     const STEPS: [i8; 7] = [16, 16, 8, 4, 2, 2, 2];
     let cost = |[from_green, from_red]: [i8; 2]| {
-        tile.blue_cost(totals, from_green, from_red)
+        tile.cost::<false>(totals, from_green, from_red)
             - bonus(from_green, nearby.map(|it| it.green_to_blue))
             - bonus(from_red, nearby.map(|it| it.red_to_blue))
     };
@@ -254,7 +224,7 @@ pub(super) fn apply(pixels: &mut [Argb], width: usize, height: usize, bits: u32)
         counts: vec::array(0)?,
         len: 0,
         indices: vec::array(0)?,
-        lanes: vec::with_room(MAX_TILE_LEN / LANES)?,
+        lanes: vec::with_room(MAX_TILE_LEN / 8)?,
     };
     let mut before = Multipliers::default();
     for tile_y in 0..subsampled(height, bits) {
@@ -296,4 +266,16 @@ pub(super) fn apply(pixels: &mut [Argb], width: usize, height: usize, bits: u32)
     }
     tiles.merge();
     Ok(tiles)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_colors_of_a_tile_can_differ() {
+        let mut pixels: [_; 2 * MAX_TILE_LEN] = core::array::from_fn(|i| i as Argb + 1);
+        let side = 1 << MAX_TILE_BITS;
+        assert!(apply(&mut pixels, side, 2 * side, MAX_TILE_BITS).is_ok());
+    }
 }

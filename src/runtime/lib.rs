@@ -8,7 +8,6 @@
 #![feature(arbitrary_self_types)]
 #![feature(ascii_char)]
 #![feature(core_io_borrowed_buf, borrowed_buf_init)]
-#![feature(vec_fallible_shrink)]
 #![cfg_attr(all(unix, target_arch = "x86_64"), feature(breakpoint))]
 // The unit-test harness leaves out `bin_entry` (below), the root that keeps
 // this crate's `pub(crate)` items alive, so in a test build most of the crate

@@ -10,26 +10,6 @@ extern "C" fn WTF__parseDouble(_: *const u8, _: usize, _: *mut usize) -> f64 {
     unreachable!()
 }
 
-/// Stands in for highway_strings.cpp.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_memmem(
-    text: *const u8,
-    len: usize,
-    part: *const u8,
-    part_len: usize,
-) -> *const u8 {
-    use core::slice::from_raw_parts;
-    // SAFETY: the caller passes two slices.
-    let (text, part) = unsafe { (from_raw_parts(text, len), from_raw_parts(part, part_len)) };
-    (text.windows(part_len).find(|window| *window == part))
-        .map_or(core::ptr::null(), <[u8]>::as_ptr)
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn highway_index_of_char(_: *const u8, _: usize, _: u8) -> usize {
-    unreachable!()
-}
-
 const HELLO: &str = "%1\r\n+proto\r\n:3\r\n";
 
 fn show(value: &RESPValue) -> String {

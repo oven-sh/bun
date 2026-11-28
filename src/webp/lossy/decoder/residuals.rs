@@ -146,9 +146,8 @@ impl Residuals {
     }
 
     /// Reads the coefficients and turns them into what is added to the prediction. They were cleared.
-    // Out of line, so that the reader gets the registers.
-    #[inline(never)]
-    pub(super) fn read(
+    #[inline(always)]
+    fn read_inline(
         &mut self,
         partition: &mut BoolReader,
         probabilities: &Probabilities,
@@ -232,7 +231,7 @@ impl Residuals {
                 let short = mask(TWO_OR_THREE) | to_transform & !with_more;
                 return self.transform_short_apart(to_transform, short);
             }
-            bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+            crate::simd::inverse_dct(&mut self.rows, to_transform);
         }
     }
 
@@ -243,11 +242,26 @@ impl Residuals {
     #[inline(never)]
     fn transform_short_apart(&mut self, to_transform: u32, short: u32) {
         let coefficients = self.rows;
-        bun_highway::webp::inverse_dct(&mut self.rows, to_transform);
+        crate::simd::inverse_dct(&mut self.rows, to_transform);
         for i in (0..24).filter(|i| short >> i & 1 != 0) {
             spread_three(coefficients.at(i / 4), self.rows.at_mut(i / 4), i % 4);
         }
     }
+}
+
+/// `Residuals::read_inline()` out of line, so that the reader gets the registers, and with `lzcnt` and `shlx` if the CPU
+/// has them.
+#[bun_simd::kernel(avx2)]
+pub(super) fn read(
+    residuals: &mut Residuals,
+    partition: &mut BoolReader<'_>,
+    probabilities: &Probabilities,
+    quantizers: &Quantizers,
+    has_y2: bool,
+    above: &mut Context,
+    left: &mut Context,
+) {
+    residuals.read_inline(partition, probabilities, quantizers, has_y2, above, left);
 }
 
 /// The inverse DCT of three coefficients below this takes no more than 16 bits.
@@ -369,6 +383,7 @@ fn read_above_one(reader: &mut BoolReader, tree: &Tree) -> i32 {
 }
 
 /// Turns the block at the left of `y2` into the first coefficients of the blocks of `luma`. Section 14.3.
+#[inline(never)]
 fn inverse_wht(y2: &BlockRow, luma: &mut [BlockRow; 4]) {
     let butterfly = |[i0, i1, i2, i3]: [i32; 4]| {
         let (a, b, c, d) = (i0 + i3, i1 + i2, i1 - i2, i0 - i3);
@@ -398,5 +413,42 @@ mod tests {
         let (reader, mut row) = (&mut BoolReader::new(&[254; 8]), [0; 64]);
         assert_eq!(block.read_to_end(reader, &[128; 11], &mut row, 0), None);
         assert_eq!(row, [0; 64]);
+    }
+
+    #[test]
+    fn the_largest_first_coefficients_are_spread_as_recorded() -> Result<()> {
+        let mut probabilities = Probabilities::read(&mut BoolReader::new(&[0; 8]))?;
+        for (i, steps) in probabilities.0.iter_mut().enumerate() {
+            // Mostly ones: 16 in Y2, and few elsewhere.
+            let mut tree = [255; 11];
+            (tree[0], tree[1]) = (if i == BlockType::Y2 as usize { 1 } else { 180 }, 1);
+            steps.iter_mut().for_each(|it| it.trees = [tree; 3]);
+        }
+        let quantizers = Quantizers {
+            luma: [9; 2],
+            y2: [i16::MAX.into(); 2],
+            chroma: [i16::MAX.into(), 9],
+        };
+        let noise: [_; 9000] = core::array::from_fn(|i| (i * i % 8191) as u8);
+        let (mut reader, mut sum) = (BoolReader::new(&noise), 0);
+        for _ in 0..1000 {
+            let (mut it, [mut above, mut left]) = (Residuals::new(), [Context::default(); 2]);
+            it.read_inline(
+                &mut reader,
+                &probabilities,
+                &quantizers,
+                true,
+                &mut above,
+                &mut left,
+            );
+            sum += it
+                .rows
+                .as_flattened()
+                .iter()
+                .filter(|&&it| it > 255)
+                .count();
+        }
+        assert_eq!(sum, 120711);
+        reader.check_not_past_end()
     }
 }

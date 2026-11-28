@@ -4,7 +4,7 @@ use bun_deflate::format::{
     Codeword, END_OF_BLOCK, FIRST_LENGTH_SYMBOL, MIN_MATCH_LEN, length_slot, length_slot_of,
     offset_slot, static_litlen_codeword, static_offset_codeword,
 };
-use bun_highway::with_bmi2;
+use bun_simd::kernel;
 
 use super::huffman::Code;
 use super::pending::{Bits, Pending};
@@ -156,22 +156,21 @@ impl Encoding {
     }
 }
 
-with_bmi2! {
-    fn put_symbols(
-        encoding: &Encoding,
-        pending: &mut Pending,
-        max_len: usize,
-        symbols: &[Symbol],
-        matches: usize,
-    ) -> () {
-        // A branch only pays if it mostly goes the same way.
-        if matches * 8 < symbols.len() {
-            pending.put_all(max_len, symbols, |symbol| match symbol.literal() {
-                Some(literal) => encoding.of_literal(literal),
-                None => encoding.of(symbol),
-            });
-        } else {
-            pending.put_all(max_len, symbols, |symbol| encoding.of(symbol));
-        }
+#[kernel(sse4 + bmi)]
+fn put_symbols(
+    encoding: &Encoding,
+    pending: &mut Pending,
+    max_len: usize,
+    symbols: &[Symbol],
+    matches: usize,
+) {
+    // A branch only pays if it mostly goes the same way.
+    if matches * 8 < symbols.len() {
+        pending.put_all(max_len, symbols, |symbol| match symbol.literal() {
+            Some(literal) => encoding.of_literal(literal),
+            None => encoding.of(symbol),
+        });
+    } else {
+        pending.put_all(max_len, symbols, |symbol| encoding.of(symbol));
     }
 }

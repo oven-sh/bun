@@ -13,4 +13,7 @@ workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_highway.workspace = true
+bun_simd.workspace = true
+
+[dev-dependencies]
+bun_zlib.workspace = true

@@ -11,12 +11,8 @@
 // The common case — a string with nothing to escape — is detected with a SIMD
 // scan and returns the input JSString unchanged (no allocation). Otherwise a
 // second SIMD pass computes the exact escaped length, the result string is
-// allocated once via WTF::String::tryCreateUninitialized, and a single
-// table-driven scalar pass fills it: a 256-entry length table turns the hot
-// loop into one load + branch per character (copy it, or memcpy its entity),
-// with no per-run SIMD dispatch, no reallocation and no per-append bookkeeping.
-// This keeps both the 8-bit (Latin-1) and 16-bit (UTF-16) paths ahead of the
-// previous implementations on passthrough, sparse and escape-dense input alike.
+// allocated once via WTF::String::tryCreateUninitialized, and a third one
+// fills it (src/simd_kernels/html.rs).
 //
 // UTF-16 input is copied through code unit by code unit except for the five
 // metacharacters; surrogate pairs and lone surrogates are preserved verbatim
@@ -25,6 +21,7 @@
 
 #include "root.h"
 #include "escapeHTML.h"
+#include "bun_simd.h"
 
 #include <array>
 #include <span>
@@ -32,75 +29,15 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
-// SIMD kernels implemented in highway_strings.cpp.
-extern "C" size_t highway_index_of_html_escape_char8(const uint8_t* text, size_t text_len);
-extern "C" size_t highway_index_of_html_escape_char16(const uint16_t* text, size_t text_len);
-extern "C" size_t highway_html_escape_extra_len8(const uint8_t* text, size_t text_len);
-extern "C" size_t highway_html_escape_extra_len16(const uint16_t* text, size_t text_len);
-
 namespace Bun {
 
-// Per-byte escaped length: 1 for ordinary characters, the entity length for the
-// five metacharacters. Only indices 0-127 can be non-1 (metacharacters are
-// ASCII), so this also covers the low byte of any UTF-16 code unit.
-static constexpr std::array<uint8_t, 256> makeEscapeLengthTable()
-{
-    std::array<uint8_t, 256> table {};
-    for (auto& v : table)
-        v = 1;
-    table['&'] = 5; // &amp;
-    table['<'] = 4; // &lt;
-    table['>'] = 4; // &gt;
-    table['"'] = 6; // &quot;
-    table['\''] = 6; // &#x27;
+// Indexed by a Latin-1 character.
+static constexpr auto kIsEscaped = [] {
+    std::array<bool, 256> table {};
+    for (const uint8_t c : { '&', '<', '>', '"', '\'' })
+        table[c] = true;
     return table;
-}
-static constexpr auto kEscapeLength = makeEscapeLengthTable();
-
-// Write the entity for metacharacter `c` into `out`, returning the count. Only
-// reached for the five metacharacters; entity bytes are ASCII and widen
-// implicitly to CharacterType.
-template<typename CharacterType>
-static ALWAYS_INLINE size_t writeEntity(CharacterType* out, CharacterType c)
-{
-    switch (c) {
-    case '&':
-        out[0] = '&';
-        out[1] = 'a';
-        out[2] = 'm';
-        out[3] = 'p';
-        out[4] = ';';
-        return 5;
-    case '<':
-        out[0] = '&';
-        out[1] = 'l';
-        out[2] = 't';
-        out[3] = ';';
-        return 4;
-    case '>':
-        out[0] = '&';
-        out[1] = 'g';
-        out[2] = 't';
-        out[3] = ';';
-        return 4;
-    case '"':
-        out[0] = '&';
-        out[1] = 'q';
-        out[2] = 'u';
-        out[3] = 'o';
-        out[4] = 't';
-        out[5] = ';';
-        return 6;
-    default: // '\''
-        out[0] = '&';
-        out[1] = '#';
-        out[2] = 'x';
-        out[3] = '2';
-        out[4] = '7';
-        out[5] = ';';
-        return 6;
-    }
-}
+}();
 
 // SWAR "does this 8-byte word contain byte `b`?" — sets the high bit of any
 // matching byte's lane, 0 elsewhere. Classic bit trick, no SIMD dispatch.
@@ -113,19 +50,19 @@ static ALWAYS_INLINE uint64_t swarHasByte(uint64_t x, uint8_t b)
 
 // Index of the first metacharacter in `span`, or span.size() if none. Short
 // inputs avoid the SIMD kernels — those dispatch through an indirect call
-// (HWY_DYNAMIC_DISPATCH) whose overhead dominates for a handful of characters,
-// and most `Bun.escapeHTML` calls are on short strings. The 8-bit path scans
-// 8 bytes at a time with SWAR; the 16-bit path uses a short scalar loop.
+// whose overhead dominates for a handful of characters, and most
+// `Bun.escapeHTML` calls are on short strings. The 8-bit path scans 8 bytes at
+// a time with SWAR; the 16-bit path uses a short scalar loop.
 template<typename CharacterType>
 static ALWAYS_INLINE size_t indexOfHTMLEscape(std::span<const CharacterType> span)
 {
-    constexpr size_t kScalarThreshold = 32;
+    constexpr size_t kScalarThreshold = sizeof(CharacterType) == 1 ? 32 : 20;
     const size_t length = span.size();
     const CharacterType* const data = span.data();
 
     if constexpr (sizeof(CharacterType) == 1) {
         if (length >= kScalarThreshold)
-            return highway_index_of_html_escape_char8(reinterpret_cast<const uint8_t*>(data), length);
+            return bun_simd_index_of_html_escape_char8(reinterpret_cast<const uint8_t*>(data), length);
         size_t i = 0;
         for (; i + 8 <= length; i += 8) {
             uint64_t word;
@@ -136,16 +73,16 @@ static ALWAYS_INLINE size_t indexOfHTMLEscape(std::span<const CharacterType> spa
                 return i + (__builtin_ctzll(hit) >> 3);
         }
         for (; i < length; ++i) {
-            if (kEscapeLength[data[i]] != 1)
+            if (kIsEscaped[data[i]])
                 return i;
         }
         return length;
     } else {
-        if (length >= kScalarThreshold)
-            return highway_index_of_html_escape_char16(reinterpret_cast<const uint16_t*>(data), length);
+        if (length >= kScalarThreshold && data[0] != '<')
+            return bun_simd_index_of_html_escape_char16(reinterpret_cast<const uint16_t*>(data), length);
         for (size_t i = 0; i < length; ++i) {
             const char16_t c = data[i];
-            if (c < 0x100 && kEscapeLength[static_cast<uint8_t>(c)] != 1)
+            if (c < 0x100 && kIsEscaped[c])
                 return i;
         }
         return length;
@@ -157,9 +94,9 @@ template<typename CharacterType>
 static ALWAYS_INLINE size_t htmlEscapeExtraLen(std::span<const CharacterType> span)
 {
     if constexpr (sizeof(CharacterType) == 1)
-        return highway_html_escape_extra_len8(reinterpret_cast<const uint8_t*>(span.data()), span.size());
+        return bun_simd_html_escape_extra_len8(reinterpret_cast<const uint8_t*>(span.data()), span.size());
     else
-        return highway_html_escape_extra_len16(reinterpret_cast<const uint16_t*>(span.data()), span.size());
+        return bun_simd_html_escape_extra_len16(reinterpret_cast<const uint16_t*>(span.data()), span.size());
 }
 
 // Shared escape routine for both 8-bit (Latin-1) and 16-bit (UTF-16) input.
@@ -171,7 +108,6 @@ static JSC::JSString* escapeHTMLString(JSC::JSGlobalObject* globalObject, JSC::J
 {
     auto& vm = JSC::getVM(globalObject);
     const size_t length = span.size();
-    const CharacterType* const src = span.data();
     const size_t firstEscape = indexOfHTMLEscape(span);
     // Nothing to escape — hand back the original string without allocating.
     if (firstEscape == length)
@@ -199,32 +135,16 @@ static JSC::JSString* escapeHTMLString(JSC::JSGlobalObject* globalObject, JSC::J
         return nullptr;
     }
 
-    CharacterType* dst = out.data();
-
     // Clean prefix up to the first metacharacter, copied in one shot.
-    if (firstEscape > 0) {
-        memcpy(dst, src, firstEscape * sizeof(CharacterType));
-        dst += firstEscape;
-    }
+    if (firstEscape > 0)
+        memcpy(out.data(), span.data(), firstEscape * sizeof(CharacterType));
 
-    // Table-driven single pass over the rest: one table load + branch per
-    // character. Ordinary characters (length 1) are copied; metacharacters
-    // expand to their entity. A code unit > 0xFF has a low byte that might
-    // index a metacharacter slot, so gate the table lookup on c < 0x100 for the
-    // 16-bit path (folds away for the 8-bit path).
-    for (size_t i = firstEscape; i < length; ++i) {
-        const CharacterType c = src[i];
-        if (sizeof(CharacterType) == 1 || c < 0x100) {
-            const uint8_t entityLength = kEscapeLength[static_cast<uint8_t>(c)];
-            if (entityLength != 1) {
-                dst += writeEntity(dst, c);
-                continue;
-            }
-        }
-        *dst++ = c;
-    }
-
-    ASSERT(static_cast<size_t>(dst - out.data()) == outLength);
+    const auto from = span.subspan(firstEscape);
+    const auto to = out.subspan(firstEscape);
+    if constexpr (sizeof(CharacterType) == 1)
+        bun_simd_escape_html8(reinterpret_cast<const uint8_t*>(from.data()), from.size(), reinterpret_cast<uint8_t*>(to.data()), to.size());
+    else
+        bun_simd_escape_html16(reinterpret_cast<const uint16_t*>(from.data()), from.size(), reinterpret_cast<uint16_t*>(to.data()), to.size());
     return JSC::jsString(vm, WTF::String(impl.releaseNonNull()));
 }
 

@@ -4,7 +4,7 @@ use core::array::from_fn;
 use core::hint::select_unpredictable;
 use core::ops::RangeInclusive;
 
-use bun_highway::brotli::{self, Place, SLOT_SHIFT, Ways};
+use bun_simd::target::Baseline;
 
 use super::command::{
     Command, Commands, DISTANCE_CODE_OFFSET, DistancePrefix, codes_of_short_lengths,
@@ -18,6 +18,7 @@ use super::log2::{const_log2, fast_log2};
 use super::matching::{bytes_at, match_length};
 use super::prepared_dictionary::PreparedDictionary;
 use super::ring_buffer::Window;
+use super::simd::{self, Place, SLOT_SHIFT, Ways};
 use super::symbol_set::SymbolSet;
 use super::words::WordMatches;
 use crate::format::{
@@ -288,9 +289,14 @@ impl Starts {
     fn promising(&self, count: usize, place: Place<'_>, hopeless: f32) -> (u32, u64) {
         if count == 1 {
             let last_distances = &self.last_distances[self.get(0).slot];
-            (brotli::short_codes(place, last_distances), 0)
+            (simd::short_codes::<Baseline>(place, last_distances), 0)
         } else {
-            brotli::short_codes_of_five(place, &self.last_distances, &self.ranked, hopeless)
+            simd::short_codes_of_five::<Baseline>(
+                place,
+                &self.last_distances,
+                &self.ranked,
+                hopeless,
+            )
         }
     }
 
@@ -599,14 +605,14 @@ impl<'a> Paths<'a> {
             Some(costs) if node.insert >> Node::CODE_SHIFT == 1 => (without_distance, costs),
             _ => (with_distance, &self.symbols.with_distance[insert_code]),
         };
-        let start = brotli::Start {
+        let start = simd::Start {
             cost,
             symbol_costs,
             insert: node.insert,
         };
         let (offset, short) = (attempt.offset, first..SHORT_COPY_END.min(last + 1));
         let ways = self.ways_from(offset);
-        brotli::try_lengths(ways, short, &COPY_EXTRA_BITS, start, node.distance);
+        simd::try_lengths::<_, Baseline>(ways, short, &COPY_EXTRA_BITS, start, node.distance);
         if last >= SHORT_COPY_END {
             let long = first.max(SHORT_COPY_END)..=last;
             let longest = self.try_long_lengths(offset, long, insert_code, with_distance, node);
@@ -634,8 +640,13 @@ impl<'a> Paths<'a> {
                 base + f32::from(range.extra_bits) + self.symbols.commands[usize::from(symbol)];
             let end = (last + 1).min(usize::from(range.base) + (1 << range.extra_bits));
             let (ways, lengths) = (self.ways_from(offset), length..end);
-            let taken =
-                brotli::try_lengths_at_cost(ways, lengths, cost, node.distance, node.insert);
+            let taken = simd::try_lengths_at_cost::<Baseline>(
+                ways,
+                lengths,
+                cost,
+                node.distance,
+                node.insert,
+            );
             longest = longest.max(taken);
             length = end;
         }
@@ -698,7 +709,7 @@ impl<'a> Paths<'a> {
             return 0;
         }
         let last_distances = &self.starts.last_distances[self.starts.get(rank).slot];
-        brotli::short_codes(self.place_for(offset, length + 1), last_distances) as u16
+        simd::short_codes::<Baseline>(self.place_for(offset, length + 1), last_distances) as u16
     }
 
     #[inline(always)]
@@ -749,7 +760,7 @@ impl<'a> Paths<'a> {
         longest: usize,
     ) {
         let symbols = self.symbols;
-        let start = |insert: Insert| brotli::Start {
+        let start = |insert: Insert| simd::Start {
             cost: insert.cost,
             symbol_costs: &symbols.with_distance[insert.code],
             insert: insert.length,
@@ -758,7 +769,7 @@ impl<'a> Paths<'a> {
         let other = start(self.insert_from(other_rank, attempt.offset));
         let after_short_codes = &symbols.distances[DISTANCE_SHORT_CODES as usize..];
         if let Some(distance_costs) = after_short_codes.first_chunk() {
-            brotli::try_matches(
+            simd::try_matches::<_, Baseline>(
                 self.ways_from(attempt.offset),
                 attempt.min_length..longest + 1,
                 &COPY_EXTRA_BITS,

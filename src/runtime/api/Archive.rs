@@ -1258,7 +1258,7 @@ pub(crate) mod testing {
                 "\"{}\"... {} bytes crc32={:08x}",
                 name[..SHOWN].escape_ascii(),
                 name.len(),
-                bun_highway::crc32(0, name),
+                bun_hash::crc32(0, name),
             );
         }
     }
@@ -1376,7 +1376,7 @@ pub(crate) mod testing {
                     run = Run::default();
                 }
                 Event::Data { offset, bytes } => {
-                    crc = bun_highway::crc32(crc, bytes);
+                    crc = bun_hash::crc32(crc, bytes);
                     if offset != run.offset + run.len {
                         run.flush(&mut log);
                         run.offset = offset;

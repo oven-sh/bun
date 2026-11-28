@@ -3,11 +3,11 @@
 use core::cell::Cell;
 
 use bun_core::vec::{BorrowedBuf, append_behind, append_with};
-use bun_highway::zlib::{Appender, NEXT_MATCH_OFFSET};
 
 use super::Status;
 use super::bits::BitReader;
 use super::codes::{self, FAST_INPUT, Lap, Reach, Stop};
+use super::matches::NEXT_MATCH_OFFSET;
 use super::tables::Tables;
 use super::window::SLACK;
 use crate::checksum::Checksum;
@@ -198,7 +198,7 @@ impl Target for Growing<'_> {
             return Ok(Some(Status::BlockEnd));
         }
         let decoded = self.vec.len() - start;
-        let tape = Appender::new(self.vec, reach.from + decoded, room - decoded);
+        let tape = codes::end_of(self.vec, reach.from + decoded, room - decoded);
         codes::decode_slowly(tables, bits, tape, reach)
     }
 }

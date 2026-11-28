@@ -1,8 +1,7 @@
 //! Counts symbols, and estimates what they cost.
 
-use bun_highway::brotli::{SPARE_LOGARITHMS, estimate_costs};
-
 use super::log2::{FRACTION_BITS, fast_log2, fixed_point_log2};
+use super::simd::{LOGARITHM_BYTES, Logarithms, MAX_LOGARITHMS, estimate_costs, set_logarithm};
 use super::symbol_set::SymbolSet;
 use crate::format::{
     CODE_LENGTH_CODES, COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS, MAX_DIRECT_CODES,
@@ -147,18 +146,47 @@ impl IndexedList {
 
 /// Estimates the bits for a prefix code and for its symbols.
 pub(super) struct Estimator {
-    logarithms: Vec<[f64; 2]>,
+    logarithms: Vec<u8>,
+    wanted: usize,
+    /// Zero until the first use.
+    known: u32,
 }
 
 impl Estimator {
     /// For histograms of about `symbols` symbols altogether.
     pub(super) fn new(symbols: usize) -> Result<Self> {
-        let known = (symbols / 32).next_power_of_two().max(256);
-        let mut logarithms = memory::empty(known + SPARE_LOGARITHMS)?;
-        logarithms.push([1e6, 0.0]);
-        logarithms.extend((1..known).map(|count| [fast_log2(count), count as f64]));
-        memory::resize(&mut logarithms, known + SPARE_LOGARITHMS, [0.0; 2]);
-        Ok(Self { logarithms })
+        // Below 128 symbols, `cost_of_little` handles even the sum of two histograms without the table, so it is zeroed
+        // only if it is used. Otherwise, the allocator may have zeroed memory at hand.
+        let logarithms = match symbols {
+            ..128 => memory::empty(LOGARITHM_BYTES)?,
+            _ => memory::zeroed(LOGARITHM_BYTES)?,
+        };
+        Ok(Self {
+            logarithms,
+            wanted: (symbols / 32)
+                .next_power_of_two()
+                .clamp(256, MAX_LOGARITHMS),
+            known: 0,
+        })
+    }
+
+    #[inline(always)]
+    fn logarithms(&mut self) -> (&mut Logarithms, u32) {
+        if self.known == 0 {
+            self.fill();
+        }
+        (&mut self.logarithms.as_chunks_mut().0[0], self.known)
+    }
+
+    #[cold]
+    fn fill(&mut self) {
+        memory::resize(&mut self.logarithms, LOGARITHM_BYTES, 0);
+        let table = &mut self.logarithms.as_chunks_mut().0[0];
+        set_logarithm(table, 0, 0, 1e6);
+        for count in 1..self.wanted {
+            set_logarithm(table, count, count as u32, fast_log2(count));
+        }
+        self.known = self.wanted as u32;
     }
 
     pub(super) fn cost(&mut self, histogram: &Indexed<'_>) -> f64 {
@@ -175,14 +203,15 @@ impl Estimator {
             return cost_of_little(&used, total, counts, nothing);
         }
         let (totals, gaps) = ([total as u32; 4], used.gaps().map(|gaps| [gaps; 4]));
-        let logarithms = &mut self.logarithms;
+        let (table, known) = self.logarithms();
         estimate_costs(
             counts,
-            [nothing; 4],
+            &[nothing; 4],
             used.words(),
             &totals,
             &gaps,
-            logarithms,
+            table,
+            known,
         )[0]
     }
 
@@ -213,13 +242,15 @@ impl Estimator {
                 count += 1;
             }
             if count == 4 || (count != 0 && left == 0) {
+                let (table, known) = self.logarithms();
                 let estimates = estimate_costs(
                     common.counts,
-                    counts,
+                    &counts,
                     all_used.words(),
                     &totals,
                     &gaps,
-                    &mut self.logarithms,
+                    table,
+                    known,
                 );
                 for (&id, cost) in waiting[..count].iter().zip(estimates) {
                     costs[id as usize] = cost;
@@ -328,4 +359,17 @@ fn entropy_of(counts: impl Iterator<Item = u32>, sum: u32) -> f64 {
     }
     bits += f64::from(sum) * fast_log2(sum as usize);
     bits.max(f64::from(sum))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn more_symbols_than_expected_cost_the_same() -> Result<()> {
+        let histogram = Indexed::new(&[300; 64], 64 * 300);
+        let cost = Estimator::new(128)?.cost(&histogram);
+        assert_eq!(Estimator::new(127)?.cost(&histogram), cost);
+        Ok(())
+    }
 }

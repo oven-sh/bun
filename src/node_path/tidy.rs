@@ -1,44 +1,14 @@
-//! `path.posix` for 8-bit characters. What looks at all of them is a kernel of `bun_highway`.
+//! `path.posix` for 8-bit characters. What looks at all of them is a kernel of `bun_simd_kernels`.
+#![forbid(unsafe_code)]
 
+use bun_simd::mem::Output;
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
 const SLASH: u8 = b'/';
 const DOT: u8 = b'.';
 
-/// `<[u8]>::is_ascii` for a path or a part of one: a few characters or a few dozen.
-#[inline(always)]
-pub fn is_ascii(text: &[u8]) -> bool {
-    const HIGHEST_BITS: u128 = u128::from_ne_bytes([0x80; 16]);
-    let (start, len) = (text.as_ptr(), text.len());
-    // SAFETY: every read lies in `text`. One that ends with it may overlap the one before it.
-    unsafe {
-        let block = |at: usize| start.add(at).cast::<u128>().read_unaligned();
-        if len > 32 {
-            let mut seen = block(len - 32) | block(len - 16);
-            let mut at = 0;
-            while at + 32 < len {
-                seen |= block(at) | block(at + 16);
-                at += 32;
-            }
-            return seen & HIGHEST_BITS == 0;
-        }
-        if len >= 16 {
-            return (block(0) | block(len - 16)) & HIGHEST_BITS == 0;
-        }
-        if len >= 8 {
-            let first = start.cast::<u64>().read_unaligned();
-            let last = start.add(len - 8).cast::<u64>().read_unaligned();
-            return (first | last) & HIGHEST_BITS as u64 == 0;
-        }
-        if len >= 4 {
-            let first = start.cast::<u32>().read_unaligned();
-            let last = start.add(len - 4).cast::<u32>().read_unaligned();
-            return (first | last) & HIGHEST_BITS as u32 == 0;
-        }
-        len == 0 || (*start | *start.add(len / 2) | *start.add(len - 1)) < 0x80
-    }
-}
+pub use bun_simd_kernels::is_ascii_path as is_ascii;
 
 /// Whether the part of `path` that starts at `start` is "." or "..".
 #[inline(always)]
@@ -54,32 +24,34 @@ fn is_dots_at(path: &[u8], start: usize) -> bool {
 pub fn is_tidy_ascii_posix(path: &[u8]) -> bool {
     !path.is_empty()
         && !(path[0] == DOT && is_dots_at(path, 0))
-        && bun_highway::index_of_untidy_slash_or_non_ascii(path).is_none()
+        && bun_simd_kernels::index_of_untidy_slash_or_non_ascii(path).is_none()
 }
 
 /// Where the parts from `start` on that are kept as they are end: at a '/' in front of a part that is empty, "." or "..", or at `limit`, which is not behind a slash.
 #[inline(always)]
 fn end_of_tidy_parts(path: &[u8], start: usize, limit: usize) -> usize {
-    // Only slashes follow `limit`, so a part that ends there ends there in `path` too.
-    bun_highway::index_of_untidy_slash(&path[start..limit]).map_or(limit, |found| start + found)
+    bun_simd_kernels::index_of_untidy_slash(&path[start..limit])
+        .map_or(limit, |found| start + found)
 }
 
-/// `normalize_string_t` in the crate root, with '/'.
+/// A '/' and then `normalize_string_t` in the crate root, with '/'. What is written after the first '/' is no longer than what was read.
 #[inline(always)]
-fn normalize_string_posix_latin1(
+fn normalize_string_posix_latin1<'b>(
     path: &[u8],
     allow_above_root: bool,
-    to: &mut [MaybeUninit<u8>],
-) -> usize {
-    assert!(to.len() >= path.len());
-    let to = to.as_mut_ptr().cast::<u8>();
+    to: &'b mut [MaybeUninit<u8>],
+) -> Output<'b, u8> {
+    let mut to = Output::new(to);
+    to.push_one(SLASH);
     let limit = end_without_slashes(path, 0);
-    let mut length = 0;
-    let mut at = 0;
+    let (path, mut at) = (&path[..limit], 0);
     while at < limit {
         if path[at] == SLASH {
             at += 1;
-            continue;
+            // The last character is not a slash.
+            while path[at] == SLASH {
+                at += 1;
+            }
         }
         if path[at] == DOT {
             if at + 1 == limit || path[at + 1] == SLASH {
@@ -88,39 +60,27 @@ fn normalize_string_posix_latin1(
             }
             if path[at + 1] == DOT && (at + 2 == limit || path[at + 2] == SLASH) {
                 at += 3;
-                // SAFETY: that many are written.
-                let written = unsafe { core::slice::from_raw_parts(to, length) };
-                if length != 0 && !matches!(written, [DOT, DOT] | [.., SLASH, DOT, DOT]) {
-                    length = last_slash(written, length).unwrap_or(0);
+                let written = to.filled();
+                if written.len() > 1 && !matches!(written, [.., SLASH, DOT, DOT]) {
+                    let length = last_slash(written, written.len()).unwrap_or(0);
+                    to.truncate(length.max(1));
                 } else if allow_above_root {
-                    // SAFETY: what is written is no longer than what was read.
-                    unsafe {
-                        if length != 0 {
-                            to.add(length).write(SLASH);
-                            length += 1;
-                        }
-                        to.add(length).write(DOT);
-                        to.add(length + 1).write(DOT);
+                    if to.len() > 1 {
+                        to.push_one(SLASH);
                     }
-                    length += 2;
+                    to.push(&[DOT, DOT]);
                 }
                 continue;
             }
         }
         let end = end_of_tidy_parts(path, at, limit);
-        // SAFETY: what is written is no longer than what was read.
-        unsafe {
-            if length != 0 {
-                to.add(length).write(SLASH);
-                length += 1;
-            }
-            to.add(length)
-                .copy_from_nonoverlapping(path.as_ptr().add(at), end - at);
+        if to.len() > 1 {
+            to.push_one(SLASH);
         }
-        length += end - at;
+        to.push(&path[at..end]);
         at = end + 1;
     }
-    length
+    to
 }
 
 /// [`crate::normalize_posix_t`]. `buffer` has room for two characters more than `path` has.
@@ -129,27 +89,20 @@ pub fn normalize_posix_latin1<'b>(path: &[u8], buffer: &'b mut [MaybeUninit<u8>]
     if path.is_empty() {
         return b".";
     }
-    assert!(buffer.len() >= path.len() + 2);
     let is_absolute = path[0] == SLASH;
     let ends_with_slash = path[path.len() - 1] == SLASH;
-    let mut length = normalize_string_posix_latin1(path, !is_absolute, &mut buffer[1..]);
-    if length == 0 {
+    let mut normalized = normalize_string_posix_latin1(path, !is_absolute, buffer);
+    if normalized.len() == 1 {
         return match (is_absolute, ends_with_slash) {
             (true, _) => b"/",
             (false, true) => b"./",
             (false, false) => b".",
         };
     }
-    buffer[0].write(SLASH);
     if ends_with_slash {
-        buffer[1 + length].write(SLASH);
-        length += 1;
+        normalized.push_one(SLASH);
     }
-    let start = usize::from(!is_absolute);
-    // SAFETY: the first character and `length` after it are written.
-    unsafe {
-        core::slice::from_raw_parts(buffer.as_ptr().cast::<u8>().add(start), 1 + length - start)
-    }
+    &normalized.into_filled()[usize::from(!is_absolute)..]
 }
 
 /// [`crate::resolve_posix_t`] of one path that is absolute. `buffer` has room for one character more than `path` has.
@@ -159,21 +112,17 @@ pub fn resolve_absolute_posix_latin1<'b>(
     buffer: &'b mut [MaybeUninit<u8>],
 ) -> &'b [u8] {
     debug_assert!(path[0] == SLASH);
-    assert!(buffer.len() > path.len());
-    let length = normalize_string_posix_latin1(path, false, &mut buffer[1..]);
-    buffer[0].write(SLASH);
-    // SAFETY: the first character and `length` after it are written.
-    unsafe { core::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), 1 + length) }
+    normalize_string_posix_latin1(path, false, buffer).into_filled()
 }
 
 #[inline(always)]
 fn last_slash(path: &[u8], end: usize) -> Option<usize> {
-    bun_highway::last_index_of_slash(&path[..end])
+    bun_simd_kernels::last_index_of_slash(&path[..end])
 }
 
 #[inline(always)]
 fn last_slash_or_dot(path: &[u8], end: usize) -> Option<usize> {
-    bun_highway::last_index_of_slash_or_dot(&path[..end])
+    bun_simd_kernels::last_index_of_slash_or_dot(&path[..end])
 }
 
 /// `path.len()` less the slashes at its end, but at least `least`.
@@ -298,7 +247,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     debug_assert!(is_resolved_ascii_posix(from) && is_resolved_ascii_posix(to));
     // Where the names of `from` start that are not in `to`, if there are any, and `rest`.
     let (left_from, rest) = 'found: {
-        let common = bun_highway::common_prefix_length(from, to);
+        let common = bun_simd_kernels::common_prefix_length(from, to);
         if common == from.len() {
             if common == to.len() {
                 break 'found (None, common);
@@ -325,7 +274,7 @@ pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
     };
     RelativePosixLatin1 {
         ups: match left_from {
-            Some(start) => 1 + bun_highway::count_slashes(&from[start..]),
+            Some(start) => 1 + bun_simd_kernels::count_slashes(&from[start..]),
             None => 0,
         },
         rest,

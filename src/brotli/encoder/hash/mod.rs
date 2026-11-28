@@ -18,13 +18,13 @@ pub(super) use small::{MAX_SMALL_INPUT_SIZE, Small};
 
 use core::hint::{Locality, prefetch_read};
 
-use bun_highway::brotli::short_codes;
-use bun_highway::common_prefix_length;
+use bun_simd::prelude::{Baseline, u8x16};
 
 use super::input_block::InputBlock;
 use super::log2::log2_floor;
 use super::matching::{bytes_at, load32, load64};
 use super::ring_buffer::{SLACK, Window};
+use super::simd::short_codes;
 use super::words::QuickWordSearch;
 use crate::memory::Result;
 
@@ -111,7 +111,9 @@ const LONG_MATCH: usize = 64;
 #[cold]
 #[inline(never)]
 extern "rust-cold" fn long_match_length(a: &[u8], b: &[u8]) -> usize {
-    LONG_MATCH + common_prefix_length(&a[LONG_MATCH..], &b[LONG_MATCH..])
+    let (a, b) = (&a[LONG_MATCH..], &b[LONG_MATCH..]);
+    let difference = (u8x16::<Baseline>::over(a).zip(b)).position(|(a, b)| a.simd_ne(b));
+    LONG_MATCH + difference.unwrap_or_else(|| a.len().min(b.len()))
 }
 
 impl<'a> Search<'a> {
@@ -177,7 +179,7 @@ impl<'a> Search<'a> {
         let last = recent.first_chunk().unwrap_or(&[0; 4]);
         if count > last.len() {
             let place = window.place(self.position, 0, pair);
-            return short_codes(place, last) & ((1 << count) - 1);
+            return short_codes::<Baseline>(place, last) & ((1 << count) - 1);
         }
         let may_match = |distance: i32| {
             let earlier = window.index(self.position.wrapping_sub(distance as usize));

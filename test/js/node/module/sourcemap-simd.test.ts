@@ -1,5 +1,5 @@
 // Correctness tests for the SIMD source-map mappings decoder
-// (src/jsc/bindings/highway_sourcemap.cpp). The SIMD path is enabled for
+// (src/simd_kernels/sourcemap.rs). The SIMD path is enabled for
 // mappings >= 128 bytes; every case here is parsed twice (once normally,
 // once with BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP=1 to force the scalar
 // decode) and the full mapping list must be byte-identical.
@@ -204,7 +204,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
 
   test("2-char VLQ in each of the five positions (Masked-VByte shuffle)", async () => {
     // Each segment has exactly one 2-char VLQ, rotating through all five
-    // field positions, so every kShufTable entry with a single set bit
+    // field positions, so every GATHER entry with a single set bit
     // (cont = 1<<k for k in 0..4) is exercised.
     const segs: number[][] = [];
     for (let i = 0; i < 120; i++) {

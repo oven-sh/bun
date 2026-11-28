@@ -1,0 +1,13 @@
+[package]
+name = "bun_image_ops"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simd.workspace = true

@@ -439,7 +439,7 @@ describeLink("a trimmable link", () => {
   });
 
   test("puts what the command's order file lists together, in front of the rest of the features", async () => {
-    using dir = tempDir("trim-elf", { ...sources, "mine.txt": "retained\nentered\nmain\n" });
+    using dir = tempDir("trim-elf", { ...sources, "mine.txt": "retained.llvm.1\nentered.llvm.2\nmain\n" });
     const folder = String(dir);
     const result = await linked(folder, { linkFlags: ["-Wl,--symbol-ordering-file=mine.txt"] });
     const orderedNames = readFileSync(join(folder, "work/order.txt"), "latin1").split("\n");

@@ -1,6 +1,7 @@
 //! Throughput benchmark for the XML parser against other Rust and C/C++ parsers.
 //! Run via `scripts/bench-json-rust.sh --xml [criterion args]`. Fixtures: every `*.xml` / `*.svg` in
 //! `$BUN_XML_BENCH_FIXTURES` (default `bench/xml-corpus/`), plus built-in synthetic documents.
+#![allow(unexpected_cfgs)] // bench-json-rust.sh passes a `--cfg` for each C library that it finds.
 use bun_alloc::Arena as Bump;
 use bun_ast as js_ast;
 use bun_parsers::xml;

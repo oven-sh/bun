@@ -1,5 +1,5 @@
 use bun_core::vec::BorrowedCursor;
-use bun_highway::checksums::{adler32, copy_and_adler32, copy_and_crc32, crc32};
+use bun_hash::checksums::{adler32, copy_and_adler32, copy_and_crc32, crc32};
 
 const ADLER32_START: u32 = 1;
 /// For more, glibc's `memcpy` may take `rep movsb`.

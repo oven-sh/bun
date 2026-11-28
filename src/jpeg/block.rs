@@ -3,7 +3,7 @@
 use crate::{wrapped, wrapped_mut};
 use core::hint::{Locality, prefetch_read, select_unpredictable};
 
-pub(crate) use bun_highway::JpegBlock as Block;
+pub(crate) use crate::simd::Block;
 
 pub(crate) const ZERO: Block = Block([0; 64]);
 

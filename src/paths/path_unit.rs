@@ -83,22 +83,22 @@ impl PathUnit for u8 {
 
     #[inline(always)]
     fn index_of_untidy_slash(path: &[u8]) -> Option<usize> {
-        bun_highway::index_of_untidy_slash(path)
+        bun_simd_kernels::index_of_untidy_slash(path)
     }
 
     #[inline(always)]
     fn last_index_of_slash(path: &[u8]) -> Option<usize> {
-        bun_highway::last_index_of_slash(path)
+        bun_simd_kernels::last_index_of_slash(path)
     }
 
     #[inline(always)]
     fn count_slashes(path: &[u8]) -> usize {
-        bun_highway::count_slashes(path)
+        bun_simd_kernels::count_slashes(path)
     }
 
     #[inline(always)]
     fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-        bun_highway::common_prefix_length(a, b)
+        bun_simd_kernels::common_prefix_length(a, b)
     }
 }
 

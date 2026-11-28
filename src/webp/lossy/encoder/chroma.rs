@@ -1,7 +1,5 @@
 //! Picks the prediction mode for the chroma of a macroblock that gets the least distortion for its rate.
 
-use bun_highway::webp::{self, ChromaCandidates, Macroblock};
-
 use super::border::{self, Border};
 use super::candidates::{MACROBLOCK_MODES, add_costs, bottom, residual, right};
 use super::cost::{CHROMA_MODE_COSTS, FLATNESS_PENALTY, LevelCosts, add_excess};
@@ -9,6 +7,7 @@ use super::segments::Coding;
 use super::tokens::Residual;
 use crate::array::At;
 use crate::lossy::{BlockType, MacroblockMode};
+use crate::simd::{self, ChromaCandidates, Macroblock};
 
 /// What a macroblock leaves to the one below it, or to the one on its right.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -61,7 +60,7 @@ pub(super) fn choose(
     out: &mut Choice,
 ) {
     let errors = [above.errors, left.errors];
-    let is_saturated = webp::try_chroma_modes(
+    let is_saturated = simd::try_chroma_modes(
         samples,
         &border::chroma_edges(above.samples, left.samples, *above_left),
         [above.non_zero, left.non_zero],

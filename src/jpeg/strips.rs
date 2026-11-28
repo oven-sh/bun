@@ -2,8 +2,8 @@
 
 use crate::block::{self, Block, Zigzag};
 use crate::header::Grid;
-use crate::{Result, filled, wrapped};
-use bun_highway::JPEG_PIXEL_GROUP;
+use crate::simd::{self, GROUP};
+use crate::{Error, Result, filled, wrapped};
 
 const MCU_SIZE: usize = 16;
 
@@ -37,7 +37,7 @@ impl<'a> Strips<'a> {
         height: usize,
         quant: &[[u8; 64]; 2],
     ) -> Result<Self> {
-        let chroma_stride = width.next_multiple_of(JPEG_PIXEL_GROUP) / 2;
+        let chroma_stride = width.next_multiple_of(GROUP) / 2;
         Ok(Self {
             pixels,
             width,
@@ -73,21 +73,23 @@ impl<'a> Strips<'a> {
         let top = mcu_row * MCU_SIZE;
         let rows = MCU_SIZE.min(self.height - top);
         let pixels = self.pixels.get(top * width..).unwrap_or_default();
-        let mut convert_rows = |pixels, pixel_stride, count, pairs, x: usize, first_pair: usize| {
-            let at = first_pair * stride;
-            let [y, cb, cr] = &mut self.planes;
-            let planes = [(y, 4 * at + x), (cb, at + x / 2), (cr, at + x / 2)]
-                .map(|(plane, at)| plane.get_mut(at..).unwrap_or_default());
-            bun_highway::jpeg_rgba_to_ycc420(pixels, pixel_stride, count, pairs, planes, stride)
-        };
+        let mut convert_rows =
+            |pixels, pixel_stride, groups, pairs, x: usize, first_pair: usize| {
+                let at = first_pair * stride;
+                let [y, cb, cr] = &mut self.planes;
+                let [y, cb, cr] = [(y, 4 * at + x), (cb, at + x / 2), (cr, at + x / 2)]
+                    .map(|(plane, at)| plane.get_mut(at..).unwrap_or_default());
+                simd::rgba_to_ycc420(pixels, pixel_stride, groups, pairs, y, cb, cr, stride)
+                    .ok_or(Error::Internal)
+            };
 
-        let whole = width - width % JPEG_PIXEL_GROUP;
-        convert_rows(pixels, width, whole, rows / 2, 0, 0)?;
+        let (groups, whole) = (width / GROUP, width - width % GROUP);
+        convert_rows(pixels, width, groups, rows / 2, 0, 0)?;
         let last_row = pixels.get((rows - 1) * width..).unwrap_or_default();
         if rows % 2 == 1 {
-            convert_rows(last_row, 0, whole, 1, 0, rows / 2)?;
+            convert_rows(last_row, 0, groups, 1, 0, rows / 2)?;
         }
-        let mut edge = [[[0; 4]; JPEG_PIXEL_GROUP]; MCU_SIZE];
+        let mut edge = [[[0; 4]; GROUP]; MCU_SIZE];
         if whole != width {
             let pixel_rows = pixels.chunks(width).chain([last_row]);
             for (to, row) in edge.iter_mut().zip(pixel_rows) {
@@ -96,8 +98,7 @@ impl<'a> Strips<'a> {
                 start.copy_from_slice(rest);
                 end.fill(rest.last().copied().unwrap_or_default());
             }
-            let (edge, len) = (edge.as_flattened(), JPEG_PIXEL_GROUP);
-            convert_rows(edge, len, len, rows.div_ceil(2), whole, 0)?;
+            convert_rows(edge.as_flattened(), GROUP, 1, rows.div_ceil(2), whole, 0)?;
         }
 
         for (plane, scale) in self.planes.iter_mut().zip([2, 1, 1]) {
@@ -123,7 +124,6 @@ impl<'a> Strips<'a> {
         let samples = plane.and_then(|plane| plane.get(8 * (y * stride + x)..));
         let divisors = wrapped(&self.divisors, usize::from(!is_luma));
         let samples = samples.unwrap_or_default();
-        bun_highway::jpeg_forward_transform(samples, stride, divisors, blocks, masks)?;
-        Ok(())
+        simd::forward_transform(samples, stride, divisors, blocks, masks).ok_or(Error::Internal)
     }
 }

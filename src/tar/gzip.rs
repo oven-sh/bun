@@ -8,7 +8,7 @@ use bun_deflate::gzip::{
     HAS_COMMENT, HAS_EXTRA, HAS_HEADER_CRC, HAS_NAME, HEADER_LEN, MAGIC_AND_METHOD, RESERVED,
     TRAILER_LEN, UNKNOWN_SYSTEM, plain_header, trailer_for,
 };
-use bun_highway::crc32;
+use bun_hash::crc32;
 use bun_zlib::{Deflater, GZIP_ID, Inflater, deflate, inflate};
 
 const FLAGS: usize = MAGIC_AND_METHOD.len();

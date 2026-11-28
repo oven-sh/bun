@@ -20,6 +20,7 @@ mod meta_block;
 mod params;
 mod prepared_dictionary;
 mod ring_buffer;
+mod simd;
 mod symbol_set;
 mod windowed;
 mod word_tables;

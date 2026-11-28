@@ -13,10 +13,16 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 bun_alloc.workspace = true
-bun_highway.workspace = true
+bun_hash.workspace = true
 bun_pod.workspace = true
 bun_removable_features.workspace = true
+bun_simd_kernels.workspace = true
+bun_simd.workspace = true
 
 [[test]]
 name = "deflate"
 path = "tests/main.rs"
+
+[[test]]
+name = "targets"
+path = "tests/targets.rs"

@@ -440,6 +440,7 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
     const prepared = preparedNativeInput(path);
     return prepared === undefined ? undefined : (copies.get(prepared) ?? prepared);
   };
+  const secondLinkArguments = format.secondLinkArguments(order, analysis.reading.graph);
   return {
     firstExecutable: first.executable,
     room,
@@ -447,7 +448,7 @@ function planSecondLink(session: LinkSession): SecondLinkPlan {
       name: "second",
       rewrite: reused === undefined ? preparedInput : namedNativeInput,
       first: [...format.supportObjects(tableRoom), ...format.firstInputs, ...(reused ?? [])],
-      ...format.secondLinkArguments(order),
+      ...secondLinkArguments,
     }),
   };
 }

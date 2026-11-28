@@ -1084,6 +1084,7 @@ impl Materializer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{json5::JSON5Parser, xml};
     use bun_ast::expr::Data;
 
     struct Parsed {
@@ -1097,6 +1098,7 @@ mod tests {
     }
 
     fn run(contents: &[u8], which: Which) -> Parsed {
+        bun_sema_standalone::native::set_stack_size(512 << 10);
         bun_ast::initialize_store_or_reset();
         let scope = js_ast::StoreResetGuard::new();
         let mut log = bun_ast::Log::init();
@@ -1116,6 +1118,13 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
+            Which::Json5 => {
+                JSON5Parser::parse(&source, &mut log, &bump).map_err(|_| crate::Error::SyntaxError)
+            }
+            Which::Xml => {
+                let (compact, encoding) = (true, xml::InputEncoding::Text);
+                xml::XML::parse(&source, &mut log, &bump, xml::Options { compact, encoding })
+            }
             Which::Immutable => {
                 parse_to_rows(&source, &mut log, JSONOptions::DEFAULT, false).map(|mut p| {
                     tape = p.tape.take();
@@ -1148,6 +1157,8 @@ mod tests {
         Jsonc,
         JsoncDocument,
         Immutable,
+        Json5,
+        Xml,
     }
 
     fn json_value_to_string(v: &E::JsonValue, out: &mut String) {
@@ -2165,6 +2176,27 @@ mod tests {
         expect_error("[1] // c\n /2", "JSON does not support comments");
         expect_error("[@] 1/2", "Decorators are not allowed in JSON");
         expect_error("/ [1]", "Operators are not allowed in JSON");
+    }
+
+    #[test]
+    fn json5_strings_and_xml_entities() {
+        let entities = r#"<!DOCTYPE a [<!ENTITY b '<c d="x&lt;"/><!--é-->é'>]><a>&b;</a>"#;
+        let expanded = r##"{"a":{"c":{"@d":"x<"},"#text":"é"}}"##;
+        for (input, which, expected) in [
+            (r#"['ab"é\n', "c"]"#, Which::Json5, r#"["ab\"é\n","c"]"#),
+            (entities, Which::Xml, expanded),
+        ] {
+            let (p, mut found) = (run(input.as_bytes(), which), String::new());
+            to_json_string(p.root.as_ref().expect(&p.first_msg), &mut found);
+            assert_eq!(found, expected);
+        }
+        for input in ["'a", "'ab"] {
+            let (mut log, bump) = (bun_ast::Log::init(), Bump::new());
+            let source = bun_ast::Source::init_path_string("fixture.json5", input.as_bytes());
+            assert!(JSON5Parser::parse(&source, &mut log, &bump).is_err());
+            let at = log.msgs[0].data.location.as_ref().map(|it| it.offset);
+            assert_eq!(at, Some(input.len()));
+        }
     }
 
     #[test]

@@ -469,9 +469,9 @@ describe("the image", () => {
   const block = 16;
   const busy = 4 * block;
   test("the blocks are as long as the tests below take them to be", async () => {
-    const source = await Bun.file(join(import.meta.dir, "../../../../../src/jsc/bindings/highway_png.cpp")).text();
-    expect(source).toContain(`constexpr size_t kBlock = ${block};`);
-    expect(source).toContain("constexpr size_t kBusy = 4 * kBlock;");
+    const source = await Bun.file(join(import.meta.dir, "../../../../../src/png/simd.rs")).text();
+    expect(source).toContain(`const BLOCK: usize = ${block};`);
+    expect(source).toContain("const BUSY: usize = 4 * BLOCK;");
   });
   test.each([
     // From the start of the row, or of a block that is not one pixel over and over, so much goes by until the next

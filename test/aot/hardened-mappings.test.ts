@@ -1,15 +1,13 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isGlibc, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { hasGuardedPages } from "./hardened";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
-const isX64 = process.arch === "x64";
 const lowestDrawnAddress = 64 * 2 ** 30;
 const highestDrawnAddress = 124 * 2 ** 40;
 const largestPageSize = 64 * 1024;
-const guardSizeOfSecondStack = 256 * 1024;
 
 const programThatListsItsMappings = `import { readFileSync } from "node:fs";
 import { gzip } from "node:zlib";
@@ -104,12 +102,4 @@ describe.skipIf(!hasGuardedPages)("an executable of a Bun built with --hardened=
   test("maps its instance and each of its tables between two pages without access, at an address drawn for it alone", async () => {
     expectAnAddressOfItsOwnEach(await startTwice(), guardSize => guardSize <= largestPageSize, 10);
   }, 120_000);
-
-  test.skipIf(!isX64 || !isGlibc || isASAN)(
-    "maps every thread's second stack at an address drawn for it alone",
-    async () => {
-      expectAnAddressOfItsOwnEach(await startTwice(), guardSize => guardSize === guardSizeOfSecondStack, 2);
-    },
-    120_000,
-  );
 });

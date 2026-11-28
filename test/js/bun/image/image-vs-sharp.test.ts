@@ -9,7 +9,7 @@
 // through every (filter × target-size) pair, decoded back to RGBA, and diffed
 // against a pre-baked Sharp/libvips reference. Edge mode intentionally differs
 // (we clamp+renormalise; libvips embeds with VIPS_EXTEND_COPY — see
-// image_resize.cpp header), so the outer 2-pixel border is excluded.
+// src/image_ops/resize.rs header), so the outer 2-pixel border is excluded.
 //
 // Thresholds:
 //   interior MAE   < 1.0   — i16 fixed-point on both sides; sub-1 noise is

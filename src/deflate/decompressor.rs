@@ -8,7 +8,7 @@ use crate::decode_tables::{
 use crate::format::{DYNAMIC, MAX_CODEWORD_LEN, MAX_MATCH_LEN, STATIC, STORED};
 use crate::output::{MAX_STEP, Output, Sink};
 use crate::{Error, Result, chunk_at, gzip, wrapped};
-use bun_highway::with_bmi2;
+use bun_simd::kernel;
 use core::cell::Cell;
 use core::hint::{Locality, cold_path, prefetch_write};
 
@@ -69,47 +69,59 @@ fn with_sink(
     result
 }
 
-with_bmi2! {
-    fn decode_blocks(input: &[u8], sink: &mut Sink<'_>, is_message: bool) -> Result<Decompressed> {
-        let input = Input::new(input);
-        let (mut bits, mut written) = (Bits::default(), 0);
-        let mut dynamic = None;
-        loop {
-            bits.refill(&input)?;
-            let is_final = bits.buffer & 1 != 0;
-            match (bits.buffer >> 1) as u32 % 4 {
-                STORED => {
-                    bits.consume(3);
-                    let read = bits.byte_position();
-                    let rest = input.bytes_from(read)?;
-                    if is_message && rest.is_empty() {
-                        return Ok(Decompressed { read, written });
-                    }
-                    let len = copy_stored(rest, sink, written)?;
-                    written += len;
-                    bits = Bits::at(read + 4 + len);
+/// Without AVX, here and below: 32 bytes at a time are slower after a pause, and wait more often for the stores before.
+#[kernel(sse4 + bmi)]
+fn decode_blocks(input: &[u8], sink: &mut Sink<'_>, is_message: bool) -> Result<Decompressed> {
+    let input = Input::new(input);
+    let (mut bits, mut written) = (Bits::default(), 0);
+    let mut dynamic = None;
+    loop {
+        bits.refill(&input)?;
+        let is_final = bits.buffer & 1 != 0;
+        match (bits.buffer >> 1) as u32 % 4 {
+            STORED => {
+                bits.consume(3);
+                let read = bits.byte_position();
+                let rest = input.bytes_from(read)?;
+                if is_message && rest.is_empty() {
+                    return Ok(Decompressed { read, written });
                 }
-                STATIC => {
-                    bits.consume(3);
-                    // These tend to be too short for a call.
-                    let inlined = #[inline(always)]
+                let len = copy_stored(rest, sink, written)?;
+                written += len;
+                bits = Bits::at(read + 4 + len);
+            }
+            STATIC => {
+                bits.consume(3);
+                // These tend to be too short for a call.
+                let inlined =
+                    #[inline(always)]
                     |tables: &_, input: &_, bits: &mut _, output: &mut _, position: &mut _| {
                         decode_fast(tables, input, bits, output, position)
                     };
-                    decode_block(&STATIC_TABLES, inlined, &input, &mut bits, sink, &mut written)?;
-                }
-                DYNAMIC => {
-                    let tables = dynamic.get_or_insert_with(DynamicTables::new);
-                    bits = tables.read_header(bits, &input)?;
-                    decode_block(tables, decode_dynamic, &input, &mut bits, sink, &mut written)?;
-                }
-                _ => return Err(Error::BadData),
+                decode_block(
+                    &STATIC_TABLES,
+                    inlined,
+                    &input,
+                    &mut bits,
+                    sink,
+                    &mut written,
+                )?;
             }
-            if is_final {
-                let read = bits.byte_position();
-                input.bytes_from(read)?;
-                return Ok(Decompressed { read, written });
+            DYNAMIC => {
+                let tables = dynamic.get_or_insert_with(DynamicTables::new);
+                bits = tables.read_header(bits, &input)?;
+                let called =
+                    |tables: &_, input: &_, bits: &mut _, output: &mut _, position: &mut _| {
+                        decode_dynamic::here(tables, input, bits, output, position)
+                    };
+                decode_block(tables, called, &input, &mut bits, sink, &mut written)?;
             }
+            _ => return Err(Error::BadData),
+        }
+        if is_final {
+            let read = bits.byte_position();
+            input.bytes_from(read)?;
+            return Ok(Decompressed { read, written });
         }
     }
 }
@@ -166,20 +178,20 @@ fn decode_block<const N: usize>(
     }
 }
 
-with_bmi2! {
-    /// In a function of its own, the loop has all registers to itself.
-    fn decode_dynamic(
-        tables: &DynamicTables,
-        input: &[u8],
-        state: &mut Bits,
-        output: &mut [u8],
-        written: &mut usize,
-    ) -> Result<bool> {
-        let (mut bits, mut position) = (*state, *written);
-        let has_ended = decode_fast(tables, input, &mut bits, output, &mut position);
-        (*state, *written) = (bits, position);
-        has_ended
-    }
+/// In a function of its own, the loop has all registers to itself.
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn decode_dynamic(
+    tables: &DynamicTables,
+    input: &[u8],
+    state: &mut Bits,
+    output: &mut [u8],
+    written: &mut usize,
+) -> Result<bool> {
+    let (mut bits, mut position) = (*state, *written);
+    let has_ended = decode_fast(tables, input, &mut bits, output, &mut position);
+    (*state, *written) = (bits, position);
+    has_ended
 }
 
 /// Returns how long `output` has to be to go on, unless the block ended.
@@ -444,6 +456,8 @@ fn copy_overlapping(from: &MatchRoom, to: &MatchRoom, offset: usize, len: usize)
         [load(from, 0), load(from, offset - N)]
     }
 
+    // No loop has to ask whether it runs at all.
+    let len = len.max(1);
     match offset {
         ..=8 => {
             let unit =

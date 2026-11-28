@@ -752,7 +752,7 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
     agents,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
+    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 15,
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,

@@ -80,7 +80,7 @@ pub(crate) fn end(out: &mut Vec<u8>, start: usize) -> Result<()> {
         return Err(Error::ChunkTooLong);
     }
     *length_field = len.to_be_bytes();
-    let crc = bun_highway::crc32(0, crc_input);
+    let crc = bun_hash::crc32(0, crc_input);
     out.try_reserve(4)?;
     out.extend_from_slice(&crc.to_be_bytes());
     Ok(())
@@ -92,3 +92,7 @@ pub(crate) fn write(out: &mut Vec<u8>, chunk_type: ChunkType, data: &[u8]) -> Re
     out.extend_from_slice(data);
     end(out, start)
 }
+
+#[cfg(all(test, target_os = "linux", not(miri)))]
+#[path = "tests/unit/chunk.rs"]
+mod tests;

@@ -11,7 +11,6 @@ mod inflate_through_window;
 #[expect(clippy::duplicate_mod, reason = "`step()` goes by the name")]
 #[path = "inflate.rs"]
 mod inflate_to_vec;
-mod kernels;
 mod plain;
 mod refusals;
 mod samples;

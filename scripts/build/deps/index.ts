@@ -12,7 +12,6 @@
 
 import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
-import { highway } from "./highway.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -33,7 +32,6 @@ export const allDeps: readonly Dependency[] = [
   // Header-only first — no link order concerns.
   nodejsHeaders,
 
-  highway,
   libuv,
   lolhtml,
   rustArgon2,
@@ -52,17 +50,4 @@ export const allDeps: readonly Dependency[] = [
 ];
 
 // Re-export individuals for direct import when needed.
-export {
-  boringssl,
-  highway,
-  libuv,
-  lolhtml,
-  lsqpack,
-  lsquic,
-  mimalloc,
-  nodejsHeaders,
-  rustArgon2,
-  sqlite,
-  tinycc,
-  webkit,
-};
+export { boringssl, libuv, lolhtml, lsqpack, lsquic, mimalloc, nodejsHeaders, rustArgon2, sqlite, tinycc, webkit };

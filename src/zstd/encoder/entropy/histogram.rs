@@ -1,6 +1,6 @@
 //! Counting symbols.
 
-use bun_highway::zstd::{are_quicker_for, count_bytes};
+use bun_simd_kernels::zstd::{are_quicker_for, count_bytes};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 

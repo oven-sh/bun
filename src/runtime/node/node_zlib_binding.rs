@@ -82,7 +82,7 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
-    bun_highway::crc32(value, data)
+    bun_hash::crc32(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────

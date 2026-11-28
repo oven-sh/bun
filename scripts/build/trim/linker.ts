@@ -68,7 +68,7 @@ export interface LinkerFormat extends OutputPolicy {
   relinksSameInputs(): boolean;
   compiledObjects(link: "first" | "second"): string[];
   firstLinkArguments(): LinkArguments;
-  secondLinkArguments(order: SectionOrder): LinkArguments;
+  secondLinkArguments(order: SectionOrder, graph: SectionGraph): LinkArguments;
   read(link: Link): GraphReading;
   namedBytes(link: Link): NamedBytes | undefined;
   orderOf(graph: SectionGraph, partition: Partition): SectionOrder;

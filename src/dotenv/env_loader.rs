@@ -940,6 +940,7 @@ struct Parser<'a> {
 // Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
+static WHITESPACE: strings::ByteSet = strings::ByteSet::new(&[b'\t'..=b'\r', b' '..=b' ']);
 
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {
@@ -953,7 +954,7 @@ impl<'a> Parser<'a> {
     fn skip_whitespaces(&mut self) {
         let mut i = self.pos;
         while i < self.src.len() {
-            if strings::index_of_char(WHITESPACE_CHARS, self.src[i]).is_none() {
+            if !WHITESPACE.contains(self.src[i]) {
                 break;
             }
             i += 1;
@@ -961,6 +962,8 @@ impl<'a> Parser<'a> {
         self.pos = i;
     }
 
+    // Inlined into itself, it spills registers.
+    #[inline(never)]
     fn parse_key<const CHECK_EXPORT: bool>(&mut self) -> Option<&'a [u8]> {
         if CHECK_EXPORT {
             self.skip_whitespaces();
@@ -994,9 +997,7 @@ impl<'a> Parser<'a> {
                     }
                     b':' => {
                         let next = self.pos + 1;
-                        if next < self.src.len()
-                            && strings::index_of_char(WHITESPACE_CHARS, self.src[next]).is_some()
-                        {
+                        if next < self.src.len() && WHITESPACE.contains(self.src[next]) {
                             self.pos += 2;
                             return Some(&self.src[start..end]);
                         }
@@ -1094,14 +1095,7 @@ impl<'a> Parser<'a> {
                 &value[1..value.len() - 1]
             });
         }
-        end = start;
-        while end < self.src.len() {
-            match self.src[end] {
-                b'#' | b'\r' | b'\n' => break,
-                _ => {}
-            }
-            end += 1;
-        }
+        end = strings::index_of_any_pos(self.src, b"#\r\n", start).unwrap_or(self.src.len());
         self.pos = end;
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }

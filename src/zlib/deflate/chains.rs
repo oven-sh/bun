@@ -2,7 +2,7 @@
 
 use bun_core::ffi::try_boxed_zeroed;
 use bun_deflate::format::MIN_MATCH_LEN;
-use bun_highway::zlib::subtract_saturating;
+use bun_simd::prelude::{kernel, over_mut};
 
 use super::spare_steps::SpareSteps;
 use super::window::chunk;
@@ -15,6 +15,12 @@ pub(super) const HASHED_LEN: u32 = 4;
 const MIN_LINKS: usize = 512;
 
 type Heads = [u16; 1 << 16];
+
+/// With more than 256 bits the cache sets the pace.
+#[kernel(Upto<B32>)]
+fn subtract_saturating(groups: &mut [[u16; 64]], amount: u16) {
+    over_mut(groups.as_flattened_mut()).map(|v| v.saturating_sub(amount));
+}
 
 /// Position 0 stands for none.
 pub(super) struct Chains {
@@ -250,6 +256,14 @@ impl<'a> Index<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn positions_that_slide_out_become_zero() {
+        let before: [u16; 64] = core::array::from_fn(|at| (at * 1040) as u16);
+        let mut groups = [before; 3];
+        subtract_saturating(&mut groups, 1 << 15);
+        assert_eq!(groups, [before.map(|it| it.saturating_sub(1 << 15)); 3]);
+    }
 
     #[test]
     fn empty_chains_have_all_spare_steps() {

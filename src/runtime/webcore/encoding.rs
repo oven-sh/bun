@@ -6,6 +6,7 @@ use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_simdutf_sys::simdutf as bun_simdutf;
+use core::sync::atomic::AtomicU8;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
@@ -269,12 +270,31 @@ unsafe extern "C" fn Bun__encoding__toString(
     global_object: &JSGlobalObject,
     encoding: u8,
 ) -> JSValue {
-    // SAFETY: forwarded from this fn's contract.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
-    match to_string(input, global_object, encoding_from_u8(encoding)) {
+    let result = if encoding == Encoding::Hex as u8 {
+        // SAFETY: forwarded from this fn's contract, and `SharedBytes` does not store.
+        let input = unsafe { bun_core::ffi::slice(input.cast(), len) };
+        shared_to_hex(input).into_js(global_object)
+    } else {
+        // SAFETY: forwarded from this fn's contract.
+        let input = unsafe { bun_core::ffi::slice(input, len) };
+        to_string(input, global_object, encoding_from_u8(encoding))
+    };
+    match result {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
     }
+}
+
+/// The bytes of a `Buffer`.
+fn shared_to_hex(input: &[AtomicU8]) -> BunString {
+    if input.is_empty() {
+        return BunString::EMPTY;
+    }
+    let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
+    if !str.is_dead() {
+        bun_simd_kernels::SharedBytes::new(input).encode_hex_lower(chars);
+    }
+    str
 }
 
 pub(crate) fn to_string(

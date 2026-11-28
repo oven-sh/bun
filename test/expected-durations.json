@@ -13540,7 +13540,7 @@
     "windows": 100,
     "windows-aarch64": 100
   },
-  "js/bun/util/highway-strings.test.ts": {
+  "js/bun/util/simd-strings.test.ts": {
     "default": 500,
     "asan": 12200,
     "musl": 400,

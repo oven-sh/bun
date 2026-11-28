@@ -132,7 +132,7 @@ describe("decodeURIComponent — SIMD % scanning", () => {
   });
 });
 
-describe("URL parsing — Highway indexOfChar/indexOfAny", () => {
+describe("URL parsing — SIMD indexOfChar/indexOfAny", () => {
   test("long URL with all components", () => {
     const longPath = "/" + "segment/".repeat(32) + "end";
     const url = new URL("https://user:pass@example.com:8080" + longPath + "?key=value&foo=bar#section");
@@ -189,7 +189,7 @@ describe("HTTP request head", () => {
   });
 });
 
-describe("HTTP response head — Highway byte sets", () => {
+describe("HTTP response head — SIMD byte sets", () => {
   test("long header name and value", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("", { headers: { [ascii256]: ascii1k } }) });
     expect((await fetch(server.url)).headers.get(ascii256)).toBe(ascii1k);
@@ -207,7 +207,7 @@ describe("Latin-1 to UTF-8 — @Vector(16, u8) ungated", () => {
   });
 });
 
-describe("String search — Highway memMem/indexOfChar", () => {
+describe("String search — SIMD memMem/indexOfChar", () => {
   test("indexOf long string", () => {
     const haystack = Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "b").toString();
     expect(haystack.indexOf("needle")).toBe(1000);
@@ -257,8 +257,8 @@ function linesOf(file: Uint8Array): Buffer {
   return inflateSync(Buffer.concat(idat));
 }
 
-describe("Brotli: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_brotli.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+describe("Brotli: runtime dispatch", () => {
+  // src/brotli/encoder/simd is compiled for SSE4 and for AVX2 on x64, and for NEON on arm64. All
   // three have to lead to the same bytes. These checksums are from google/brotli. The loops in src/brotli that read and
   // write bits are compiled with BMI2 and without.
   // Text takes turns with bytes of few, of many, and of scattered values, and some of it comes again with changes.
@@ -354,8 +354,8 @@ describe("Brotli: Highway runtime dispatch", () => {
   });
 });
 
-describe("JPEG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+describe("JPEG codec: runtime dispatch", () => {
+  // src/jpeg/simd is compiled for SSE4 and for AVX2 on x64, and has separate code for arm64. All
   // three have to give the same bytes. These checksums are from libjpeg-turbo 3.2.0.
   // Two groups of 32 pixels and a remainder, and partial blocks on both edges.
   const width = 75;
@@ -469,10 +469,9 @@ describe("JPEG codec: Highway runtime dispatch", () => {
   });
 });
 
-describe("PNG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_png.cpp is compiled several times over, on x64 for SSSE3, SSE4 and AVX2. A machine with
-  // AVX2 runs that one alone, and any file can reach the others on a machine without. An emulated Nehalem runs SSSE3:
-  // it lacks the AES that Highway wants for SSE4.
+describe("PNG codec: runtime dispatch", () => {
+  // src/png/simd.rs is compiled for SSE4 and for AVX2 on x64. A machine with AVX2 runs that one alone, and any file
+  // can reach the other on a machine without.
   // Rows 9 and 21 begin with 96 bytes that repeat a pixel, or are such bytes. Below them Paeth has a shorter way, which
   // it looks for 64 bytes in and leaves where they end.
   const someFilterTypes = [0, 1, 2, 3, 4, 4, 3, 2, 1, 0, 4, 4];
@@ -575,8 +574,8 @@ describe("PNG codec: Highway runtime dispatch", () => {
 
 const webp = await loadCases();
 
-describe("WebP codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_webp_*.cpp are compiled for SSSE3 and AVX2 on x64, and webp-golden.test.ts gets to see
+describe("WebP codec: runtime dispatch", () => {
+  // src/webp/simd is compiled for SSE4 and AVX2 on x64, and webp-golden.test.ts gets to see
   // the one that suits the machine. In small parts, for the sake of Intel SDE.
   const kinds = ["encoded", "random", "handmade", "changed", "extreme"];
   test.each(inParts(webp.decode, kinds, 20))("decode, part %#", async some => {
@@ -621,9 +620,9 @@ function expectedChecksums(bytes: Uint8Array, lengths: number[], seed = 0) {
 
 const zlibCases = await zlibGolden.loadCases();
 
-describe("zlib: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_checksums.cpp is compiled five times over on x64 and up to three times on arm64. An
-  // emulated Nehalem cannot multiply polynomials, and gets its CRC-32 from src/highway/checksums.rs.
+describe("zlib: runtime dispatch", () => {
+  // src/hash/checksums is compiled up to six times over on x64 and up to three times on arm64. An
+  // emulated Nehalem cannot multiply polynomials, and gets its CRC-32 from crc32_tables.rs there.
   function noise(length: number) {
     const bytes = Buffer.alloc(length);
     let state = 1;
@@ -697,8 +696,8 @@ describe("zlib: Highway runtime dispatch", () => {
   });
 });
 
-describe("DEFLATE: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_checksums.cpp has code for each width of vector, and for what does not fill one. Parts of
+describe("DEFLATE: runtime dispatch", () => {
+  // src/hash/checksums has code for each width of vector, and for what does not fill one. Parts of
   // src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
   const library = "libdeflate";
   const bytes = Buffer.alloc(140_000);
@@ -760,7 +759,7 @@ describe("zstd codec: BMI2 runtime dispatch", () => {
   test.each(inParts(zstd.encode, ["small"], 20))("compress, part %#", async some => {
     expect(await zstdGolden.encodeDifferences(some)).toBe("");
   });
-  test("as many literals as src/jsc/bindings/highway_zstd.cpp takes where it can", () => {
+  test("as many literals as src/simd_kernels/zstd.rs takes where it can", () => {
     let state = 1;
     const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 24;
     const frame = Bun.zstdCompressSync(

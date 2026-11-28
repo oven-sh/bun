@@ -10128,7 +10128,7 @@ declare module "bun" {
      * - `"system"` (default on macOS/Windows) — static codecs for
      *   JPEG/PNG/WebP (same bytes as Linux), Accelerate/vImage for `lanczos3`
      *   resize · rotate · flip on macOS, and ImageIO/WIC for HEIC/AVIF.
-     * - `"bun"` — static codecs + Highway geometry only. Byte-identical to a
+     * - `"bun"` — static codecs and geometry only. Byte-identical to a
      *   Linux build; HEIC/AVIF reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`.
      *
      * Set before awaiting a pipeline; in-flight tasks read the value as of

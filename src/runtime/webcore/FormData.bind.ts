@@ -15,7 +15,7 @@ export const from = b.overloads(
   },
   {
     ...parse,
-    args: { input: stringOrBuffer, boundary: stringOrBuffer.nullable },
+    args: { input: b.bytes({ from: ["string", "buffer"], shared: "copied" }), boundary: stringOrBuffer.nullable },
     rustPath: "crate::webcore::form_data::from_bytes",
   },
 );

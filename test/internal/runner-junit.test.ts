@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
@@ -155,4 +156,29 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
     },
   });
   expect(exitCode).toBe(1);
+});
+
+test("getFileUrl gives no link for a vendored suite, whose checkout has no remote", async () => {
+  using dir = tempDir("runner-file-url", { "vendor/pkg/test/a.test.ts": "" });
+  await using git = Bun.spawn({
+    cmd: ["git", "init", "--quiet", join(String(dir), "vendor", "pkg")],
+    env: bunEnv,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+  expect(await git.exited).toBe(0);
+
+  const buildkite = pathToFileURL(join(import.meta.dir, "..", "..", "scripts", "buildkite.ts")).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { getFileUrl } from ${JSON.stringify(buildkite)};
+      console.log(getFileUrl("vendor/pkg/test/a.test.ts", 12));`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "undefined\n", stderr: "", exitCode: 0 });
 });

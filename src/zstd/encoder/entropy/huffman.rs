@@ -1,9 +1,9 @@
 //! Huffman codes for literals.
 
-use bun_highway::with_bmi2;
-use bun_highway::zstd::{Written, are_quicker_for, write_codes};
+use bun_simd_kernels::zstd::{Written, are_quicker_for, write_codes};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
+use bun_zstd_decoder::calls::with_bmi2;
 use bun_zstd_decoder::format::HUFFMAN_TABLE_LOG_MAX;
 use bun_zstd_decoder::{Error, Result};
 

@@ -4701,6 +4701,27 @@ test_napi_create_string_utf16_unaligned(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value
+test_external_string_utf16_unaligned(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const char16_t text[] = u"odd address";
+  alignas(char16_t) char bytes[sizeof(text) + 1];
+  memcpy(bytes + 1, text, sizeof(text));
+  empty_external_string_finalized = 0;
+  bool copied = false;
+  napi_value string;
+  NODE_API_CALL(env,
+                node_api_create_external_string_utf16(
+                    env, reinterpret_cast<char16_t *>(bytes + 1),
+                    NAPI_AUTO_LENGTH, empty_external_string_finalizer, nullptr,
+                    &string, &copied));
+  memset(bytes, 0, sizeof(bytes));
+  printf("%s copied=%d finalized=%d\n",
+         Napi::String(env, string).Utf8Value().c_str(), (int)copied,
+         empty_external_string_finalized);
+  return ok(env);
+}
+
 static napi_value test_napi_get_boolean_bytes(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   auto get_boolean =
@@ -4911,6 +4932,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_symbol_key_result_ordering);
   REGISTER_FUNCTION(env, exports, test_napi_external_string_args);
   REGISTER_FUNCTION(env, exports, test_napi_create_string_utf16_unaligned);
+  REGISTER_FUNCTION(env, exports, test_external_string_utf16_unaligned);
   REGISTER_FUNCTION(env, exports, test_napi_get_boolean_bytes);
   REGISTER_FUNCTION(env, exports, test_napi_get_buffer_info_gate);
   REGISTER_FUNCTION(env, exports, test_create_weak_ref_for_gc);

@@ -107,7 +107,7 @@ struct Unmask {
 
 impl Unmask {
     fn copy(&mut self, output: &mut [u8], input: &[u8]) {
-        bun_highway::fill_with_skip_mask(self.key, output, input, false);
+        bun_simd_kernels::fill_with_skip_mask(self.key, output, input, false);
         self.key.rotate_left(input.len() % 4);
     }
 }
@@ -1000,7 +1000,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut payload = self.control_payload.get();
         if self.options.is_server {
             let key = self.unmask.get().key;
-            bun_highway::fill_with_skip_mask_inplace(key, &mut payload[..payload_len], false);
+            bun_simd_kernels::fill_with_skip_mask_inplace(key, &mut payload[..payload_len], false);
         }
         self.control_frame_started.set(false);
         Some((payload, payload_len))
@@ -2200,7 +2200,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
+        bun_simd_kernels::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
     }
 
     /// In-place variant for when output and input alias the same buffer
@@ -2212,7 +2212,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
+        bun_simd_kernels::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
     }
 }
 

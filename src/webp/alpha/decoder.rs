@@ -1,10 +1,9 @@
 //! The alpha channel, a row at a time.
 
-use bun_highway::webp::ROW_STEP;
-
 use super::{Filter, LOSSLESS_COMPRESSION, NO_COMPRESSION, gradient};
 use crate::error::{Error, Result};
 use crate::lossless::decoder::{Green, IndexedGreen, MAX_BUNDLE_LEN, decode_green};
+use crate::simd::ROW_STEP;
 use crate::vec;
 
 pub(crate) struct Rows<'a> {
@@ -12,7 +11,7 @@ pub(crate) struct Rows<'a> {
     filter: Filter,
     y: usize,
     width: usize,
-    /// With the padding that `yuv_to_rgba()` reads. Above the first are zeros.
+    /// With the padding that `append_rgba()` reads. Above the first are zeros.
     row: Vec<u8>,
     first_above: u8,
 }
@@ -26,7 +25,7 @@ enum Source<'a> {
 }
 
 impl<'a> Rows<'a> {
-    /// Also returns where the picture goes: room for `width * height` pixels, which may be there already.
+    /// Also returns where the picture goes: `width * height` pixels that are there already, or room for `ROW_STEP` more.
     pub(crate) fn new(
         chunk: &'a [u8],
         width: usize,
@@ -68,7 +67,7 @@ impl<'a> Rows<'a> {
         };
         Ok((
             rows,
-            pixels.map_or_else(|| vec::with_room(width * height), Ok)?,
+            pixels.map_or_else(|| vec::with_room(width * height + ROW_STEP), Ok)?,
         ))
     }
 

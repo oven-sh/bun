@@ -1,13 +1,12 @@
 //! What things cost to store, in 256ths of a bit.
 
-use bun_highway::webp::{Candidates, IS_FLAT, MAX_SYMBOL};
-
 use crate::array::At;
 use crate::error::Result;
 use crate::lossy::tables::{
     BANDS, CATEGORY_3_TO_6, DEFAULT_COEFFICIENT_PROBABILITIES, SUBBLOCK_MODE_PROBABILITIES,
 };
 use crate::lossy::{BlockType, CoefficientProbabilities, SUBBLOCK_MODES};
+use crate::simd::{Candidates, IS_FLAT, MAX_SYMBOL};
 use crate::vec;
 
 // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dsp/cost.c#L25

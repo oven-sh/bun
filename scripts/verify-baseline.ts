@@ -5,11 +5,13 @@
 //   Linux arm64:  QEMU with Cortex-A53 (no LSE/SVE)
 //   Windows x64:  Intel SDE with -nhm (no AVX)
 //
+// The SIMD tests also run on newer CPUs and on this machine, which take other versions of the kernels.
+//
 // Usage:
 //   bun scripts/verify-baseline.ts --binary ./bun --arch x64 --emulator /usr/bin/qemu-x86_64
 //   bun scripts/verify-baseline.ts --binary ./bun.exe --arch x64 --emulator ./sde.exe
 
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { markBuildkiteStepReported } from "./buildkite.ts";
@@ -108,6 +110,8 @@ interface RunTestOptions {
   /** Tee output live to the console while still capturing it for analysis */
   live?: boolean;
   executable?: string;
+  runnerCmd?: string[];
+  env?: Record<string, string | undefined>;
 }
 
 /** Read a stream, write each chunk to a writable, and return the full text. */
@@ -125,9 +129,11 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
   const start = performance.now();
   const live = options?.live ?? false;
-  const proc = Bun.spawn([...config.runnerCmd, options?.executable ?? binary, ...binaryArgs], {
+  const runnerCmd = options?.runnerCmd ?? config.runnerCmd;
+  const proc = Bun.spawn([...runnerCmd, options?.executable ?? binary, ...binaryArgs], {
     // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
     cwd: config.cwd ?? options?.cwd,
+    env: { ...process.env, ...options?.env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -164,7 +170,9 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     if (!live && output.trim()) console.log(output.trim());
     console.log();
     console.log(`    FAIL: CPU instruction violation detected (${elapsed}s)`);
-    if (isAarch64) {
+    if (runnerCmd !== config.runnerCmd) {
+      console.log("    Code was chosen that this CPU cannot run.");
+    } else if (isAarch64) {
       console.log("    The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC).");
       console.log("    LSE atomics, SVE, and dotprod instructions are not allowed.");
     } else {
@@ -237,8 +245,36 @@ if (values["skip-emulation"]) {
 } else {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-  // Under SDE code is slow the first time it runs: the first test to use a codec took 3 to 6 s. The default is 5 s.
-  await runTest("SIMD baseline tests", ["test", "--timeout=15000", simdTestPath], { live: true });
+  const kernelTests = [
+    "util/simd-strings.test.ts",
+    "util/simd-callers.test.ts",
+    "util/hash.test.js",
+    "image/image-kernels.test.ts",
+    // SDE is five times as slow.
+    ...(isWindows
+      ? []
+      : ["image/image.test.ts", "image/png-golden/png-golden.test.ts", "image/png-golden/png-valid-kept.test.ts"]),
+  ].map(name => realpathSync(join(repoRoot, "test", "js", "bun", name))); // `bun test` passes over a missing file
+  // By the level that each has to report (src/simd_kernels/level.rs).
+  const newer = isWindows
+    ? { avx2: ["-adl", "--"], avx512: ["-skx", "--"] }
+    : isAarch64
+      ? { neon82: ["-cpu", "max,sve=off,sme=off"] }
+      : { avx2: ["-cpu", "Haswell,check=off"] };
+  const cpus: [level: string | undefined, runnerCmd: string[]][] = [[isAarch64 ? "neon" : "sse4", config.runnerCmd]];
+  for (const [level, args] of Object.entries(newer)) cpus.push([level, [emulatorPath, ...args]]);
+  if (isAarch64 === (process.arch === "arm64")) cpus.push([undefined, []]);
+
+  for (const [level, runnerCmd] of cpus) {
+    const on = level ?? "this machine";
+    // Under SDE code is slow the first time it runs: the first test to use a codec took 3 to 6 s. The default is 5 s.
+    await runTest(`SIMD tests, ${on}`, ["test", "--timeout=15000", simdTestPath], { live: true, runnerCmd });
+    await runTest(`Tests of kernels, ${on}`, ["test", "--expose-internals", "--timeout=60000", ...kernelTests], {
+      live: true,
+      runnerCmd,
+      env: { EXPECTED_SIMD_LEVEL: level },
+    });
+  }
 
   const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
   const aotProgram = join(aotDir, "baseline-cpu.ts");
@@ -317,7 +353,7 @@ if (instructionFailures > 0) {
   const parts = [
     `<details open>`,
     `<summary>❌ CPU instruction violation on <b>${platform}</b> — ${instructionFailures} check(s) failed</summary>`,
-    `<p>The baseline build contains instructions not available on <code>${config.cpuDesc}</code>.</p>`,
+    `<p>The baseline build contains instructions not available on <code>${config.cpuDesc}</code>, or on the CPU named below.</p>`,
     `<ul>${failedTests.map(t => `<li><code>${t}</code></li>`).join("")}</ul>`,
   ];
   if (staticViolations) {
@@ -343,13 +379,13 @@ if (instructionFailures > 0) {
 }
 
 if (otherFailures > 0) {
-  console.error(`    FAILED: ${otherFailures} check(s) failed under emulation on ${config.cpuDesc}.`);
+  console.error(`    FAILED: ${otherFailures} check(s) failed: ${failedTests.join("; ")}.`);
 
   annotate(
     [
       `<details open>`,
       `<summary>❌ Baseline verification failed on <b>${platform}</b> — ${otherFailures} check(s)</summary>`,
-      `<p>The baseline build crashed or failed tests under <code>${config.cpuDesc}</code> emulation ` +
+      `<p>The baseline build crashed or failed tests under <code>${config.cpuDesc}</code> emulation, or on the CPU named below ` +
         `(not an unsupported-instruction fault). See the step log for the crash output.</p>`,
       `<ul>${failedTests.map(t => `<li><code>${t}</code></li>`).join("")}</ul>`,
       `</details>`,

@@ -834,10 +834,11 @@ impl<'a> JSON5Parser<'a> {
                 b'\n' | b'\r' => return Err(ParseError::UnterminatedString),
                 0x20..=0x7E => {
                     let rest = &source[self.pos + 1..];
-                    self.pos += 1 + bun_highway::index_of_interesting_character_in_string_literal(
-                        rest, quote,
-                    )
-                    .unwrap_or(rest.len());
+                    self.pos += 1
+                        + bun_simd_kernels::index_of_interesting_character_in_string_literal(
+                            rest, quote,
+                        )
+                        .unwrap_or(rest.len());
                 }
                 _ => {
                     if c < 0x20 {

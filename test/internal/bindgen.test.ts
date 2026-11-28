@@ -206,12 +206,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   }
   for (const held of ["handle", "copied", "pinned"] as const) {
     expect(() => b.bytes({ from: ["string", "buffer"], held }).optional).toThrow(
-      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
+      'b.bytes can be absent if it is held: "borrowed" and not shared: "atomic", and .nullable if it is string: "asIs"',
     );
   }
   for (const modifier of ["optional", "falsyAsNull", "emptyStringAsNull"] as const) {
     expect(() => b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" })[modifier]).toThrow(
-      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
+      'b.bytes can be absent if it is held: "borrowed" and not shared: "atomic", and .nullable if it is string: "asIs"',
     );
   }
   expect(() => stringOrBuffer.default("")).toThrow("cannot have a default");
@@ -245,6 +245,19 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.bytes({ from: ["buffer"], shared: "copied", held: "pinned" })).toThrow(
     'held: "pinned" pins a shared buffer; it does not copy one',
   );
+  expect(() => b.bytes({ from: ["buffer"], shared: "atomic", held: "handle" })).toThrow(
+    'shared: "atomic" is only with held: "borrowed"',
+  );
+  for (const more of [
+    { from: ["string", "buffer"] },
+    { from: ["blob", "buffer"] },
+    { otherwise: "toString" },
+  ] as const) {
+    expect(() => b.bytes({ from: ["buffer"], shared: "atomic", ...more })).toThrow(
+      'shared: "atomic" takes nothing but a buffer',
+    );
+  }
+  expect(() => b.bytes({ from: ["buffer"], shared: "atomic" }).optional).toThrow('not shared: "atomic"');
   expect(() => b.bytes({ from: ["blob"], held: "pinned" })).toThrow('held: "pinned" does not take a Blob');
   const pinned = b.bytes({ from: ["string", "buffer"], held: "pinned" });
   expect(() => b.fn({ args: { data: pinned, more: pinned } })).toThrow(

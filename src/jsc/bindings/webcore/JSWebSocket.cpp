@@ -57,6 +57,7 @@
 #include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
+#include "Bindgen/JSBytesView.h"
 #include "PinnedArrayBuffer.h"
 #include "ErrorCode.h"
 #include "blob.h"
@@ -1017,6 +1018,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrameForWs, (JSGlobalObject * lexicalGlo
     auto& impl = socket->wrapped();
     if (impl.readyState() != WebSocket::OPEN)
         return JSValue::encode(jsBoolean(false));
+    Bun::Bindgen::BytesCopy copy;
+    if (Bun::Bindgen::isSharedBuffer(argument1.value())) [[unlikely]] {
+        Bun::Bindgen::copyBytes(*lexicalGlobalObject, std::get<std::span<const uint8_t>>(*payload), copy);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.sendFrame(opcode, *payload, flags); })));
 }
 

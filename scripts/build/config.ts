@@ -197,7 +197,7 @@ export interface Config {
   /**
    * What an executable compiled ahead of time maps for as long as a VM or the process lives (its instance, its tables) lies
    * between two pages that cannot be touched, at an address drawn for that mapping alone: an address of one says nothing
-   * about another's, nor about the C library's. So does every thread's second stack, where a hardened build has them.
+   * about another's, nor about the C library's.
    * Costs a few system calls and 8 KB of page tables a mapping. On with `hardened`. Off: a hardened build to compare with.
    */
   guardedPages: boolean;

@@ -903,6 +903,12 @@ describe("util.parseEnv", () => {
     );
   });
 
+  it("skips blanks and finds where values end", () => {
+    const C = "x".repeat(70);
+    const content = `\v\f\t A\v=\f1\nB:\v2\nC=${C} #c\rD=${C}\r\bE=5\n\x0eF=6\n!G=7\n\x1fI=8\nJ:\r9\nK${" ".repeat(90)}=\f"x"\nH=${C}`;
+    expect(util.parseEnv(content)).toEqual({ A: "1", B: "2", C, D: C, J: "9", K: "x", H: C });
+  });
+
   it("stores array-index keys as indexed properties", () => {
     // 4294967295 is 2^32 - 1, the first integer that is not an array index.
     const parsed = util.parseEnv("A=1\n0=zero\n2023=y\n4294967295=notidx\n");

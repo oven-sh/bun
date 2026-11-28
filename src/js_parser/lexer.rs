@@ -820,6 +820,10 @@ impl<'a> Lexer<'a> {
                     // Non-ASCII strings need the slow path
                     if self.code_point >= 0x80 {
                         needs_decode = true;
+                        let other = if QUOTE == 0x60 { b'$' } else { b'\r' };
+                        self.current += skip_to(&contents[self.current..], |text| {
+                            strings::index_of_any(text, &[QUOTE as u8, b'\\', b'\n', other])
+                        });
                     } else if (QUOTE == 0x22 || QUOTE == 0x27) && Environment::IS_NATIVE {
                         let remainder = &contents[self.current..];
                         if remainder.len() >= 4096 {
@@ -2026,15 +2030,10 @@ impl<'a> Lexer<'a> {
                     )?;
                 }
                 _ => {
-                    if self.code_point < 128 {
-                        let remainder = &contents[self.current..];
-                        if remainder.len() >= 512 {
-                            self.current +=
-                                skip_to_interesting_character_in_multiline_comment(remainder);
-                            self.end = self.current.saturating_sub(1);
-                            self.step_with(contents);
-                            continue;
-                        }
+                    let remainder = &contents[self.current..];
+                    if remainder.len() >= 512 {
+                        self.current +=
+                            skip_to_interesting_character_in_multiline_comment(remainder);
                     }
 
                     self.step_with(contents);
@@ -2082,58 +2081,44 @@ impl<'a> Lexer<'a> {
         // Only the first `#` / `@` of a `//` comment can start a `__PURE__` annotation.
         let mut first_marker = true;
         loop {
-            // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
-            if let Some(relative_index) =
-                bun_highway::index_of_newline_or_non_ascii_or_hash_or_at(&contents[self.current..])
-            {
-                let absolute_index = self.current + relative_index;
-                self.current = absolute_index; // Move TO the interesting char
+            self.current +=
+                skip_to_interesting_character_in_line_comment(&contents[self.current..]);
+            self.step_with(contents); // Consume the interesting char, sets code_point, advances current
 
-                self.step_with(contents); // Consume the interesting char, sets code_point, advances current
-
-                match self.code_point {
-                    0x0D | 0x0A | 0x2028 | 0x2029 => {
-                        // Is it a line terminator?
-                        // Found the end of the comment line.
-                        return; // Stop scanning. Lexer state is ready for the next token.
-                    }
-                    -1 => {
-                        return;
-                    } // EOF? Stop.
-
-                    0x23 | 0x40 => {
-                        let pragma_trigger_pos = self.end;
-                        let pure = if first_marker
-                            && strings::is_all_whitespace(
-                                &contents[self.start + 2..pragma_trigger_pos],
-                            ) {
-                            PureAnnotation::Allow
-                        } else {
-                            PureAnnotation::Ignore
-                        };
-                        first_marker = false;
-                        let chunk = js_ast::StoreStr::new(self.remaining());
-                        self.current += self.scan_pragma(
-                            pragma_trigger_pos,
-                            chunk.slice(),
-                            CommentKind::SingleLine,
-                            pure,
-                        );
-                        continue;
-                    }
-                    _ => {
-                        // Non-ASCII (but not LS/PS), etc. Treat as normal comment char.
-                        // The character was consumed by step(). Let the outer loop continue.
-                        continue;
-                    }
+            match self.code_point {
+                0x0D | 0x0A | 0x2028 | 0x2029 => {
+                    // Is it a line terminator?
+                    // Found the end of the comment line.
+                    return; // Stop scanning. Lexer state is ready for the next token.
                 }
-            } else {
-                // Highway found nothing until EOF
-                // Consume the rest of the line.
-                self.end = contents.len();
-                self.current = contents.len();
-                self.code_point = -1; // Set EOF state
-                return;
+                -1 => {
+                    return;
+                } // EOF? Stop.
+
+                0x23 | 0x40 => {
+                    let pragma_trigger_pos = self.end;
+                    let pure = if first_marker
+                        && strings::is_all_whitespace(&contents[self.start + 2..pragma_trigger_pos])
+                    {
+                        PureAnnotation::Allow
+                    } else {
+                        PureAnnotation::Ignore
+                    };
+                    first_marker = false;
+                    let chunk = js_ast::StoreStr::new(self.remaining());
+                    self.current += self.scan_pragma(
+                        pragma_trigger_pos,
+                        chunk.slice(),
+                        CommentKind::SingleLine,
+                        pure,
+                    );
+                    continue;
+                }
+                _ => {
+                    // Non-ASCII (but not LS/PS), etc. Treat as normal comment char.
+                    // The character was consumed by step(). Let the outer loop continue.
+                    continue;
+                }
             }
         }
         // unreachable
@@ -3550,18 +3535,30 @@ impl PragmaArg {
     }
 }
 
-/// Byte offset of the next character `scan_multi_line_comment_body` has to
-/// inspect one code point at a time: the first `*` (potential `*/`
-/// terminator), `\r` / `\n` (newline tracking for ASI), or non-ASCII byte
-/// (U+2028/U+2029 and other multi-byte sequences). Returns `text_.len()` when
-/// the rest of the input has no such byte — the comment is unterminated, so
-/// the caller's next `step()` lands on EOF and reports the error.
-fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> usize {
-    bun_highway::index_of_interesting_character_in_multiline_comment(text_).unwrap_or(text_.len())
+/// How many bytes can be skipped on the way to what `index_of` finds.
+/// `step()` goes on from there.
+#[inline(always)]
+fn skip_to(text: &[u8], index_of: impl Fn(&[u8]) -> Option<usize>) -> usize {
+    let text = &text[..text.len().saturating_sub(3)];
+    index_of(text).unwrap_or(text.len())
+}
+
+fn skip_to_interesting_character_in_multiline_comment(text: &[u8]) -> usize {
+    skip_to(
+        text,
+        bun_simd_kernels::index_of_interesting_character_in_multiline_comment,
+    )
+}
+
+fn skip_to_interesting_character_in_line_comment(text: &[u8]) -> usize {
+    skip_to(
+        text,
+        bun_simd_kernels::index_of_interesting_character_in_line_comment,
+    )
 }
 
 fn index_of_interesting_character_in_string_literal(text_: &[u8], quote: u8) -> Option<usize> {
-    bun_highway::index_of_interesting_character_in_string_literal(text_, quote)
+    bun_simd_kernels::index_of_interesting_character_in_string_literal(text_, quote)
 }
 
 struct InvalidEscapeSequenceFormatter {

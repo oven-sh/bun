@@ -127,7 +127,7 @@ it(`Bun.hash.rapidhash()`, () => {
   expect(Bun.hash.rapidhash(new TextEncoder().encode("hello world"))).toBe(0x58a89bdcee89c08cn);
 });
 // Bun.hash.xxHash3 is backed by a runtime-dispatched SIMD kernel
-// (src/jsc/bindings/xxhash3.cpp). The `len <= 16` case above only exercises
+// (src/hash/xxhash3.rs). The `len <= 16` case above only exercises
 // the scalar short-key branch; these cover every length branch (16 / 128 / 240
 // cutoffs, 64-byte stripes, multi-block long inputs) and the seeded
 // custom-secret path. Expected values come from the xxHash reference
@@ -165,7 +165,7 @@ describe("xxHash3 SIMD kernel", () => {
     [239, 0n, 0x5e6dd82b298c64d5n],
     [240, 0n, 0x744366c87a6954e9n],
     [240, 2882400001n, 0xdc5d0fd70f358c69n],
-    // Long-input path (> 240): the Highway-dispatched stripe loop.
+    // Long-input path (> 240): the dispatched stripe loop.
     [241, 0n, 0xdc3fc1135592d6e6n],
     [256, 0n, 0xd3a2265cf3c76bccn],
     [257, 0n, 0xf11e5731791d1209n],
@@ -218,7 +218,7 @@ describe("xxHash3 SIMD kernel", () => {
   });
 });
 
-// XXH32 and XXH64 are now C++ (src/jsc/bindings/xxhash3.cpp) — scalar, no SIMD
+// XXH32 and XXH64 (src/hash/xxhash.rs) are scalar, no SIMD
 // form in the reference. These vectors pin the output bit-identical to the
 // xxHash reference (and the retired twox-hash crate) across every length branch
 // (16/32-byte stripes, trailing 4-/1-byte tails) and a seeded case. Input byte

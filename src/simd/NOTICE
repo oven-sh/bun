@@ -1,0 +1,60 @@
+The names and the meaning of the operations follow Highway (https://github.com/google/highway), Copyright Google LLC,
+which is licensed under the Apache License 2.0 or the BSD 3-Clause License, and core::simd and std of Rust (MIT or Apache License 2.0).
+
+src/simd/math.rs     Began as a port of hwy/contrib/math/math-inl.h (Apache License 2.0). The steps of sin, sin_cos, ln, tanh and atanh,
+                and the first step of asin and acos, are still the same. That file names musl for log, and sse_mathfun.h
+                (zlib license) and Cephes for sin_cos. No table is from there: tools/coefficients.py computes all. Some
+                first coefficients and parts of pi and ln(2) are as in other libraries, since they can't be otherwise.
+src/simd/vqsort.rs   Follows the design of hwy/contrib/sort (Blacher, Giesen, Sanders, Wassenberg: "Vectorized and
+                performance-portable Quicksort", 2022). No code is from there. The network for 8 values is Batcher's, and that
+                for 16 is Green's (1969), in the order of sorting_networks-inl.h (Apache License 2.0).
+src/simd/slices.rs   xoshiro256++ and SplitMix64 are by David Blackman, Sebastiano Vigna and Guy Steele, in the public domain.
+src/simd/utf8.rs     The check is that of Keiser and Lemire, "Validating UTF-8 in less than one instruction per byte", 2021. Its three
+                tables of 16 bytes, the names of their bits and the limits for the end of a block are as in that paper,
+                simdjson and simdutf (Apache License 2.0 or MIT).
+src/simd/aes_fallback.rs
+                The lookups of four bits follow the method of Mike Hamburg, "Accelerating AES with Vector Permute
+                Instructions", 2009. No code or table is from elsewhere.
+
+The crate also has these short methods from other projects or has the same steps. They were
+written anew in Rust, from memory or after reading. No file, function or table was copied.
+
+Highway         (as above) How some operations are made of others where there is no instruction: partial loads in steps of
+                halves, interleaved loads and stores within blocks first, slides of bytes across blocks, shifts that
+                round, high products of 64 bits, leading zeros by way of floating point, saturating conversions from
+                floating point on x86, compress by tables for eight lanes, masks as four bits for each byte on Arm (first
+                described by Danila Kutenin), bit shuffles and sums of absolute differences on AVX-512, and a table of
+                entries for dispatch whose first one detects the CPU. Masks from bits, shifts of bytes and by powers of two,
+                saturating sums of 32 and 64 bits, comparisons of 128 bits, division by way of floating point, compress of
+                16 bits by way of 32, and steps of AES from others. Floating point from unsigned and 64-bit integers by
+                halves, for which it names wim (https://stackoverflow.com/questions/41144668 and 34066228).
+Hyperscan       (BSD 3-Clause) Sets of bytes by lookups of four bits, there "shufti" and "truffle": ByteSet, ByteClasses.
+simdjson        (Apache License 2.0 or MIT) compress of 16 bytes as two halves that a second lookup joins, the
+                positions of set bits by compress of 0, 1, 2.. or several at a time, prefix_xor by a carry-less product,
+                bitmasks by pairwise sums on Arm, and white space by one lookup.
+ggml            (MIT) The sign of one factor moved to the other in dot_add_relaxed for i8.
+memchr          (MIT or Unlicense) The shape of the loop of position: one vector, and then four aligned ones at a time.
+compiler-rt     (Apache License 2.0 with LLVM exception) The order of the products in powi, so that it gives the results of std.
+LLVM            (the same) f32 from u32, f64 from u64 by 2^52 and 2^84, and shifts and rotations by a vector, on x86.
+musl            (MIT) Roots in integers, in src/simd/soft.rs: the index of the first guess, and the steps from it. The table is computed.
+BearSSL         (MIT) Carry-less products from usual ones.
+FP16            (MIT) Rounding to narrow floats by an addition. The way back is by Fabian Giesen, in the public domain.
+xxHash          (BSD 2-Clause) Up to three bytes as the first, the middle and the last.
+zlib-ng         (zlib license) Matches that reach into themselves by a shuffle, in src/simd/matches.rs. The table is computed.
+sm4ni           (MIT) The S-box of SM4 by way of that of AES. The maps are computed.
+std_detect      (MIT or Apache License 2.0) Which CPUs and systems report features that can't be used, in src/simd/detect.rs.
+                The numbers there are those of the interfaces of the CPUs and systems.
+
+Papers: Granlund and Montgomery, "Division by Invariant Integers using Multiplication", 1994 (Divisor). Boldo and
+Melquiond, "Emulation of FMA and correctly rounded sums", 2008 (rounding to odd), with the product of Dekker and Veltkamp.
+Payne and Hanek, "Radian reduction for trigonometric functions", 1983 (src/simd/large_angles.rs). Warren, "Hacker's Delight"
+(deposit_bits and extract_bits without the instructions, squares of 8 by 8 bits, comparisons, lanes that share a word).
+Lemire, Kurz and Rupp, "Stream VByte", 2018 (src/simd/low_bytes.rs). Plank, Greenan and Miller, "Screaming fast Galois field arithmetic",
+2013 (LinearMap). Kounavis and Berry, slicing by 8, 2005, and the reduction of
+Barrett, 1986 (crc32 and crc32c without the instructions). Câmara, Gouvêa, López and Dahab, "Fast Software Polynomial Multiplication
+on ARM Processors Using the NEON Engine", 2013. Muła, Kurz and Lemire, "Faster Population Counts Using AVX2 Instructions", 2018.
+Locktyukhin, "Improving the Performance of the Secure Hash Algorithm (SHA-1)", 2010, and Guilford, Yap and Gopal, "Fast SHA-256
+Implementations on Intel Architecture Processors", 2012 (the schedules without the instructions). Daemen and Rijmen, "The Design of
+Rijndael", 2002 (the inverse of MixColumns). Batcher, "Sorting networks and their applications", 1968. Shepherd and Laframboise,
+"Chebyshev approximation of (1 + 2x) exp(x^2) erfc x", 1981. Walczyk, Moroz and Cieśliński, "Improving the accuracy of the fast inverse
+square root by modifying Newton-Raphson corrections", 2018 (recip_sqrt_relaxed; tools/reciprocal_root.py computes the numbers).

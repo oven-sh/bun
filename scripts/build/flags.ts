@@ -18,10 +18,6 @@ import { quote, slash } from "./shell.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
-  return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
-}
-
 /** What makes a translation unit report coverage to Fuzzilli: for Bun's own sources and, in an engine built from source, JavaScriptCore's. */
 export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fuzzilliCompilerOnly">): string[] {
   if (!cfg.fuzzilli) return [];
@@ -713,11 +709,6 @@ export const bunOnlyFlags: Flag[] = [
     flag: "-DBUN_LOCKED_ENVIRONMENT=1",
     when: c => c.lockEnvironment,
     desc: "Hardened: an executable compiled ahead of time takes a short list of BUN_JSC_* options and starts with no other",
-  },
-  {
-    flag: "-DBUN_SAFE_STACK=1",
-    when: c => usesSafeStack(c),
-    desc: "Hardened: every thread gets the second stack that what is compiled with SafeStack keeps its arrays on",
   },
 
   // ─── Build profiling ───
@@ -2000,97 +1991,6 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
-  },
-  {
-    file: "src/jsc/bindings/highway_brotli.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run for every byte that Brotli compresses.",
-  },
-  {
-    file: "src/jsc/bindings/highway_brotli.cpp",
-    // For -mcpu=apple-m1, clang lists `ccidx` on each function, and rustc does not. For all C++ at once, it would be
-    // -Wl,-mllvm,-mattr=+ccidx in the link, which makes the executable 2 MB larger.
-    extraFlags: ["-Xclang", "-target-feature", "-Xclang", "-ccidx"],
-    when: c => c.darwin && c.arm64 && c.lto && rustLtoInLink(c),
-    desc: "LTO inlines a function only into one that has all of its CPU features, and these are called from Rust loops.",
-  },
-  {
-    file: "src/jsc/bindings/highway_byte_set.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
-  },
-  {
-    file: "src/jsc/bindings/highway_checksums.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
-  },
-  {
-    file: "src/jsc/bindings/highway_jpeg.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every sample of a JPEG image.",
-  },
-  {
-    file: "src/jsc/bindings/highway_png.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
-  },
-  {
-    file: "src/jsc/bindings/highway_webp_decoder.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
-  },
-  {
-    file: "src/jsc/bindings/highway_webp_encoder.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
-  },
-  {
-    file: "src/jsc/bindings/highway_zlib.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run in the loops of a DEFLATE stream.",
-  },
-  {
-    file: "src/jsc/bindings/highway_xml.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
-  },
-  {
-    file: "src/jsc/bindings/highway_zstd.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run over every literal that zstd compresses.",
-  },
-  {
-    file: "src/jsc/bindings/highway_zstd.cpp",
-    extraFlags: ["-fsanitize=safe-stack"],
-    when: usesSafeStack,
-    desc: "It sorts input into arrays on the stack, and never calls back into JavaScript.",
-  },
-  {
-    file: "src/jsc/bindings/highway_zstd.cpp",
-    extraFlags: ["-fstack-clash-protection"],
-    when: c => c.x64 && (c.linux || c.freebsd),
-    desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
-  },
-  {
-    file: "src/jsc/bindings/highway_json.cpp",
-    extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc:
-      "Always optimize the JSON structural-index kernel (debug builds use -O0 globally). At -O0 every " +
-      "highway op is an outlined call taking 64-byte vectors by value through the stack, and clang's " +
-      "unoptimized codegen for that pattern raises #GP on an aligned zmm stack store under the debug " +
-      "sanitizer set; it would also make every JSON parse in debug builds pathologically slow. " +
-      "Covered by test/js/bun/jsonc/jsonc.test.ts and `scripts/bench-json-rust.sh --test`.",
   },
 ];
 

@@ -792,6 +792,8 @@ mod draft {
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
     pub fn crash_handler(reason: CrashReason<'_>, seed: TraceSeed<'_>) -> ! {
+        bun_simd_kernels::level::lower_to_baseline();
+
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }
@@ -1824,6 +1826,7 @@ mod draft {
     }
 
     pub fn init() {
+        bun_simd_kernels::level::detect();
         if !ENABLE {
             return;
         }
@@ -1921,6 +1924,8 @@ mod draft {
     #[cold]
     #[inline(never)]
     fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
+        bun_simd_kernels::level::lower_to_baseline();
+
         // Re-entry guard: if the hook itself panics (formatter, write, …), the
         // recursive entry sees stage>0, prints a one-liner, and returns so the
         // inner unwind tears the process down rather than looping.
@@ -2457,6 +2462,7 @@ mod draft {
             if !cpu_features.is_empty() {
                 writeln!(writer, "CPU: {}", cpu_features).map_err(fmt_err)?;
             }
+            writeln!(writer, "SIMD: {}", bun_simd_kernels::level::detected()).map_err(fmt_err)?;
 
             write!(writer, "Args: ").map_err(fmt_err)?;
             let mut arg_chars_left: usize = if cfg!(debug_assertions) { 4096 } else { 196 };

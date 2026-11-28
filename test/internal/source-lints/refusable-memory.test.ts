@@ -8,18 +8,20 @@ import path from "node:path";
 //
 // What fills a `Vec` (`push()`, `extend()`, `resize()`) is invisible to this lint. It aborts in the same way once it
 // leaves the room that was reserved.
-const crates = ["brotli", "deflate", "icu", "jpeg", "png", "webp", "zlib"];
+const crates = ["brotli", "deflate", "icu", "image_ops", "jpeg", "png", "webp", "zlib"];
 test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refusal", async name => {
   const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
   // What is `Clone` in bun_icu shares its memory or has none. The rest is `TryClone`.
   const functions = `
     with_capacity reserve reserve_exact shrink_to shrink_to_fit into_boxed_slice to_vec to_owned into_owned to_string
-    ${name === "icu" ? "" : "clone cloned"} clone_from collect from_iter concat split_off sort sort_by sort_by_key sort_by_cached_key
+    ${name === "icu" ? "" : "clone cloned"} clone_from collect from_iter split_off sort sort_by sort_by_key sort_by_cached_key
     unwrap_or_oom handle_oom out_of_memory
   `;
   const aborts = new RegExp(
     [
       String.raw`(?:\.|::)(?:${functions.trim().split(/\s+/).join("|")})\b`,
+      // With an argument, it joins two vectors of bun_simd.
+      String.raw`\.concat\(\)|::concat\b`,
       String.raw`\b(?:vec|format)!`,
       String.raw`\b(?:Box|Rc|Arc)::(?:<.*?>::)?(?:new\w*|from)\b`,
       String.raw`\b(?:Vec|String)::(?:<.*?>::)?from\b`,

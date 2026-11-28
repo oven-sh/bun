@@ -124,6 +124,10 @@ impl Header {
         Ok(header)
     }
 
+    pub(crate) fn is_rgba8(self) -> bool {
+        matches!(self.color_type, ColorType::TruecolorAlpha) && self.bit_depth == 8
+    }
+
     /// The distance between a byte and the one the filters pair it with.
     pub(crate) fn bytes_per_pixel(self) -> usize {
         usize::from(self.color_type.channels() * self.bit_depth / 8).max(1)

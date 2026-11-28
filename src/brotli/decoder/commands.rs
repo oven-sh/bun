@@ -1,6 +1,6 @@
 //! The data of a compressed meta-block (RFC 7932 section 9.3).
 
-use bun_highway::with_bmi2;
+use bun_simd::{has, kernel};
 
 use super::bit_reader::{BitReader, FastReader, REFILLED};
 use super::huffman::{
@@ -392,28 +392,56 @@ fn run_fast_in_block<'a>(
     })
 }
 
-with_bmi2! {
-    fn run_fast_in_one_tree(
-        tables: &Tables<'_>,
-        tree: &SymbolTree,
-        cursor: &mut Cursor,
-        reader: &mut BitReader<'_>,
-        ring: &mut [u8],
-    ) -> Stopped |has_bmi2| {
-        run_fast(tables, tree, cursor, reader, ring, has_bmi2)
-    }
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn run_fast_in_one_tree(
+    tables: &Tables<'_>,
+    tree: &SymbolTree,
+    cursor: &mut Cursor,
+    reader: &mut BitReader<'_>,
+    ring: &mut [u8],
+) -> Stopped {
+    run_fast(tables, tree, cursor, reader, ring, has!(bmi))
 }
 
-with_bmi2! {
-    fn run_fast_in_contexts(
-        tables: &Tables<'_>,
-        trees: &TreesByContext<'_>,
-        cursor: &mut Cursor,
-        reader: &mut BitReader<'_>,
-        ring: &mut [u8],
-    ) -> Stopped |has_bmi2| {
-        run_fast(tables, trees, cursor, reader, ring, has_bmi2)
-    }
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn run_fast_in_contexts(
+    tables: &Tables<'_>,
+    trees: &TreesByContext<'_>,
+    cursor: &mut Cursor,
+    reader: &mut BitReader<'_>,
+    ring: &mut [u8],
+) -> Stopped {
+    run_fast(tables, trees, cursor, reader, ring, has!(bmi))
+}
+
+/// See [`read_literals`].
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn read_many_literals<'a>(
+    tables: &Tables<'a>,
+    contexts: LiteralContexts<'a>,
+    trees: &mut Option<TreesByContext<'a>>,
+    reader: &mut BitReader<'_>,
+    ring: &mut [u8],
+    start: usize,
+    end: usize,
+) -> Result<usize, Stop> {
+    let Some(mut fast) = reader.begin_refilling() else {
+        return Ok(start);
+    };
+    let (start, end) = (start as u32, end as u32);
+    let position = match contexts.lut {
+        None => read_literals(tables, contexts.first, &mut fast, ring, start, end),
+        Some(lut) if !core::ptr::eq(lut, tables.lut_in_trees) => start,
+        Some(_) => {
+            let trees = TreesByContext::select(trees, tables, &contexts)?;
+            read_literals(tables, trees, &mut fast, ring, start, end)
+        }
+    };
+    reader.end_refilling(&fast);
+    Ok(position as usize)
 }
 
 /// Decodes the commands that are clear of the ends of the input, the blocks, the meta-block and the ring.
@@ -788,34 +816,6 @@ fn in_root(root: &RangesRoot, bits: u64) -> &Ranges {
 #[inline(always)]
 fn look_up<'a>(root: &'a RangesRoot, entries: &'a [Ranges], bits: u64) -> Result<&'a Ranges, Stop> {
     (in_root(root, bits).resolve(entries, bits)).ok_or(Stop::UNREACHABLE)
-}
-
-with_bmi2! {
-    /// See [`read_literals`].
-    fn read_many_literals<'a>(
-        tables: &Tables<'a>,
-        contexts: LiteralContexts<'a>,
-        trees: &mut Option<TreesByContext<'a>>,
-        reader: &mut BitReader<'_>,
-        ring: &mut [u8],
-        start: usize,
-        end: usize,
-    ) -> Result<usize, Stop> {
-        let Some(mut fast) = reader.begin_refilling() else {
-            return Ok(start);
-        };
-        let (start, end) = (start as u32, end as u32);
-        let position = match contexts.lut {
-            None => read_literals(tables, contexts.first, &mut fast, ring, start, end),
-            Some(lut) if !core::ptr::eq(lut, tables.lut_in_trees) => start,
-            Some(_) => {
-                let trees = TreesByContext::select(trees, tables, &contexts)?;
-                read_literals(tables, trees, &mut fast, ring, start, end)
-            }
-        };
-        reader.end_refilling(&fast);
-        Ok(position as usize)
-    }
 }
 
 #[inline(always)]

@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ ! -d vendor/mimalloc ] || [ ! -d vendor/highway ]; then
+if [ ! -d vendor/mimalloc ]; then
   echo "error: vendor/ not populated — run \`bun bd\` (or \`bun run build\`) once first" >&2
   exit 1
 fi
@@ -13,8 +13,8 @@ fi
 SUP=target/bench-json-cdeps
 mkdir -p "$SUP/wtf"
 export BUN_CODEGEN_DIR=${BUN_CODEGEN_DIR:-$PWD/build/debug/codegen}
-if [ ! -f "$BUN_CODEGEN_DIR/json_byte_class.h" ]; then
-  echo "error: $BUN_CODEGEN_DIR/json_byte_class.h not found — run \`bun bd\` once first" >&2
+if [ ! -f "$BUN_CODEGEN_DIR/build_options.rs" ]; then
+  echo "error: $BUN_CODEGEN_DIR/build_options.rs not found — run \`bun bd\` once first" >&2
   exit 1
 fi
 CC=${CC:-cc}
@@ -39,14 +39,6 @@ MI_FLAGS=(-O2 -fPIC -ftls-model=initial-exec -DNDEBUG -D_GNU_SOURCE -DMI_STATIC_
 build "$SUP/mimalloc.o" $CC "${MI_FLAGS[@]}" -Ivendor/mimalloc/include -c vendor/mimalloc/src/static.c
 build "$SUP/simdutf.o" $CXX -O3 -fPIC -std=c++20 -I"$SUP" -c "$SUP/simdutf.cpp"
 build "$SUP/simdutf_shim.o" $CXX -O3 -fPIC -std=c++20 -I"$SUP" -c src/parsers/benches/support/simdutf_shim.cpp
-for f in abort targets per_target print timer nanobenchmark aligned_allocator; do
-  build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
-done
-for k in json xml; do
-  if [ -f src/jsc/bindings/highway_$k.cpp ]; then
-    $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_$k.cpp -o "$SUP/highway_$k.o"
-  fi
-done
 # C/C++ XML parsers for benches/xml_parse.rs to compare against (optional).
 XML_C_DEFS=()
 XML_C_LIBS=()

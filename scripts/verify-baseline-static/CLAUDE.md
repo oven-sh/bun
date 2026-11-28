@@ -126,8 +126,14 @@ SUMMARY:
 
 - Violation line format: `symbol  [FEAT, ...]  (N insns)`. Copy the symbol
   name exactly when allowlisting — it's compared post-canonicalization.
+  A `*` stands for any text. It is for the kernels of bun_simd, whose names
+  have the target in them: a new target needs lines, a new kernel does not.
+  Only names of Rust are matched with patterns, the one with the fewest features
+  counts, and none is reported as STALE.
+  `ZMM` stands for vectors of 64 bytes in these kernels, which only the target
+  `icelake` may have. Elsewhere they lower the clock of some CPUs: change the kernel.
 - Feature names are iced-x86's `CpuidFeature` Debug names (x64) or the strings
-  in `src/aarch64.rs:44-54` (aarch64). They must match the allowlist brackets
+  in `src/aarch64.rs` (aarch64). They must match the allowlist brackets
   character-for-character.
 - `STALE` entries are informational, not an error. One allowlist covers both
   glibc and musl; a symbol LTO'd away on one libc shows STALE on the other.
@@ -145,8 +151,8 @@ executed. Real bug, will SIGILL on baseline hardware. Fix the compile flags.
 ### Deciding which
 
 **Identify the dependency.** Demangle the symbol (`c++filt`, or recognize the
-prefix: `_ZN7simdutf` = simdutf, `_ZN3bun` + `N_AVX2`/`N_SVE` = Bun's Highway
-code, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
+prefix: `_ZN7simdutf` = simdutf, `8bun_simd4gate7entries` = a kernel of
+Bun's, `_RNv` + `memchr` = Rust memchr, etc). Search the allowlist for that
 dependency — if neighbors are there under an existing `# Gate: ...` header,
 this is almost certainly (A).
 
@@ -157,9 +163,7 @@ table, an HWCAP test. Known patterns:
 | Dependency                            | Gate                                                        | Where                                 |
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------- |
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy    |
-| Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h` |
-| `with_bmi2!` (Bun)                    | `is_x86_feature_detected!("bmi2")`                          | `src/highway/lib.rs`                  |
-| `with_bmi2()` (Bun)                   | `is_x86_feature_detected!()`                                | `src/highway/lib.rs`                  |
+| bun_simd (Bun)                        | An index that the first call sets, after CPUID or HWCAP     | `src/simd/gate.rs`                    |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c` |
 | Rust `memchr`                         | `is_x86_feature_detected!()`                                | (via lolhtml dep)                     |
 | compiler-rt outline-atomics (aarch64) | `__aarch64_have_lse_atomics` (= `AT_HWCAP & HWCAP_ATOMICS`) | compiler-rt builtin                   |
@@ -220,7 +224,7 @@ data-in-.text misdecodes (previous section) and `<no-symbol@...>` padding
 `AVX512_VPOPCNTDQ`, `AVX512_FP16`, `AVX_VNNI`, …
 
 **aarch64 feature names:** `LSE`, `SVE`, `RCPC`, `DotProd`, `JSCVT`, `RDM`,
-`PAC(non-hint)`.
+`PAC(non-hint)`, `AES`, `SHA2`, `SHA3`.
 
 ### Special symbol forms
 
@@ -238,9 +242,6 @@ use `<rust-hash>` in place of the hash:
 
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
-
-**Rust generics — `<generic-args>`.** An entry that ends in it covers every instance of a generic function, for a gate
-that takes a closure.
 
 **Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
 record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm

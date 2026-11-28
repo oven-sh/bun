@@ -20,7 +20,7 @@ mod window;
 use bun_core::vec::{BorrowedCursor, append_with};
 use bun_deflate::format::{MIN_MATCH_LEN, STATIC};
 use bun_deflate::gzip;
-use bun_highway::adler32;
+use bun_hash::adler32;
 
 use crate::checksum::Checksum;
 use crate::error::{Error, Result};

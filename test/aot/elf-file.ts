@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const programHeaderType = { load: 1, dynamic: 2, stack: 0x6474e551 };
-const dynamicTag = { needed: 1, hash: 4, stringTable: 5, symbolTable: 6, libraryPath: 15, runPath: 29, earlyInitializersSize: 33, packedRelocationsSize: 35 };
+const dynamicTag = { needed: 1, hash: 4, stringTable: 5, symbolTable: 6, libraryPath: 15, runPath: 29, packedRelocationsSize: 35 };
 const mayExecute = 1;
 const endOfPage = (address: number) => Math.ceil(address / 4096) * 4096;
 
@@ -10,7 +10,6 @@ export interface ElfFile {
   neededLibraries: string[];
   librarySearchPaths: string[];
   importedSymbols: Set<string>;
-  earlyInitializers: number;
   packedRelocationsSize: number;
   /** The most bytes, in whole pages, that a segment has in memory behind what the file holds of it. */
   largestPartThatStartsAsZeros: number;
@@ -61,7 +60,6 @@ export function readElfFile(path: string): ElfFile {
     neededLibraries: namesOf(dynamicTag.needed),
     librarySearchPaths: [...namesOf(dynamicTag.libraryPath), ...namesOf(dynamicTag.runPath)],
     importedSymbols,
-    earlyInitializers: (valueOf(dynamicTag.earlyInitializersSize) ?? 0) / 8,
     packedRelocationsSize: valueOf(dynamicTag.packedRelocationsSize) ?? 0,
     largestPartThatStartsAsZeros: Math.max(...loads.map(load => endOfPage(load.address + load.sizeInMemory) - endOfPage(load.address + load.size))),
     countInCode: pattern =>

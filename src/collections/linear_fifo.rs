@@ -756,7 +756,7 @@ mod tests {
             std::io::Write::write_all(&mut fifo, b"This is a test").unwrap();
             let mut drained = Vec::new();
             std::io::Read::read_to_end(&mut fifo, &mut drained).unwrap();
-            let words: Vec<&[u8]> = drained.split(|&c| c == b' ').collect();
+            let words: Vec<&[u8]> = bun_core::strings::split(&drained, b" ").collect();
             assert_eq!(vec![&b"This"[..], b"is", b"a", b"test"], words);
         }
     }

@@ -35,7 +35,7 @@ namespace WebCore {
 // FIXME: Not every header fits into a map. Notably, multiple Set-Cookie header fields are needed to set multiple cookies.
 
 // ASCII-lowercase a header name. Equivalent to String::convertToASCIILowercase
-// but routes both the 8-bit and 16-bit paths through Highway SIMD kernels so
+// but routes both the 8-bit and 16-bit paths through SIMD kernels so
 // the scan and copy don't depend on the build's -march. Returns the original
 // String (no allocation) when it is already lowercase, matching the WTF
 // behavior.

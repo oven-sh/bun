@@ -247,7 +247,7 @@ export type IdentifiedTool = "cc" | "cxx" | "hostCc" | "nasm" | "ld";
  * freshly installed binary keeps its packaged mtime, which is usually older
  * than the objects it should invalidate. The build directory then holds
  * objects from two compilers, and with LTO their bitcode meets in one link —
- * LLVM 21's next to LLVM 23's failed with `undefined symbol: hwy::Abort`.
+ * LLVM 21's next to LLVM 23's failed with undefined symbols.
  *
  * The archiver and the resource compiler have no file: llvm-lib and llvm-rc
  * do not report a version, and what they write does not depend on one.

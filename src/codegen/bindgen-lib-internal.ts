@@ -1325,7 +1325,7 @@ export interface BytesOptions {
   otherwise?: "throw" | "toString";
   refuse?: readonly ("undefined" | "null" | "stringObject")[];
   string?: "utf8" | "asIs";
-  shared?: "borrowed" | "copied";
+  shared?: "borrowed" | "copied" | "atomic";
   held?: "borrowed" | "handle" | "copied" | "pinned";
 }
 
@@ -1353,6 +1353,11 @@ export class BytesType extends Type {
     assert(shared === "borrowed" || from.includes("buffer"), "shared: it takes no buffer");
     assert(shared === "borrowed" || held !== "copied", 'held: "copied" copies every buffer');
     // What no function needs yet is not written.
+    assert(shared !== "atomic" || held === "borrowed", 'shared: "atomic" is only with held: "borrowed"');
+    assert(
+      shared !== "atomic" || (from.length === 1 && otherwise === "throw"),
+      'shared: "atomic" takes nothing but a buffer',
+    );
     assert(string === "utf8" || held === "handle", 'string: "asIs" is only with held: "handle"');
     assert(string === "utf8" || shared === "borrowed", 'string: "asIs" does not copy a shared buffer');
     assert(shared === "borrowed" || held !== "pinned", 'held: "pinned" pins a shared buffer; it does not copy one');
@@ -1418,6 +1423,7 @@ export class BytesType extends Type {
     return this.#options.held === "borrowed";
   }
   canBe(modifier: OptionalType["modifier"]): boolean {
+    if (this.#options.shared === "atomic") return false;
     return this.#options.held === "borrowed" || (this.#options.string === "asIs" && modifier === "nullable");
   }
   get nullRepresentation() {
@@ -1463,6 +1469,8 @@ export class BytesType extends Type {
   #rust(argument: string): readonly [type: string, fromExtern: string] {
     const stringOrBytes = `bindgen::StringOrJsBytes::from_extern(${argument}, heap)`;
     if (this.#options.string === "asIs") return ["bindgen::StringOrJsBytes<'a>", stringOrBytes];
+    if (this.#options.shared === "atomic")
+      return ["bun_simd_kernels::SharedBytes<'a>", `bun_simd_kernels::SharedBytes::new(${argument}.get_atomic(heap))`];
     return (
       {
         borrowed: ["&'a [u8]", `${argument}.get(heap)`],
@@ -1917,7 +1925,7 @@ export class OptionalType extends Type {
     }
     assert(
       !(inner instanceof BytesType) || inner.canBe(modifier),
-      'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
+      'b.bytes can be absent if it is held: "borrowed" and not shared: "atomic", and .nullable if it is string: "asIs"',
     );
     this.inner = inner;
     this.modifier = modifier;

@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! `bun_jpeg`, `bun_png` and `bun_webp` codecs and the highway resize kernel.
+//! `bun_jpeg`, `bun_png` and `bun_webp` codecs and the kernels of `bun_image_ops`.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -488,8 +488,8 @@ impl Image {
         let options = options.to_js();
         let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
         if options.is_object() {
-            // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
-            // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
+            // Clamp finite + bounded so Infinity doesn't reach the kernel as
+            // f32 +Inf (0×Inf = NaN, whose conversion depends on the CPU).
             if let Some(v) = options.get(global, "brightness")? {
                 if v.is_number() {
                     let x = v.as_number();
@@ -1840,7 +1840,7 @@ impl PipelineTask {
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width, d.height);
             // Guard the output canvas AND the H-then-V intermediate (always
-            // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
+            // dst_w × src_h — the order of the passes is fixed). A 1×N
             // source → resize(W,1) has tiny input AND output canvases yet a
             // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
             // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded

@@ -1510,6 +1510,16 @@ node_api_create_external_string_utf16(napi_env env,
     bool* copied)
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_utf16
+    // Slices of Rust are aligned.
+    if (length && reinterpret_cast<uintptr_t>(str) % alignof(char16_t)) [[unlikely]] {
+        napi_status status = napi_create_string_utf16(env, str, length, result);
+        if (status != napi_ok)
+            return status;
+        if (copied)
+            *copied = true;
+        env->doFinalizer(finalize_callback, str, finalize_hint);
+        return napi_set_last_error(env, napi_ok);
+    }
     bool disposeNow = false;
     napi_status status = createExternalString<char16_t>(env, str, length, finalize_callback, finalize_hint, result, copied, disposeNow);
     if (disposeNow) {

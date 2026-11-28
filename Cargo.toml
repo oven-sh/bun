@@ -69,7 +69,10 @@ members = [
   "src/sort_by_number",
   "src/trim",
   "src/trim/removable_features",
-  "src/highway",
+  "src/image_ops",
+  "src/simd",
+  "src/simd_kernels",
+  "src/simd_macros",
   "src/histogram",
   "src/hpack",
   "src/http1",
@@ -453,7 +456,10 @@ bun_exe_format = { path = "src/exe_format" }
 bun_sort_by_number = { path = "src/sort_by_number" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
-bun_highway = { path = "src/highway" }
+bun_image_ops = { path = "src/image_ops" }
+bun_simd = { path = "src/simd" }
+bun_simd_kernels = { path = "src/simd_kernels" }
+bun_simd_macros = { path = "src/simd_macros" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }
@@ -529,7 +535,7 @@ bun_websocket = { path = "src/websocket" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp, highway_jpeg.cpp and highway_webp_*.cpp.
+# checks stay on.
 [profile.dev.package.bun_png]
 opt-level = 3
 [profile.dev.package.bun_jpeg]
@@ -537,6 +543,47 @@ opt-level = 3
 
 [profile.dev.package.bun_webp]
 opt-level = 3
+
+[profile.dev.package.bun_image_ops]
+opt-level = 3
+
+# Unoptimized, every operation on a vector is a call that passes it through the stack.
+[profile.dev.package.bun_simd]
+opt-level = 3
+debug-assertions = false
+[profile.test.package.bun_simd]
+debug-assertions = true
+[profile.dev.package.bun_simd_kernels]
+opt-level = 3
+[profile.dev.package.bun_hash]
+opt-level = 3
+codegen-units = 1
+
+# As in the builds that ship, also with ASan, where kernels would be up to 40 times slower otherwise.
+[profile.release.package.bun_simd]
+debug-assertions = false
+[profile.release.package.bun_simd_kernels]
+codegen-units = 1
+[profile.release.package.bun_hash]
+codegen-units = 1
+[profile.release.package.bun_zlib]
+codegen-units = 1
+[profile.release.package.bun_deflate]
+codegen-units = 1
+[profile.release.package.bun_brotli]
+codegen-units = 1
+[profile.release.package.bun_zstd_decoder]
+codegen-units = 1
+[profile.release.package.bun_zstd_encoder]
+codegen-units = 1
+[profile.release.package.bun_png]
+codegen-units = 1
+[profile.release.package.bun_jpeg]
+codegen-units = 1
+[profile.release.package.bun_webp]
+codegen-units = 1
+[profile.release.package.bun_image_ops]
+codegen-units = 1
 
 # Loops over every byte that is compressed or decompressed.
 [profile.dev.package.bun_deflate]
@@ -570,7 +617,7 @@ opt-level = 3
 [profile.dev.package.bun_icu]
 opt-level = 3
 
-# It stands in for vector code that every test program runs over each byte it parses.
+# It stands in for simdutf, which test programs run over each byte they parse.
 [profile.dev.package.bun_sema_standalone]
 opt-level = 3
 

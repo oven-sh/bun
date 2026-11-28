@@ -7,8 +7,6 @@ mod planes;
 mod reconstruct;
 mod residuals;
 
-use bun_highway::webp::FilterStrength;
-
 pub(crate) use self::header::Header;
 use self::header::Parameters;
 use self::modes::LumaMode;
@@ -18,6 +16,7 @@ use self::residuals::{Context, Residuals};
 use super::SubblockMode;
 use crate::array::At;
 use crate::error::Result;
+use crate::simd::FilterStrength;
 use crate::vec;
 
 /// What a macroblock leaves to the one below.
@@ -71,7 +70,8 @@ impl Header<'_> {
                     above.context.clear(has_y2);
                     context_left.clear(has_y2);
                 } else {
-                    residuals.read(
+                    residuals::read(
+                        &mut residuals,
                         &mut tokens,
                         &parameters.probabilities,
                         &segment.quantizers,

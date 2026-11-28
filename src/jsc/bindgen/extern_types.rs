@@ -112,6 +112,13 @@ impl ExternBytes {
         unsafe { core::slice::from_raw_parts(self.data, self.length) }
     }
     /// # Safety
+    /// As [`get`](Self::get), and nothing is stored through the result.
+    #[inline(always)]
+    pub unsafe fn get_atomic<'a>(self, _: &JsHeap<'a>) -> &'a [core::sync::atomic::AtomicU8] {
+        // SAFETY: as above, and `AtomicU8` has the layout of `u8`.
+        unsafe { core::slice::from_raw_parts(self.data.cast(), self.length) }
+    }
+    /// # Safety
     /// As [`get`](Self::get).
     #[inline(always)]
     pub unsafe fn get_optional<'a>(self, heap: &JsHeap<'a>) -> Option<&'a [u8]> {

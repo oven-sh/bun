@@ -662,6 +662,14 @@ template<typename Char>
 // Main Implementation
 // ============================================================================
 
+template<typename Char>
+static NEVER_INLINE const Char* findLineBreak(const Char* it, const Char* end)
+{
+    while (it != end && *it != '\n' && *it != '\r')
+        ++it;
+    return it;
+}
+
 // Returns nullopt if a row, the list of rows or the result couldn't grow.
 template<typename Char>
 static std::optional<WTF::String> wrapAnsiImpl(std::span<const Char> input, size_t columns, const WrapAnsiOptions& options)
@@ -682,15 +690,8 @@ static std::optional<WTF::String> wrapAnsiImpl(std::span<const Char> input, size
     bool firstLine = true;
 
     while (true) {
-        auto remaining = std::span<const Char>(lineStart, dataEnd);
-        size_t brPos = WTF::notFound;
-        for (size_t k = 0; k < remaining.size(); ++k) {
-            if (remaining[k] == '\n' || remaining[k] == '\r') {
-                brPos = k;
-                break;
-            }
-        }
-        const Char* lineEnd = (brPos == WTF::notFound) ? dataEnd : lineStart + brPos;
+        bool isEmpty = lineStart == dataEnd || *lineStart == '\n' || *lineStart == '\r';
+        const Char* lineEnd = isEmpty ? lineStart : findLineBreak(lineStart + 1, dataEnd);
 
         // Add newline between input lines
         if (!firstLine)

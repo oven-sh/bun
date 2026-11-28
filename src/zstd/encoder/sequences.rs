@@ -2,8 +2,8 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::with_bmi2;
 use bun_zstd_decoder::array::{At, grow, resize};
+use bun_zstd_decoder::calls::with_bmi2;
 use bun_zstd_decoder::format::CodeKind::{self, LiteralLength, MatchLength, Offset};
 use bun_zstd_decoder::format::{
     INITIAL_REPEAT_OFFSETS, LITERAL_LENGTH_BASES, LITERAL_LENGTH_BITS, MATCH_LENGTH_BASES,

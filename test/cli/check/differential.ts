@@ -88,12 +88,12 @@ export async function inBatches<T>(items: T[], run: (item: T) => Promise<void>) 
 type Case = { files: Record<string, string>; build?: true; deep?: true; theirs?: string[] };
 
 /** Returns the programs of differential-cases.json that this build and system can check, each written to `root`/name. */
-export async function writtenCases(root: string, isWanted: (it: Case, index: number) => boolean) {
+export async function writtenCases(root: string, isWanted: (it: Case, index: number, name: string) => boolean) {
   const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
   return (
     Object.entries(all)
       .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
-      .filter(([, it], index) => isWanted(it, index))
+      .filter(([name, it], index) => isWanted(it, index, name))
       // Windows can't create a directory named `c:` or `w*d`.
       .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
       .filter(([name, it]) => {
@@ -112,6 +112,10 @@ export async function writtenCases(root: string, isWanted: (it: Case, index: num
   );
 }
 
+// `ONLY=import-type bun bd test test/cli/check/differential-cases-1.test.ts` checks the programs with that text in
+// their name, on a debug build too. The first test checks them all, and the others are skipped.
+const only = process.env.ONLY;
+
 /**
  * Small programs on which `bun check` and tsc once disagreed, each named after where it was found.
  * A program takes two processes, and a test file has three minutes, so each file tests one of `parts` parts.
@@ -119,17 +123,18 @@ export async function writtenCases(root: string, isWanted: (it: Case, index: num
 export function programsThatOnceDiffered(part: number, parts: number) {
   const tests = 4;
   for (let nth = 0; nth < tests; nth++) {
-    test.skipIf(!tsc)(
+    test.skipIf(!tsc || (!!only && part + nth > 0))(
       `matches tsc on programs where the two once disagreed, ${part * tests + nth + 1} of ${parts * tests}`,
       async () => {
         using dir = tempDir("bun-check-differential", {});
         const root = String(dir);
         // A debug build checks a sample, always the same one.
         const every = isDebug || isASAN ? 40 : 1;
-        const cases = await writtenCases(
-          root,
-          (_, index) => index % every === 0 && (index / every) % (parts * tests) === part * tests + nth,
+        const cases = await writtenCases(root, (_, index, name) =>
+          only ? name.includes(only) : index % every === 0 && (index / every) % (parts * tests) === part * tests + nth,
         );
+        // A test with no program passes, and `ONLY` may match none.
+        if (only) expect(cases.length).toBeGreaterThan(0);
         const different: Record<string, object> = {};
         await inBatches(cases, async ([name, it]) => {
           const cwd = join(root, name);

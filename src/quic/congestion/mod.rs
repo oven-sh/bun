@@ -6,13 +6,14 @@ mod catch_up;
 mod ceiling;
 mod crowd;
 mod cubic;
+mod foreign_delay;
 mod pacer;
 mod rtt;
 mod spread;
 mod trial;
 mod windowed_filter;
 
-use bbr::Bbr;
+use bbr::{Bbr, Limit};
 use crowd::Crowd;
 use cubic::Cubic;
 use pacer::{Pacer, Place};
@@ -224,9 +225,12 @@ impl Controller {
         let window = self.window();
         if self.in_flight >= window {
             self.refill_at = Instant::NEVER;
-            match &self.model {
+            match &mut self.model {
                 Model::Bbr(bbr) if !bbr.is_draining() => {
                     self.pacer.on_window_full(now, window, !bbr.is_cycling());
+                    if expects_more() {
+                        bbr.on_limit(Limit::Window);
+                    }
                 }
                 _ => self.pacer.on_limited_otherwise(),
             }
@@ -247,7 +251,10 @@ impl Controller {
             && let Model::Bbr(bbr) = &mut self.model
             // What goes out all at once with nothing to follow spends most of the time on an empty path.
             && (is_held_back
-                || !bbr.is_cycling() && unsent <= window - self.in_flight && !expects_more())
+                || !bbr.is_cycling()
+                    && unsent <= window - self.in_flight
+                    && !bbr.fills_path(self.in_flight)
+                    && !expects_more())
         {
             bbr.on_held_back(self.last_sent);
         }
@@ -311,6 +318,7 @@ impl Controller {
         self.crowd.on_sent();
         self.prior_in_flight = self.in_flight;
         self.last_sent += 1;
+        let last_sent_at = self.pacer.last_sent_at();
         let mut flight = Flight {
             at: now,
             len,
@@ -320,7 +328,7 @@ impl Controller {
         };
         match &mut self.model {
             Model::Cubic(cubic) => cubic.on_sent(flight.sequence, self.in_flight),
-            Model::Bbr(bbr) => bbr.on_sent(&mut flight),
+            Model::Bbr(bbr) => bbr.on_sent(&mut flight, last_sent_at),
         }
         flight
     }
@@ -369,6 +377,13 @@ impl Controller {
             && self.in_flight < bbr.window()
         {
             bbr.on_application_limited(self.last_sent);
+        }
+    }
+
+    /// There is more to send than the peer allows.
+    pub(crate) fn on_out_of_credit(&mut self) {
+        if let Model::Bbr(bbr) = &mut self.model {
+            bbr.on_limit(Limit::Credit);
         }
     }
 
@@ -498,7 +513,7 @@ impl Controller {
         match &mut self.model {
             Model::Cubic(cubic) => cubic.on_feedback(now, &feedback, rtt),
             Model::Bbr(bbr) => {
-                bbr.on_feedback(now, &feedback, rtt);
+                bbr.on_feedback(now, &feedback, rtt, self.pacer.lateness(now));
                 let newest = feedback.newest_acked.map(|it| it.sequence);
                 if let Some(time) = newest.and_then(|it| self.pacer.woke_after(it)) {
                     bbr.skip_until(time);

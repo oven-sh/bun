@@ -565,6 +565,7 @@ impl Connection {
         }
         self.streams.write_stream_frames(out, end, sent);
         if core::mem::take(&mut self.streams.state.has_reported_blocked) {
+            self.congestion.on_out_of_credit();
             let random = self.crypto.random_below(MAX_SECS_BLOCKED_IN_SILENCE);
             let mut delay = Duration::from_secs(1 + u64::from(random));
             if !self.idle_timeout.is_zero() {

@@ -57,6 +57,47 @@ fn bbr_drains_the_queue_after_startup() {
 }
 
 #[test]
+fn queues_stay_short_if_the_credit_runs_out() {
+    for (connection, stream) in [(100_000, 9_000_000), (9_000_000, 100_000)] {
+        let mut network = Network::new(1);
+        network.config(|it| {
+            it.parameters.initial_max_data = connection;
+            it.parameters.initial_max_stream_data_uni = stream;
+        });
+        (network.bytes_per_second, network.latency) = (2_000_000, Duration::from_millis(10));
+        network.max_queueing = Duration::from_secs(1);
+        network.connect();
+        let id = network.client.open(Direction::Unidirectional);
+        network.client.send(id, &filler(0, 8_000_000), true);
+        network.run_for(Duration::from_secs(2));
+        let rtts = (0..20).map(|_| {
+            network.run_for(Duration::from_millis(50));
+            network.client.connection().stats().smoothed_rtt.as_millis()
+        });
+        assert!(rtts.sum::<u64>() < 20 * 38);
+        assert!(network.server.streams[&id].received.len() > 5_000_000);
+    }
+}
+
+#[test]
+fn queues_stay_short_if_the_application_has_to_go_for_more() {
+    let mut network = Network::new(1);
+    network.config(|it| {
+        it.parameters.initial_max_data = 20_000_000;
+        it.parameters.initial_max_stream_data_uni = 20_000_000;
+    });
+    (network.bytes_per_second, network.latency) = (60_000_000, Duration::from_millis(3));
+    network.max_queueing = Duration::from_secs(1);
+    network.connect();
+    let id = network.client.open(Direction::Unidirectional);
+    network.client.send(id, &[0], false);
+    network.client.refill = Some((id, 20_000));
+    network.run_for(Duration::from_millis(200));
+    assert!(network.client.connection().stats().smoothed_rtt < Duration::from_millis(10));
+    assert!(network.server.streams[&id].received.len() > 9_000_000);
+}
+
+#[test]
 fn unreliable_links() {
     for seed in 0..120 {
         let mut network = Network::new(seed);

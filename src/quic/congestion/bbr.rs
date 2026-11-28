@@ -2,12 +2,19 @@
 
 use super::bandwidth_sampler::{BandwidthSampler, micros};
 use super::ceiling::Ceiling;
+use super::foreign_delay::{ForeignDelay, saturate};
 use super::rtt::GRANULARITY;
 use super::windowed_filter::WindowedMax;
 use super::{Feedback, Flight, INITIAL_WINDOW, MAX_WINDOW, MICROS_PER_SECOND, Rtt, SEGMENT};
 use crate::time::{Duration, Instant};
 
 const MIN_SEGMENTS: u64 = 4;
+/// What the window has on top (§4.2.3.2). Among those who fill their windows, the shares are in proportion to that.
+const EXTRA_SEGMENTS: u64 = 3;
+/// They end up in the queue.
+const MAX_EXTRA_TIME: Duration = Duration::from_millis(15);
+/// After it has overflowed.
+const ROUNDS_WITHOUT_EXTRA: u8 = 3;
 /// Up to here, the window does not have to be in proportion to the path.
 const UNCONDITIONAL_WINDOW: u64 = 2000 * SEGMENT;
 const DEFAULT_RTT: Duration = Duration::from_millis(25);
@@ -18,6 +25,8 @@ const MAX_SLOWDOWN: u64 = 4;
 /// What is shorter may be due to the hosts.
 const MIN_TRICKLE_TIME: Duration = Duration::from_millis(50);
 const ROUNDS_WITHOUT_GROWTH: u8 = 3;
+/// draft-ietf-ccwg-bbr-06 §5.3.2.
+const MAX_DRAIN_ROUNDS: u64 = 3;
 /// After how many they are forgotten, or twice as many if there was a queue.
 const CLEAR_ROUNDS: u8 = 4;
 /// To lose this many in a round, and more than one in `HIGH_LOSS_RATIO`, is no accident.
@@ -50,7 +59,9 @@ impl Gain {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Startup,
-    Drain,
+    Drain {
+        last_round: u64,
+    },
     ProbeBandwidth {
         phase: u8,
         since: Instant,
@@ -79,7 +90,7 @@ struct Arrival {
 
 impl Arrival {
     fn add(&mut self, len: u64) {
-        self.len = self.len.saturating_add(len.try_into().unwrap_or(u32::MAX));
+        self.len = self.len.saturating_add(saturate(len));
     }
 
     fn on_feedback(&mut self, now: Instant, sent_at: Instant, is_limited: bool, it: &Feedback) {
@@ -129,6 +140,16 @@ struct Recovery {
     has_collapsed: bool,
 }
 
+/// What has kept a flight from being longer. The greatest one counts.
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Limit {
+    #[default]
+    None,
+    Window,
+    Application,
+    Credit,
+}
+
 pub(super) struct Bbr {
     pub(super) segment: u64,
     sampler: BandwidthSampler,
@@ -141,6 +162,9 @@ pub(super) struct Bbr {
     /// Zero until there is a sample.
     min_rtt: Duration,
     min_rtt_at: Instant,
+    /// In microseconds. It counts instead if it is longer.
+    assumed_rtt: u32,
+    foreign_delay: ForeignDelay,
     round: u64,
     /// The last packet of the round.
     round_end: u64,
@@ -150,23 +174,34 @@ pub(super) struct Bbr {
     lost_in_round: u64,
     was_congested_in_round: bool,
     has_overflowed_in_round: bool,
-    acked_in_last_round: u64,
+    limit_in_round: Limit,
+    /// The flight was too short to queue.
+    has_drained_in_round: bool,
+    acked_in_last_round: u32,
     is_pipe_filled: bool,
     is_last_sample_limited: bool,
     is_restarting: bool,
+    /// Nothing was in flight before that for as long as probing the round-trip time takes.
+    has_rested: bool,
+    /// The last flight that the application did not limit took much longer than the path and the sender account for.
+    was_delayed: bool,
     has_lost_packets: bool,
     rounds_without_growth: u8,
     /// Those that were about as long as `limited_len` and got through, since the last one without growth.
     clear_rounds: u8,
     /// Of the longest round that met a queue since they count. Shorter ones say nothing about it.
-    limited_len: u64,
+    limited_len: u32,
     bandwidth_to_beat: u64,
     ceiling: Ceiling,
     was_congested_in_cycle: bool,
+    /// Those that are left.
+    rounds_without_extra: u8,
     /// What is acknowledged in excess of the bandwidth, as paths and peers bunch acknowledgments.
     excess_acked: WindowedMax,
     bunch_start: Instant,
-    bunch_len: u64,
+    bunch_len: u32,
+    /// In microseconds. For how long nothing was acknowledged before it.
+    bunch_pause: u32,
     pub(super) random: u32,
 }
 
@@ -187,6 +222,8 @@ impl Bbr {
             bandwidth: WindowedMax::default(),
             min_rtt: Duration::ZERO,
             min_rtt_at: Instant::default(),
+            assumed_rtt: 0,
+            foreign_delay: ForeignDelay::default(),
             round: 0,
             round_end: 0,
             ran_dry_at: 0,
@@ -194,10 +231,14 @@ impl Bbr {
             lost_in_round: 0,
             was_congested_in_round: false,
             has_overflowed_in_round: false,
+            limit_in_round: Limit::None,
+            has_drained_in_round: false,
             acked_in_last_round: 0,
             is_pipe_filled: false,
             is_last_sample_limited: false,
             is_restarting: false,
+            has_rested: false,
+            was_delayed: false,
             has_lost_packets: false,
             rounds_without_growth: 0,
             clear_rounds: 0,
@@ -205,9 +246,11 @@ impl Bbr {
             bandwidth_to_beat: 0,
             ceiling: Ceiling::NONE,
             was_congested_in_cycle: false,
+            rounds_without_extra: 0,
             excess_acked: WindowedMax::default(),
             bunch_start: Instant::default(),
             bunch_len: 0,
+            bunch_pause: 0,
             random,
         }
     }
@@ -232,15 +275,19 @@ impl Bbr {
 
     #[inline]
     pub(super) fn is_draining(&self) -> bool {
-        matches!(self.mode, Mode::Drain | Mode::ProbeRtt { .. })
+        matches!(self.mode, Mode::Drain { .. } | Mode::ProbeRtt { .. })
     }
 
     pub(super) fn min_rtt(&self, rtt: &Rtt) -> Duration {
         match (self.min_rtt.is_zero(), rtt.has_sample()) {
-            (false, _) => self.min_rtt,
+            (false, _) => self.min_or_assumed_rtt(),
             (true, true) => rtt.min,
             (true, false) => DEFAULT_RTT,
         }
+    }
+
+    fn min_or_assumed_rtt(&self) -> Duration {
+        (self.min_rtt).max(Duration::from_micros(self.assumed_rtt.into()))
     }
 
     /// §4.2.1.
@@ -259,7 +306,7 @@ impl Bbr {
     fn pacing_gain(&self) -> Gain {
         match self.mode {
             Mode::Startup => Gain::HIGH,
-            Mode::Drain => Gain::DRAIN,
+            Mode::Drain { .. } => Gain::DRAIN,
             Mode::ProbeBandwidth { phase: 0, .. } => Gain::PROBE_UP,
             Mode::ProbeBandwidth { phase: 1, .. } => Gain::PROBE_DOWN,
             Mode::ProbeBandwidth { .. } | Mode::ProbeRtt { .. } => Gain::UNIT,
@@ -269,6 +316,16 @@ impl Bbr {
     pub(super) fn on_application_limited(&mut self, last_sent: u64) {
         self.sampler.on_application_limited(last_sent);
         self.ran_dry_at = last_sent;
+    }
+
+    #[inline]
+    pub(super) fn on_limit(&mut self, limit: Limit) {
+        self.limit_in_round = self.limit_in_round.max(limit);
+    }
+
+    pub(super) fn fills_path(&self, in_flight: u64) -> bool {
+        let capacity = delivered_in(self.min_or_assumed_rtt(), self.bandwidth.get());
+        capacity > 0 && in_flight >= Gain::PROBE_UP.of(capacity)
     }
 
     /// For when the rate of what follows is not up to the path.
@@ -283,13 +340,18 @@ impl Bbr {
 
     /// §4.3.4.4.
     pub(super) fn on_idle_restart(&mut self, now: Instant) {
+        self.has_rested = now >= self.sampler.delivered_at + PROBE_RTT_TIME;
         self.sampler.on_idle_restart(now);
         self.is_restarting = self.sampler.is_application_limited();
     }
 
     #[inline]
-    pub(super) fn on_sent(&self, flight: &mut Flight) {
+    pub(super) fn on_sent(&mut self, flight: &mut Flight, last_sent_at: Instant) {
         self.sampler.on_sent(flight);
+        // Or else it has only gone for more.
+        if flight.sequence == self.ran_dry_at + 1 && flight.at > last_sent_at + GRANULARITY {
+            self.on_limit(Limit::Application);
+        }
     }
 
     pub(super) fn on_late(&mut self, len: u64) {
@@ -304,41 +366,76 @@ impl Bbr {
         });
     }
 
-    pub(super) fn on_feedback(&mut self, now: Instant, feedback: &Feedback, rtt: &Rtt) {
+    /// `lateness` is how long it may have waited to be read.
+    pub(super) fn on_feedback(
+        &mut self,
+        now: Instant,
+        feedback: &Feedback,
+        rtt: &Rtt,
+        lateness: Duration,
+    ) {
         let (mut is_round_start, mut has_min_rtt_expired) = (false, false);
         if let Some(newest) = &feedback.newest_acked {
             is_round_start = newest.sequence > self.round_end;
             if is_round_start {
+                if self.ran_dry_at <= self.round_end {
+                    // The samples are going to tell.
+                    self.limit_in_round = Limit::None;
+                }
                 self.round += 1;
                 self.round_end = feedback.last_sent;
             }
-            self.update_bandwidth(now, feedback.acked, newest);
+            let pause = now - self.sampler.delivered_at;
+            let bandwidth = self.update_bandwidth(now, feedback.acked, newest, is_round_start);
             let mut sample = now - newest.at;
             let is_latest = sample == rtt.latest;
+            let on_path = match is_latest {
+                true => rtt.latest_without_ack_delay(),
+                false => sample,
+            };
+            let is_delayed = on_path > rtt.min * 2 + lateness + GRANULARITY;
+            if !newest.is_application_limited {
+                self.was_delayed = is_delayed;
+            }
+            let bandwidth = bandwidth.filter(|_| is_round_start);
+            self.watch_delay(on_path, feedback.prior_in_flight, bandwidth);
             let starts_first_long_flight = self.is_restarting
                 && is_latest
                 && self.sampler.delivered < INITIAL_WINDOW + feedback.acked
                 && self.ran_dry_at != feedback.last_sent
                 && feedback.lost == 0;
             let is_probing = matches!(self.mode, Mode::ProbeRtt { .. });
-            if is_probing && is_latest || starts_first_long_flight {
+            if is_probing || starts_first_long_flight {
                 // The peer may wait for more packets than there are.
-                sample = rtt.latest_without_ack_delay();
+                sample = on_path;
             }
-            has_min_rtt_expired = self.update_min_rtt(now, sample);
-            if starts_first_long_flight && sample / 2 > self.min_rtt {
-                // A window for the earlier samples would not get through. Not all of it, or else those who start
-                // together outbid one another.
-                (self.min_rtt, self.min_rtt_at) = (sample / 2, now);
-            }
-            has_min_rtt_expired &= !core::mem::take(&mut self.is_restarting);
-            self.update_excess_acked(now, feedback.acked);
+            // What is longer may be due to the queue of others.
+            let is_free = self.is_restarting && sample <= rtt.min + rtt.min / 4 + lateness;
+            has_min_rtt_expired = self.update_min_rtt(now, sample, is_free);
+            let is_longer = sample > self.min_rtt + self.min_rtt / 4;
+            self.assumed_rtt = match starts_first_long_flight && is_longer {
+                // A window for the earlier samples would not get through.
+                true => micros(sample),
+                // Twice that is the window from now on.
+                false if self.is_draining() => self.assumed_rtt.min(micros(on_path) / 2),
+                false => self.assumed_rtt.min(micros(sample)),
+            };
+            // That only goes away if all hold back for a while.
+            has_min_rtt_expired &=
+                !core::mem::take(&mut self.is_restarting) || is_delayed && !self.has_rested;
+            self.update_excess_acked(now, feedback.acked, pause);
         }
+        self.foreign_delay.has_lost |= feedback.lost > 0;
+        let min_rtt = self.min_rtt(rtt);
         // Loss alone does not tell that there is a queue.
-        let has_met_queue = feedback.lost > 0
-            && rtt.latest.as_micros() > Gain::PROBE_UP.of(self.min_rtt.as_micros());
+        let has_met_queue =
+            feedback.lost > 0 && rtt.latest.as_micros() > Gain::PROBE_UP.of(min_rtt.as_micros());
         let is_congested = feedback.is_overflow || has_met_queue;
-        self.update_recovery(feedback, is_round_start, is_congested);
+        self.rounds_without_extra = match is_congested {
+            true => ROUNDS_WITHOUT_EXTRA,
+            false => (self.rounds_without_extra).saturating_sub(is_round_start.into()),
+        };
+        self.update_recovery(feedback, min_rtt, is_round_start, is_congested);
         if let Some(recovery) = &mut self.recovery {
             if feedback.is_persistent_congestion {
                 recovery.window = MIN_SEGMENTS * self.segment;
@@ -351,7 +448,6 @@ impl Bbr {
             }
         }
 
-        let min_rtt = self.min_rtt(rtt);
         let capacity = match delivered_in(min_rtt, self.bandwidth.get()) {
             0 => INITIAL_WINDOW,
             capacity => capacity,
@@ -369,21 +465,27 @@ impl Bbr {
             // The queue is gone by the time that the end of a flight is found to be lost.
             self.was_congested_in_round |= is_congested || feedback.lost > 0 && has_queue;
             self.has_overflowed_in_round |= feedback.is_overflow;
+            self.has_drained_in_round |= !self.fills_path(feedback.in_flight);
             if feedback.is_persistent_congestion {
                 self.lost_in_round = 0;
             }
         }
         if self.mode == Mode::Startup && self.is_pipe_filled {
-            self.mode = Mode::Drain;
+            self.assumed_rtt /= 2;
+            self.mode = Mode::Drain {
+                last_round: self.round + MAX_DRAIN_ROUNDS,
+            };
         }
-        if self.mode == Mode::Drain && feedback.in_flight <= capacity.max(self.min_window()) {
+        if let Mode::Drain { last_round } = self.mode
+            && (feedback.in_flight <= capacity.max(self.min_window()) || self.round > last_round)
+        {
             self.probe_bandwidth(now);
         }
         self.probe_rtt(now, feedback, rtt, is_round_start, has_min_rtt_expired);
 
         let pacing_rate = self.pacing_gain().of(self.bandwidth.get());
         self.pacing_rate = match self.is_pipe_filled {
-            true => pacing_rate,
+            true => pacing_rate.max(self.foreign_delay.trial_rate()),
             false => (pacing_rate.max(self.pacing_rate))
                 .min((self.ceiling.rate).max(self.min_startup_rate())),
         };
@@ -413,25 +515,35 @@ impl Bbr {
         }
     }
 
-    /// §4.1.1.
-    fn update_bandwidth(&mut self, now: Instant, acked: u64, newest: &Flight) {
-        if let Some(sample) = self.sampler.on_delivered(now, acked, newest) {
-            self.is_last_sample_limited = newest.is_application_limited;
-            match newest.is_application_limited && sample < self.bandwidth.get() {
-                true => self.bandwidth.extend(self.round),
-                false => self.bandwidth.update(self.round, sample),
-            }
+    /// Returns the sample (§4.1.1).
+    fn update_bandwidth(
+        &mut self,
+        now: Instant,
+        acked: u64,
+        newest: &Flight,
+        is_round_start: bool,
+    ) -> Option<u64> {
+        let sample = self.sampler.on_delivered(now, acked, newest)?;
+        self.is_last_sample_limited = newest.is_application_limited;
+        if !newest.is_application_limited || sample >= self.bandwidth.get() {
+            self.bandwidth.update(self.round, sample);
+        } else if !self.was_delayed {
+            self.bandwidth.extend(self.round);
+        } else if is_round_start && !matches!(self.mode, Mode::ProbeRtt { .. }) {
+            // Or else those who pause every few rounds never find out that they get less through.
+            self.bandwidth.hold(self.round);
         }
+        Some(sample)
     }
 
     /// Returns whether it had expired (§4.1.2).
-    fn update_min_rtt(&mut self, now: Instant, sample: Duration) -> bool {
+    fn update_min_rtt(&mut self, now: Instant, sample: Duration, is_free: bool) -> bool {
         if sample.is_zero() {
             return false;
         }
         let is_unknown = self.min_rtt.is_zero();
-        let expiry = match self.is_restarting {
-            // There is no queue to drain, so the new sample comes for free.
+        let expiry = match is_free {
+            // There is no queue to drain.
             true => MIN_RTT_EXPIRY / 2,
             false => MIN_RTT_EXPIRY,
         };
@@ -448,23 +560,59 @@ impl Bbr {
         has_expired
     }
 
-    /// draft-cardwell-iccrg-bbr-congestion-control-02 §4.5.5.
-    fn update_excess_acked(&mut self, now: Instant, acked: u64) {
-        let mut expected = delivered_in(now - self.bunch_start, self.bandwidth.get());
-        if self.bunch_len <= expected {
-            (self.bunch_start, self.bunch_len, expected) = (now, 0, 0);
+    /// `bandwidth` is the sample that starts a round.
+    fn watch_delay(&mut self, rtt: Duration, in_flight: u64, bandwidth: Option<u64>) {
+        if matches!(self.mode, Mode::ProbeRtt { .. }) {
+            self.foreign_delay = ForeignDelay::default();
+            return;
         }
-        self.bunch_len += acked;
-        (self.excess_acked).update(self.round, self.bunch_len - expected);
+        if self.is_last_sample_limited {
+            self.foreign_delay.on_limited();
+        }
+        if let Some(bandwidth) = bandwidth {
+            let may_try = self.is_cycling();
+            if let Some(it) = (self.foreign_delay).end_round(self.min_rtt, bandwidth, may_try) {
+                self.assumed_rtt = micros(it.rtt);
+                self.bandwidth = WindowedMax::default();
+                self.bandwidth.update(self.round, it.bandwidth);
+            }
+            if self.foreign_delay.keeps_losing() {
+                self.assumed_rtt = 0;
+            }
+        }
+        if !self.is_last_sample_limited {
+            self.foreign_delay.on_acked(rtt, in_flight);
+        }
     }
 
-    fn update_recovery(&mut self, feedback: &Feedback, is_round_start: bool, is_congested: bool) {
+    /// draft-cardwell-iccrg-bbr-congestion-control-02 §4.5.5. `pause` is the time since the last acknowledgment.
+    fn update_excess_acked(&mut self, now: Instant, acked: u64, pause: Duration) {
+        let bandwidth = self.bandwidth.get();
+        let mut expected = delivered_in(now - self.bunch_start, bandwidth);
+        if u64::from(self.bunch_len) <= expected {
+            (self.bunch_start, self.bunch_len, expected) = (now, 0, 0);
+            self.bunch_pause = micros(pause);
+        }
+        self.bunch_len = self.bunch_len.saturating_add(saturate(acked));
+        // Any more was not held back. Those who share the queue have just left some room for a while.
+        let held_back = delivered_in(Duration::from_micros(self.bunch_pause.into()), bandwidth);
+        let excess = held_back.min(u64::from(self.bunch_len) - expected);
+        self.excess_acked.update(self.round, excess);
+    }
+
+    fn update_recovery(
+        &mut self,
+        feedback: &Feedback,
+        min_rtt: Duration,
+        is_round_start: bool,
+        is_congested: bool,
+    ) {
         let min_window = self.min_window();
         let Some(recovery) = &mut self.recovery else {
             if feedback.lost > 0 {
                 let window = feedback.prior_in_flight.saturating_sub(feedback.lost);
                 let floor = match self.is_pipe_filled {
-                    true => (delivered_in(self.min_rtt, self.bandwidth.get()))
+                    true => (delivered_in(min_rtt, self.bandwidth.get()))
                         .saturating_add(self.excess_acked.get()),
                     false => 0,
                 };
@@ -513,7 +661,7 @@ impl Bbr {
         if self.was_congested_in_round {
             self.clear_rounds = 0;
             if lost > 0 {
-                self.limited_len = self.limited_len.max(len);
+                self.limited_len = self.limited_len.max(saturate(len));
                 match self.ceiling.rate < self.min_startup_rate() {
                     // It only keeps loss from being high enough to end startup.
                     true => self.ceiling = Ceiling::NONE,
@@ -526,14 +674,19 @@ impl Bbr {
             }
             self.clear_rounds += u8::from(
                 self.is_last_sample_limited
-                    && len >= self.limited_len - self.limited_len / 8
+                    && len >= u64::from(self.limited_len - self.limited_len / 8)
                     && !(has_lost_many && is_share_high),
             );
         }
         if self.clear_rounds >= CLEAR_ROUNDS << u8::from(self.limited_len > 0 && !loses_starts) {
             (self.clear_rounds, self.rounds_without_growth) = (0, 0);
         }
-        if !self.is_last_sample_limited {
+        let has_drained = core::mem::take(&mut self.has_drained_in_round);
+        let limit = core::mem::take(&mut self.limit_in_round);
+        // There is more to send than gets through.
+        let has_overshot = matches!(limit, Limit::Window | Limit::Credit) && !has_drained;
+        let is_limited = self.is_last_sample_limited && !has_overshot;
+        if !is_limited {
             self.ceiling = Ceiling::NONE;
         }
         // It has taken long enough to measure the bandwidth.
@@ -542,11 +695,11 @@ impl Bbr {
         let is_loss_high = core::mem::take(&mut self.was_congested_in_round)
             && (has_lost_many || was_too_much)
             && is_share_high;
-        if self.is_last_sample_limited && !is_loss_high {
+        if is_limited && !is_loss_high {
             return;
         }
-        let acked_to_beat =
-            Gain::PROBE_UP.of(core::mem::replace(&mut self.acked_in_last_round, acked));
+        let acked_to_beat = Gain::PROBE_UP.of(self.acked_in_last_round.into());
+        self.acked_in_last_round = saturate(acked);
         // The window is on its way back to where the bandwidth was measured.
         let is_catching_up =
             self.window() < self.window && acked > acked_to_beat && !self.is_last_sample_limited;
@@ -557,7 +710,7 @@ impl Bbr {
         } else if !is_catching_up {
             self.clear_rounds = 0;
             if has_queue {
-                self.limited_len = self.limited_len.max(len).max(capacity);
+                self.limited_len = self.limited_len.max(saturate(len.max(capacity)));
             }
             self.rounds_without_growth += 1;
             self.is_pipe_filled = self.rounds_without_growth >= ROUNDS_WITHOUT_GROWTH;
@@ -704,18 +857,26 @@ impl Bbr {
     /// §4.2.3.
     fn update_window(&mut self, acked: u64, capacity: u64) {
         let gain = match self.mode {
-            Mode::Startup | Mode::Drain => Gain::HIGH,
+            Mode::Startup | Mode::Drain { .. } => Gain::HIGH,
             Mode::ProbeBandwidth { .. } => Gain::WINDOW,
             Mode::ProbeRtt { .. } => return,
         };
-        let target = gain.of(capacity).max(self.min_window());
+        let target = gain.of(capacity);
+        let trial_len = u64::from(self.foreign_delay.trial_len);
         if self.is_pipe_filled {
-            let target = target.saturating_add(self.excess_acked.get());
+            let extra = match self.rounds_without_extra {
+                0 => delivered_in(MAX_EXTRA_TIME, self.bandwidth.get()),
+                _ => 0,
+            };
+            let target = (target + extra.min(EXTRA_SEGMENTS * self.segment)).max(self.min_window());
+            let target = (target.saturating_add(self.excess_acked.get())).max(trial_len);
             self.window = target.min(self.window + acked);
-        } else if self.window < target || self.sampler.delivered < INITIAL_WINDOW {
+        } else if self.window < target.max(self.min_window())
+            || self.sampler.delivered < INITIAL_WINDOW
+        {
             self.window += acked;
         }
-        let max_window = Gain::MAX_WINDOW.of(capacity).max(UNCONDITIONAL_WINDOW);
+        let max_window = (Gain::MAX_WINDOW.of(capacity)).max(UNCONDITIONAL_WINDOW.max(trial_len));
         self.window = (self.window.min(max_window).min(MAX_WINDOW)).max(self.min_window());
     }
 }

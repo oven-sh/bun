@@ -6,7 +6,7 @@ use crate::time::{Duration, Instant};
 pub(super) struct BandwidthSampler {
     /// In bytes.
     pub(super) delivered: u64,
-    delivered_at: Instant,
+    pub(super) delivered_at: Instant,
     /// Of the newest packet that was delivered.
     pub(super) sent_at: Instant,
     /// The last packet that was sent before the application ran dry, until a later one is delivered.

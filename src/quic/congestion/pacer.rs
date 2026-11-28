@@ -39,6 +39,7 @@ const MAX_SHARED_OVERFLOWS: u8 = 2;
 const MIN_LAG: Duration = Duration::from_millis(2);
 /// To be very late is rare if it has not happened for so many times as long.
 const RARE_AFTER: u64 = 5;
+const LATENESS_EXPIRY: Duration = Duration::from_secs(1);
 const FRACTION_BITS: u32 = 24;
 
 /// Of a packet in its burst.
@@ -268,6 +269,14 @@ impl Pacer {
     fn is_rarely_as_late(&self, now: Instant) -> bool {
         let lag = now - self.next;
         lag > self.max_lag && now - self.late_at > lag * RARE_AFTER
+    }
+
+    #[inline]
+    pub(super) fn lateness(&self, now: Instant) -> Duration {
+        match now < self.late_at + LATENESS_EXPIRY {
+            true => Duration::from_micros(self.lateness.into()),
+            false => Duration::ZERO,
+        }
     }
 
     #[inline]

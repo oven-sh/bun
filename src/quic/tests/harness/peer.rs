@@ -44,6 +44,8 @@ pub(crate) struct Peer {
     /// How many bytes it offers at a time.
     pub(crate) piece_len: Option<usize>,
     pub(crate) waits_to_be_asked: bool,
+    /// For which stream it comes back with how many bytes once there is nothing else to do.
+    pub(crate) refill: Option<(u64, usize)>,
     turns: u32,
     /// In datagrams.
     pub(crate) longest_run: usize,
@@ -69,6 +71,7 @@ impl Peer {
             resets: false,
             piece_len: None,
             waits_to_be_asked: false,
+            refill: None,
             turns: 0,
             longest_run: 0,
         }
@@ -187,7 +190,12 @@ impl Peer {
                 && !self.endpoint.wants_to_transmit()
                 && self.endpoint.timeout().is_none_or(|it| it > now)
             {
-                return datagrams;
+                match self.refill {
+                    Some((id, len)) if self.streams[&id].unsent.is_empty() => {
+                        self.send(id, &vec![0; len], false);
+                    }
+                    _ => return datagrams,
+                }
             }
         }
         panic!("does not come to rest");

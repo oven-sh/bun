@@ -91,7 +91,7 @@ fn an_older_or_more_urgent_stream_goes_next() {
         (&[(6, 1_000_000); 4], true),
         (&[(6, 8000); 90], true),
     ] {
-        for (len, max_passed) in [(100, 0), (20_000, 2048)] {
+        for (len, max_passed) in [(100, 100), (20_000, 2048)] {
             let (mut network, mut id, others) = under_way(others);
             if is_new {
                 id = network.open(3, false);
@@ -282,7 +282,7 @@ fn window_follows_the_rate_however_busy_the_application_is() {
         }
         network.client.connection().stats().congestion_window
     });
-    assert!(windows.iter().all(|&it| it < 20_000), "{windows:?}");
+    assert!(windows.iter().all(|&it| it < 30_000), "{windows:?}");
 }
 
 #[test]

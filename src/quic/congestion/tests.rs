@@ -5,6 +5,7 @@ use super::bandwidth_sampler::BandwidthSampler;
 use super::catch_up::CatchUp;
 use super::ceiling::Ceiling;
 use super::crowd::Crowd;
+use super::foreign_delay::{ForeignDelay, Verdict};
 use super::pacer::MAX_OVERFLOWS;
 use super::spread::Spread;
 use super::trial::Trial;
@@ -368,6 +369,18 @@ fn filter_keeps_the_maximum_of_ten_rounds() {
 }
 
 #[test]
+fn filter_outlasts_its_integers() {
+    let mut filter = WindowedMax::default();
+    let start = u64::from(u32::MAX) - 5;
+    filter.update(start, u64::MAX);
+    filter.extend(start + 7);
+    filter.update(start + 10, 1);
+    assert_eq!(filter.get(), u32::MAX.into());
+    filter.update(start + 11, 1);
+    assert_eq!(filter.get(), 1);
+}
+
+#[test]
 fn filter_outlasts_a_gap() {
     let mut filter = WindowedMax::default();
     filter.update(1, 9);
@@ -376,6 +389,19 @@ fn filter_outlasts_a_gap() {
     for (round, value, expected) in [(51, 1, 9), (52, 4, 9), (53, 2, 9), (54, 3, 4)] {
         filter.update(round, value);
         assert_eq!(filter.get(), expected);
+    }
+}
+
+#[test]
+fn filter_gains_no_time_by_being_held() {
+    let mut filter = WindowedMax::default();
+    let start = u64::from(u32::MAX) - 20;
+    filter.update(start, 9);
+    (1..40).for_each(|it| filter.hold(start + it));
+    for (round, expected) in [(40, 9), (42, 9), (44, 9), (46, 1)] {
+        filter.update(start + round, 1);
+        assert_eq!(filter.get(), expected);
+        filter.hold(start + round + 1);
     }
 }
 
@@ -1053,6 +1079,13 @@ fn pace_late(pacer: &mut Pacer, now: Instant, packets: Range<u64>) -> (Range<u64
 }
 
 #[test]
+fn pacer_remembers_how_late_it_was_for_a_second() {
+    let (pacer, now) = pacer_with_full_window(millis(20), 5);
+    assert_eq!(pacer.lateness(now + micros(999_999)), millis(20));
+    assert_eq!(pacer.lateness(now + micros(999_999 + 1)), Duration::ZERO);
+}
+
+#[test]
 fn pacer_keeps_to_the_limit_of_catching_up() {
     for (per, room, late, expected) in [
         (1000, 30, [40_000; 3], [(42, 43), (28, 29), (30, 31)]),
@@ -1152,7 +1185,7 @@ fn bbr_owes_a_whole_window_once_it_has_started_up() {
     let mut sender = bbr_probing();
     sender.send(170).burst();
     sender.wait(millis(500)).burst();
-    assert_eq!(sender.segments(), 186);
+    assert_eq!(sender.segments(), 189);
     assert_eq!(sender.feedback(0, 170).burst(), 120);
 }
 
@@ -1167,7 +1200,7 @@ fn a_full_window_only_ends_catching_up_once_it_has_stopped_growing() {
         let burst = sender.wait(millis(50)).feedback(0, len).burst();
         (burst, sender.segments())
     });
-    assert_eq!(bursts, [(34, 63), (5, 305)]);
+    assert_eq!(bursts, [(34, 63), (5, 311)]);
 }
 
 /// Of 1000 bytes per millisecond, whose window of 60,000 bytes has stopped a burst of `len` packets.
@@ -1397,18 +1430,19 @@ fn what_is_cut_short_says_nothing_about_the_bandwidth_once_the_limit_is_proven()
 
 #[test]
 fn last_burst_says_nothing_about_the_bandwidth_during_startup() {
-    for (is_starting, late, excess, expects_more, expected) in [
-        (true, 5, 0, false, true),
-        (true, 5, 1, false, false),
-        (true, 5, 0, true, false),
-        (true, 1, 0, false, false),
-        (false, 5, 0, false, false),
+    for (is_starting, in_flight, late, excess, expects_more, expected) in [
+        (true, 49, 9, 0, false, true),
+        (true, 50, 9, 0, false, false),
+        (true, 49, 9, 1, false, false),
+        (true, 49, 9, 0, true, false),
+        (true, 49, 4, 0, false, false),
+        (false, 49, 9, 0, false, false),
     ] {
         let mut sender = match is_starting {
             true => Sender::new(Algorithm::Bbr),
             false => bbr_probing(),
         };
-        sender.rounds_of(10, 1, millis(10)).send(10).burst();
+        sender.rounds_of(40, 1, millis(10)).send(in_flight).burst();
         let unsent = sender.window() - sender.controller.in_flight() + excess;
         let now = sender.wait(millis(late)).now;
         sender.controller.permit(now, unsent, || expects_more);
@@ -2865,7 +2899,7 @@ fn bbr_starts_up_drains_and_cycles() {
         let cycle = [100, 125, 75].into_iter().cycle();
         let expected = cycle.skip_while(|&pace| Some(pace) != first).skip(1);
         assert!(paces.zip(expected).all(|(a, b)| a == b));
-        assert_within(path.controller.window(), 82 * LEN..=85 * LEN);
+        assert_within(path.controller.window(), 85 * LEN..=88 * LEN);
     }
     assert_eq!(first_paces, BTreeSet::from([Some(100), Some(125)]));
 }
@@ -2885,6 +2919,133 @@ fn bbr_starts_up_until_the_bandwidth_stops_growing() {
         }
         assert_eq!(sender.pacing_rate() < 100 * 100 * SEGMENT, is_over);
     }
+}
+
+#[test]
+fn bbr_ends_startup_if_the_credit_allows_for_a_queue() {
+    for (left, blocked_every, dip, is_over) in [
+        (75, 1, 0, true),
+        (75, 13, 0, true),
+        (74, 1, 0, false),
+        (75, 200, 0, false),
+        (80, 1, 5, true),
+        (79, 1, 5, false),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 2, millis(10)).run_dry();
+        sender.send(left + 6).wait(millis(9));
+        for time in 1..70 {
+            let len = match time % 7 {
+                1 => 6 - dip,
+                2 => 6 + dip,
+                _ => 6,
+            };
+            sender.wait(millis(1)).feedback(0, 6).send(len).run_dry();
+            if time % blocked_every == 0 {
+                sender.controller.on_out_of_credit();
+            }
+        }
+        assert_eq!(gain(&sender) < 200, is_over, "{left} {blocked_every} {dip}");
+    }
+}
+
+#[test]
+fn bbr_ends_startup_if_the_application_only_runs_dry_on_its_way_for_more() {
+    for (acked, expects_more, dry_every, long_pause_every, is_over) in [
+        (20, true, 1, 1000, true),
+        (20, true, 5, 1000, true),
+        (20, true, 1, 20, true),
+        (20, true, 1, 5, false),
+        (20, false, 1, 1000, false),
+        (127, true, 1, 1000, true),
+        (128, true, 1, 1000, false),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 2, millis(10)).run_dry();
+        sender.send(sender.segments()).wait(millis(10));
+        sender.feedback(0, 50).send(50).wait(millis(10));
+        let interval = millis(11) * acked / 60;
+        for time in 1..2000 / acked {
+            sender.wait(interval - millis(2));
+            sender.feedback(0, acked as usize).send(acked - 10);
+            if time % dry_every == 0 {
+                sender.run_dry();
+            }
+            let pause = micros(1000 + u64::from(time % long_pause_every == 0));
+            sender.wait(pause);
+            while (sender.controller).permit(sender.now, 1, || expects_more) != Permit::Blocked {
+                sender.send(1);
+            }
+            sender.wait(millis(2) - pause);
+        }
+        let case = (acked, expects_more, dry_every, long_pause_every);
+        assert_eq!(gain(&sender) < 200, is_over, "{case:?}");
+    }
+}
+
+#[test]
+fn bbr_waits_for_the_samples_of_rounds_in_which_the_application_has_kept_up() {
+    for (dry_at, len) in [(5, 48), (6, 38), (17, 38), (18, 28)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 2, millis(10)).run_dry();
+        sender.send(sender.segments()).wait(millis(10));
+        let startup = (0..100).take_while(|&time| {
+            sender.wait(millis(3)).feedback(0, 18);
+            match time % 22 == dry_at {
+                true => sender.send(17).run_dry(),
+                false => sender.fill(),
+            };
+            gain(&sender) > 200
+        });
+        assert_eq!(startup.count(), len, "{dry_at}");
+    }
+}
+
+#[test]
+fn bbr_takes_the_path_to_hold_what_the_first_long_flight_finds() {
+    let fills = |sender: &Sender, segments| match &sender.controller.model {
+        Model::Bbr(bbr) => bbr.fills_path(segments * SEGMENT),
+        Model::Cubic(_) => false,
+    };
+    let mut sender = Sender::new(Algorithm::Bbr);
+    assert!(!fills(&sender, 1000));
+    sender.rounds_of(5, 1, millis(10)).run_dry();
+    sender.rounds_of(20, 1, millis(40));
+    assert_eq!([24, 25].map(|it| fills(&sender, it)), [false, true]);
+}
+
+#[test]
+fn bbr_does_not_suspect_a_short_queue_once_the_credit_fills_a_long_one() {
+    let suspects = |sender: &Sender| match &sender.controller.model {
+        Model::Bbr(bbr) => bbr.suspects_short_queue(),
+        Model::Cubic(_) => false,
+    };
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 2, millis(10));
+    while !suspects(&sender) {
+        sender.run_dry().send(60).wait(millis(10)).feedback(0, 15);
+        sender.feedback(usize::from(!suspects(&sender)), usize::MAX);
+    }
+    sender.run_dry().send(90).wait(millis(9));
+    while gain(&sender) > 200 {
+        sender.wait(millis(1)).feedback(0, 6).run_dry().send(6);
+        sender.controller.on_out_of_credit();
+    }
+    assert!(!suspects(&sender));
+}
+
+#[test]
+fn bbr_only_counts_rounds_that_were_both_long_and_out_of_credit() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 2, millis(10));
+    for _ in 0..10 {
+        sender.controller.on_out_of_credit();
+        sender.run_dry().rounds_of(60, 1, millis(10)).run_dry();
+        sender.send(160).wait(millis(20)).feedback(0, 80);
+        sender.run_dry().send(80).wait(millis(20)).feedback(0, 80);
+        sender.run_dry().send(1).wait(millis(20)).feedback(0, 81);
+    }
+    assert!(gain(&sender) > 200);
 }
 
 #[test]
@@ -3364,17 +3525,68 @@ fn bbr_remembers_the_bandwidth_while_the_application_is_the_limit() {
 #[test]
 fn bbr_makes_room_for_bunched_acknowledgments() {
     let mut sender = bbr_probing();
-    assert_eq!(sender.wait(millis(1)).segments(), 2 * 60 + 66);
+    assert_eq!(sender.wait(millis(1)).segments(), 2 * 60 + 66 + 3);
     for _ in 0..11 {
         sender.send(66).wait(millis(10)).feedback(0, 33);
         sender.wait(millis(1)).feedback(0, 33);
     }
-    assert_eq!(sender.segments(), 2 * 60 + 66 - 6);
+    assert_eq!(sender.segments(), 2 * 60 + 66 + 3 - 6);
+}
+
+#[test]
+fn bbr_makes_room_for_no_more_than_was_held_back() {
+    let windows = [(10, 1), (21, 1), (21, 3), (21, 8)].map(|(rtt, pause)| {
+        let mut sender = bbr_probing();
+        for _ in 0..12 {
+            sender.send(61).wait(millis(rtt)).feedback(0, 1);
+            sender.wait(millis(pause)).feedback(0, 10);
+            for _ in 0..5 {
+                sender.wait(micros(500)).feedback(0, 10);
+            }
+        }
+        sender.segments()
+    });
+    assert_eq!(windows, [99, 58, 67, 86]);
+}
+
+#[test]
+fn bbr_adds_three_datagrams_to_the_window() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.controller = Controller::new(Algorithm::Bbr, 4 * SEGMENT as u16, 0);
+    sender.rounds_of(1, 1, millis(1));
+    assert_eq!(sender.rounds_of(500, 8, millis(2)).segments(), 1012);
+}
+
+#[test]
+fn bbr_adds_less_to_the_window_on_slow_paths() {
+    for (segments, rtt, tenths) in [(10, 50, 330), (10, 75, 319), (10, 150, 309), (1, 50, 50)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(segments, 8, millis(rtt));
+        assert_eq!(sender.window() * 10 / SEGMENT, tenths);
+    }
+}
+
+#[test]
+fn bbr_adds_nothing_to_the_window_right_after_an_overflow() {
+    for (rtt, ends_burst, rounds) in [(12, false, 0), (13, false, 2), (12, true, 2)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 8, millis(10));
+        sender.send(60).wait(millis(rtt)).feedback(0, 57);
+        for flight in sender.flights.drain(..) {
+            (sender.controller).on_lost(&flight, ends_burst && flight.sequence % 60 == 0);
+        }
+        sender.feedback(0, 0);
+        for round in 0..5 {
+            sender.send(60).wait(millis(rtt)).feedback(0, 30);
+            let expected = if round < rounds { 180 } else { 183 };
+            assert_eq!(sender.feedback(0, 30).segments(), expected);
+        }
+    }
 }
 
 #[test]
 fn bbr_keeps_large_windows_in_proportion_to_the_path() {
-    for (segments, expected) in [(500, 1000), (1200, 2000), (3000, 4500)] {
+    for (segments, expected) in [(500, 1003), (1200, 2000), (3000, 4500)] {
         let mut sender = Sender::new(Algorithm::Bbr);
         sender.rounds_of(1, 1, millis(1));
         sender.rounds_of(segments, 8, millis(2));
@@ -3492,7 +3704,7 @@ fn bbr_starts_over_in_startup_too() {
 
 #[test]
 fn bbr_does_not_go_by_an_old_trickle() {
-    for (pause, expected) in [(4_990_000, 11), (4_990_001, 180)] {
+    for (pause, expected) in [(4_990_000, 11), (4_990_001, 183)] {
         let mut sender = Sender::new(Algorithm::Bbr);
         sender.rounds_of(60, 1000, millis(10)).send(120);
         sender.wait(micros(10_001)).feedback(0, 60);
@@ -3544,13 +3756,13 @@ fn bbr_starts_over_if_a_flight_trickles_in() {
     let uneven = |longest| vec![15_000, 15_000, longest, 15_000, 15_000];
     for (former_rtt, pauses, len, rtt, expected) in [
         (10, vec![10_001; 5], 12, 10_000, (12, 153)),
-        (10, vec![10_000; 5], 12, 10_000, (121, 100)),
+        (10, vec![10_000; 5], 12, 10_000, (124, 100)),
         (10, vec![12_000; 5], 17, 10_000, (15, 153)),
-        (10, vec![12_000; 5], 18, 10_000, (121, 100)),
+        (10, vec![12_000; 5], 18, 10_000, (124, 100)),
         (10, uneven(19_998), 12, 10_000, (8, 153)),
-        (10, uneven(20_000), 12, 10_000, (121, 100)),
+        (10, uneven(20_000), 12, 10_000, (124, 100)),
         (100, vec![100_000; 5], 100, 128_999, (129, 48)),
-        (100, vec![100_000; 5], 100, 129_000, (1801, 100)),
+        (100, vec![100_000; 5], 100, 129_000, (1804, 100)),
         (10, vec![3_000_000; 5], 100, 10_000, (4, 153)),
     ] {
         let mut sender = trickle(millis(former_rtt), &pauses, len, micros(rtt));
@@ -3587,7 +3799,7 @@ fn bbr_keeps_what_it_knows_about_packets_when_it_starts_over() {
         .feedback(0, 1);
     assert!(matches!(&sender.controller.model, Model::Bbr(it) if it.random != 0));
     assert_eq!(sender.rounds_of(10, 10, millis(100)).segments(), 202);
-    assert_eq!(sender.rounds_of(10, 1, millis(100)).segments(), 30);
+    assert_eq!(sender.rounds_of(10, 1, millis(100)).segments(), 31);
 }
 
 #[test]
@@ -3738,7 +3950,7 @@ fn ack_oldest_with_delay(sender: &mut Sender, ack_delay: Duration) {
 #[test]
 fn bbr_makes_room_for_what_the_first_long_flight_finds() {
     for (before, has_paused, is_long, lost, expected) in [
-        (31, true, true, 0, 15),
+        (31, true, true, 0, 30),
         (32, true, true, 0, 10),
         (31, false, true, 0, 10),
         (31, true, false, 0, 10),
@@ -3756,14 +3968,576 @@ fn bbr_makes_room_for_what_the_first_long_flight_finds() {
         sender.wait(millis(30)).feedback(lost, 2);
         assert_eq!(min_rtt(&sender), millis(expected));
     }
+    for (rtt, expected) in [(12_500, 10_000), (12_501, 12_501)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(5, 1, millis(10)).run_dry().send(20);
+        sender.wait(micros(rtt)).feedback(0, 2);
+        assert_eq!(min_rtt(&sender), micros(expected));
+    }
 }
 
 #[test]
-fn bbr_keeps_what_the_first_long_flight_finds_for_as_long_as_any_sample() {
+fn bbr_goes_by_what_the_first_long_flight_finds_while_it_starts_up() {
     let mut sender = Sender::new(Algorithm::Bbr);
     sender.rounds_of(5, 1, millis(10)).run_dry();
-    sender.wait(millis(4000)).rounds(300, millis(30));
-    assert_eq!(min_rtt(&sender), millis(15));
+    assert_eq!(min_rtt(sender.rounds_of(20, 3, millis(30))), millis(30));
+    assert_eq!(min_rtt(sender.rounds_of(1, 1, millis(12))), millis(12));
+    assert_eq!(min_rtt(sender.rounds_of(20, 3, millis(30))), millis(10));
+}
+
+#[test]
+fn bbr_keeps_half_of_that_unless_draining_helps() {
+    for (drained, ack_delay, expected) in [(40, 0, 15), (26, 0, 13), (40, 16, 12), (18, 0, 10)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(5, 1, millis(10)).run_dry();
+        sender.rounds_of(20, 4, millis(30)).send(80);
+        assert_eq!(min_rtt(sender.wait(millis(30)).feedback(0, 1)), millis(15));
+        sender.send(1).flights.rotate_right(1);
+        ack_oldest_with_delay(sender.wait(millis(drained)), millis(ack_delay));
+        assert_eq!(min_rtt(sender.feedback(0, 79)), millis(expected));
+        assert_eq!(
+            min_rtt(sender.rounds_of(20, 1, millis(20))),
+            millis(expected)
+        );
+    }
+}
+
+#[test]
+fn bbr_drains_for_three_rounds_at_most() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(1, 1, millis(10)).send(59);
+    let mut rounds = 0;
+    for _ in 0..20 {
+        sender.send(60).wait(millis(50)).feedback(0, 60);
+        rounds += u64::from(matches!(&sender.controller.model, Model::Bbr(it) if it.is_draining()));
+    }
+    assert_eq!(rounds, 4);
+}
+
+/// Round trips are in milliseconds. The shortest one there was took 10.
+fn end_round(delay: &mut ForeignDelay, flight: u64, rtt: u64, bandwidth: u64) -> Option<Verdict> {
+    delay.on_acked(millis(rtt + 50), flight / 2);
+    delay.on_acked(millis(rtt), flight);
+    delay.on_acked(millis(rtt + 50), flight / 2);
+    delay.end_round(millis(10), bandwidth, true)
+}
+
+/// Takes how many rounds there are of each kind. Returns the one that starts a trial.
+fn first_trial(rounds: &[(usize, u64, u64)]) -> Option<usize> {
+    let mut delay = ForeignDelay::default();
+    (rounds.iter())
+        .flat_map(|&(count, flight, rtt)| core::iter::repeat_n((flight, rtt), count))
+        .position(|(flight, rtt)| {
+            end_round(&mut delay, flight, rtt, 0);
+            delay.trial_len > 0
+        })
+}
+
+#[test]
+fn delays_may_be_foreign_if_smaller_flights_do_not_shorten_them() {
+    for (rounds, expected) in [
+        (&[(2, 800, 200), (9, 600, 200)][..], Some(5)),
+        (&[(1, 800, 200), (9, 600, 200)], None),
+        (&[(2, 800, 200), (9, 601, 200)], None),
+        (&[(2, 800, 160), (9, 600, 146)], Some(5)),
+        (&[(2, 800, 160), (9, 600, 145)], None),
+        (&[(2, 800, 160), (9, 400, 131)], Some(5)),
+        (&[(2, 800, 160), (9, 400, 130)], None),
+        (&[(2, 800, 100), (9, 600, 100)], Some(5)),
+        (&[(2, 800, 99), (9, 600, 99)], Some(6)),
+        (&[(2, 800, 21), (99, 600, 21)], Some(21)),
+        (&[(2, 800, 20), (99, 600, 20)], None),
+        // They shorten them little by little.
+        (
+            &[(2, 800, 160), (1, 610, 160), (1, 610, 146), (9, 600, 146)],
+            Some(7),
+        ),
+        (
+            &[(2, 800, 160), (1, 610, 160), (1, 610, 145), (9, 600, 145)],
+            None,
+        ),
+        // It is interrupted.
+        (
+            &[(2, 800, 200), (3, 600, 200), (2, 601, 200), (9, 600, 200)],
+            Some(5),
+        ),
+        (
+            &[(2, 800, 200), (2, 600, 200), (2, 601, 200), (9, 600, 200)],
+            Some(9),
+        ),
+        (
+            &[(2, 800, 50), (6, 600, 50), (2, 601, 50), (9, 600, 50)],
+            Some(17),
+        ),
+        (
+            &[(2, 800, 200), (3, 600, 200), (1, 600, 100), (9, 600, 200)],
+            None,
+        ),
+    ] {
+        assert_eq!(first_trial(rounds), expected, "{rounds:?}");
+    }
+}
+
+#[test]
+fn delays_are_compared_with_those_of_the_largest_recent_flight() {
+    for (rounds, expected) in [
+        (&[(2, 800, 200), (20, 700, 200)][..], true),
+        (&[(2, 800, 200), (21, 700, 200)], false),
+        (&[(30, 800, 200), (20, 700, 200)], true),
+        (&[(2, 700, 200), (2, 800, 200)], true),
+        (&[(2, 800, 400), (1, 800, 200)], true),
+        (&[(2, 800, 200), (1, 800, 400)], false),
+    ] {
+        let rounds = [rounds, &[(9, 600, 200)]].concat();
+        assert_eq!(first_trial(&rounds).is_some(), expected, "{rounds:?}");
+    }
+}
+
+#[test]
+fn delays_are_not_foreign_if_they_give_way_at_a_single_step() {
+    for (step, expected) in [
+        ((1400, 306), true),
+        ((1400, 305), false),
+        ((1401, 305), true),
+    ] {
+        let rounds = [(2, 1800, 200), (1, 1600, 320), (1, step.0, step.1)];
+        let rounds = [&rounds[..], &[(9, 1350, 320)]].concat();
+        assert_eq!(first_trial(&rounds).is_some(), expected, "{step:?}");
+    }
+    let rounds = [(2, 800, 100), (2, 600, 200), (9, 400, 150)];
+    assert_eq!(first_trial(&rounds), None);
+}
+
+/// Takes the last samples of the bandwidth.
+fn start_trial(samples: [u64; 3]) -> ForeignDelay {
+    let mut delay = ForeignDelay::default();
+    for (flight, rtt, sample) in [
+        (800, 100, 0),
+        (800, 100, 0),
+        (600, 200, 0),
+        (600, 200, samples[0]),
+        (600, 200, samples[1]),
+    ] {
+        assert_eq!(end_round(&mut delay, flight, rtt, sample), None);
+    }
+    assert_eq!((delay.trial_len, delay.trial_rate()), (0, 0));
+    assert_eq!(end_round(&mut delay, 480, 200, samples[2]), None);
+    assert_eq!(delay.trial_len, 720);
+    delay
+}
+
+#[test]
+fn trials_go_by_what_has_just_got_through() {
+    for (samples, expected) in [
+        ([2300, 1600, 2000], 3000),
+        ([2300, 2000, 1600], 3000),
+        ([0, 0, 9000], 3600),
+    ] {
+        assert_eq!(start_trial(samples).trial_rate(), expected);
+    }
+}
+
+#[test]
+fn delays_are_foreign_if_a_larger_flight_gets_more_through() {
+    for (rounds, expected) in [
+        (&[(2250, false)][..], (120, 3333)),
+        (&[(2249, false), (9000, false)], (120, 9000)),
+        (&[(0, false), (2249, false)], (0, 2249)),
+        (&[(0, true), (0, false), (0, true), (7, false)], (0, 2000)),
+        (&[(0, true), (0, true), (2250, true)], (120, 3333)),
+        (&[(0, true), (0, true), (7, true)], (0, 2000)),
+    ] {
+        let mut delay = start_trial([2000; 3]);
+        for (left, &(bandwidth, has_lost)) in (0..rounds.len()).rev().zip(rounds) {
+            delay.has_lost = has_lost;
+            let expected = (left == 0).then_some(Verdict {
+                rtt: millis(expected.0),
+                bandwidth: expected.1,
+            });
+            assert_eq!(end_round(&mut delay, 900, 240, bandwidth), expected);
+            assert_eq!(delay.trial_len > 0, left > 0);
+        }
+    }
+}
+
+#[test]
+fn flights_get_no_larger_than_they_were() {
+    for (rtt, expected) in [(400, 2250), (200, 4000), (100, 8000), (50, 8000)] {
+        let mut delay = start_trial([2000; 3]);
+        let verdict = end_round(&mut delay, 900, rtt, 2250);
+        assert_eq!(verdict.map(|it| it.bandwidth), Some(expected));
+    }
+}
+
+#[test]
+fn trials_are_repeated_unless_the_delay_gives_way_afterwards() {
+    for (verdict, has_lost, rtt, expected) in [
+        (0, false, 190, Some(3)),
+        (0, false, 189, None),
+        (0, true, 240, None),
+        (9000, false, 240, None),
+    ] {
+        let mut delay = start_trial([2000; 3]);
+        while delay.trial_len > 0 {
+            delay.has_lost = has_lost;
+            end_round(&mut delay, 900, 240, verdict);
+        }
+        let next = (0..9).position(|_| {
+            end_round(&mut delay, 400, rtt, 1);
+            delay.trial_len > 0
+        });
+        assert_eq!(next, expected);
+    }
+    let mut delay = ForeignDelay::default();
+    let trials = (0..40).filter(|&round| {
+        let flight = if round < 2 { 800 } else { 400 };
+        end_round(&mut delay, flight, 50, 2000).is_some()
+    });
+    assert!(trials.eq([11, 21, 31]));
+}
+
+#[test]
+fn flights_that_suffer_loss_say_nothing_about_delays() {
+    for (rounds, expected) in [
+        ("88666666666", Some(5)),
+        ("88x66666666", Some(7)),
+        ("8866x666666", Some(7)),
+        ("88xx6666666", Some(8)),
+        ("88xxx666666", None),
+        ("66x86666666", None),
+        ("66x88666666", Some(8)),
+    ] {
+        let mut delay = ForeignDelay::default();
+        let trial = rounds.bytes().position(|it| {
+            delay.has_lost |= it == b'x';
+            let flight = if it == b'6' { 600 } else { 800 };
+            end_round(&mut delay, flight, 200, 0);
+            delay.trial_len > 0
+        });
+        assert_eq!(trial, expected, "{rounds}");
+    }
+
+    let mut delay = ForeignDelay::default();
+    for (count, has_lost, keeps_losing) in [
+        (2, true, false),
+        (1, false, false),
+        (2, true, false),
+        (999, true, true),
+        (1, false, false),
+    ] {
+        for _ in 0..count {
+            delay.has_lost |= has_lost;
+            end_round(&mut delay, 600, 200, 0);
+            assert_eq!(delay.keeps_losing(), keeps_losing);
+        }
+    }
+}
+
+#[test]
+fn flights_that_the_path_did_not_limit_say_nothing_about_delays() {
+    for (before, limited, expected) in [
+        (0, 1, Some(4)),
+        (2, 1, Some(2)),
+        (3, 9, Some(1)),
+        (0, 19, Some(4)),
+        (0, 20, None),
+        (0, 999, None),
+    ] {
+        let mut delay = ForeignDelay::default();
+        for flight in [800; 2].into_iter().chain(vec![600; before]) {
+            end_round(&mut delay, flight, 200, 0);
+        }
+        for _ in 0..limited {
+            delay.on_acked(millis(200), 600);
+            delay.on_limited();
+            delay.end_round(millis(10), 0, true);
+        }
+        let trial = (0..9).position(|_| {
+            end_round(&mut delay, 600, 200, 0);
+            delay.trial_len > 0
+        });
+        assert_eq!(trial, expected, "{before} {limited}");
+    }
+
+    // The rest of such a round only tells how much is in flight.
+    let mut delay = start_trial([2000; 3]);
+    assert_eq!(end_round(&mut delay, 900, 240, 0), None);
+    delay.on_limited();
+    assert_eq!((delay.trial_len, delay.trial_rate()), (0, 0));
+    let next = (0..9).position(|_| {
+        assert_eq!(end_round(&mut delay, 400, 200, 9000), None);
+        delay.trial_len > 0
+    });
+    assert_eq!(next, Some(4));
+}
+
+#[test]
+fn foreign_delays_can_be_of_any_size() {
+    for (former_rtt, rtt, flight, rounds) in [
+        (micros(100), micros(100), 400, 4000),
+        (micros(100), micros(100), 3_000_000_000, 4000),
+        (Duration::ZERO, millis(100), 400, 4),
+        (Duration::MAX, Duration::MAX, 1, 4),
+    ] {
+        let mut delay = ForeignDelay::default();
+        for _ in 0..2 {
+            delay.on_acked(former_rtt, u64::MAX);
+            delay.end_round(micros(1), 0, true);
+        }
+        let mut end_round = |rtt| {
+            delay.on_acked(rtt, flight);
+            delay.end_round(micros(1), u64::MAX, true);
+            delay.trial_len > 0
+        };
+        assert_eq!((1..).find(|_| end_round(rtt)), Some(rounds));
+        assert!(!end_round(former_rtt));
+    }
+}
+
+/// One round before the trial.
+fn bbr_squeezed() -> Sender {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 20, millis(10));
+    sender.rounds_of(80, 12, millis(160));
+    sender.rounds_of(40, 4, millis(160));
+    sender
+}
+
+fn bbr_convinced() -> Sender {
+    let mut sender = bbr_squeezed();
+    assert_eq!(min_rtt(sender.rounds_of(40, 1, millis(160))), millis(10));
+    assert_eq!(min_rtt(sender.rounds_of(60, 1, millis(160))), millis(80));
+    sender
+}
+
+/// In segments per 160 ms, for each phase of the cycle.
+fn is_bandwidth(sender: &Sender, segments: u64) -> bool {
+    let pace = sender.pacing_rate() * 160 / 1000 * 4;
+    [3, 4, 5].contains(&(pace / (segments * SEGMENT))) && pace.is_multiple_of(segments * SEGMENT)
+}
+
+#[test]
+fn bbr_tries_a_larger_flight_if_delays_may_be_foreign() {
+    let mut path = Path::new(Algorithm::Bbr, micros(100), millis(10), 200);
+    path.saturate(millis(2000), |_| {});
+    path.delay = millis(100);
+    let windows = [1500, 250, 400].map(|it| {
+        path.saturate(millis(it), |_| {});
+        path.controller.window() / LEN
+    });
+    assert!(matches!(windows, [83, 126, 200..=300]), "{windows:?}");
+
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(30, 20, millis(10));
+    sender.rounds_of(80, 2, millis(32));
+    assert!(is_bandwidth(sender.rounds_of(40, 13, millis(32)), 5 * 40));
+    assert!(is_bandwidth(sender.rounds_of(40, 1, millis(32)), 5 * 60));
+
+    // It leaves nothing behind if it is cut short.
+    sender.run_dry().rounds_of(20, 2, millis(32));
+    assert!(is_bandwidth(&sender, 5 * 40));
+
+    // It may be out of proportion to the shortest round trip.
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 20, millis(10));
+    sender.rounds_of(4000, 12, millis(160));
+    assert_eq!(sender.rounds_of(2000, 4, millis(160)).segments(), 2000);
+    assert_eq!(sender.rounds_of(2000, 1, millis(160)).segments(), 3000);
+}
+
+#[test]
+fn bbr_goes_by_the_verdict() {
+    assert!(is_bandwidth(&bbr_convinced(), 80));
+
+    let mut sender = bbr_squeezed();
+    assert!(is_bandwidth(sender.rounds_of(40, 2, millis(160)), 80));
+    assert!(is_bandwidth(sender.rounds_of(40, 1, millis(160)), 40));
+
+    let mut sender = bbr_convinced();
+    sender.rounds_of(60, 11, millis(160));
+    assert_eq!(min_rtt(sender.rounds_of(40, 6, millis(160))), millis(80));
+    assert_eq!(min_rtt(sender.rounds_of(40, 1, millis(160))), millis(10));
+}
+
+#[test]
+fn bbr_only_tries_that_while_it_cycles() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(1, 1, millis(10));
+    sender.rounds_of(80, 2, millis(160)).send(29);
+    for _ in 0..6 {
+        sender.send(30).wait(millis(160)).feedback(0, 30);
+    }
+    sender.send(90).wait(millis(160)).feedback(0, 90);
+    assert_eq!(min_rtt(&sender), millis(10));
+
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 20, millis(10));
+    sender.rounds_of(80, 56, millis(160));
+    sender.rounds_of(40, 5, millis(160));
+    sender.send(40).wait(millis(10)).feedback(0, 1);
+    sender.send(40).wait(millis(300)).feedback(0, 39);
+    assert_eq!(sender.segments(), 4);
+    sender.wait(millis(10)).feedback(0, 1).feedback(0, 39);
+    sender.rounds_of(4, 1, millis(10));
+    sender.rounds_of(4, 2, millis(160));
+    assert!(is_bandwidth(&sender, 80));
+
+    // What was before is forgotten.
+    sender.rounds_of(40, 6, millis(160));
+    assert_eq!(min_rtt(sender.rounds_of(60, 2, millis(160))), millis(10));
+}
+
+fn lossy_rounds(sender: &mut Sender, count: u64) {
+    for _ in 0..count {
+        sender.send(40).wait(millis(160)).feedback(0, 20);
+        sender.feedback(1, 0).feedback(0, 19);
+    }
+    sender.rounds_of(40, 1, millis(160));
+}
+
+#[test]
+fn bbr_gives_up_the_room_for_foreign_delays() {
+    let cases: [(fn(&mut Sender), u64); 6] = [
+        (|it| _ = it.rounds_of(60, 30, millis(160)), 80),
+        (|it| _ = it.rounds_of(60, 60, millis(160)), 160),
+        (|it| _ = it.run_dry().rounds_of(5, 1, millis(160)), 80),
+        (|it| _ = it.rounds_of(60, 1, millis(50)), 50),
+        (|it| lossy_rounds(it, 2), 80),
+        (|it| lossy_rounds(it, 3), 10),
+    ];
+    for (then, expected) in cases {
+        let mut sender = bbr_convinced();
+        then(&mut sender);
+        assert_eq!(min_rtt(&sender), millis(expected));
+    }
+}
+
+#[test]
+fn bbr_keeps_the_room_for_foreign_delays_while_it_recovers() {
+    let mut sender = bbr_convinced();
+    sender.rounds_of(60, 3, millis(160)).send(2);
+    assert_eq!(sender.wait(millis(160)).feedback(1, 1).segments(), 120);
+}
+
+#[test]
+fn bbr_does_not_take_what_it_has_made_room_for_for_a_queue() {
+    for (rtt, expected) in [(37_500, 59), (37_501, 49)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(5, 1, millis(10)).run_dry();
+        sender.rounds_of(20, 1, millis(30)).send(50);
+        sender.wait(micros(rtt)).feedback(1, 9).feedback(0, 10);
+        assert_eq!(sender.segments(), expected);
+    }
+}
+
+#[test]
+fn bbr_does_not_take_what_the_application_or_the_peer_does_for_a_foreign_delay() {
+    let mut sender = bbr_squeezed();
+    sender.run_dry().rounds_of(40, 2, millis(160));
+    assert_eq!(min_rtt(sender.rounds_of(60, 1, millis(160))), millis(10));
+
+    let mut sender = bbr_squeezed();
+    sender.rounds_of(40, 1, millis(160)).run_dry();
+    assert_eq!(min_rtt(sender.rounds_of(60, 3, millis(160))), millis(10));
+
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 20, millis(10));
+    sender.rounds_of(80, 2, millis(160));
+    for _ in 0..5 {
+        sender.send(40).wait(millis(160)).feedback(0, 39);
+        ack_oldest_with_delay(&mut sender, millis(80));
+    }
+    assert_eq!(min_rtt(sender.rounds_of(60, 2, millis(160))), millis(10));
+}
+
+#[test]
+fn bbr_carries_its_suspicion_over_a_pause() {
+    for (rounds, expected) in [(3, 10), (4, 80)] {
+        let mut sender = bbr_squeezed();
+        sender.run_dry().rounds_of(40, rounds, millis(160));
+        sender.rounds_of(60, 1, millis(160));
+        assert_eq!(min_rtt(&sender), millis(expected));
+    }
+}
+
+#[test]
+fn bbr_follows_a_route_that_gets_longer() {
+    let mut path = Path::new(Algorithm::Bbr, micros(200), millis(5), 200);
+    path.saturate(millis(2000), |_| {});
+    path.delay = millis(50);
+    path.saturate(millis(3000), |_| {});
+    assert_within(path.saturate(millis(3000), |_| {}), 55..=101);
+}
+
+#[test]
+fn bbr_follows_a_route_that_gets_longer_and_slower() {
+    let mut path = Path::new(Algorithm::Bbr, micros(100), millis(2), 3000);
+    path.saturate(millis(2000), |_| {});
+    (path.time_per_packet, path.delay) = (millis(1), millis(40));
+    path.saturate(millis(3000), |path| assert!(path.rtt.latest < millis(120)));
+    assert_within(path.saturate(millis(3000), |_| {}), 90..=101);
+}
+
+#[test]
+fn bbr_does_not_take_its_own_queue_for_that_of_others() {
+    for slowdown in [2, 5, 10, 50] {
+        let mut path = Path::fast(Algorithm::Bbr, 2000);
+        path.saturate(millis(2000), |_| {});
+        path.time_per_packet = path.time_per_packet * slowdown;
+        path.saturate(millis(7000), |path| {
+            assert!(matches!(&path.controller.model, Model::Bbr(it) if it.min_rtt(&path.rtt) < millis(21)));
+        });
+    }
+}
+
+#[test]
+fn bbr_does_not_fill_the_queue_of_a_path_that_keeps_getting_slower() {
+    for (steps, ack_period) in [(20, 1), (60, 1), (120, 1), (60, 10_000), (120, 10_000)] {
+        let mut path = Path::fast(Algorithm::Bbr, 2000);
+        path.ack_period = ack_period;
+        path.saturate(millis(2000), |_| {});
+        for step in 1..=steps {
+            path.time_per_packet = micros((100.0 * 10f64.powf(step as f64 / steps as f64)) as u64);
+            path.saturate(millis(50), |_| {});
+        }
+        path.saturate(millis(7500 - 50 * steps), |_| {});
+        assert!(path.rtt.smoothed < millis(60));
+    }
+}
+
+#[test]
+fn bbr_flows_that_squeeze_one_another_get_rid_of_their_queue() {
+    for (count, gap, response, seconds) in [
+        (3, 1100, u64::MAX / 2, 45),
+        (4, 3000, u64::MAX / 2, 45),
+        (5, 2000, u64::MAX / 2, 45),
+        (3, 1100, 800, 60),
+        (5, 1100, 800, 60),
+        (4, 2000, 2000, 60),
+        (5, 2000, 300, 60),
+    ] {
+        let mut paths = Vec::from_iter((0..count).map(|it| Path {
+            controller: Controller::new(Algorithm::Bbr, LEN as u16, (it as u32) << 28),
+            now: START + millis(it * gap),
+            ..Path::new(Algorithm::Bbr, micros(400), millis(10), 5000)
+        }));
+        let (mut free_at, mut rtts) = (START, Vec::new());
+        while let Some(path) = paths.iter_mut().min_by_key(|it| it.now)
+            && path.now < START + millis(seconds * 1000)
+        {
+            if path.unsent == 0 && path.pending.is_empty() {
+                (path.unsent, path.now) = (response, path.now + millis(2));
+                continue;
+            }
+            path.free_at = free_at;
+            path.step();
+            free_at = path.free_at;
+            if path.now > START + millis((seconds - 5) * 1000) {
+                rtts.push(path.rtt.latest.as_millis());
+            }
+        }
+        assert_within(rtts.iter().sum::<u64>() / rtts.len() as u64, 10..=50);
+    }
 }
 
 #[test]
@@ -3784,7 +4558,7 @@ fn bbr_does_not_take_the_delay_of_acknowledgments_for_a_queue() {
     let mut sender = Sender::new(Algorithm::Bbr);
     sender.rounds_of(5, 1, millis(10)).run_dry().send(20);
     ack_oldest_with_delay(sender.wait(millis(30)), millis(15));
-    assert_eq!(min_rtt(&sender), millis(10));
+    assert_eq!(min_rtt(&sender), millis(15));
 
     let mut sender = Sender::new(Algorithm::Bbr);
     sender.rounds_of(40, 1, millis(10));
@@ -3826,6 +4600,114 @@ fn bbr_measures_the_round_trip_time_after_pauses() {
             path.now = path.now + pause;
         }
     }
+}
+
+#[test]
+fn bbr_takes_what_it_measures_after_a_pause_early_unless_that_is_much_longer() {
+    for (age, rtt, expected) in [
+        (5000, 12_500, 10_000),
+        (5001, 12_500, 12_500),
+        (5001, 12_501, 10_000),
+        (10_000, 12_501, 10_000),
+        (10_001, 12_501, 12_501),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(40, 1, millis(10)).run_dry();
+        sender.wait(millis(age) - micros(rtt));
+        assert_eq!(
+            min_rtt(sender.rounds_of(40, 1, micros(rtt))),
+            micros(expected)
+        );
+        assert!(sender.segments() > 4);
+    }
+}
+
+#[test]
+fn bbr_does_not_get_used_to_longer_round_trips_pause_by_pause() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(40, 1, millis(10));
+    for (rtt, expected) in [(12, 12), (13, 12)] {
+        sender.run_dry().wait(millis(5000));
+        assert_eq!(
+            min_rtt(sender.rounds_of(40, 1, millis(rtt))),
+            millis(expected)
+        );
+    }
+}
+
+#[test]
+fn bbr_probes_the_round_trip_time_after_a_short_pause_if_there_is_a_queue() {
+    for (rounds, pause, rtt, ack_delay, late, probes) in [
+        (198, 199_999, 21_001, 0, 0, true),
+        (198, 200_000, 21_001, 0, 0, false),
+        (198, 199_999, 21_000, 0, 0, false),
+        (198, 199_999, 30_001, 9, 0, true),
+        (198, 199_999, 30_000, 9, 0, false),
+        (198, 199_999, 30_001, 0, 9, true),
+        (198, 199_999, 30_000, 0, 9, false),
+        (402, 199_999, 50_000, 0, 0, true),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(40, 1, millis(10));
+        sender.rounds_of(40, rounds, millis(50)).run_dry();
+        sender.wait(micros(pause)).send(1);
+        let pacer = &mut sender.controller.pacer;
+        *pacer = pacer_at(1000, millis(1));
+        let now = sender.now + pace(pacer, sender.now).1 + millis(late);
+        pacer.catch_up_however_late();
+        pace_late(pacer, now, 0..1);
+        ack_oldest_with_delay(sender.wait(micros(rtt)), millis(ack_delay));
+        assert_eq!(sender.segments() == 4, probes);
+    }
+}
+
+#[test]
+fn bbr_measures_the_bandwidth_anew_after_probing_the_round_trip_time_for_a_queue() {
+    for (rtt, is_kept) in [(20, true), (22, false)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 1, millis(10));
+        while sender.segments() > 4 {
+            sender.rounds_of(6 * rtt, 1, millis(rtt));
+        }
+        while sender.segments() == 4 {
+            sender.rounds_of(4, 1, millis(10));
+        }
+        sender.rounds_of(30, 2, millis(10));
+        assert_eq!(is_bandwidth(&sender, 6 * 160), is_kept);
+    }
+}
+
+#[test]
+fn bbr_gives_up_the_bandwidth_in_spite_of_pauses_if_there_is_a_queue() {
+    for (rtt, responses, is_kept) in [(21_000, 20, true), (21_001, 6, true), (21_001, 7, false)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(1, 1, millis(10));
+        sender.rounds_of(80, 8, millis(20));
+        for _ in 0..responses {
+            sender.run_dry().rounds_of(10, 2, micros(rtt));
+        }
+        assert_eq!(is_bandwidth(&sender, 8 * 80), is_kept);
+    }
+}
+
+#[test]
+fn bbr_follows_the_bandwidth_response_by_response() {
+    let mut path = Path::fast(Algorithm::Bbr, 5000);
+    for (slowdown, count) in [(1, 20), (10, 8)] {
+        path.time_per_packet = path.time_per_packet * slowdown;
+        for _ in 0..count {
+            path.transfer(900, |_| {});
+        }
+    }
+    assert_within(path.pace(), 70..=130);
+}
+
+#[test]
+fn bbr_does_not_take_being_late_for_a_queue() {
+    let mut path = Path::new(Algorithm::Bbr, micros(100), millis(10), 20);
+    path.busy = (20_000, 23_000);
+    let times = Vec::from_iter((0..60).map(|_| path.transfer(350, |_| {}).as_millis()));
+    assert!(times.iter().skip(30).all(|&it| it < 400), "{times:?}");
 }
 
 #[test]

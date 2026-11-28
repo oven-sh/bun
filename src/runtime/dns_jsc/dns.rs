@@ -710,6 +710,13 @@ pub(crate) mod internal {
         })
     }
 
+    fn get_connect_attempt_delay_ms() -> c_int {
+        let ms = env_var::BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS
+            .get()
+            .unwrap_or(250);
+        c_int::try_from(ms).unwrap_or(c_int::MAX)
+    }
+
     // ───────────── Request ─────────────
 
     // The stack key borrows the caller's host string; `to_owned()` copies
@@ -801,6 +808,9 @@ pub(crate) mod internal {
 
         /// Only accessed with `GLOBAL_CACHE` locked, so `Relaxed` is enough.
         valid: AtomicBool,
+
+        /// The address that last connected through this entry; the staggered dial leads with it.
+        last_address: Guarded<Option<SockaddrStorage>>,
     }
 
     impl Request {
@@ -811,6 +821,7 @@ pub(crate) mod internal {
                 notify: Guarded::new(Vec::new()),
                 created_at,
                 valid: AtomicBool::new(true),
+                last_address: Guarded::new(None),
             }
         }
 
@@ -1052,7 +1063,7 @@ pub(crate) mod internal {
 
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
-    // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
+    // the pending connect attempts. See #4938 / #33278.
     fn process_results<'a>(addrs: impl Iterator<Item = &'a [u8]> + Clone) -> Box<[ResultEntry]> {
         let mut total = FamilyCounts::default();
         for addr in addrs.clone() {
@@ -1588,6 +1599,31 @@ pub(crate) mod internal {
                 error: *error,
             },
         }
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__addrinfo_attemptDelayMs() -> c_int {
+        get_connect_attempt_delay_ms()
+    }
+
+    /// 0, with `out` not written, when no address is recorded.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__addrinfo_getLastAddress(
+        req: &Request,
+        out: &mut MaybeUninit<SockaddrStorage>,
+    ) -> c_int {
+        match *req.last_address.lock() {
+            Some(addr) => {
+                out.write(addr);
+                1
+            }
+            None => 0,
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__addrinfo_setLastAddress(req: &Request, addr: &SockaddrStorage) {
+        *req.last_address.lock() = Some(*addr);
     }
 
     /// QUIC analogue of `Bun__addrinfo_set`, declared in `bun_http`.

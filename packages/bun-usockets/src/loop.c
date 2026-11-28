@@ -70,6 +70,25 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
+uint64_t us_internal_monotonic_ns(void) {
+    return uv_hrtime();
+}
+
+static void connect_timer_cb(struct us_timer_t *t) {
+    us_internal_connect_sweep(us_timer_loop(t));
+}
+
+void us_internal_loop_arm_connect_deadline(struct us_loop_t *loop, long long ns) {
+    long long cur = loop->data.connect_next_tick_ns;
+    if (cur >= 0 && cur <= ns) return;
+    loop->data.connect_next_tick_ns = ns;
+    if (!loop->data.connect_timer) loop->data.connect_timer = us_create_timer(loop, 1, 0);
+    long long diff = ns - (long long) us_internal_monotonic_ns();
+    /* us_timer_set(0) stops the timer; a due deadline still needs one fire. */
+    int ms = diff < 1000000 ? 1 : (int) ((diff + 999999) / 1000000);
+    us_timer_set(loop->data.connect_timer, connect_timer_cb, ms, 0);
+}
+
 #else
 
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
@@ -95,27 +114,44 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
+/* The sooner of the sweep and the staggered-connect deadlines, or -1. */
+static long long us_internal_next_tick_ns(struct us_loop_t *loop) {
+    long long next = loop->data.sweep_next_tick_ns;
+    long long connect = loop->data.connect_next_tick_ns;
+    if (connect >= 0 && (next < 0 || connect < next)) next = connect;
+    return next;
+}
+
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
-    if (loop->data.sweep_next_tick_ns < 0) {
+    long long next = us_internal_next_tick_ns(loop);
+    if (next < 0) {
         return -1;
     }
-    /* Its own reading, deliberately: this bounds the poll so the sweep is not
+    /* Its own reading, deliberately: this bounds the poll so neither deadline is
      * starved, and a caller's older reading would round the deadline up. */
-    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
+    long long diff = next - (long long) us_internal_monotonic_ns();
     return diff > 0 ? diff : 0;
 }
 
 void us_internal_sweep_if_due(struct us_loop_t *loop) {
-    if (loop->data.sweep_next_tick_ns < 0) {
+    if (us_internal_next_tick_ns(loop) < 0) {
         return;
     }
     long long now = (long long) us_internal_monotonic_ns();
-    if (now < loop->data.sweep_next_tick_ns) {
+    if (loop->data.connect_next_tick_ns >= 0 && now >= loop->data.connect_next_tick_ns) {
+        us_internal_connect_sweep(loop);
+    }
+    if (loop->data.sweep_next_tick_ns < 0 || now < loop->data.sweep_next_tick_ns) {
         return;
     }
     /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
     loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
     us_internal_timer_sweep(loop);
+}
+
+void us_internal_loop_arm_connect_deadline(struct us_loop_t *loop, long long ns) {
+    long long cur = loop->data.connect_next_tick_ns;
+    if (cur < 0 || ns < cur) loop->data.connect_next_tick_ns = ns;
 }
 
 #endif
@@ -130,6 +166,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
 #else
     loop->data.sweep_next_tick_ns = -1;
 #endif
+    loop->data.connect_next_tick_ns = -1;
     loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
@@ -168,6 +205,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
+    if (loop->data.connect_timer) us_timer_close(loop->data.connect_timer, 0);
 #endif
     us_internal_async_close(loop->data.wakeup_async);
 }

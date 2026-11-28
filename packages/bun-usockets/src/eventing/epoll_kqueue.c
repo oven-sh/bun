@@ -428,7 +428,7 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
+/* Bound `timeout` by the sweep and staggered-connect deadlines (NULL == forever). */
 static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
     long long ns = us_internal_sweep_timeout_ns(loop);
     if (ns < 0) {

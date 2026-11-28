@@ -103,7 +103,7 @@ public:
     bool partitioned() const { return m_partitioned; }
     void setPartitioned(bool partitioned) { m_partitioned = partitioned; }
 
-    bool isExpired() const;
+    bool isExpired(JSC::JSGlobalObject*) const;
 
     // Returns OutOfMemoryError if the Set-Cookie string exceeds the max string length.
     ExceptionOr<String> toString(JSC::VM& vm) const;

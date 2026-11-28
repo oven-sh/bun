@@ -5672,6 +5672,11 @@ void JSC__VM__shrinkFootprint(JSC::VM* arg0)
     arg0->shrinkFootprintWhenIdle();
 }
 
+void JSC__VM__setModuleFetchesOnHold(JSC::VM* vm, bool areOnHold)
+{
+    vm->m_areFetchesOfHostOnHold = areOnHold;
+}
+
 // The following two functions are copied 1:1 from JSLockHolder to provide a
 // new, more ergonomic binding for interacting with the lock from native code
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp

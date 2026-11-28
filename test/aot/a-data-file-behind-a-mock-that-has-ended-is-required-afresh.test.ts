@@ -36,39 +36,29 @@ const projects = {
     'vi.doMock(require.resolve(made), () => ({ default: { a: "second" } })); said.push(require(made).default.a);',
     "",
   ),
-};
-// What is left: what require() answered UNDER the mock leaves with the mock under bun test; compiled it stays.
-const notYet = {
   "required under the mock, which then ends": testFile("text", "", "said.push(require(made).default.a);"),
 };
 
-for (const [name, text, check] of [
-  ...Object.entries(projects).map(([name, text]) => [name, text, test] as const),
-  ...Object.entries(notYet).map(([name, text]) => [name, text, test.failing] as const),
-]) {
-  check(
-    `behind a mock of a data file that has ended require() answers as under bun test: ${name}`,
-    async () => {
-      using dir = tempDir("aot-data-file-behind-an-ended-mock", {
-        "package.json": JSON.stringify({ name: "probe" }),
-        "d.json": JSON.stringify({ a: 1 }),
-        "order.test.mjs": text,
+for (const [name, text] of Object.entries(projects)) {
+  test(`behind a mock of a data file that has ended require() answers as under bun test: ${name}`, async () => {
+    using dir = tempDir("aot-data-file-behind-an-ended-mock", {
+      "package.json": JSON.stringify({ name: "probe" }),
+      "d.json": JSON.stringify({ a: 1 }),
+      "order.test.mjs": text,
+    });
+    const seen = async (...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const seen = async (...flags: string[]) => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "test", ...flags],
-          cwd: String(dir),
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        return { said: stdout.split("\n").filter(line => line.startsWith("SAID ")), exitCode };
-      };
-      const [plain, compiled] = await Promise.all([seen(), seen("--aot")]);
-      expect(plain.said).toHaveLength(1);
-      expect(compiled).toEqual(plain);
-    },
-    120_000,
-  );
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { said: stdout.split("\n").filter(line => line.startsWith("SAID ")), exitCode };
+    };
+    const [plain, compiled] = await Promise.all([seen(), seen("--aot")]);
+    expect(plain.said).toHaveLength(1);
+    expect(compiled).toEqual(plain);
+  }, 120_000);
 }

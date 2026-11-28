@@ -1106,6 +1106,8 @@ impl Build<'_> {
         let may_have_plugins = project == ProjectId::Application
             && !self.options.load.runs_tests
             && crate::load::contents::load_names::names_plugin(files);
+        let mentions_plugin = project == ProjectId::Application
+            && crate::load::contents::load_names::mentions_plugin(files);
         if reads_source_paths {
             sources.note_source_paths_at_run_time();
         }
@@ -1134,6 +1136,7 @@ impl Build<'_> {
             page_manifests: &page_manifests,
             reads_source_paths,
             may_have_plugins,
+            mentions_plugin,
             may_replace_evaluators,
             replaced_builtins: &loaded.contents.replaced_builtins,
             fixed_builtins: &loaded.contents.fixed_builtins,
@@ -1181,9 +1184,7 @@ pub(super) fn may_fail_where_loaded(
     file: FileId,
 ) -> bool {
     project == ProjectId::Application
-        && (runs_tests
-            || graph.is_found_by_computed_names_alone(file)
-            || graph.is_module_form(file))
+        && (runs_tests || graph.is_found_by_computed_names_alone(file))
 }
 
 pub(crate) fn find_files_to_lower(

@@ -201,6 +201,14 @@ class ResolvedSourceBytecode {
 
 public:
     ResolvedSourceBytecode() = default;
+    ResolvedSourceBytecode(ResolvedSourceBytecode&& other)
+        : m_bytes(std::exchange(other.m_bytes, nullptr))
+        , m_size(other.m_size)
+        , m_owned(other.m_owned)
+        , m_persistent(other.m_persistent)
+        , m_entryOffset(other.m_entryOffset)
+    {
+    }
     ~ResolvedSourceBytecode()
     {
         if (m_owned && m_bytes)
@@ -223,6 +231,8 @@ typedef struct ResolvedSource {
     Bun::OwnedString source_code;
     Bun::OwnedString source_url;
     bool isCommonJSModule;
+    // Without the `type` of the import, the file is something else.
+    bool is_code_by_type_alone;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
@@ -232,7 +242,7 @@ typedef struct ResolvedSource {
     // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
     // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
     bool is_prelinked_module;
-    // source_code depends on more than the file's text (macros, `import.meta.glob`), so IsolatedModuleCache must not cache it.
+    // source_code depends on more than the file's text (macros, `import.meta.glob`, how the file was asked for), so IsolatedModuleCache must not cache it.
     bool depends_on_more_than_source;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
@@ -242,7 +252,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     Bun::OwnedString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, is_prelinked_module) == 77 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 78 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, is_code_by_type_alone) == 49 && OBJECT_OFFSETOF(ResolvedSource, is_prelinked_module) == 77 && OBJECT_OFFSETOF(ResolvedSource, depends_on_more_than_source) == 78 && OBJECT_OFFSETOF(ResolvedSource, is_static) == 79 && OBJECT_OFFSETOF(ResolvedSource, bytecode_cache) == 80 && sizeof(ResolvedSourceBytecode) == 24 && OBJECT_OFFSETOF(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 using ErrorableResolvedSource = Errorable<ResolvedSource>;
 static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");

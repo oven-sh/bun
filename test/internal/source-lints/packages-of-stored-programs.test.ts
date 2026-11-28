@@ -7,7 +7,15 @@ const root = path.resolve(import.meta.dir, "..", "..", "aot");
 
 // Where no node_modules stands above a file, plain Bun asks the registry for a package that it does not find, and runs what comes.
 // A made-up name may be somebody's package there. So a stored program brings what it loads.
-const answeredByBun = ["@jest/globals", "@vercel/fetch", "abort-controller", "utf-8-validate", "vitest"];
+const answeredByBun = [
+  "@jest/globals",
+  "@vercel/fetch",
+  "abort-controller",
+  "ffi",
+  "node-fetch",
+  "utf-8-validate",
+  "vitest",
+];
 
 // These are loaded to see how a package that is not there fails, or who answers for it. TODO: a name under the scope below for each. Nothing is added here.
 const plainNamesOfPackagesThatAreNotThere = [

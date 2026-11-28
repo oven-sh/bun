@@ -83,7 +83,6 @@ fn with_export_tables(
             modules: &modules,
             half: &|module| order.half(module),
             half_at_link: &|module| order.half_at_link(module),
-            is_prefix_root: &|_| true,
         });
         let entries = collect_export_entries(input, &scans, &modules);
         let mocked = find_mocked_modules(input, &scans, &modules);
@@ -104,7 +103,6 @@ fn star_names_with_a_place(files: &[(&str, &str)], asked: &[&str]) -> Vec<String
             modules: &modules,
             half: &|module| order.half(module),
             half_at_link: &|module| order.half_at_link(module),
-            is_prefix_root: &|_| true,
         });
         let entries = collect_export_entries(input, &scans, &modules);
         let mocked = find_mocked_modules(input, &scans, &modules);

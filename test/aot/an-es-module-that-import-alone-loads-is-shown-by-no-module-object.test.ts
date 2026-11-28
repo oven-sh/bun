@@ -7,7 +7,7 @@ import { test } from "./supported";
 const library = `export function used(): number { return 1 }
 export function unused(): number { const s: { a: number } = { a: 1 }; return s.b }
 `;
-const main = `import { used } from "./lib";\nimport "./way.cjs";\nconsole.log(used());\n`;
+const main = `import "./way.cjs";\nimport { used } from "./lib";\nconsole.log(used());\n`;
 
 const ways: Record<string, string> = {
   "tests its parent": `if (!module.parent) console.log("no parent");\n`,

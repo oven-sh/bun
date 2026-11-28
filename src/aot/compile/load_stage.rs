@@ -164,18 +164,10 @@ fn warn_of_guesses_left_out(
     view: ProgramView<'_, '_>,
     host: &LoadHost<'_>,
 ) {
-    let Some(file_whose_loader_decides_its_kind) = host.guesses_left_out() else {
+    if !host.are_guesses_left_out() {
         return;
-    };
-    let why = match file_whose_loader_decides_its_kind {
-        Some(file) => [
-            &b"\""[..],
-            &host.display_path_of(&file),
-            b"\" doesn't say whether it's CommonJS or an ES module, so whichever load gets to it first decides, and nothing says when this one runs. Write `export {}` or `module.exports = {}` in that file",
-        ]
-        .concat(),
-        None => b"The build only brings such files along if nothing more hangs on them: no path in the program that it can't work out other than this kind, no TypeScript among them to check, none above the folders that the executable holds. Add the files as entry points".to_vec(),
-    };
+    }
+    let why = b"The build only brings such files along if nothing more hangs on them: no path in the program that it can't work out other than this kind, no TypeScript among them to check, none above the folders that the executable holds. Add the files as entry points";
     let files = view.files();
     let compiled = files.compiled_files().iter();
     let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
@@ -192,7 +184,7 @@ fn warn_of_guesses_left_out(
             let names: Vec<&[u8]> = of_site.iter().map(|it| files.atoms().bytes(it.1)).collect();
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(of_site[0].0));
             let code = Code::FilesLeftOutByPattern;
-            let warning = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..]), &why]);
+            let warning = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..]), why]);
             diagnostics.add(Some(view), warning);
         }
     }

@@ -183,6 +183,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut requested: Vec<FileId> = Vec::new();
         for request in modules.requests_of(ModuleRef::File(own_file)) {
             if let ModuleRef::File(target) = request.target
+                && !request.is_hoisted
                 && target != own_file
                 && modules.is_instantiated_ahead(target)
                 && !modules.has_instances(target)

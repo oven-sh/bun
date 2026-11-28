@@ -2470,7 +2470,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         moduleExportsInterop: import.meta.require("./me.mjs").who,
         onlyRequiredWho: import.meta.require("./only-required.mjs").who,
         tla: (() => { try { import.meta.require("./tla.mjs"); return "loaded" } catch (err) { return String(err.message).includes("await import") } })(),
-        jsonViaRequireIsThisImport: import.meta.require("./d.json").default === json,
+        jsonViaRequireIsThisImport: import.meta.require("./d.json") === json,
         inRequireCache: require.cache[require.resolve("./c.cjs")]?.exports === c,
       })`,
   });
@@ -2495,7 +2495,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         moduleExportsInterop: who,
         onlyRequiredWho: who, // also when nothing imported it before
         tla: true, // a module with top-level await cannot be require()d
-        jsonViaRequireIsThisImport: true, // already an ES module record in this loader: require() answers from it
+        jsonViaRequireIsThisImport: true,
         inRequireCache: true,
       });
       expect({

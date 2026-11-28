@@ -4,7 +4,7 @@
     "the test ends",
     "the body of the file begins",
     "the file between begins",
-    "the call failed: TypeError require() async module \"between.mjs\" is unsupported. use \"await import()\" instead."
+    "the call failed: Error require() async module \"between.mjs\" is unsupported. use \"await import()\" instead."
   ],
   "tests": [
     "(pass) the call is left in flight"

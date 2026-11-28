@@ -20,7 +20,8 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
     // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
     // not a requireable public module.
-    expect(builtinModules).toHaveLength(76);
+    expect(builtinModules).toHaveLength(77);
+    expect(builtinModules).toContain("node:test");
   });
 
   test("isBuiltin() works", () => {
@@ -34,6 +35,36 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("node:bacon")).toBe(false);
     expect(isBuiltin("node:test")).toBe(true);
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
+    expect(builtinModules.filter(name => !isBuiltin(name))).toEqual([]);
+    expect(["node:ws", "node:undici", "node:bun", "node:bun:ffi", "node:node:fs"].filter(isBuiltin)).toEqual([]);
+  });
+
+  test.each([
+    [[], false],
+    [["--experimental-stream-iter"], true],
+  ])("stream/iter and zlib/iter are builtins with %j: %p", async (flags, areBuiltins) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        ...flags,
+        "--no-warnings",
+        "-e",
+        `
+          const { builtinModules, isBuiltin } = require("node:module");
+          const got = ["stream/iter", "zlib/iter"].flatMap(name => [
+            isBuiltin(name),
+            isBuiltin("node:" + name),
+            builtinModules.includes(name),
+            process.getBuiltinModule(name) !== undefined,
+          ]);
+          console.log(JSON.stringify([...new Set(got)]));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `[${areBuiltins}]\n`, stderr: "", exitCode: 0 });
   });
 
   test("_stat() says what is at a path", () => {
@@ -67,7 +98,7 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ missing: [], builtinModules: 76, globalPaths: true }),
+      stdout: JSON.stringify({ missing: [], builtinModules: 77, globalPaths: true }),
       stderr: "",
       exitCode: 0,
     });
@@ -887,6 +918,173 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["what the original returns", `original.apply(this, arguments)`],
+    ["the request", `request`],
+    ["a 16-bit copy of the request", `Buffer.from(request, "utf16le").toString("utf16le")`],
+  ])(
+    "require() loads a builtin by any of its names when an overridden _resolveFilename returns %s",
+    async (_, answer) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--experimental-stream-iter",
+          "--no-warnings",
+          "-e",
+          `
+          const Module = require("node:module");
+          const names = ["os", "node:os", "sys", "node:sys", "stream/iter"];
+          const before = names.map(name => require(name));
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function (request) {
+            return ${answer};
+          };
+          const differ = names.filter((name, i) => {
+            try {
+              return require(name) !== before[i];
+            } catch {
+              return true;
+            }
+          });
+          console.log(JSON.stringify({ differ, cached: names.filter(name => name in require.cache) }));
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ differ: [], cached: [] });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("require.cache answers for all but node: names when an overridden _resolveFilename returns the request", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          require("node:module")._resolveFilename = request => request;
+          for (const name of ["os", "sys", "node:sys", "ffi", "ws/lib/websocket"]) require.cache[name] = { exports: name };
+          console.log(require("os"), require("sys"), typeof require("node:sys"), require("ffi"), require("ws/lib/websocket"));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "os sys object ffi ws/lib/websocket\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("an overridden _resolveFilename is asked what Node.js asks it, and its answer names the entry in require.cache", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        "-e",
+        `
+          const Module = require("node:module");
+          const asked = [];
+          const answers = { alias: "os", deprecated: "sys" };
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function (request) {
+            asked.push(request);
+            return answers[request] ?? original.apply(this, arguments);
+          };
+          const outcome = load => {
+            try {
+              return load().from ?? "builtin";
+            } catch (error) {
+              return error.code;
+            }
+          };
+          const unasked = ["node:os", "node:absent", "", 1, undefined].map(id => outcome(() => require(id)));
+          unasked.push(outcome(() => require.resolve(1)));
+          const resolved = require.resolve("node:os");
+          console.log(JSON.stringify({ unasked, resolved, asked }));
+          for (const name of ["os", "alias", "util"]) require.cache[name] = { exports: { from: name } };
+          const entries = ["alias", "os", "deprecated"].map(id => outcome(() => require(id)));
+          answers.os = "path";
+          console.log(JSON.stringify({ entries, moved: outcome(() => require("os")) }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Node v26.12.1 prints these.
+    expect(stdout.trim().split("\n").map(JSON.parse)).toEqual([
+      {
+        unasked: [
+          "builtin",
+          "ERR_UNKNOWN_BUILTIN_MODULE",
+          "ERR_INVALID_ARG_VALUE",
+          "ERR_INVALID_ARG_TYPE",
+          "ERR_INVALID_ARG_TYPE",
+          "ERR_INVALID_ARG_TYPE",
+        ],
+        resolved: "node:os",
+        asked: ["node:os"],
+      },
+      { entries: ["os", "os", "builtin"], moved: "builtin" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an alias of a module that Bun provides is seen as it is written, however the file was loaded", async () => {
+    const names = ["ffi", "ws/lib/websocket", "abort-controller/polyfill", "next/dist/compiled/node-fetch"];
+    const loads = `async () => {
+      ${names.map(name => `require("${name}"); require.resolve("${name}"); await import("${name}");`).join("\n")}
+    }`;
+    using dir = tempDir("alias-as-written", {
+      "imported.cjs": `exports.load = ${loads};`,
+      "imported.mjs": `export const load = ${loads};`,
+      "required.cjs": `exports.load = ${loads};`,
+      "required.mjs": `export const load = ${loads};`,
+      "main.mjs": `
+        import { tracingChannel } from "node:diagnostics_channel";
+        import Module from "node:module";
+        const files = [await import("./imported.cjs"), await import("./imported.mjs")];
+        files.push(require("./required.cjs"), require("./required.mjs"));
+        let seen;
+        const { _resolveFilename, prototype: { require: original } } = Module;
+        Module._resolveFilename = function (request) {
+          seen.resolveFilename.push(request);
+          return _resolveFilename.apply(this, arguments);
+        };
+        Module.prototype.require = function (id) {
+          seen.require.push(id);
+          return original.apply(this, arguments);
+        };
+        tracingChannel("module.require").subscribe({ start: ({ id }) => seen.requireChannel.push(id) });
+        tracingChannel("module.import").subscribe({ start: ({ url }) => seen.importChannel.push(url) });
+        for (const { load } of files) {
+          seen = { resolveFilename: [], require: [], requireChannel: [], importChannel: [] };
+          await load();
+          console.log(JSON.stringify(seen));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n").map(JSON.parse)).toEqual(
+      Array(4).fill({
+        resolveFilename: names.flatMap(name => [name, name]),
+        require: names,
+        requireChannel: names,
+        importChannel: names,
+      }),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test("Overridden _resolveFilename receives a parent Module for createRequire from ESM", async () => {
     using dir = tempDir("resolve-filename-args-esm", {
       "real.cjs": "module.exports = 'REAL';",
@@ -1328,6 +1526,64 @@ console.log("survived", require("./late.js"));`,
       delete require.cache["util/types"];
     }
   });
+  test("require() of a builtin goes by the name in the source, however the file was loaded", async () => {
+    const body = `{
+      loaded: [require("os"), require("node:os"), require("sys"), require("node:sys")].map(it => it.entry ?? "module"),
+      resolved: [require.resolve("os"), require.resolve("node:os"), require.resolve("sys"), require.resolve("node:sys")],
+      asked: asked.splice(0).filter(id => !id.endsWith("js")),
+    }`;
+    const files = {};
+    for (const way of ["required", "called", "imported"]) {
+      files[`${way}.cjs`] = `exports.default = ${body}; exports.__esModule = true;`;
+      files[`${way}.mjs`] = `export default ${body};`;
+    }
+    using dir = tempDir("builtin-name-as-written", {
+      ...files,
+      "hooks.cjs": `
+        const { prototype } = require("node:module");
+        const original = prototype.require;
+        globalThis.asked = [];
+        prototype.require = function (id) {
+          asked.push(id);
+          return original.apply(this, arguments);
+        };
+        for (const name of ["os", "node:os", "sys", "node:sys"]) require.cache[name] = { exports: { entry: name } };
+      `,
+      "statements.mjs": `
+        export { default as cjs } from "./imported.cjs";
+        export { default as mjs } from "./imported.mjs";
+      `,
+      "main.mjs": `
+        import "./hooks.cjs";
+        const { cjs, mjs } = await import("./statements.mjs");
+        console.log(JSON.stringify({
+          "import statement, cjs": cjs.default ?? cjs,
+          "import statement, mjs": mjs,
+          "import(), cjs": await import("./called.cjs").then(it => it.default.default ?? it.default),
+          "import(), mjs": (await import("./called.mjs")).default,
+          "require(), cjs": require("./required.cjs").default,
+          "require(), mjs": require("./required.mjs").default,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const expected = {
+      loaded: ["os", "module", "sys", "module"],
+      resolved: ["os", "node:os", "sys", "node:sys"],
+      asked: ["os", "node:os", "sys", "node:sys"],
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      "import statement, cjs": expected,
+      "import statement, mjs": expected,
+      "import(), cjs": expected,
+      "import(), mjs": expected,
+      "require(), cjs": expected,
+      "require(), mjs": expected,
+    });
+    expect(exitCode).toBe(0);
+  });
   // https://github.com/oven-sh/bun/issues/40551
   test("require.cache does not expose builtins from the ESM registry", () => {
     // `fs` and `bun:sqlite` are ESM-imported at the top of this file, so the
@@ -1465,6 +1721,104 @@ console.log("survived", require("./late.js"));`,
     });
   });
 
+  describe.concurrent("the main module", () => {
+    const says = `console.log(require.main === module, process.mainModule === module, module.id === ".", require("./asks.cjs")());`;
+    async function run(files, entry = "main.cjs") {
+      using dir = tempDir("the-main-module", {
+        "asks.cjs": `module.exports = () => require.main && require("path").basename(require.main.filename);`,
+        ...files,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    test.each([
+      [
+        "is the CommonJS file that runMain() runs before it returns",
+        {
+          "main.cjs": `require("module").runMain(__dirname + "/other"); console.log(require.main === module, require("./asks.cjs")());`,
+          "other.js": says,
+        },
+        ["true true true other.js", "true other.js"],
+      ],
+      [
+        "throws out of runMain()",
+        {
+          "main.cjs": `try { require("module").runMain(__dirname + "/other.cjs"); } catch (error) { console.log(error.message); }`,
+          "other.cjs": `throw new Error("from the file");`,
+        },
+        ["from the file"],
+      ],
+      [
+        "is asked of a replaced resolver as such",
+        {
+          "main.cjs": `
+            const Module = require("module");
+            const { basename } = require("path");
+            const resolve = Module._resolveFilename;
+            Module._resolveFilename = function (request, parent, isMain) {
+              console.log(basename(request), parent === null, isMain);
+              return resolve.apply(this, arguments);
+            };
+            Module.runMain(__dirname + "/other.cjs");
+            Module.prototype.require.call(null, __dirname + "/required.cjs");
+          `,
+          "other.cjs": `console.log("runs");`,
+          "required.cjs": ``,
+        },
+        ["other.cjs true true", "runs", "required.cjs true false"],
+      ],
+      [
+        "stays when it leaves require.cache, and a second run of the file is not it",
+        {
+          "main.cjs": `
+            ${says}
+            if (!globalThis.first) {
+              globalThis.first = module;
+              delete require.cache[__filename];
+              ${says}
+              require(__filename);
+              console.log(require.main === first, process.mainModule === first);
+            }
+          `,
+        },
+        ["true true true main.cjs", "true true true main.cjs", "false false false main.cjs", "true true"],
+      ],
+      [
+        "is not the second run of a file that threw",
+        {
+          "main.cjs": `
+            ${says}
+            if (!globalThis.threw) {
+              globalThis.threw = true;
+              process.on("uncaughtException", () => require(__filename));
+              throw new Error("first run");
+            }
+          `,
+        },
+        ["true true true main.cjs", "false false false main.cjs"],
+      ],
+    ])("%s", async (_, files, lines) => {
+      expect(await run(files)).toEqual({ lines, stderr: "", exitCode: 0 });
+    });
+
+    test("is not a file that an ES module imports", async () => {
+      expect(
+        await run(
+          { "main.mjs": `import "./a.cjs"; await import("./b.cjs");`, "a.cjs": says, "b.cjs": says },
+          "main.mjs",
+        ),
+      ).toEqual({ lines: ["false false false undefined", "false false false undefined"], stderr: "", exitCode: 0 });
+    });
+  });
+
   describe.concurrent("Module.runMain set by a preload", () => {
     const handlers = `
       process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));
@@ -1532,9 +1886,9 @@ console.log("survived", require("./late.js"));`,
         stderr: "",
         exitCode: 0,
       });
-      // What the main file throws is not lost for it.
+      // The original throws what the main file throws.
       expect(await run(handlers + preload, false, `throw new Error("from main");`)).toEqual({
-        stdout: "unhandledRejection: after the original\nuncaughtException: from main\n",
+        stdout: "uncaughtException: from main\n",
         stderr: "",
         exitCode: 0,
       });

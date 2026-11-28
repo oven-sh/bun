@@ -3,8 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// A plugin that a test file registers may answer for any file of data, so the run leaves those to the loader. Two statements that ask for one file under two types share a place
-// there: the second gets what the first one made, and the loader never comes to a module of its own for it.
+// A plugin that a test file registers may answer for any file of data, so the run leaves those to the loader. Two statements that ask for one file under two types get a module each.
 const testFile = (text: string) => `import { test } from "bun:test";\n${text}\ntest("runs", () => {});\n`;
 const files = {
   "package.json": `{}`,
@@ -48,7 +47,7 @@ for (const [form, flags, words] of [
     async () => {
       using dir = tempDir("two-types-beside-a-plugin", files);
       const plain = await runTests(String(dir), [...flags]);
-      expect(plain.printed).toBe(`object object true\nstring string "5\\n"\n`);
+      expect(plain.printed).toBe(`object string false\nstring number 5\n`);
       expect(plain.exitCode).toBe(0);
       expect(await runTests(String(dir), ["--aot", ...flags], words)).toEqual(plain);
     },

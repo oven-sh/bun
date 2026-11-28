@@ -29,7 +29,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
-🟢 Fully implemented. Bun publishes the built-in channels, except `locks.*`, `node:permission-model:*`, `crypto.fips.indicator` and `quic.session.application`. `tracePromise()` returns the promise of the traced function, where Node returns a promise that is chained to it. In a file that an `import` loads, `module.require` publishes `require("fs")` with the `id` `"node:fs"`.
+🟢 Fully implemented. Bun publishes the built-in channels, except `locks.*`, `node:permission-model:*`, `crypto.fips.indicator` and `quic.session.application`. `tracePromise()` returns the promise of the traced function, where Node returns a promise that is chained to it.
 
 `fetch()` and `WebSocket` publish the `undici:*` channels, except `undici:proxy:connected`. The messages differ from Node's in these ways:
 

@@ -387,6 +387,68 @@ describe.concurrent("require.cache", () => {
     ); // takes 4s on an M1 in release build
   });
 
+  describe("of a CommonJS file that an import has loaded", () => {
+    test.each([
+      [
+        "holds its module",
+        `say(require.cache[file].exports === imported.default, require(file) === imported.default);`,
+        "true true 1",
+      ],
+      ["runs it again once the entry is deleted", `delete require.cache[file]; say(require(file).run);`, "2 2"],
+      ["runs it again once the entry is falsy", `require.cache[file] = undefined; say(require(file).run);`, "2 2"],
+      ["answers with what is stored", `require.cache[file] = { exports: "stored" }; say(require(file));`, "stored 1"],
+      ["answers with what the module exports now", `require.cache[file].exports = "now"; say(require(file));`, "now 1"],
+    ])("%s", async (_, code, said) => {
+      using dir = tempDir("require-cache-of-imported-file", {
+        "main.mjs": `
+          const file = require.resolve("./file.cjs");
+          const imported = await import(file);
+          const say = (...words) => console.log(...words, globalThis.runs);
+          ${code}
+        `,
+        "file.cjs": `exports.run = globalThis.runs = (globalThis.runs ?? 0) + 1;`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: said + "\n", stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      ["import()", `await import("./file.cjs")`],
+      ["an import statement under import()", `await import("./imports.mjs")`],
+      ["an import statement under require()", `require("./imports.mjs")`],
+    ])("has no entry once it has thrown, and require() runs it again: %s", async (_, load) => {
+      using dir = tempDir("require-cache-of-imported-file", {
+        "main.mjs": `
+          const tried = async load => { try { return await load(); } catch (error) { return error.message; } };
+          console.log(
+            await tried(async () => ${load}),
+            require.resolve("./file.cjs") in require.cache,
+            await tried(() => require("./file.cjs").run),
+            await tried(async () => ${load}),
+          );
+        `,
+        "imports.mjs": `import "./file.cjs";`,
+        "file.cjs": `exports.run = globalThis.runs = (globalThis.runs ?? 0) + 1; if (exports.run === 1) throw new Error("threw");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "threw false 2 threw\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   describe("files transpiled and loaded don't leak the AST", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({

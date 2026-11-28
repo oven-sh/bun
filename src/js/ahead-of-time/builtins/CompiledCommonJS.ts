@@ -26,6 +26,8 @@ export function createRequireCacheOverCompiledProgram(requireMap: RequireMap, ow
     !(hidesFiles && $isHiddenFromRequireCache(key)) &&
     (requireMap.$has(key) ||
       (isBuiltinKey(key) ? isRequiredCompiledBuiltin(key) : $esmRegistryHasEvaluated(key, owner)));
+  // What import attributes have made of files. It is not in `requireMap`, because require() does not answer with it.
+  const otherForms = new $Map<string, { form: unknown; mod: JSCommonJSModule }>();
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
       const hidden = hidesFiles && $isHiddenFromRequireCache(key);
@@ -44,6 +46,15 @@ export function createRequireCacheOverCompiledProgram(requireMap: RequireMap, ow
           requireMap.$set(key, mod);
           return mod;
         }
+        const form = $esmNamespaceForCjs(key, owner, true);
+        if (form !== undefined) {
+          let shown = otherForms.$get(key);
+          if (shown?.form !== form) {
+            shown = { form, mod: $createCommonJSModule(key, form, true, owner) };
+            otherForms.$set(key, shown);
+          }
+          return shown!.mod;
+        }
       }
 
       return inner[key];
@@ -61,6 +72,7 @@ export function createRequireCacheOverCompiledProgram(requireMap: RequireMap, ow
     deleteProperty(_target, key: string) {
       if (isHidden(key)) return true;
       $requireCacheDidDelete(key, owner);
+      otherForms.$delete(key);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);

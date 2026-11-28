@@ -41,6 +41,8 @@ test/cli/test/isolation-one-module-fetched-twice.test.ts: --isolate: two import(
 # These import a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
 test/cli/test/isolation.test.ts: --isolate: a macro runs in every file when a plugin is registered
 test/cli/test/isolation.test.ts: --isolate: collects globals pinned by leaked handles > a macro left loaded
+test/cli/test/isolation.test.ts: --isolate: the SourceProvider cache keeps what any load of a path gets > a load that a file leaves in flight > does not run a macro in the next file
+test/cli/test/isolation.test.ts: --isolate=modules: the SourceProvider cache keeps what any load of a path gets > a load that a file leaves in flight > does not run a macro in the next file
 test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--isolate)
 test/cli/test/isolation.test.ts: bun test --isolate > a test file's macros are loaded again for each file (--parallel worker)
 test/cli/test/isolation.test.ts: the SourceProvider cache skips files that use import.meta.glob() or macros > --isolate, large files, BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
@@ -102,7 +104,6 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
 # The next one's fixture writes and deletes a name of a mocked namespace 30,000 times in one test, which has the 5 s that a test has by default. With a sanitizer, beside the other jobs of a lane, it took 6.6 s.
 ~ASAN test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > writes and deletes aren't cached by the JIT
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends

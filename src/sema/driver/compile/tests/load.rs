@@ -902,9 +902,12 @@ fn locator_names_file() {
 #[test]
 fn file_queued_again_is_read_and_parsed_again() {
     const FILES: [(&str, &str); 3] = [
-        ("package.json", r#"{ "name": "project", "type": "module" }"#),
-        ("main.ts", "import \"./first.cjs\";\n"),
-        ("first.cjs", "globalThis.seen = 1;\n"),
+        ("main.ts", "import \"./first.ts\";\n"),
+        (
+            "first.ts",
+            "import \"./sets-main.ts\";\nconsole.log(import.meta.main);\n",
+        ),
+        ("sets-main.ts", "export {};\n"),
     ];
     for reads_on_other_threads in [false, true] {
         let (ended, has_ended) = std::sync::mpsc::channel();
@@ -915,7 +918,7 @@ fn file_queued_again_is_read_and_parsed_again() {
             };
             let host = SlowToQueueAgain(&disk, Default::default());
             let is_loaded = load_with_host(&host, &["./main.ts"]).is_ok();
-            let times_queued = ["main.ts", "first.cjs"].map(|path| host.times_queued(path));
+            let times_queued = ["main.ts", "first.ts"].map(|path| host.times_queued(path));
             let _ = ended.send((is_loaded, times_queued));
         });
         let outcome = has_ended.recv_timeout(std::time::Duration::from_secs(120));

@@ -69,15 +69,15 @@ const cases: Record<string, { files: Record<string, string>; said: string; leftO
     },
     said: "a",
   },
-  "a function of another object that only shares the helper's name: the text that it gets makes no file CommonJS": {
+  "a function of another object that only shares the helper's name gets the name of a file that the program imports": {
     files: {
       "package.json": "{}",
       "main.cjs": `const tools = { load: name => require(name) };\nconst other = { load: text => console.log(text) };\nother.load("./setup.cjs");\nconsole.log(typeof tools.load);\nimport("./setup.cjs").then(() => console.log("done"));\n`,
       "setup.cjs": sloppyOrStrict,
     },
-    said: "./setup.cjs\nfunction\nundefined\ndone",
+    said: "./setup.cjs\nfunction\nobject\ndone",
   },
-  "a function that a file which requires the helper exports: the text that it gets makes no file CommonJS": {
+  "a function that a file which requires the helper exports gets the name of a file that the program imports": {
     files: {
       "package.json": "{}",
       "main.cjs": `const say = require("./say.cjs");\nsay("./setup.cjs");\nimport("./setup.cjs").then(() => console.log("done"));\n`,
@@ -85,25 +85,25 @@ const cases: Record<string, { files: Record<string, string>; said: string; leftO
       "load.cjs": `module.exports = name => require(name);\n`,
       "setup.cjs": sloppyOrStrict,
     },
-    said: "./setup.cjs function\nundefined\ndone",
+    said: "./setup.cjs function\nobject\ndone",
   },
-  "a function that is made with require and only prints its text: the text makes no file CommonJS": {
+  "a function that is made with require and only prints the name of a file that the program imports": {
     files: {
       "package.json": "{}",
       "main.cjs": `const say = require("./wrap.cjs")(require);\nsay("./setup.cjs");\nimport("./setup.cjs").then(() => console.log("done"));\n`,
       "wrap.cjs": `module.exports = load => text => console.log(text, typeof load);\n`,
       "setup.cjs": sloppyOrStrict,
     },
-    said: "./setup.cjs function\nundefined\ndone",
+    said: "./setup.cjs function\nobject\ndone",
   },
-  "a file that the program imports keeps its kind beside a module that such a text names": {
+  "a file that the program imports, beside a module that such a text names": {
     files: {
       "package.json": "{}",
       "main.cjs": `const make = given => name => given(name);\nconst load = make(require);\nif (process.argv.length > 9) load("./m.mjs");\nimport("./x.cjs").then(() => console.log("done"));\n`,
       "m.mjs": `import "./x.cjs";\nexport default 1;\n`,
       "x.cjs": sloppyOrStrict,
     },
-    said: "undefined\ndone",
+    said: "object\ndone",
   },
   "a maker of the same file that hands the name on loads in front of the import() behind it": {
     files: {

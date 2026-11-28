@@ -38,7 +38,7 @@ test("in a test run", async () => {
 test("in an executable", async () => {
   using dir = tempDir("a-require-of-an-es-module-looks-first", files);
   const plain = said(await run([bunExe(), "main.mjs"], String(dir), env));
-  expect(plain).toEqual(["SAID tick", "SAID 2 thrown while it loads"]);
+  expect(plain).toEqual(["SAID 2 thrown while it loads", "SAID tick"]);
   said(await run([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "built"], String(dir), env));
   expect(said(await run([join(String(dir), "built")], String(dir), env))).toEqual(plain);
 });

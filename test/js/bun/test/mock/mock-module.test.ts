@@ -6166,6 +6166,7 @@ test.concurrent(
     await expectFixturesToPass(
       {
         "d.json": `{"a":1}`,
+        "e.json": `2`,
         "user.js": `
         import typed from "./d.json" with { type: "json" };
         import plain from "./d.json";
@@ -6181,11 +6182,25 @@ test.concurrent(
           vi.doUnmock("./d.json");
           expect((await import("./user.js")).both()).toEqual([1, 1]);
           vi.doMock("./d.json", () => ({ default: { a: "third" } }));
-          expect((await import("./user.js")).both()).toEqual(["third", "third"]);
+          expect((await import("./user.js")).both()).toEqual([1, 1]);
+          const typed = await import("./d.json", { with: { type: "json" } });
+          expect(typed.default.a).toBe("third");
+          expect(await import("./d.json")).toBe(typed);
+        });
+        test("a type that makes another module of the file", async () => {
+          const both = async () => [(await import("./e.json", { with: { type: "text" } })).default, (await import("./e.json")).default];
+          vi.doMock("./e.json", () => ({ default: "first" }));
+          expect(await both()).toEqual(["first", "first"]);
+          vi.doMock("./e.json", () => ({ default: "second" }));
+          expect(await both()).toEqual(["second", "second"]);
+          vi.doUnmock("./e.json");
+          expect(await both()).toEqual(["2", 2]);
+          vi.doMock("./e.json", () => ({ default: "third" }));
+          expect(await both()).toEqual(["third", "third"]);
         });
       `,
       },
-      1,
+      2,
     );
   },
 );
@@ -7319,7 +7334,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       test("the file and what it imports get the mock", async () => {
         expect([esm.base, esm.rate(), cjs.base, cjs.rate(), rates()]).toEqual([0.2, "mock", 0.2, "mock", ["mock", "mock"]]);
         expect([(await vi.importActual("esm-rates")).rate(), (await vi.importActual("cjs-rates")).rate()]).toEqual(["real", "real"]);
-        expect(globalThis.evaluationsOfRates).toEqual(["cjs-rates", "esm-rates"]);
+        expect(globalThis.evaluationsOfRates).toEqual(["esm-rates", "cjs-rates"]);
       });
     `;
     await expectFixturesToPass(
@@ -7513,4 +7528,402 @@ test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a v
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 4 pass\n 0 fail");
   expect(exitCode).toBe(0);
+});
+
+test.concurrent.each(isolationFlags)("a factory requires the builtin that it mocks %j", async flags => {
+  const lay = (name: string) => `() => {
+    mock.module("${name}", () => ({ of: typeof require("${name}").parse }));
+    return require("${name}").of;
+  }`;
+  using dir = tempDir("mock-module-factory-requires-builtin", {
+    "imported.mjs": `import { mock } from "bun:test"; export default ${lay("path")};`,
+    "required.cjs": `const { mock } = require("bun:test"); module.exports = ${lay("url")};`,
+    "a.test.mjs": `
+      import { beforeAll, describe, expect, mock, test } from "bun:test";
+      import Module from "node:module";
+      import imported from "./imported.mjs";
+
+      test("past an entry under the prefixed name in require.cache", () => {
+        mock.module("querystring", () => {
+          require.cache["node:querystring"] = { exports: { parse: 1 } };
+          return { of: typeof require("node:querystring").parse };
+        });
+        expect(require("querystring").of).toBe("function");
+      });
+      describe("with Module._resolveFilename overridden", () => {
+        beforeAll(() => {
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function () {
+            return original.apply(this, arguments);
+          };
+        });
+        test("in an imported file", () => expect(imported()).toBe("function"));
+        test("in a required file", () => expect(require("./required.cjs")()).toBe("function"));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...flags, "./a.test.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 3 pass\n 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each(isolationFlags)("beside a mock, a builtin is required like a file %j", async flags => {
+  const read = `() => [require("os"), require("sys"), require("./file.cjs"), require("node:os")].map(it => it.from).join()`;
+  using dir = tempDir("mock-module-builtin-like-a-file", {
+    "file.cjs": `exports.from = "file";`,
+    "other.cjs": `exports.from = "resolver";`,
+    "imported.cjs": `exports.read = ${read};`,
+    "imported.mjs": `export const read = ${read};`,
+    "required.cjs": `exports.read = ${read};`,
+    "a.test.mjs": `
+      import { expect, mock, test } from "bun:test";
+      import Module from "node:module";
+      import { read as cjs } from "./imported.cjs";
+      import { read as mjs } from "./imported.mjs";
+      const reads = () => [...new Set([cjs(), mjs(), require("./required.cjs").read()])];
+      const names = ["os", "sys", "./file.cjs"];
+
+      test("the mock", () => {
+        for (const name of names) mock.module(name, () => ({ from: "mock" }));
+        expect(reads()).toEqual(["mock,mock,mock,mock"]);
+      });
+      test("a later entry in require.cache", () => {
+        for (const name of names) require.cache[require.resolve(name)] = { exports: { from: "entry" } };
+        expect(reads()).toEqual(["entry,entry,entry,mock"]);
+      });
+      test("what Module._resolveFilename answers", () => {
+        const original = Module._resolveFilename;
+        Module._resolveFilename = function (request, ...rest) {
+          return original.call(this, names.includes(request) ? "./other.cjs" : request, ...rest);
+        };
+        expect(reads()).toEqual(["resolver,resolver,resolver,mock"]);
+      });
+      test("what Module.prototype.require returns", () => {
+        const original = Module.prototype.require;
+        Module.prototype.require = function (id) {
+          return names.includes(id) ? { from: "require" } : original.apply(this, arguments);
+        };
+        expect(reads()).toEqual(["require,require,require,mock"]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...flags, "./a.test.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 4 pass\n 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+async function runTestFiles(files: Record<string, string>, args: string[]) {
+  using dir = tempDir("mock-module-require", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+test.concurrent.each(isolationFlags)(
+  "of a mock and an entry in require.cache, the later one counts %j",
+  async flags => {
+    const { stderr, exitCode } = await runTestFiles(
+      {
+        "file.cjs": `exports.from = "file";`,
+        "reads.cjs": `exports.read = () => [require("os"), require("sys"), require("./file.cjs")].map(it => it.from).join();`,
+        "a.test.mjs": `
+        import { expect, jest, mock, test } from "bun:test";
+        import { read } from "./reads.cjs";
+        const store = from => {
+          for (const name of ["os", "sys", "./file.cjs"]) require.cache[require.resolve(name)] = { exports: { from } };
+        };
+        const lay = (from, names = ["os", "sys", "./file.cjs"]) => {
+          for (const name of names) mock.module(name, () => ({ from }));
+        };
+
+        test("a mock after an entry", () => {
+          store("entry");
+          lay("mock");
+          expect(read()).toBe("mock,mock,mock");
+        });
+        test("an entry after that", () => {
+          store("second entry");
+          expect(read()).toBe("second entry,second entry,second entry");
+        });
+        test("a mock under another name of the module", () => {
+          lay("second mock", ["node:os", "util", "./file.cjs"]);
+          expect(read()).toBe("second mock,second mock,second mock");
+        });
+        test("the entry of a builtin is still there when the mock is gone", () => {
+          jest.dontMock("os");
+          expect(require("os").from).toBe("second entry");
+        });
+      `,
+      },
+      [...flags, "./a.test.mjs"],
+    );
+    expect(stderr).toContain(" 4 pass\n 0 fail");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each(isolationFlags)("a factory gets the original beside a replaced resolver %j", async flags => {
+  const { stderr, exitCode } = await runTestFiles(
+    {
+      "file.cjs": `exports.from = "file";`,
+      "esm.mjs": `export const from = "esm";`,
+      "data.json": `{ "from": "json" }`,
+      "aliased.cjs": `exports.from = "aliased";`,
+      "below.cjs": `exports.from = "below";`,
+      "helper.cjs": `exports.read = () => require("./below.cjs").from;`,
+      "node_modules/dependency/index.js": `exports.from = "dependency";`,
+      "a.test.mjs": `
+        import { expect, mock, test } from "bun:test";
+        import Module from "node:module";
+
+        const original = Module._resolveFilename;
+        Module._resolveFilename = function (request, ...rest) {
+          return original.call(this, request === "alias" ? "./aliased.cjs" : request, ...rest);
+        };
+
+        test.each([
+          ["./file.cjs", () => require("./file.cjs"), "file"],
+          ["./esm.mjs", () => require("./esm.mjs"), "esm"],
+          ["./data.json", () => require("./data.json"), "json"],
+          ["dependency", () => require("dependency"), "dependency"],
+          ["./aliased.cjs", () => require("alias"), "aliased"],
+        ])("%s", (name, load, from) => {
+          mock.module(name, () => ({ of: load().from }));
+          expect(load().of).toBe(from);
+        });
+        test("through a file that the factory requires", () => {
+          mock.module("./below.cjs", () => ({ of: require("./helper.cjs").read() }));
+          expect(require("./below.cjs").of).toBe("below");
+        });
+      `,
+    },
+    [...flags, "./a.test.mjs"],
+  );
+  expect(stderr).toContain(" 6 pass\n 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each(isolationFlags)("a factory gets the original of a module that Bun provides %j", async flags => {
+  const members = {
+    "ws": "WebSocketServer",
+    "undici": "fetch",
+    "node-fetch": "Headers",
+    "isomorphic-fetch": "call",
+    "@vercel/fetch": "call",
+    "abort-controller/polyfill": "call",
+    "bun:ffi": "dlopen",
+    "bun:jsc": "heapStats",
+    "bun:sqlite": "Database",
+    "buffer": "Buffer",
+  };
+  const each = (body: (name: string, member: string) => string) =>
+    Object.entries(members)
+      .map(([name, member]) => `test("${name}", async () => { ${body(name, member)} });`)
+      .join("\n");
+  const { stderr, exitCode } = await runTestFiles(
+    {
+      "required.test.mjs": `
+        import { expect, mock, test } from "bun:test";
+        ${each(
+          (name, member) => `
+            mock.module("${name}", () => ({ of: typeof require("${name}").${member} }));
+            expect(require("${name}").of).toBe("function");`,
+        )}
+      `,
+      "actual.test.mjs": `
+        import { expect, jest, test } from "bun:test";
+        ${each(
+          (name, member) => `
+            jest.doMock("${name}", () => ({ of: typeof jest.requireActual("${name}").${member} }));
+            expect(require("${name}").of).toBe("function");`,
+        )}
+      `,
+      "original.test.mjs": `
+        import { expect, test, vi } from "vitest";
+        ${each(
+          (name, member) => `
+            await import("${name}");
+            let of;
+            await vi.doMock("${name}", async importOriginal => {
+              const original = await importOriginal();
+              of = typeof (original.${member} ?? original.default.${member});
+              return {};
+            });
+            expect(of).toBe("function");`,
+        )}
+      `,
+    },
+    [...flags, "./required.test.mjs", "./actual.test.mjs", "./original.test.mjs"],
+  );
+  expect(stderr).toContain(` ${Object.keys(members).length * 3} pass\n 0 fail`);
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent.each(isolationFlags)("a mock that an imported CommonJS file lays %j", flags => {
+  test.each([
+    ["a file", "./file.mjs"],
+    ["a CommonJS file", "./file.cjs"],
+    ["a builtin", "node:os"],
+    ["a name that does not resolve", "@made-up/absent"],
+  ])("is there for the imports behind it: %s", async (_, name) => {
+    const { stderr, exitCode } = await runTestFiles(
+      {
+        "file.mjs": `globalThis.ran = true; export const from = "file";`,
+        "file.cjs": `globalThis.ran = true; exports.from = "file";`,
+        "lays.cjs": `require("bun:test").mock.module("${name}", () => ({ from: "mock" }));`,
+        "reads.mjs": `import { from } from "${name}"; export const read = from;`,
+        "a.test.mjs": `
+          import { expect, test } from "bun:test";
+          import "./lays.cjs";
+          import { from } from "${name}";
+          import { read } from "./reads.mjs";
+          test("reads", () => expect([from, read, globalThis.ran]).toEqual(["mock", "mock", undefined]));
+        `,
+      },
+      [...flags, "./a.test.mjs"],
+    );
+    expect(stderr).toContain(" 1 pass\n 0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent.each(isolationFlags)("a file that changes what is loaded in the middle of a load %j", flags => {
+  const counted = (name: string) =>
+    `const run = "${name}" + (globalThis.${name} = (globalThis.${name} ?? 0) + 1); log.push(run);`;
+  const files = {
+    "a.mjs": `${counted("a")} export const v = run;`,
+    "b.cjs": `${counted("b")} exports.v = run;`,
+    "reads.mjs": `import { v as a } from "./a.mjs"; import { v as b } from "./b.cjs"; log.push("reads " + a + b);`,
+    "again.mjs": `import { v as a } from "./a.mjs"; import { v as b } from "./b.cjs"; log.push("again " + a + b);`,
+    "last.mjs": `import { v as a } from "./a.mjs"; import { v as b } from "./b.cjs"; log.push("last " + a + b);`,
+    "z.cjs": `log.push("z");`,
+  };
+  const loads = [`await import("./root.mjs")`, `require("./root.mjs")`];
+
+  async function expectLog(more: Record<string, string>, load: string, log: string) {
+    await expectFixturesToPass(
+      {
+        ...files,
+        ...more,
+        "a.test.mjs": `
+          import { expect, test, vi } from "bun:test";
+          test("log", async () => {
+            globalThis.log = [];
+            ${load};
+            expect(log.join()).toBe(${JSON.stringify(log)});
+          });
+        `,
+      },
+      1,
+      [...flags, "./a.test.mjs"],
+    );
+  }
+
+  test.each(loads)("two CommonJS files reset the modules under %s", async load => {
+    const resets = (name: string) => `log.push("${name}"); require("bun:test").vi.resetModules();`;
+    await expectLog(
+      {
+        "first.cjs": resets("first"),
+        "second.cjs": resets("second"),
+        "root.mjs": `
+          import "./reads.mjs";
+          import "./first.cjs";
+          import { v as a } from "./a.mjs";
+          import "./again.mjs";
+          import "./second.cjs";
+          import { v as b } from "./b.cjs";
+          import "./last.mjs";
+          import "./z.cjs";
+          log.push("root " + a + b);
+        `,
+      },
+      load,
+      "a1,b1,reads a1b1,first,a2,b2,again a2b2,second,b3,a3,last a3b3,z,root a2b3",
+    );
+  });
+
+  test.each(loads)("one mocks a module and one resets the modules under %s", async load => {
+    await expectLog(
+      {
+        "mocks.cjs": `{ require("bun:test").vi.doMock("./a.mjs", () => (log.push("factory"), { v: "mock" })); }`,
+        "resets.cjs": `require("bun:test").jest.resetModules();`,
+        "root.mjs": `
+          import { v as a } from "./a.mjs";
+          import "./mocks.cjs";
+          import "./resets.cjs";
+          import "./reads.mjs";
+          log.push("root " + a);
+        `,
+      },
+      load,
+      "a1,b1,factory,reads mockb1,root a1",
+    );
+  });
+
+  test.each(loads)("one mocks a module and one deletes its importer under %s", async load => {
+    await expectLog(
+      {
+        "mocks.cjs": `{ require("bun:test").vi.doMock("./a.mjs", () => (log.push("factory"), { v: "mock" })); }`,
+        "deletes.cjs": `delete require.cache[require.resolve("./reads.mjs")];`,
+        "root.mjs": `import "./mocks.cjs"; import "./deletes.cjs"; import "./reads.mjs";`,
+      },
+      load,
+      "b1,factory,reads mockb1",
+    );
+  });
+
+  test.each(loads)("an ES module resets and mocks what its siblings are linked to under %s", async load => {
+    await expectLog(
+      {
+        "changes.mjs": `
+          import { vi } from "bun:test";
+          vi.resetModules();
+          for (const name of ["./a.mjs", "./b.cjs"]) vi.doMock(name, () => (log.push("factory"), { v: "mock" }));
+        `,
+        "root.mjs": `import "./changes.mjs"; import "./reads.mjs"; import "./z.cjs"; import "./again.mjs";`,
+      },
+      `await import("./a.mjs"); await import("./b.cjs"); ${load}; await import("./last.mjs")`,
+      "a1,b1,reads a1b1,z,again a1b1,factory,factory,last mockmock",
+    );
+  });
+
+  test.each([
+    ["an ES module", "./a.mjs"],
+    ["a JSON file", "./data.json"],
+    ["a builtin", "node:os"],
+  ])("a require() that cannot wait for the mock of %s runs nothing later", async (_, name) => {
+    await expectLog(
+      {
+        "data.json": `{ "v": "data" }`,
+        "mocks.cjs": `{ require("bun:test").vi.doMock("${name}", async () => (await gate.promise, { v: "mock" })); }`,
+        "root.mjs": `import "./mocks.cjs"; import { v } from "${name}"; log.push("root " + v);`,
+      },
+      `globalThis.gate = Promise.withResolvers();
+       try { require("./root.mjs"); } catch (error) { log.push(error.code); }
+       gate.resolve();
+       log.push((await import("${name}")).v);
+       await import("./root.mjs")`,
+      "ERR_REQUIRE_ASYNC_MODULE,mock,root mock",
+    );
+  });
 });

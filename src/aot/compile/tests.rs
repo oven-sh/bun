@@ -366,34 +366,22 @@ fn nothing_names_what_a_placeholder_declares() {
 }
 
 #[test]
-fn an_executable_has_a_file_of_data_as_the_type_that_the_scan_of_the_bundler_comes_to_first() {
+fn a_file_of_data_has_a_form_for_each_type_that_its_name_does_not_imply() {
     let call = "console.log(await import(\"./conf.txt\", { with: { type: \"text\" } }));";
     let statement = "import conf from \"./conf.txt\" with { type: \"jsonc\" };\nconsole.log(conf);";
-    let forms_of = |main: &str, below: &str, builds_executable: bool| {
-        let main = format!("await import(\"./below.js\");\n{main}");
-        let conf = "{ \"port\": 21 }\n";
-        let files = [("a.js", &main[..]), ("below.js", below), ("conf.txt", conf)];
-        let mut project = TestProject::new(&files, &default_settings());
-        project.builds_executable = builds_executable;
-        let (result, log) = link_project(&project, &WithoutServices);
-        let text = print_program(&expect_success(result, &log).program);
-        ["conf.txt?jsonc", "conf.txt?text"].map(|form| text.contains(form))
-    };
-    assert_eq!(forms_of(call, statement, false), [true, true]);
-    assert_eq!(forms_of(statement, call, false), [true, true]);
-    assert_eq!(forms_of(call, statement, true), [false, false]);
-    assert_eq!(forms_of(statement, call, true), [true, false]);
-    let files = [
-        ("a.js", "import \"./caller.js\";\nimport \"./holder.js\";"),
-        ("caller.js", call),
-        ("holder.js", statement),
-        ("conf.txt", "{ \"port\": 21 }\n"),
-    ];
-    let mut project = TestProject::new(&files, &default_settings());
-    project.builds_executable = true;
-    let (result, log) = link_project(&project, &WithoutServices);
-    let text = print_program(&expect_success(result, &log).program);
-    assert!(text.contains("conf.txt?jsonc") && !text.contains("conf.txt?text"));
+    for builds_executable in [false, true] {
+        for (main, below) in [(call, statement), (statement, call)] {
+            let main = format!("await import(\"./below.js\");\n{main}");
+            let conf = "{ \"port\": 21 }\n";
+            let files = [("a.js", &main[..]), ("below.js", below), ("conf.txt", conf)];
+            let mut project = TestProject::new(&files, &default_settings());
+            project.builds_executable = builds_executable;
+            let (result, log) = link_project(&project, &WithoutServices);
+            let text = print_program(&expect_success(result, &log).program);
+            let forms = ["conf.txt\"", "conf.txt?jsonc", "conf.txt?text"];
+            assert_eq!(forms.map(|form| text.contains(form)), [true, true, false]);
+        }
+    }
 }
 
 #[test]

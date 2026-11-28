@@ -1,44 +1,18 @@
-// `require()` of a file of data answers what an import has made of the file: the namespace object. It asks the imports without a type first, then those under a type, those under
-// "json" last, and reads the file itself where the loader holds none of them. Every name of such a module is kept for the namespace object, though the statements take the default
-// alone, and a member of its value is read off the object: a store through what `require()` answers shows there. What no `require()` names keeps its one answer.
-
-// RUN(SHAPE): lower
-// SHAPE: [[first]] = RequireModule module=[[m1]] referrer=[[main]] specifier="./data.json" [onlyIfImported]
-// SHAPE-NEXT: [[isFirstAbsent]] = TypeTest [[first]] testedType=undefined
-// SHAPE-NEXT: Branch [[isFirstAbsent]] -> taken [[next]](), notTaken [[done]]([[first]])
-// SHAPE-NEXT: [[next]]():
-// SHAPE-NEXT: [[second]] = RequireModule module=[[m2]] referrer=[[main]] specifier="./data.json" [onlyIfImported]
-// SHAPE-NEXT: [[isSecondAbsent]] = TypeTest [[second]] testedType=undefined
-// SHAPE-NEXT: Branch [[isSecondAbsent]] -> taken [[last]](), notTaken [[done]]([[second]])
-// SHAPE-NEXT: [[last]]():
-// SHAPE-NEXT: [[read]] = RequireModule module=[[m3]] referrer=[[main]] specifier="./data.json"
-// SHAPE-NOT: onlyIfImported
-// SHAPE: Jump -> next [[done]]([[read]])
-// SHAPE-NEXT: [[done]]([[answer]]):
-
+// `require()` of a file of data answers the value that an import holds: one without a type, or one under the type that the name of the file says, which is the same module.
+// An import under another type makes another module, which answers no `require()` without that type.
+// A member of a held value is read off the object: a store through what `require()` answers shows there. What no `require()` names keeps its one answer.
 // RUN(TEXT): link
-// TEXT: module [[text]] path="{{*}}data.json?text" displayPath={{*}}requireResult=NamespaceIfImported
-// TEXT-NOT: = RequireModule {{*}}specifier="./data.json"
-// TEXT: = RequireModule module=[[text]] {{*}}specifier="./data.json" [onlyIfImported]
-
+// TEXT: module [[text]] path="{{*}}data.json?text" displayPath={{*}}requireResult=DefaultExport typeAttribute="text"
+// TEXT-NOT: = RequireModule module=[[text]]
 // RUN(JSON): link
-// JSON: module [[json]] path="{{*}}data.json?json" displayPath={{*}}requireResult=NamespaceIfImported {{*}}exports=[{name="a"{{*}}{name="default"{{*}}{name="list"
-// JSON: = RequireModule {{*}}specifier="./data.json" [onlyIfImported]
-// JSON: = RequireModule module=[[json]] {{*}}specifier="./data.json" [onlyIfImported]
-
-// RUN(ITSELF): link
-// ITSELF: module [[file]] path="{{*}}data.json" displayPath={{*}}requireResult=NamespaceIfImported {{*}}exports=[{name="a" variable=[[a]]}, {name="default" variable=[[whole]]}, {name="list" variable=[[list]]}]
-// ITSELF-COUNT-2: specifier="./data.json" [onlyIfImported]
-// ITSELF: = RequireModule module=[[file]] {{*}}specifier="./data.json"
-
+// JSON: module [[json]] path="{{*}}data.json" displayPath={{*}}requireResult=HeldDefaultExport {{*}}exports=[{name="a"{{*}}{name="default"{{*}}{name="list"
+// JSON: = RequireModule module=[[json]] {{*}}specifier="./data.json" @
 // RUN(UNTYPED): link
-// UNTYPED: module [[plain]] path="{{*}}plain.json" displayPath={{*}}requireResult=NamespaceIfImported
-// UNTYPED-NOT: = RequireModule {{*}}specifier="./plain.json"
-// UNTYPED: = RequireModule module=[[plain]] {{*}}specifier="./plain.json" [onlyIfImported]
-// UNTYPED: = RequireModule module=[[typed]] {{*}}specifier="./plain.json" [onlyIfImported]
-// UNTYPED: = RequireModule module=[[plain]] {{*}}specifier="./plain.json"
-// UNTYPED-NOT: onlyIfImported
-
+// UNTYPED: module [[plain]] path="{{*}}plain.json" displayPath={{*}}requireResult=HeldDefaultExport
+// UNTYPED: = RequireModule module=[[plain]] {{*}}specifier="./plain.json" @
+// RUN(ONCE): link
+// ONCE-NOT: .json?json
+// ONCE-NOT: onlyIfImported
 // RUN(ALONE): link
 // ALONE: module {{*}}path="{{*}}alone.json" displayPath={{*}}requireResult=DefaultExport {{*}}exports=[{name="default"
 

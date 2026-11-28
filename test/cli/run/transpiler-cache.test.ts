@@ -518,6 +518,55 @@ describe("transpiler cache", () => {
     });
   });
 
+  test("an entry that an import wrote reads require() as it is written", async () => {
+    writeFileSync(join(temp_dir, "a.cjs"), dummyFile(50 * 1024, "1", { code: `require.resolve("os")` }));
+    writeFileSync(join(temp_dir, "imports.mjs"), `import "./a.cjs";`);
+    writeFileSync(join(temp_dir, "requires.cjs"), `require("./a.cjs");`);
+
+    expect(await bunRun(join(temp_dir, "imports.mjs"), env)).toSpawn("os");
+    expect(newCacheCount()).toBe(1);
+
+    expect(await bunRun(join(temp_dir, "requires.cjs"), env)).toSpawn("os");
+    expect(newCacheCount()).toBe(0);
+  });
+
+  test("the entry of a CommonJS file does not serve an ES module of the same text", async () => {
+    const text = dummyFile(50 * 1024, "kind", { code: `(function () { return this ? "sloppy" : "strict"; })()` });
+    for (const type of ["commonjs", "module"]) {
+      mkdirSync(join(temp_dir, type));
+      writeFileSync(join(temp_dir, type, "package.json"), JSON.stringify({ type }));
+      writeFileSync(join(temp_dir, type, "a.js"), text);
+    }
+    expect(await bunRun(join(temp_dir, "commonjs", "a.js"), env)).toSpawn("sloppy");
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "module", "a.js"), env)).toSpawn("strict");
+    expect(await bunRun(join(temp_dir, "commonjs", "a.js"), env)).toSpawn("sloppy");
+  });
+
+  test.each([
+    ["calls require()", `export const read = () => require("node:path").posix.sep;`],
+    ["calls a macro", `import { sep } from "./sep.js" with { type: "macro" }; export const read = () => sep();`],
+  ])("a file that %s works after a macro has loaded it", async (_, code) => {
+    writeFileSync(join(temp_dir, "shared.js"), `export const one = 1; ${code}\n//${Buffer.alloc(50 * 1024, "-")}`);
+    writeFileSync(join(temp_dir, "sep.js"), `export const sep = () => "/";`);
+    writeFileSync(join(temp_dir, "macro.js"), `import { one } from "./shared.js"; export const macro = () => one;`);
+    writeFileSync(
+      join(temp_dir, "calls-macro.js"),
+      `import { macro } from "./macro.js" with { type: "macro" }; console.error(macro());`,
+    );
+    writeFileSync(join(temp_dir, "imports.js"), `import { read } from "./shared.js"; console.error(read());`);
+
+    const said = [];
+    for (const file of ["calls-macro.js", "imports.js"]) {
+      const { stderr, exitCode } = await bunRun(join(temp_dir, file), env);
+      said.push({ stderr, exitCode });
+    }
+    expect(said).toEqual([
+      { stderr: "1", exitCode: 0 },
+      { stderr: "/", exitCode: 0 },
+    ]);
+  });
+
   // Serving the entry point from the cache must not change how the modules it
   // loads are resolved. Both of these are gated on the `has_loaded` flag, which
   // used to be set only on the path that runs the printer.

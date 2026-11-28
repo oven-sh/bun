@@ -72,8 +72,8 @@ function assertValidFrame(frame: unknown): boolean {
       f,
     );
     $assert(
-      $isObject((f as Frame).storage),
-      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, a module mock, or (leaving a graph's context) the global object",
+      $isObject((f as Frame).storage) || typeof (f as Frame).storage === "string",
+      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, a module mock, the key of a module that a plugin makes, or (leaving a graph's context) the global object",
     );
     $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");

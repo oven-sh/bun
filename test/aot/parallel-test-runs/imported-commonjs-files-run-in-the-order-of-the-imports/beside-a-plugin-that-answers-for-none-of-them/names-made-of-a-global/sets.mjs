@@ -1,0 +1,2 @@
+globalThis.material = "clay";
+export {};

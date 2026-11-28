@@ -293,7 +293,7 @@ fn parse_module(
     // Requested modules, in the record's order. An entry references its request by (specifier, type), as
     // hostResolveImportedModule would look it up.
     let mut requests: Vec<Request> = Vec::with_capacity(info.requested_modules_keys.len());
-    let mut request_index: bun_collections::HashMap<(u32, u8), u16> = Default::default();
+    let mut request_index: bun_collections::HashMap<(u32, u32), u16> = Default::default();
     let mut all_in_graph = true;
     for (((&specifier, &value), &phase), index) in info
         .requested_modules_keys
@@ -322,7 +322,7 @@ fn parse_module(
             host => (4, shared(StringID(host.0))),
         };
         request_index
-            .entry((specifier.0, value.to_script_fetch_parameters_type()))
+            .entry((specifier.0, value.type_key()))
             .or_insert_with(|| index);
         requests.push(Request {
             specifier: shared(specifier),
@@ -341,7 +341,7 @@ fn parse_module(
     }
     let request_for = |module_name: StringID, fetch: FetchParameters| -> u16 {
         *request_index
-            .get(&(module_name.0, fetch.to_script_fetch_parameters_type()))
+            .get(&(module_name.0, fetch.type_key()))
             .expect("module_info lists every module its entries reference")
     };
 

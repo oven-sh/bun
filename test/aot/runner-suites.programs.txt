@@ -447,6 +447,12 @@ test/js/bun/resolve/resolve.test.ts: in a directory named a\b > runs from anothe
 test/js/bun/resolve/resolve.test.ts: a backslash is part of a name: createRequire()
 test/js/bun/resolve/resolve.test.ts: in a directory named a\ > resolves after process.chdir() into it and back
 test/js/bun/resolve/resolve.test.ts: in a directory named a\b > resolves after process.chdir() into it and back
+# These use require.cache, which does not reach compiled modules, as docs/compiler/compatibility.mdx says.
+test/js/bun/import-attributes/import-attributes.test.ts: one file under several types > gives way under a type of code to a module that the program made in require.cache
+test/js/bun/import-attributes/import-attributes.test.ts: one file under several types > gives way under a type of code to the entry of another file in require.cache
+test/js/bun/import-attributes/import-attributes.test.ts: one file under several types > has one entry in require.cache until it is deleted, which require() does not answer with
+test/js/bun/import-attributes/import-attributes.test.ts: one file under several types > runs as CommonJS under a type of code, behind an entry that was read from require.cache
+test/js/bun/import-attributes/import-attributes.test.ts: one file under several types > runs as CommonJS under a type of code, behind require()
 # These start a Worker from a file that the program writes.
 test/js/bun/resolve/resolve.test.ts: finds a worker in a directory that is created later and written with a separator at the end
 test/js/bun/resolve/resolve.test.ts: finds a worker that is created later and written with /./

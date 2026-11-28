@@ -21,12 +21,11 @@ pub(crate) enum Kind {
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
     /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
     /// and the worker's peak RSS so far
-    /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads, u32: 1 where growth is written
+    /// u32 file_idx, str path, u32: 1 where growth is written
     Run,
     /// (empty)
     Shutdown,

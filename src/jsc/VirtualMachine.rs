@@ -1762,6 +1762,8 @@ impl VirtualMachine {
         self.event_loop.set(&raw const self.macro_event_loop);
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled.set(false);
+        // What the transpiler's threads finish goes to the regular loop.
+        self.jsc_vm().set_module_fetches_on_hold(true);
     }
 
     pub(crate) fn disable_macro_mode(&self) {
@@ -1772,6 +1774,7 @@ impl VirtualMachine {
         self.macro_mode.set(false);
         self.event_loop.set(&raw const self.regular_event_loop);
         self.transpiler_store.enabled.set(true);
+        self.jsc_vm().set_module_fetches_on_hold(false);
     }
 
     pub fn enqueue_task(&self, task: bun_event_loop::Task) {
@@ -2892,6 +2895,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
+    safe fn Bun__forgetMainModule(global: &JSGlobalObject);
     safe fn NodeModuleModule__callOverriddenRunMain(
         global: &JSGlobalObject,
         argv1: JSValue,
@@ -3235,6 +3239,7 @@ impl VirtualMachine {
         self.set_main(entry_path);
         self.main_resolved_path.set(bun_core::String::EMPTY);
         self.overridden_main.set(Default::default());
+        Bun__forgetMainModule(self.global());
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -3335,15 +3340,12 @@ impl VirtualMachine {
                             | MainEntryPoint::Compiled
                             | MainEntryPoint::OutsideExecutable
                     )
+                    && let Some(main) = self.main()
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let run_main_path = match (self.main_entry_point.get(), self.main()) {
-                        (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
-                        (_, Some(main)) => main,
-                    };
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, main)?;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -4587,7 +4589,6 @@ impl VirtualMachine {
         global_object: &JSGlobalObject,
         specifier: &bun_core::String,
         referrer: &bun_core::String,
-        loader: Option<bun_ast::Loader>,
         log: &mut bun_ast::Log,
         flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
@@ -4654,7 +4655,7 @@ impl VirtualMachine {
 
         let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
-            loader: Cell::new(loader.or(lr.loader).unwrap_or(if lr.is_main {
+            loader: Cell::new(lr.loader.unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
                 bun_ast::Loader::File
@@ -4955,6 +4956,64 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+        let namespaces = global.on_resolve_namespaces();
+        if !namespaces.file && !namespaces.another {
+            return Ok(None);
+        }
+        let builtin = match namespaces.of_builtins {
+            true => ModuleLoader::key_of_builtin_in_namespace(&specifier.to_utf8()),
+            false => None,
+        };
+        let builtin = match builtin {
+            Some(key)
+                if specifier.eql_utf8(key)
+                    || is_alias_asked_by_key(global, specifier, key, source, mode)? =>
+            {
+                key
+            }
+            _ => {
+                return Self::resolve_by_on_resolve::<IS_A_FILE_PATH>(
+                    global,
+                    specifier,
+                    source,
+                    query_string,
+                    mode,
+                    same_is_no_answer,
+                );
+            }
+        };
+        let mut query = bun_core::String::EMPTY;
+        let resolved = Self::resolve_by_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            &bun_core::String::static_(builtin),
+            source,
+            Some(&mut query),
+            mode,
+            same_is_no_answer,
+        )?;
+        if let Some(Ok(path)) = &resolved {
+            let key = bun_core::String::create_format(format_args!("{path}{query}"));
+            let is_asked_by_alias = !specifier.eql_utf8(builtin);
+            if ModuleLoader::key_of_builtin_in_namespace(&key.to_utf8()) == Some(builtin)
+                || global.gives_way_to_builtin(&key, source, is_asked_by_alias, mode)
+            {
+                return Ok(None);
+            }
+        }
+        if let Some(query_string) = query_string {
+            *query_string = query;
+        }
+        Ok(resolved)
+    }
+
+    fn resolve_by_on_resolve<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+        same_is_no_answer: bool,
+    ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
         let answer = match run_on_resolve(global, specifier, source, IS_A_FILE_PATH, mode)? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
@@ -5003,7 +5062,7 @@ impl VirtualMachine {
         Ok(Some(resolved))
     }
 
-    fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
+    pub(crate) fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
@@ -5262,6 +5321,19 @@ impl VirtualMachine {
         self.main().is_some_and(|main| key.eql_utf8(main))
     }
 
+    #[unsafe(export_name = "Bun__VirtualMachine__isEntryPointLeftToRunMain")]
+    pub extern "C" fn is_entry_point_left_to_run_main(&self, key: &bun_core::String) -> bool {
+        self.has_patched_run_main.get()
+            && self.main_entry_point.get() == MainEntryPoint::File
+            && self.is_main_module(key)
+    }
+
+    /// What the program has stored in `Bun.main`, or empty.
+    #[unsafe(export_name = "Bun__VM__overriddenMain")]
+    pub extern "C" fn overridden_main_value(&self) -> JSValue {
+        self.overridden_main.get().get().unwrap_or_default()
+    }
+
     /// Whether `bun test` transpiles `key` as an entry point when it's loaded now.
     #[unsafe(export_name = "Bun__VM__isTestEntryPoint")]
     pub extern "C" fn is_test_entry_point(&self, key: &bun_core::String) -> bool {
@@ -5294,6 +5366,7 @@ impl VirtualMachine {
         self.set_main(Some(entry_path));
         self.main_resolved_path.set(bun_core::String::EMPTY);
         self.overridden_main.set(Default::default());
+        Bun__forgetMainModule(self.global());
         if self.test_isolation_state.shares_global.get() {
             Bun__Process__resetArgv(self.global());
         }
@@ -6283,7 +6356,6 @@ impl VirtualMachine {
                     global,
                     &frames[top].source_url,
                     &bun_core::String::EMPTY,
-                    None,
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
@@ -7323,6 +7395,41 @@ impl Drop for OnResolveScope<'_> {
     }
 }
 
+/// Whether plugins are asked about `node:os` when the request says "os".
+fn is_alias_asked_by_key(
+    global: &JSGlobalObject,
+    alias: &bun_core::String,
+    key: &'static [u8],
+    importer: &bun_core::String,
+    mode: ResolveMode,
+) -> JsResult<bool> {
+    let vm = global.bun_vm();
+    // It resolves to the key, which is asked about when it is loaded. And a callback gets the builtins that it needs.
+    if mode == ResolveMode::EsmResolve || vm.is_in_on_resolve.get() {
+        return Ok(false);
+    }
+    // A mock of the module comes first, and so does what the program has stored in `require.cache`.
+    let key = bun_core::String::static_(key);
+    if global.resolve_virtual_module(&key, importer).is_some()
+        || (!mode.is_esm() && global.is_key_of_loaded_module(alias)?)
+    {
+        return Ok(false);
+    }
+    if vm.standalone_module_graph.is_none() || isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+    {
+        return Ok(true);
+    }
+    // The build has bound what an executable holds. What the executable has loaded since is like any other module.
+    let importer = importer.to_utf8();
+    let is_loaded =
+        |key: &[u8]| global.is_key_of_loaded_module(&bun_core::StringView::borrow_utf8(key));
+    Ok(
+        !bun_options_types::standalone_path::is_bun_standalone_file_path(&importer)
+            && !crate::compiled_program::is_compiled_module(&importer)
+            && (is_loaded(&importer)? || is_loaded(importer.strip_prefix(b"/").unwrap_or(b""))?),
+    )
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 fn run_on_resolve(
     global: &JSGlobalObject,
@@ -7331,18 +7438,15 @@ fn run_on_resolve(
     importer_is_a_file: bool,
     mode: ResolveMode,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-    let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
-    if !in_file_namespace && !in_another_namespace {
-        return Ok(None);
-    }
+    let namespaces = global.on_resolve_namespaces();
     let specifier = specifier.to_utf8();
     let (namespace, path) = ModuleLoader::namespace_and_path(&specifier);
     let namespace: &[u8] = if namespace == b"file" { b"" } else { namespace };
     let vm = global.bun_vm();
     // "virtual:thing" is offered as "thing" in namespace "virtual", then as "virtual:thing" in namespace "file".
-    let asks_namespace = in_another_namespace && !namespace.is_empty();
+    let asks_namespace = namespaces.another && !namespace.is_empty();
     // Without an extension, skip builtins and anything a callback resolves, or a catch-all filter would recurse forever.
-    let asks_file_namespace = in_file_namespace
+    let asks_file_namespace = namespaces.file
         && !specifier.is_empty()
         && ((namespace.is_empty() && ModuleLoader::has_extension_or_namespace(&specifier))
             || !(vm.is_in_on_resolve.get() || ModuleLoader::bun_aliases_get(&specifier).is_some()))

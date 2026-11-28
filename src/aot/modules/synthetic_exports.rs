@@ -236,7 +236,6 @@ mod tests {
     use crate::modules::{ExportBinding, ImportBinding, ModuleGraph};
     use bun_sema::bind::{Decl, SymbolId};
     use bun_sema::hir::ImportId;
-    use bun_sema::program::FileId;
 
     fn name_of<'a>(input: &BindInput<'a, '_>, export: &SyntheticExport) -> &'a str {
         let name = core::str::from_utf8(input.files.atoms.bytes(export.name));
@@ -282,7 +281,6 @@ mod tests {
             modules: &modules,
             half: &|module: ModuleRef| order.half(module),
             half_at_link: &|module: ModuleRef| order.half_at_link(module),
-            is_prefix_root: &|file: FileId| order.is_prefix_root(file),
         };
         let texts = scan_commonjs_modules(&commonjs_input);
         let entries = collect_export_entries(input, &scans, &modules);

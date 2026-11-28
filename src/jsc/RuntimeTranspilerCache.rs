@@ -89,7 +89,11 @@ bun_core::declare_scope!(cache, visible);
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
 /// Version 53: The name of a Node.js builtin in `import()` is printed as it is written.
-const EXPECTED_VERSION: u32 = 53;
+/// Version 54: So is the one in `require()`, in a file that an import loads.
+/// Version 55: So is an alias of a module of Bun's own, in both.
+/// Version 56: ModuleInfo has a request for each type that a specifier is imported with, and
+///             `export ... from` keeps its type.
+const EXPECTED_VERSION: u32 = 56;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

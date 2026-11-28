@@ -169,8 +169,7 @@ The build compiles every file it can reach from your entry point. Where a path i
 - `import.meta.glob()` is expanded at build time, and every file that matches is compiled.
 - `require.resolve()` and `import.meta.resolve()` return a path. They don't embed the file. Neither do `Bun.resolveSync()`, `Bun.resolve()` and `import.meta.resolveSync()`. With those three the build warns if the path names a file that isn't in the executable (`TS100099`). `require.resolve()` returns where the file was when you built, so reading it fails on another machine.
 - `require("./notes.txt")` returns the text itself, as in `bun build --compile`. `bun run` returns an object with the text as its `default`.
-- An `import()` at the top level of an ES module that a `require()` loads, or of a CommonJS file that this module imports, runs its module after that `require()` returns, as in Node.js and `bun build --compile`. Under `bun run`, it runs during the `require()`.
-- In a cycle of `require()` and `import`, a CommonJS file can be imported before it has finished, and again later. In the executable, every importer then sees the exports of the later import. Under `bun run` and with `--no-aot`, the first importer keeps what the file exported at that point.
+- A CommonJS file that has thrown runs again at the next `require()`. There's one exception: your entry point, or a file that an `import` statement runs at the start of the program, if nothing catches the error. A `require()` of a dynamic path may then throw the same error again. Under `bun run`, it runs the file.
 - A query, as in `import("./a.ts?v=2")`, loads one more copy of the file, as in `bun run`. `?worker` works too. `?raw`, `?url`, a query on a data file and a query in a `require()` stop the build (`TS100159`).
 
 ### A file that isn't in the executable
@@ -330,7 +329,6 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws             | Throws                                  |
 | `(Color as any).Red = 2`, then `Color.Red`, for an `enum` imported from a file | `2`                                         | `1`. The member is a constant           |
 | `"useDefineForClassFields"` in `tsconfig.json`                                 | Taken from the one in the working directory | Taken from the one nearest to each file |
-| `export { x } from "./a.txt" with { type: "json" }`                            | The type is ignored: `a.txt` is text        | JSON, as with an `import`               |
 | `fn.caller` and `fn.arguments`, outside strict mode                            | The calling function and the arguments      | `null`. The build warns (`TS100302`)    |
 
 `process.env.NODE_ENV`, `process.platform` and `process.arch`, written out like that, are replaced by their values when you build, as in `bun build --compile`. `NODE_ENV=production ./app` still reads `"development"` unless you built with `NODE_ENV=production` or `--production`.

@@ -30,6 +30,12 @@ const forms: Record<string, [imports: string, printed: string, path: string, moc
     "./t.txt",
     `{ default: "mocked" }`,
   ],
+  "two-types": [
+    `import t from "./t.txt" with { type: "yaml" }; import u from "./t.txt";`,
+    `t + " " + u`,
+    "./t.txt",
+    `{ default: "mocked" }`,
+  ],
   "file-by-attribute": [
     `import t from "./t.txt" with { type: "file" };`,
     `t.endsWith(".txt") ? "a path" : t`,
@@ -91,7 +97,7 @@ test("mock.module replaces what a file of data that is loaded exports", async ()
         test(${JSON.stringify(name)}, () => { console.log(${JSON.stringify(name)}, before, "|", read()); });`,
     })),
     // The file is loaded under two types. A patch would reach one of them, so neither is patched.
-    ["text-both-ways orig orig | orig orig"],
+    ["two-types orig orig | orig orig"],
   );
 });
 

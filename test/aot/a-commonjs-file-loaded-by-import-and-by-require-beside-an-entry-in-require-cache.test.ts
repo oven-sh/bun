@@ -102,38 +102,27 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
 
 for (const isolation of [["--isolate"], []]) {
   for (const [way, env] of ways) {
-    const name = `the first load of a CommonJS file decides how it reads require("fs"), ${way}`;
+    const name = `a CommonJS file reads require("fs") as it is written, however it is loaded, ${way}`;
     test.concurrent(isolation.length ? `${name}, isolated` : name, async () => {
       using dir = tempDir("a-commonjs-file-loaded-by-import-and-by-require", project);
       const plain = await runTests(String(dir), {}, ...isolation);
       expect(plain.printed).toEqual([
-        "import() then require(): function function",
+        "import() then require(): number number",
         "require() then import(): number number",
         "require() then a module that imports it: number number",
-        "imported, and required by a module in front of it: function function",
-        "imported, and what it requires: function number",
+        "imported, and required by a module in front of it: number number",
+        "imported, and what it requires: number number",
         "required at the top of a module: number",
         "a preload: number",
-        "first test file: number function",
-        "second test file: number function number",
+        "first test file: number number",
+        "second test file: number number number",
         "started by the runner: number",
-        "in a test of its own: function",
-        "imported before the runner starts it: function",
+        "in a test of its own: number",
+        "imported before the runner starts it: number",
         ...(isolation.length ? ["in a test of its own: number"] : []),
-        "import() behind a mock, and behind a plugin: function function",
+        "import() behind a mock, and behind a plugin: number number",
       ]);
       expect(await runTests(String(dir), env, "--aot", ...isolation)).toEqual(plain);
     });
   }
 }
-
-test.concurrent(
-  "in layers with a process for each test file, the first load of the run decides as in one process",
-  async () => {
-    using dir = tempDir("a-commonjs-file-loaded-by-import-and-by-require-in-two-processes", project);
-    const plain = await runTests(String(dir), {}, "--isolate");
-    expect(plain.printed).toContain("second test file: number function number");
-    const words = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
-    expect(await runTests(String(dir), words, "--aot", "--isolate")).toEqual(plain);
-  },
-);

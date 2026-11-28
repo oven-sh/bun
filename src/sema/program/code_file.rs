@@ -49,7 +49,6 @@ impl<'s> AcceptedTree<'s, '_> {
 #[derive(Copy, Clone, Default)]
 pub(super) struct LoadInputs<'a, 's> {
     pub(super) stored_by_mocks: StoredByMocks<'s>,
-    pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
     pub(super) texts_of_data_files: &'a [TextOfDataFile],
@@ -72,9 +71,7 @@ pub(super) fn load_code_file<'s, 'r>(
         ..
     } = context;
     let &LoadInputs {
-        stored_by_mocks,
-        is_only_imported,
-        ..
+        stored_by_mocks, ..
     } = inputs;
     let key = target.key;
     let path = key.path;
@@ -82,15 +79,7 @@ pub(super) fn load_code_file<'s, 'r>(
     let specifies_esm = Files::specifies_esm(resolver, options, path, false);
     let is_javascript = is_javascript_file(context.host, path);
     let settings = resolver.transpile_settings_as(path, || is_javascript);
-    let mut tree = accept_tree(
-        context,
-        arena,
-        key,
-        settings,
-        is_javascript,
-        is_only_imported,
-        text,
-    );
+    let mut tree = accept_tree(context, arena, target, settings, is_javascript, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     write_what_other_files_say(&mut tree.hir, inputs, arena);
     tree.hir.runs_beside_loader = context.host.has_loader_at_run_time();
@@ -326,23 +315,22 @@ fn parse_options_of(
 fn accept_tree<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,
-    key: LoadKey<'r>,
+    target: CodeTarget<'r>,
     settings: &'r TranspileSettings,
     is_javascript: bool,
-    is_only_imported: bool,
     text: Cow<'static, [u8]>,
 ) -> AcceptedTree<'s, 'r> {
     let &CodeLoadContext {
         host, ref atoms, ..
     } = context;
-    let path = key.path;
+    let LoadKey { path, loader } = target.key;
     let request = CodeParseRequest {
         path,
-        loader: key.loader,
+        loader,
         options: parse_options_of(context, path, settings, is_javascript),
         reads_jsdoc: is_javascript,
         settings,
-        declared_module_type: declared_module_type_of(context, path, is_only_imported),
+        declared_module_type: declared_module_type_of(context, target),
     };
     let ParsedCode {
         hir,
@@ -361,17 +349,16 @@ fn accept_tree<'s, 'r>(
     }
 }
 
-fn declared_module_type_of(
+pub(super) fn declared_module_type_of(
     context: &CodeLoadContext<'_, '_, '_>,
-    path: &[u8],
-    is_only_imported: bool,
+    target: CodeTarget<'_>,
 ) -> DeclaredModuleType {
-    if context.host.is_plugin_source(path) {
-        return DeclaredModuleType::Unknown;
-    }
-    match is_only_imported {
-        true => context.resolver.module_type_where_imported(path),
-        false => context.resolver.declared_module_type(path),
+    let LoadKey { path, loader } = target.key;
+    let is_loader_named = (target.has_loader_attribute && loader != HostLoader::default())
+        || context.host.has_loader_by_name(path);
+    match is_loader_named && !context.host.is_plugin_source(path) {
+        true => context.resolver.declared_module_type(path),
+        false => DeclaredModuleType::Unknown,
     }
 }
 
@@ -473,8 +460,6 @@ fn analyze<'s, 'r>(
         jsx,
         jsx_mode,
         declared_module_type,
-        type_where_imported: declared_module_type_of(context, path, true),
-        runs_inside_require: false,
         is_package_type_module: resolver.is_package_type_module(path),
         package: resolver.enclosing_package(path),
         side_effects: resolver.declared_side_effects(path),

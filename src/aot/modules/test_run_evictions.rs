@@ -6,10 +6,12 @@ use super::plan::Plan;
 use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
+use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, is_in_node_modules};
 use crate::test_run_report::{say_es_packages_that_mocks_name, say_reloadable_files};
 use bun_core::strings::{contains, last_index_of_char};
 use bun_sema::atom::Atom;
+use bun_sema::bind::Parent;
 use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{self, ExprId, ExprKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
@@ -437,6 +439,7 @@ fn limit_reloadable_files(
     scans: &Scans,
     absent: &[ModuleRef],
     importers: &[(FileId, FileId)],
+    requirers_of_any_file: &[FileId],
     is_reloadable: &mut [bool],
 ) {
     let files = input.files;
@@ -485,6 +488,9 @@ fn limit_reloadable_files(
                 }
             }
         }
+        if !pending.is_empty() {
+            pending.extend(requirers_of_any_file.iter().copied().filter(is_in_realm));
+        }
         let calls = loads.called.iter().filter(|it| is_in_realm(&it.0));
         let mut called: Vec<FileId> = calls.flat_map(|it| it.1.iter().copied()).collect();
         called.extend_from_slice(&input.run.preloads);
@@ -530,6 +536,57 @@ fn limit_reloadable_files(
     }
 }
 
+/// The CommonJS files with a `require()` that may find the module object of another file in `require.cache`.
+pub(super) fn find_requirers_of_any_file(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    evicted: &EvictedModules,
+) -> Vec<FileId> {
+    let files = input.files;
+    let may_store_module_object = |&file: &FileId| {
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let is_given_literal = |&entry: &ExprId| {
+            let target = bound.outermost_type_assertion(hir, entry);
+            let Parent::Expr(assignment) = bound.parent_of_expr(target) else {
+                return false;
+            };
+            let ExprKind::Assign { value, .. } = hir[assignment].kind else {
+                return false;
+            };
+            matches!(
+                hir[hir.skip_type_assertions(value)].kind,
+                ExprKind::Object(_)
+            )
+        };
+        parsed_source(files, file).is_some_and(|source| {
+            let mut entries = source.builtins.entries_stored_in_module_cache().iter();
+            source.builtins.hands_module_cache_on() || !entries.all(is_given_literal)
+        })
+    };
+    let compiled_files = files.compiled_files().iter();
+    if !input.runner_starts_entry_points || !compiled_files.clone().any(may_store_module_object) {
+        return Vec::new();
+    }
+    let looks_under_such_key = |file: &FileId| {
+        let (analysis, scan) = (files.analysis(*file), scans.of(*file));
+        let mut sites = analysis.import_sites.iter().zip(&scan.sites);
+        scan.interop.kind == ModuleKind::CommonJs
+            && sites.any(|(site, answer)| match *answer {
+                ScannedSite::Module(target) if binds_importer_to_module(site.kind) => {
+                    match target {
+                        ModuleRef::File(_) => evicted.leaves(target),
+                        _ => evicted.is_stored_in_cache(target),
+                    }
+                }
+                _ => false,
+            })
+    };
+    compiled_files
+        .copied()
+        .filter(looks_under_such_key)
+        .collect()
+}
+
 /// A reloadable file is one that `bun test` may load again in the same realm: a file that a module mock names, a file
 /// other than an entry point that mocks a module, or a file that imports or requires one of those or another mocked
 /// module, directly or through other files.
@@ -538,6 +595,7 @@ pub(super) fn find_reloadable_files(
     scans: &Scans,
     absent: &[ModuleRef],
     test_files_that_ask_loader: &[FileId],
+    requirers_of_any_file: &[FileId],
 ) -> Vec<bool> {
     let files = input.files;
     let mut is_reloadable = vec![false; files.modules.len()];
@@ -594,6 +652,9 @@ pub(super) fn find_reloadable_files(
         let first = importers.partition_point(|import| import.0 < file);
         importers.get(first).is_some_and(|import| import.0 == file)
     };
+    if !to_follow.is_empty() {
+        to_follow.extend_from_slice(requirers_of_any_file);
+    }
     let test_files_alone = test_files_that_ask_loader.iter().copied();
     to_follow.extend(test_files_alone.filter(|&file| !is_imported(file)));
     while let Some(file) = to_follow.pop() {
@@ -605,7 +666,14 @@ pub(super) fn find_reloadable_files(
         to_follow.extend(importers_of_file.map(|import| import.1));
     }
     if input.runs_in_several_realms && !input.entry_points_run_again {
-        limit_reloadable_files(input, scans, absent, &importers, &mut is_reloadable);
+        limit_reloadable_files(
+            input,
+            scans,
+            absent,
+            &importers,
+            requirers_of_any_file,
+            &mut is_reloadable,
+        );
     }
     is_reloadable
 }
@@ -650,6 +718,7 @@ pub(super) fn find_reloadable_commonjs_files(
     input: &BindInput<'_, '_>,
     scans: &Scans,
     is_reloadable: &[bool],
+    requirers_of_any_file: &[FileId],
 ) -> Vec<FileId> {
     let files = input.files;
     let mut is_started = vec![false; files.modules.len()];
@@ -676,7 +745,7 @@ pub(super) fn find_reloadable_commonjs_files(
         return marked;
     };
     let mut importers: Vec<(FileId, FileId)> = Vec::new();
-    let mut to_follow: Vec<FileId> = Vec::new();
+    let mut to_follow: Vec<FileId> = requirers_of_any_file.to_vec();
     for &module in &named {
         if let ModuleRef::File(file) = module {
             to_follow.push(file);

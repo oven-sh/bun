@@ -108,7 +108,6 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             _ => SmallVec::new(),
         };
         let resolution = add_written_arms(context, key, site, &arms, resolution);
-        let written_count = files_of(resolution).count();
         let followed = analyzed.analysis.known_load_names_at(site.specifier_node);
         let followed: SmallVec<[Atom; 2]> = followed.collect();
         let resolution = add_written_arms(context, key, site, &followed, resolution);
@@ -118,26 +117,16 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             is_linked_by_bundler: matches!(site.specifier, ImportSpecifier::Constant(_))
                 && is_linked_by_bundler(hir, bound, site.kind),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
-            may_have_unread_type: may_have_unread_type(hir, site),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
-            is_statement: matches!(
-                site.kind,
-                ImportSiteKind::Import(_)
-                    | ImportSiteKind::ExportFrom(_)
-                    | ImportSiteKind::ExportStar(_)
-            ),
             increases_depth: (alternatives.iter())
                 .any(|&specifier| !is_relative(constant_prefix(atoms, specifier))),
-            is_name_followed: false,
-            may_import_module_form: may_import_module_form(hir, site.kind),
         };
-        for (place, file) in files_of(resolution).enumerate() {
+        for file in files_of(resolution) {
             let increases_depth = origin.increases_depth
                 && (file.host_module.is_some()
                     || !context.resolver.is_same_package(key.path, file.path));
             let origin = TargetOrigin {
                 increases_depth,
-                is_name_followed: place >= written_count,
                 ..origin
             };
             add_target(context, &mut targets, origin, file);
@@ -238,7 +227,6 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
                 let origin = TargetOrigin {
                     is_linked_by_bundler: false,
                     type_attribute: Some(type_attribute),
-                    is_statement: false,
                     ..IMPLIED_IMPORT
                 };
                 self.implied.push(CodeResolution::File(file));
@@ -760,47 +748,21 @@ fn loader_kind(site: &ImportSite) -> CodeImportKind {
     }
 }
 
-/// Whether the site loads a file as an ES module and names none of its exports.
-fn may_import_module_form(hir: &hir::File<'_>, site: ImportSiteKind) -> bool {
-    match site {
-        ImportSiteKind::Import(import) => {
-            let mut named = hir[import].named.iter();
-            hir[import].default.is_none() && named.all(|it| hir[it].type_only)
-        }
-        ImportSiteKind::ExportFrom(export) => {
-            let mut items = hir[export].items.iter();
-            items.all(|it| hir[it].type_only)
-        }
-        ImportSiteKind::ExportStar(_)
-        | ImportSiteKind::ImportCall(_)
-        | ImportSiteKind::ImportByTestRunner(_) => true,
-        _ => false,
-    }
-}
-
 #[derive(Copy, Clone)]
 struct TargetOrigin<'a> {
     kind: CodeImportKind,
     is_linked_by_bundler: bool,
     type_attribute: Option<&'a [u8]>,
-    may_have_unread_type: bool,
     embed_attribute: Option<&'a [u8]>,
-    is_statement: bool,
     increases_depth: bool,
-    is_name_followed: bool,
-    may_import_module_form: bool,
 }
 
 const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     kind: CodeImportKind::Import,
     is_linked_by_bundler: true,
     type_attribute: None,
-    may_have_unread_type: false,
     embed_attribute: None,
-    is_statement: true,
     increases_depth: false,
-    is_name_followed: false,
-    may_import_module_form: false,
 };
 
 fn add_target<'r>(
@@ -814,40 +776,23 @@ fn add_target<'r>(
         kind,
         is_linked_by_bundler,
         type_attribute,
-        may_have_unread_type,
         embed_attribute,
-        is_statement,
         increases_depth,
-        is_name_followed,
-        may_import_module_form,
     } = origin;
     let request = LoaderRequest {
         is_linked_by_bundler,
         ..resolver.loader_request(file.path, kind, type_attribute, embed_attribute)
     };
-    let has_no_type = type_attribute.is_none() && embed_attribute.is_none();
-    let module_form = match may_import_module_form && has_no_type && file.host_module.is_none() {
-        true => context.loader_of_module_form(file.path),
-        false => None,
-    };
-    let loader = module_form.unwrap_or_else(|| host.loader_of(&request));
     let key = LoadKey {
         path: file.path,
-        loader,
+        loader: host.loader_of(&request),
     };
     let index = targets.len() as u32;
-    let has_type_of_shared_kind =
-        may_have_unread_type || type_attribute.is_some_and(|it| it != b"json");
     targets.push(CodeTarget {
         key,
         host_module: file.host_module,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
-        is_linked_by_bundler,
-        is_loaded_with_importer: is_statement,
-        has_shared_type: is_statement && has_type_of_shared_kind,
-        has_type_of_shared_kind,
-        is_name_followed,
     });
     index
 }

@@ -633,6 +633,33 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
   });
 });
 
+test("ModuleGraph GC: the loader of a disposed graph goes while other graphs never stop loading", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { heapStats } from "bun:jsc";
+      let made = 0;
+      await Promise.all(Array.from({ length: 8 }, async () => {
+        for (let nth; (nth = ++made) <= 200; ) {
+          const graph = new Bun.ModuleGraph({});
+          await graph.import(${JSON.stringify(file("esm.mjs"))});
+          graph.dispose();
+          if (nth === 180) (Bun.gc(true), console.log(heapStats().objectTypeCounts.ModuleLoader));
+        }
+      }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(Number(stdout)).toBeWithin(1, 60);
+  expect(exitCode).toBe(0);
+});
+
 test("ModuleGraph GC: survives collecting continuously", async () => {
   await using proc = Bun.spawn({
     cmd: [

@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// A file imported with { type: "sqlite" } exports one Database as `default` and as `db`, beside `__esModule`. require() answers the object with the three names, and without the
-// attribute it asks for another module than the statements do.
+// A file imported with { type: "sqlite" } exports one Database as `default` and as `db`, beside `__esModule`. require() answers the object with the three names.
 const files = {
   "data.sqlite": "",
   "main.mjs": `import theDefault, { db } from "./data.sqlite" with { type: "sqlite" };
@@ -30,29 +29,30 @@ exports.holds = db => [asked.db === db, asked.default === db, asked.__esModule].
 export default db;
 `,
 };
-const printed = [
+const printed = (isOneModule: boolean) => [
   "object Database true true",
   "__esModule,db,default true true true",
   "__esModule,db,default true true",
-  "object __esModule,db,default false false",
-  "__esModule,db,default false,false,true",
+  `object __esModule,db,default ${isOneModule} ${isOneModule}`,
+  `__esModule,db,default ${isOneModule},${isOneModule},true`,
   "2",
 ];
 
 test("bun run", async () => {
   using directory = tempDir("sqlite-exports-plain", files);
   const { stdout, exitCode } = await run([bunExe(), "run", "./main.mjs"], String(directory), bunEnv);
-  expect(stdout.trim().split("\n")).toEqual(printed);
+  expect(stdout.trim().split("\n")).toEqual(printed(true));
   expect(exitCode).toBe(0);
 });
 
+// With the attribute an executable opens the file below its working directory, and without it where the file lay at the build.
 test("an executable", async () => {
   using directory = tempDir("sqlite-exports-executable", files);
   const executable = join(String(directory), isWindows ? "program.exe" : "program.out");
   const build = [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable];
   expect(await run(build, String(directory), bunEnv)).toMatchObject({ exitCode: 0 });
   const { stdout, exitCode } = await run([executable], String(directory), bunEnv);
-  expect(stdout.trim().split("\n")).toEqual(printed);
+  expect(stdout.trim().split("\n")).toEqual(printed(false));
   expect(exitCode).toBe(0);
 }, 240_000);
 
@@ -63,7 +63,7 @@ test("a test run", async () => {
   });
   const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
   const { stdout } = await run([bunExe(), "test", "--aot", "./main.test.mjs"], String(directory), env);
-  expect(stdout.split("\n").filter(line => line && !line.startsWith("bun test "))).toEqual(printed);
+  expect(stdout.split("\n").filter(line => line && !line.startsWith("bun test "))).toEqual(printed(true));
 }, 240_000);
 
 // Both import one file, so both hold one Database.

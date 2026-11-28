@@ -166,6 +166,19 @@ Module._resolveFilename = function (request, ...rest) { return String(request).e
 try { const again = require("FOLDER/late.json"); out = typeof again + ":" + again("a", "b"); } catch (e) { out = "inside " + say(e); }
 console.log(String(total), out);
 `,
+  ...Object.fromEntries(
+    ["node:os", "os", "sys"].map(name => [
+      `Module._resolveFilename laid over answers with ${name}`,
+      String.raw`const { platform } = require("node:os");
+const { format } = require("node:util");
+const Module = require("node:module");
+const original = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) { return String(request).endsWith("late.json") ? JSON.parse('"${name}"') : original.call(this, request, ...rest); };
+try { out = typeof require("FOLDER/late.json") + format(typeof platform); } catch (e) { out = "inside " + say(e); }
+console.log(String(total), out);
+`,
+    ]),
+  ),
   "natives and bound functions alone": String.raw`const holder = [{}][JSON.parse("0")];
 const source = Object.defineProperty({}, "got", { enumerable: true, get: require.bind(null, JSON.parse('"./sum.cjs"')) });
 require.extensions[".json"] = Object.assign.bind(null, holder, source);

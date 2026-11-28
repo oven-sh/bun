@@ -16,7 +16,6 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
 #if ENABLE(AOT)
 BUN_DECLARE_HOST_FUNCTION(jsFunctionCompiledFactorySettled);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionCompiledFactoryFailed);
-BUN_DECLARE_HOST_FUNCTION(jsFunctionDecideFailureRetention);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionSettleReplacedFactory);
 #endif
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
@@ -24,6 +23,8 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 namespace Zig {
 
 using namespace JSC;
+
+class GlobalObject;
 
 class BunPlugin {
 public:
@@ -162,8 +163,13 @@ public:
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
+        // Those that wait for the end of a walk over imports, which the end of another load does not let go.
+        WTF::UncheckedKeyHashSet<String> modulesToEvictOnceWalkEnds = {};
+        JSC::Weak<JSC::JSPromise> endOfWalk = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepInFlightModuleMock).
         VirtualModuleMap moduleMocksBeingLoaded = {};
+        // The names of Node.js modules that the program has stored something under in require.cache since the module was last mocked.
+        WTF::UncheckedKeyHashSet<String> builtinNamesStoredOverMocks = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
         // Files whose module under the original's key became the original of a mock, with the test file that has the mock.
@@ -172,9 +178,11 @@ public:
         WTF::UncheckedKeyHashMap<String, unsigned> filesWithEarlierOriginal = {};
 
         struct Matches {
+            String key;
             JSC::JSString* path { nullptr };
             JSC::MarkedArgumentBuffer callbacks;
             size_t next { 0 };
+            bool isForLoadedModule { false };
         };
 
         JSC::JSValue run(JSC::JSGlobalObject* globalObject, const String& key, Matches& matches);
@@ -184,6 +192,7 @@ public:
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void willStoreInRequireCache(const String& key);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -193,6 +202,7 @@ public:
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
+            builtinNamesStoredOverMocks.clear();
             runningModuleMocks.clear();
             waitingModuleMocks.clear();
             moduleMocksWithTurn.clear();
@@ -326,10 +336,38 @@ public:
         bool isResolvingImportCall { false };
         // Cleared while a callback runs: anything the callback resolves is a separate request.
         bool isResolvingImportStatement { false };
+
+        bool isAskedAboutBuiltins() const { return namespaces.contains("node"_s) || namespaces.contains("bun"_s); }
+        // Only while isAskedAboutBuiltins().
+        void didResolve(Zig::GlobalObject*, const String& importer, const String& key);
+        // A callback answers `key` for a builtin. True if `importer` gets the builtin all the same.
+        bool givesWayToBuiltin(Zig::GlobalObject*, const String& key, const String& importer, bool isAskedByAlias, Asker);
+        bool isReplacement(const String& key) const;
+        // False if that was known.
+        bool didFailToRequireAsyncReplacement(const String& key);
+
+        void clear()
+        {
+            Base::clear();
+            m_modulesLoadedBy.clear();
+            m_replacements.clear();
+        }
+
+    private:
+        struct Replacement {
+            // The module itself and what it has loaded, directly or not.
+            WTF::UncheckedKeyHashSet<String> ownModules;
+            bool isAsync { false };
+        };
+        void addWithWhatItLoads(Replacement&, const String& name) const;
+
+        WTF::UncheckedKeyHashMap<String, WTF::UncheckedKeyHashSet<String>> m_modulesLoadedBy;
+        WTF::UncheckedKeyHashMap<String, Replacement> m_replacements;
     };
 };
 
-class GlobalObject;
+// Leaves out the frames that only tell Bun who is calling.
+JSC::JSValue asyncContextOfImport(JSC::JSGlobalObject*, JSC::JSValue asyncContext);
 
 } // namespace Zig
 
@@ -339,7 +377,7 @@ class JSSourceCode;
 }
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, const BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
 JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
 // Returns null if the factory has settled or the generated ES module will call it (never when `synchronous`), else a promise for that.
 JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, bool synchronous);
@@ -350,10 +388,12 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 // The factory is an async function that is running, or that nothing has called. require() can't wait for it, and calling it
 // from there would make the test file the file of a running factory, whose own import of the module gets the original.
 bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
+// Whether require() gets a mock for the Node.js module `key` that is newer than what require.cache holds under `name`.
+bool isStoredBelowModuleMock(Zig::GlobalObject*, const String& name, const String& key);
 // Nothing has called it, and no import is loading the original, which a require() would disturb.
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 bool hasSynchronousMockFactory(Zig::GlobalObject*, const String& path, bool isOriginalSynchronous);
-bool isSpyMock(Zig::GlobalObject*, const String& path);
+bool isModuleMockWithoutFactory(Zig::GlobalObject*, const String& path);
 bool isRequiringModuleMock(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
 bool hasRegisteredModuleMock(Zig::GlobalObject*, const String& path);
@@ -379,7 +419,14 @@ JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModu
 JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
 #endif
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
-void evictModulesThatHaveLoaded(Zig::GlobalObject*);
+enum class LoadThatEnded : bool { WasSynchronous,
+    WasAwaited };
+void evictModulesThatHaveLoaded(Zig::GlobalObject*, LoadThatEnded = LoadThatEnded::WasSynchronous);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
+// The generated ES module makes it without waiting, so a synchronous load can use that module too.
+bool isModuleMockMadeFromImportAlone(JSC::JSObject* moduleMock);
+bool isFetchedByRunningModuleMock(Zig::GlobalObject*, const String& key);
+// It belongs to the test file that runs it, which may not be the one that fetched it.
+void willRunImportedModule(Zig::GlobalObject*, const String& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

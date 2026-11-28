@@ -154,7 +154,7 @@ fn written_files<'a>(
     scans: &'a Scans,
     file: FileId,
 ) -> impl Iterator<Item = FileId> + 'a {
-    let scan = scans.find(file);
+    let scan = scans.find(file).filter(|scan| !scan.is_never_linked);
     let answers = scan.map_or(&[][..], |scan| &scan.sites);
     let written = scan.map_or(&[][..], |_| input.files.analysis(file).import_sites);
     let sites = answers.iter().zip(written);
@@ -309,6 +309,10 @@ impl NamedByMocks<'_> {
             NamedByMocks::AnyFile => true,
         }
     }
+
+    fn may_replace(&self, input: &BindInput<'_, '_>, file: FileId) -> bool {
+        input.runs_tests && input.sources.kind(file) == SourceKind::Program && self.names(file)
+    }
 }
 
 fn add_transitive_importers(
@@ -327,10 +331,7 @@ fn add_transitive_importers(
     let mut next = 0;
     while let Some(&module) = found.get(next) {
         next += 1;
-        let may_be_replaced = input.runs_tests
-            && input.sources.kind(module.file) == SourceKind::Program
-            && named_by_mocks.names(module.file);
-        if may_be_replaced {
+        if named_by_mocks.may_replace(input, module.file) {
             continue;
         }
         for &importer in &importers[module.file.idx()] {
@@ -350,34 +351,32 @@ fn is_refused_data(input: &BindInput<'_, '_>, file: FileId) -> bool {
         .is_some_and(|source| source.parse_failure.is_some() && source.refused_at.is_some())
 }
 
-/// The parser refuses the text, so nothing of the file runs.
-fn is_refused_text(input: &BindInput<'_, '_>, scans: &Scans, file: FileId) -> bool {
-    let is_module = scans
-        .find(file)
-        .is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText);
-    parsed_source(input.files, file).is_some_and(|source| source.parse_failure.is_some())
-        || (is_module && !input.files.analysis(file).errors.is_empty())
+fn is_es_module(scans: &Scans, file: FileId) -> bool {
+    (scans.find(file)).is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText)
 }
 
-/// Counts the requests of the file in front of the first that fails. None if every request finds a module.
+/// The parser refuses the text, so nothing of the file runs.
+fn is_refused_text(input: &BindInput<'_, '_>, scans: &Scans, file: FileId) -> bool {
+    parsed_source(input.files, file).is_some_and(|source| source.parse_failure.is_some())
+        || (is_es_module(scans, file) && !input.files.analysis(file).errors.is_empty())
+}
+
+fn is_statement(site: ImportSiteKind) -> bool {
+    matches!(
+        site,
+        ImportSiteKind::Import(_) | ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+    )
+}
+
+/// Counts the requests of the file in front of the first that finds no module. None if every request finds one.
 fn count_preceding_requests(
     input: &BindInput<'_, '_>,
     scans: &Scans,
     file: FileId,
 ) -> Option<usize> {
     let scan = scans.find(file)?;
-    if is_refused_text(input, scans, file) {
-        return Some(0);
-    }
-    let mut requests = scan.requests.iter();
-    let refused = requests.position(|request| match request.target {
-        ModuleRef::File(target) => is_refused_text(input, scans, target),
-        _ => false,
-    });
     let mut failures = scan.failures.iter();
-    let Some(first) = failures.find(|pending| fails_load(pending, false)) else {
-        return refused;
-    };
+    let first = failures.find(|pending| fails_load(pending, false))?;
     if !matches!(first.failure.kind, ModuleFailureKind::Unresolved { .. }) {
         return Some(0);
     }
@@ -389,87 +388,80 @@ fn count_preceding_requests(
         .zip(&scan.sites);
     let earlier = sites.take(first.order.site as usize);
     let targets: Vec<ModuleRef> = earlier
-        .filter_map(|(site, answer)| match (site.kind, answer) {
-            (
-                ImportSiteKind::Import(_)
-                | ImportSiteKind::ExportFrom(_)
-                | ImportSiteKind::ExportStar(_),
-                &ScannedSite::Module(target),
-            ) => Some(target),
+        .filter_map(|(site, answer)| match *answer {
+            ScannedSite::Module(target) if is_statement(site.kind) => Some(target),
             _ => None,
         })
         .collect();
     let mut requests = scan.requests.iter();
     let unresolved = requests.position(|request| !targets.contains(&request.target));
-    let unresolved = unresolved.unwrap_or(scan.requests.len());
-    Some(refused.map_or(unresolved, |refused| refused.min(unresolved)))
+    Some(unresolved.unwrap_or(scan.requests.len()))
 }
 
-/// `require()` of `root` walks its graph breadth first and runs each CommonJS file on the way. A failing request ends the requests of its own file only.
-fn collect_commonjs_run_first(
+/// Counts the requests that a load of the file can come to.
+fn count_reachable_requests(
     input: &BindInput<'_, '_>,
     scans: &Scans,
+    may_be_replaced: &dyn Fn(FileId) -> bool,
+    file: FileId,
+) -> usize {
+    let requests = scans.find(file).map_or(&[][..], |scan| &scan.requests);
+    let preceding = count_preceding_requests(input, scans, file).unwrap_or(requests.len());
+    let refused = requests[..preceding].iter().position(|request| {
+        matches!(request.target, ModuleRef::File(target)
+            if is_refused_text(input, scans, target) && !may_be_replaced(target))
+    });
+    refused.map_or(preceding, |refused| refused + 1)
+}
+
+struct WayToFailure {
+    failed: FileId,
+    through: Option<FileId>,
+}
+
+/// A load of `root` goes through its imports depth first, and reports the first that fails.
+fn find_way_to_failure(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    may_be_replaced: &dyn Fn(FileId) -> bool,
     root: FileId,
-) -> Vec<FileId> {
-    let (mut made, mut loaded) = (Vec::new(), vec![root]);
-    let mut seen: FxHashSet<FileId> = loaded.iter().copied().collect();
-    let mut next = 0;
-    while let Some(&file) = loaded.get(next) {
-        next += 1;
+) -> Option<WayToFailure> {
+    let requests_of = |file: FileId| {
         let requests = scans.find(file).map_or(&[][..], |scan| &scan.requests);
         let count = count_preceding_requests(input, scans, file);
-        for request in &requests[..count.unwrap_or(requests.len())] {
-            let ModuleRef::File(target) = request.target else {
-                continue;
-            };
-            if request.phase != ImportPhase::Evaluation || !seen.insert(target) {
-                continue;
+        let preceding = &requests[..count.unwrap_or(requests.len())];
+        (file, preceding.iter(), count.is_some())
+    };
+    let mut seen = FxHashSet::from_iter([root]);
+    let mut path = vec![requests_of(root)];
+    while let Some((file, requests, fails)) = path.last_mut() {
+        let Some(request) = requests.next() else {
+            if *fails {
+                let failed = *file;
+                let through = path.get(1).map(|below_root| below_root.0);
+                return Some(WayToFailure { failed, through });
             }
-            match scans.find(target).map(|scan| scan.interop.kind) {
-                Some(ModuleKind::CommonJs) => made.push(target),
-                Some(ModuleKind::SourceText) => loaded.push(target),
-                _ => {}
-            }
+            path.pop();
+            continue;
+        };
+        let ModuleRef::File(target) = request.target else {
+            continue;
+        };
+        if !seen.insert(target) || may_be_replaced(target) {
+            continue;
+        }
+        if is_refused_text(input, scans, target) {
+            let through = path.get(1).map_or(target, |below_root| below_root.0);
+            return Some(WayToFailure {
+                failed: target,
+                through: Some(through),
+            });
+        }
+        if is_es_module(scans, target) {
+            path.push(requests_of(target));
         }
     }
-    made
-}
-
-/// Finds the files that `require()` loads and `import()` does not. A failing `import()` runs its CommonJS files in an order that varies.
-fn find_require_only_files(
-    input: &BindInput<'_, '_>,
-    scans: &Scans,
-) -> impl Fn(FileId) -> bool + use<> {
-    let (mut required, mut imported) = (FxHashSet::default(), FxHashSet::default());
-    let (mut requires_any_file, mut imports_any_file) = (false, false);
-    for &file in input.files.compiled_files() {
-        let scan = scans.of(file);
-        let sites = input.files.analysis(file).import_sites.iter();
-        for (site, answer) in sites.zip(&scan.sites) {
-            let (loaded, loads_any_file) = match site.kind {
-                ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => {
-                    (&mut required, &mut requires_any_file)
-                }
-                ImportSiteKind::ImportCall(_) => (&mut imported, &mut imports_any_file),
-                _ => continue,
-            };
-            let mut add = |target: ModuleRef| {
-                if let ModuleRef::File(target) = target {
-                    loaded.insert(target);
-                }
-            };
-            match answer {
-                &ScannedSite::Module(target) => add(target),
-                // `bun test` runs no file before the failure where the name is computed.
-                _ if input.runs_tests => {}
-                ScannedSite::Candidates(range) => scan.modules_spelled_in(range).for_each(add),
-                ScannedSite::AllModules => *loads_any_file = true,
-                _ => {}
-            }
-        }
-    }
-    let requires_any_file = requires_any_file && !imports_any_file;
-    move |file| !imported.contains(&file) && (requires_any_file || required.contains(&file))
+    None
 }
 
 /// The files that a load requests beside a file that does not parse. It calls the factories of their mocks and runs none of them.
@@ -489,9 +481,7 @@ fn find_mockable_requests(
         return Vec::new();
     };
     let is_kept = |file: FileId| {
-        let is_module =
-            (scans.find(file)).is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText);
-        is_module
+        is_es_module(scans, file)
             && named_by_mocks.names(file)
             && !input.files.analysis(file).has_live_top_level_await
     };
@@ -500,40 +490,53 @@ fn find_mockable_requests(
         .collect()
 }
 
+/// Keeps the requests that the load comes to.
 fn limit_unloadable_requests(
-    scan: &mut FileScan,
-    through: Option<FileId>,
-    run_first: &[FileId],
+    input: &BindInput<'_, '_>,
+    scans: &mut Scans,
+    module: &UnloadableModule,
+    reachable_count: usize,
     mockable: &[FileId],
 ) {
-    let mut is_first = true;
+    let Some(scan) = scans.find_mut(module.file) else {
+        return;
+    };
+    let mut place = 0;
     scan.requests.retain_mut(|request| {
-        if let ModuleRef::File(file) = request.target
-            && mockable.contains(&file)
-            && through != Some(file)
-            && request.phase == ImportPhase::Evaluation
-        {
-            *request = RequestDraft {
-                target: request.target,
-                phase: ImportPhase::Defer,
-                is_star_export: false,
-                star_place: NO_STAR_PLACE,
-            };
-            return true;
+        let is_reachable = place < reachable_count;
+        place += 1;
+        let file = match request.target {
+            ModuleRef::File(file) => Some(file),
+            _ => None,
+        };
+        if file.is_some() && file == module.through {
+            return is_reachable;
         }
-        let leads_to_failure = through.map(ModuleRef::File) == Some(request.target);
-        leads_to_failure && core::mem::replace(&mut is_first, false)
+        let is_mockable = file.is_some_and(|file| mockable.contains(&file))
+            && request.phase == ImportPhase::Evaluation;
+        *request = RequestDraft {
+            target: request.target,
+            phase: match is_reachable {
+                true => request.phase,
+                false => ImportPhase::Defer,
+            },
+            is_star_export: false,
+            star_place: NO_STAR_PLACE,
+        };
+        is_reachable || is_mockable
     });
-    let drafts = run_first.iter().map(|&file| RequestDraft {
-        target: ModuleRef::File(file),
-        phase: ImportPhase::Evaluation,
-        is_star_export: false,
-        star_place: NO_STAR_PLACE,
-    });
-    scan.requests.splice(0..0, drafts);
     scan.candidates.clear();
     scan.spellings.clear();
-    scan.sites.fill(ScannedSite::Erased);
+    scan.is_never_linked = true;
+    let written = input.files.analysis(module.file).import_sites;
+    for (answer, site) in scan.sites.iter_mut().zip(written) {
+        let is_kept = is_statement(site.kind)
+            && matches!(*answer, ScannedSite::Module(target)
+                if scan.requests.iter().any(|request| request.target == target));
+        if !is_kept {
+            *answer = ScannedSite::Erased;
+        }
+    }
 }
 
 /// Finds the modules that import refused data and lead to no other failure.
@@ -587,7 +590,7 @@ pub(super) fn find_unloadable_modules(
         })
     });
     let mut found: Vec<UnloadableModule> = with_failure_of_their_own.collect();
-    let refused_data_importers = find_refused_data_importers(input, scans, &found);
+    let mut refused_data_importers = find_refused_data_importers(input, scans, &found);
     if found.is_empty() && refused_data_importers.is_empty() {
         return found;
     }
@@ -615,35 +618,46 @@ pub(super) fn find_unloadable_modules(
     if !input.runs_tests {
         found.retain(|module| is_late(module.file) && is_late(module.importer));
     }
-    let is_only_required = find_require_only_files(input, scans);
-    let modules = found.iter().chain(&refused_data_importers);
-    let modules = modules.filter(|module| is_only_required(module.file));
-    let run_first: FxHashMap<FileId, Vec<FileId>> = modules
-        .map(|module| {
-            let files = collect_commonjs_run_first(input, scans, module.file);
-            (module.file, files)
-        })
+    let may_be_replaced = |file: FileId| named_by_mocks.may_replace(input, file);
+    let own_failures: FxHashMap<FileId, FailureOrder> = (found.iter())
+        .filter(|module| module.through.is_none())
+        .map(|module| (module.file, module.order))
         .collect();
-    let run_first_by = |file: FileId| run_first.get(&file).map_or(&[][..], |files| &files[..]);
-    for module in &refused_data_importers {
-        if found.iter().any(|it| it.file == module.file) {
+    for module in &mut found {
+        let Some(way) = find_way_to_failure(input, scans, &may_be_replaced, module.file) else {
             continue;
+        };
+        if module.importer != module.file
+            && let Some(&order) = own_failures.get(&way.failed)
+        {
+            (module.importer, module.order) = (way.failed, order);
         }
-        if let Some(scan) = scans.find_mut(module.file) {
-            limit_unloadable_requests(scan, module.through, run_first_by(module.file), &[]);
-        }
+        module.through = way.through;
     }
+    refused_data_importers.retain(|module| !found.iter().any(|it| it.file == module.file));
+    for module in &mut refused_data_importers {
+        let way = find_way_to_failure(input, scans, &may_be_replaced, module.file);
+        module.through = way.and_then(|way| way.through).or(module.through);
+    }
+    let count_reachable = |module: &UnloadableModule| {
+        count_reachable_requests(input, scans, &may_be_replaced, module.file)
+    };
+    let modules = refused_data_importers.iter().chain(&found);
+    let mut reachable_counts = modules.map(count_reachable).collect::<Vec<_>>().into_iter();
     let mockable: Vec<Vec<FileId>> = found
         .iter()
         .map(|module| find_mockable_requests(input, scans, &named_by_mocks, module))
         .collect();
-    for (module, mockable) in found.iter().zip(&mockable) {
+    for (module, count) in refused_data_importers.iter().zip(&mut reachable_counts) {
+        limit_unloadable_requests(input, scans, module, count, &[]);
+    }
+    for ((module, mockable), count) in found.iter().zip(&mockable).zip(reachable_counts) {
         let build_says_nothing = !is_named[module.file.idx()]
             || parsed_source(input.files, module.file)
                 .is_some_and(|source| !source.is_language_assumed);
+        limit_unloadable_requests(input, scans, module, count, mockable);
         let scan = scans.find_mut(module.file);
         let scan = scan.expect("an unloadable module was scanned");
-        limit_unloadable_requests(scan, module.through, run_first_by(module.file), mockable);
         let failures = scan.failures.iter_mut();
         for pending in failures.filter(|it| fails_load(it, false)) {
             pending.failure.kind =

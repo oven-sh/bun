@@ -752,6 +752,15 @@ pub mod resolved_source_tag {
         pub const CommonJsCustomExtension: Self = Self(10);
         pub const ExportDefaultOnly: Self = Self(11);
 
+        pub fn of_code_in(package_json: Option<&bun_resolver::package_json::PackageJSON>) -> Self {
+            use bun_bundler::options::ModuleType;
+            match package_json.map(|it| it.module_type) {
+                Some(ModuleType::Esm) => Self::PackageJsonTypeModule,
+                Some(ModuleType::Cjs) => Self::PackageJsonTypeCommonjs,
+                Some(ModuleType::Unknown) | None => Self::Javascript,
+            }
+        }
+
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
         pub(crate) fn try_from_name(name: &[u8]) -> Option<Self> {

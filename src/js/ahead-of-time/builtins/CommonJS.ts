@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 643ce52f6598e6a7708c4c4fc250e007bf615ea9dcd36d131e20351f10496ff3.
+// Written against that file with the SHA-256 e1375c3fb7d4fec3da1913c8d9e8b56801d86128c6ff8f2813b4f8c297daa6c2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader
@@ -11,7 +11,8 @@ interface RequiredESMNamespace {
 
 $getter;
 export function main() {
-  return $requireMap.$get(Bun.main);
+  const path = Bun.main;
+  return $requireMap.$filename === path ? $requireMap.$main : $requireMap.$get(path);
 }
 
 // This function is bound when constructing instances of CommonJSModule
@@ -25,53 +26,36 @@ export function require(this: JSCommonJSModule, _id: string) {
 // Like Node, `this` is only used as the parent module and can be any value, even null.
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
+export function overridableRequire(
+  this: JSCommonJSModule,
+  originalId: string,
+  options?: { paths?: string[]; type?: string },
+) {
   // `filename` can be a user getter, so read it once, before the module is added to the require map.
   const parentFilename = this?.filename;
-  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
   const requireMap: RequireMap = this?.$requireMap || $requireMap;
+  const paths = options ? options.paths : undefined;
+  // It is "fs", not "node:fs", if an entry of the cache answers for that name.
+  const id = $resolveSync(originalId, parentFilename, false, false, paths, this, options, requireMap);
   if (id.startsWith("node:")) {
-    if (id !== originalId) {
-      // A terrible special case where Node.js allows non-prefixed built-ins to
-      // read the require cache. Though they never write to it, which is so silly.
-      const existing = requireMap.$get(originalId);
-      if (existing) {
-        const c = $evaluateCommonJSModule(existing, this);
-        if (c && c.indexOf(existing) === -1) {
-          c.push(existing);
-        }
-        return existing.exports;
-      }
-    }
+    const exports = $requireNativeModule(id);
+    if (exports !== undefined) return exports;
+  }
 
-    return $requireNativeModule(id);
-  } else {
-    const existing = requireMap.$get(id);
-    if (existing) {
-      // Scenario where this is necessary:
-      //
-      // In an ES Module, we have:
-      //
-      //    import "react-dom/server"
-      //    import "react"
-      //
-      // Synchronously, the "react" import is created first, and then the
-      // "react-dom/server" import is created. Then, at ES Module link time, they
-      // are evaluated. The "react-dom/server" import is evaluated first, and
-      // require("react") was previously created as an ESM module, so we wait
-      // for the ESM module to load
-      //
-      // ...and then when this code is reached, unless
-      // we evaluate it "early", we'll get an empty object instead of the module
-      // exports.
-      //
-      const c = $evaluateCommonJSModule(existing, this);
-      if (c && c.indexOf(existing) === -1) {
-        c.push(existing);
-      }
-      return existing.exports;
+  const type = options ? options.type : undefined;
+  if (type !== undefined) {
+    const otherForm = $requireOtherFormOfFile(id, type, this);
+    if (otherForm !== undefined) return otherForm;
+  }
+
+  const existing = requireMap.$get(id);
+  if (existing) {
+    const c = $evaluateCommonJSModule(existing, this);
+    if (c && c.indexOf(existing) === -1) {
+      c.push(existing);
     }
+    return existing.exports;
   }
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);
@@ -108,22 +92,13 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      out = $requireCommonJS(
-        id,
-        mod,
-        parentFilename,
-        // did they pass a { type } object?
-        $argumentCount(),
-        // the object containing a "type" attribute, if they passed one
-        // maybe this will be "paths" in the future too.
-        $argument(1),
-      );
+      out = $requireCommonJS(id, mod, parentFilename, type, originalId);
     } catch (E) {
       $assert(requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
       throw E;
     }
   } else {
-    out = $requireCommonJS(id, mod, parentFilename, $argumentCount(), $argument(1));
+    out = $requireCommonJS(id, mod, parentFilename, type, originalId);
   }
 
   // -1 means we need to lookup the module from the ESM registry.
@@ -277,6 +252,8 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
   const isBuiltinKey = (key: string | symbol) =>
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
   const hasKey = (key: string) => requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key, owner));
+  // What import attributes have made of files. It is not in `requireMap`, because require() does not answer with it.
+  const otherForms = new $Map<string, { form: unknown; mod: JSCommonJSModule }>();
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
       const entry = requireMap.$get(key);
@@ -289,11 +266,21 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
           requireMap.$set(key, mod);
           return mod;
         }
+        const form = $esmNamespaceForCjs(key, owner, true);
+        if (form !== undefined) {
+          let shown = otherForms.$get(key);
+          if (shown?.form !== form) {
+            shown = { form, mod: $createCommonJSModule(key, form, true, owner) };
+            otherForms.$set(key, shown);
+          }
+          return shown!.mod;
+        }
       }
 
       return inner[key];
     },
     set(_target, key: string, value) {
+      $requireCacheWillSet(key, value, owner);
       requireMap.$set(key, value);
       return true;
     },
@@ -303,6 +290,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     },
 
     deleteProperty(_target, key: string) {
+      otherForms.$delete(key);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);

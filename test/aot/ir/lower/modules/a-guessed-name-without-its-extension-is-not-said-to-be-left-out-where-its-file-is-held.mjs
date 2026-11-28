@@ -1,12 +1,11 @@
-// DIAGNOSTIC: TS100089 main.mjs:10
+// DIAGNOSTIC: TS100089 main.mjs:9
 // RUN: link
 // CHECK: module {{*}}path="/$bunfs/root/part.mjs"
 // CHECK-NOT: path="/$bunfs/root/other.mjs"
 
 // FILE: main.mjs
-// silent.cjs leaves what it is to its loader, and other.mjs, which only a guess brings, loads it too, so no file comes in on a guess. part.mjs is imported for sure: `./part` finds it, and the build does not say that it is missing. `./other` is.
+// other.mjs, which only a guess brings, loads a file that nothing names, so no file comes in on a guess. part.mjs is imported for sure: `./part` finds it, and the build does not say that it is left out.
 import { createRequire } from "node:module";
-import "./silent.cjs";
 import { part } from "./part.mjs";
 const table = { part: "./part", other: "./other" };
 export const seen = JSON.stringify(table);
@@ -15,12 +14,8 @@ console.log(part);
 console.log(load(table.part).part);
 console.log(load(table.other).other);
 
-// FILE: silent.cjs
-console.log("silent");
-
 // FILE: part.mjs
 export const part = 1;
 
 // FILE: other.mjs
-import "./silent.cjs";
-export const other = 2;
+export const other = import(globalThis.name);

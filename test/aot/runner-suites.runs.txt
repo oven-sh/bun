@@ -21,7 +21,6 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 # These: what a running factory loads is a copy of its own in plain. The copy sees the original, and the importers that wait for the mock get another instance, which sees the mock.
 # Compiled has the one instance and hands the factory's to the importers.
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 # These: require(), jest.requireActual() or jest.createMockFromModule() meets a factory that awaits. Plain throws "require() async module". Compiled answers.
 test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its own module, whose original imports itself, is only called once
 # The next one: a factory removes its own mock. Plain calls it in a load that fails by a syntax error below it. Compiled does not call it there: the next load calls it, and gets the mock.
@@ -45,5 +44,3 @@ test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wai
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the cycle is first loaded by vi.importActual() of the mocked module
 # This one: a require() gives up on a mock whose factory has not settled, and the mock is removed or replaced. Every test of the fixture passes. Plain runs what the require() had begun to load once more.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
-# This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
-test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too

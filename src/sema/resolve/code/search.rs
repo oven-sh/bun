@@ -156,7 +156,7 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn declared_module_type(&self, path: &[u8]) -> DeclaredModuleType {
-        module_type_from_extension(path, self.package_module_type(path))
+        module_type_from_extension(path).unwrap_or_else(|| self.package_module_type(path))
     }
 
     pub fn loader_request<'a>(
@@ -195,17 +195,6 @@ impl<'h> Resolver<'h> {
             None => DeclaredModuleType::Unknown,
         };
         *by_directory.insert_ref(self.keep(directory), declared)
-    }
-
-    pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
-        let of_package = self.package_module_type(path);
-        let is_contradicted = self.code_options().builds_executable
-            && of_package == DeclaredModuleType::CommonJs
-            && self.declared_module_type(path) == DeclaredModuleType::Esm;
-        match is_contradicted {
-            true => DeclaredModuleType::Unknown,
-            false => of_package,
-        }
     }
 
     pub(super) fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
@@ -349,17 +338,15 @@ fn refine_failure(failure: CodeFailure, specifier: &[u8], kind: CodeImportKind) 
     }
 }
 
-fn module_type_from_extension(
-    path: &[u8],
-    package_module_type: DeclaredModuleType,
-) -> DeclaredModuleType {
+fn module_type_from_extension(path: &[u8]) -> Option<DeclaredModuleType> {
     let name = basename(path);
     let dot = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
-    match &name[dot..] {
-        b".mjs" | b".mts" => DeclaredModuleType::Esm,
-        b".cjs" | b".cts" => DeclaredModuleType::CommonJs,
-        b".js" | b".ts" => package_module_type,
-        _ => DeclaredModuleType::Unknown,
+    let mut extension = <[u8; 4]>::try_from(&name[dot..]).ok()?;
+    extension.make_ascii_lowercase();
+    match &extension {
+        b".mjs" | b".mts" => Some(DeclaredModuleType::Esm),
+        b".cjs" | b".cts" => Some(DeclaredModuleType::CommonJs),
+        _ => None,
     }
 }
 

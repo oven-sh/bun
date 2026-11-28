@@ -214,7 +214,7 @@ Object.assign(programs, {
     "d.mjs": `${byName("n.mjs")} console.log("d begins"); await 0; try { require(name); } catch (error) { console.log("d caught", error.message.slice(0, 22)); } console.log("d ends"); export {};`,
     "n.mjs": n,
   },
-  // It runs while the graph is loaded, so the module has not begun: the `require` evaluates the module there and then, and the importer behind it.
+  // It runs before its importer is linked, so the module has not begun: the `require` evaluates the module there and then, and the importer behind it.
   "what requires is a CommonJS file": {
     "m.mjs": `import "./d.cjs"; export const V = "v of m"; console.log("m");`,
     "d.cjs": `${byName("n.mjs")} ${requires("require(name)")}`,
@@ -222,10 +222,7 @@ Object.assign(programs, {
   },
 });
 
-// `bun run` has two loaders, and they do not read every file alike: cjs-order.test.ts. The one behind `import` never looks at the extension, so to it a file named
-// `.mjs` that uses `require` and has no `import`, `export` or `await` of its own is CommonJS, and a file named `.cjs` that uses nothing of CommonJS is an ES module.
-// Whichever loader comes first reads the file, and the other takes what it finds. A `require` that runs only once the file is loaded is never the first.
-// Where a `require` stands beside the file, `bun run` wavers: which comes first hangs on the threads that read the texts. Nothing here asks that.
+// A file with no `import`, `export` or `await` of its own and no `module`, `exports` or `this` is what its extension says, to `import` as to `require`: cjs-order.test.ts.
 const mode = (file: string) =>
   `try { undeclared = 1; console.log("${file} is sloppy"); } catch { console.log("${file} is strict"); }`;
 const above = `import "./d.mjs"; export const V = "v of m"; console.log("m");`;
@@ -262,7 +259,7 @@ Object.assign(programs, {
   },
   "its importer reads what it exports": {
     "main.mjs": `import "./m.mjs";`,
-    "m.mjs": `import d from "./d.mjs"; export const V = "v of m"; console.log("m", typeof d);`,
+    "m.mjs": `import * as d from "./d.mjs"; export const V = "v of m"; console.log("m", Object.keys(d).length);`,
     "d.mjs": `console.log("d begins"); require("./n.mjs"); console.log("d ends");`,
     "n.mjs": n,
   },

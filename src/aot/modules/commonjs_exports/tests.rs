@@ -125,7 +125,6 @@ fn with_commonjs_input<R>(
         modules: &modules,
         half: &|module: ModuleRef| order.half(module),
         half_at_link: &|module: ModuleRef| order.half_at_link(module),
-        is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
     then(&input)
 }
@@ -791,7 +790,7 @@ fn an_import_through_a_getter_holds_a_copy_of_its_own_unless_the_name_behind_it_
 }
 
 #[test]
-fn names_that_may_be_absent_are_checked_in_link_order() {
+fn names_that_may_be_absent_are_checked_by_their_importers() {
     let main = "import './first.mjs'; import { late } from './m.cjs'; console.log(late);";
     let files = [
         ("main.mjs", main),
@@ -805,8 +804,8 @@ fn names_that_may_be_absent_are_checked_in_link_order() {
         ),
     ];
     with_program(&files, |program| {
-        assert_eq!(program.checked("main.mjs"), ["m.cjs nope", "m.cjs late"]);
-        assert!(program.checked("first.mjs").is_empty());
+        assert_eq!(program.checked("main.mjs"), ["m.cjs late"]);
+        assert_eq!(program.checked("first.mjs"), ["m.cjs nope"]);
     });
 }
 

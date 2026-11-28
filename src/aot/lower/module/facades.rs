@@ -2,12 +2,11 @@ use super::finish_body;
 use super::imports::RequestedImport;
 use super::test_run_ways::{BoundBy, emit_behind_stations};
 use crate::ir::generated::{FunctionFlags, FunctionKind};
-use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, TypeTable, VariableId, VariableKey};
+use crate::ir::{BlockId, FunctionId, FunctionKey, TypeTable, VariableId, VariableKey};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, function};
 use crate::modules::{
     ImportBinding, ModuleFailure, ModuleFailureKind, ModuleRef, SyntheticExportId,
 };
-use rustc_hash::FxHashSet;
 
 fn declare_body(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) {
     file.declare_function(key, |file| {
@@ -48,17 +47,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         export: SyntheticExportId,
         written: &ModuleFailure,
     ) -> BlockId {
-        let (asks_mocks, fails, passed) = (
-            self.create_block(),
-            self.create_block(),
-            self.create_block(),
-        );
-        let importer = ModuleRef::File(written.importer);
-        let importer = self.file.fragment.declare_module(importer);
-        let root = self.file.module_id();
-        let is_linked = self.builder.is_linked_below(importer, root);
-        (self.builder).branch(is_linked, Edge::to(asks_mocks), Edge::to(passed));
-        self.continue_in(asks_mocks);
+        let (fails, passed) = (self.create_block(), self.create_block());
         let asked = match written.kind {
             ModuleFailureKind::ExportMayBeAbsent {
                 exporter: ModuleRef::File(exporter),
@@ -138,19 +127,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let modules = self.inputs.modules;
         let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
-        let mut checked = FxHashSet::default();
         let mocks_may_answer = modules.reaches_mock(own_file);
         for &(export, failure) in modules.checks_of(own_file) {
             let written = modules.failure(failure);
-            let importer = Some(ModuleRef::File(written.importer));
-            let owner = Some(modules.synthetic_export(export).module);
-            let mut linked = [importer, written.exporter(), owner].into_iter().flatten();
-            if linked.any(|module| modules.is_left_out(module)) {
-                continue;
-            }
-            if !checked.insert((export, mocks_may_answer.then_some(failure))) {
-                continue;
-            }
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));
             let value = lowering.builder.get_module_variable(copy);
             let split = lowering.split_on_type(value, TypeTable::ABSENT);

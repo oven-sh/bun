@@ -214,4 +214,191 @@ describe.concurrent("run-cjs", () => {
       expect(result.exitCode).toBe(1);
     });
   });
+
+  async function run(files: Record<string, string | Buffer>, env: Record<string, string> = {}) {
+    using dir = tempDir("run-cjs-kind", files);
+    const once = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.trim().split("\n"), stderr, exitCode };
+    };
+    return env.BUN_RUNTIME_TRANSPILER_CACHE_PATH ? [await once(), await once()] : await once();
+  }
+  const prints = (...lines: string[]) => ({ lines, stderr: "", exitCode: 0 });
+
+  /** What loads `request`, a specifier with its attributes, and hands its namespace to `show()`. Below a require() no thread reads the file. */
+  const imports = {
+    "an import statement": (request: string, id: number) => ({
+      head: `import * as ns${id} from ${request};`,
+      body: `show(ns${id});`,
+    }),
+    "an import statement below a require()": (request: string, id: number) => ({
+      body: `show(require("./imports-${id}.mjs").ns);`,
+      files: { [`imports-${id}.mjs`]: `export * as ns from ${request};` },
+    }),
+    "import()": (request: string) => ({
+      body: `show(await import(${request.replace(/ with (.*)/, ", { with: $1 }")}));`,
+    }),
+  };
+  type Load = (request: string, id: number) => { head?: string; body: string; files?: Record<string, string> };
+  function programThatLoads(requests: string[], load: Load, show: string) {
+    const loads = requests.map(load);
+    return {
+      ...Object.assign({}, ...loads.map(it => it.files)),
+      "main.mjs": [
+        ...loads.map(it => it.head ?? ""),
+        `const show = ${show};`,
+        ...loads.map(it => it.body),
+        "export {};",
+      ].join("\n"),
+    };
+  }
+  const loads = { ...imports, "require()": (request: string) => ({ body: `show(require(${request}));` }) };
+
+  describe.each([
+    ["commonjs", "sloppy"],
+    ["module", "strict"],
+  ])('a file that says nothing of its kind, in a package of "type": %j', (type, byPackage) => {
+    const mode = `console.log((function () { return this ? "sloppy" : "strict"; })());`;
+    const filesNamed = (extension: string, index: number) => [
+      [`plain-${index}${extension}`, mode],
+      [`requires-${index}${extension}`, `require("node:fs"); ${mode}`],
+    ];
+    const project = { "package.json": JSON.stringify({ type }), "bunfig.toml": `[loader]\n".es6" = "js"\n` };
+
+    test.each(Object.entries(loads))("is what its name or its package says to %s", async (_, load) => {
+      const modes: Record<string, string> = {};
+      for (const extension of [".cjs", ".cts", ".CJS", ".CTS"]) modes[extension] = "sloppy";
+      for (const extension of [".mjs", ".mts", ".MJS", ".MTS"]) modes[extension] = "strict";
+      for (const extension of [".js", ".jsx", ".ts", ".tsx", ".es6", ".JS"]) modes[extension] = byPackage;
+      const files = Object.keys(modes).flatMap(filesNamed);
+      const requests = files.map(([file]) => `"./${file}"`);
+      expect(
+        await run({ ...project, ...Object.fromEntries(files), ...programThatLoads(requests, load, "() => {}") }),
+      ).toEqual(prints(...Object.values(modes).flatMap(mode => [mode, mode])));
+    });
+
+    test.each(Object.entries(imports))("is what its package says where a type makes it code to %s", async (_, load) => {
+      const typed = [
+        [".txt", "js"],
+        [".txt", "ts"],
+        [".json", "jsx"],
+        [".unknown", "js"],
+        [".unknown", "ts"],
+        ["", "js"],
+        ["", "tsx"],
+      ];
+      const files = typed.map(([extension], index) => filesNamed(extension, index));
+      const requests = files.flatMap((pair, index) =>
+        pair.map(([file]) => `"./${file}" with { type: "${typed[index][1]}" }`),
+      );
+      expect(
+        await run({ ...project, ...Object.fromEntries(files.flat()), ...programThatLoads(requests, load, "() => {}") }),
+      ).toEqual(prints(...requests.map(() => byPackage)));
+    });
+
+    test("is what its text says where nothing names a loader", async () => {
+      const files = ["", ".unknown"].flatMap(filesNamed);
+      const requests = files.map(([file]) => `"./${file}"`);
+      expect(
+        await run({
+          ...project,
+          ...Object.fromEntries(files),
+          ...programThatLoads(requests, loads["require()"], "() => {}"),
+        }),
+      ).toEqual(prints("strict", "sloppy", "strict", "sloppy"));
+    });
+  });
+
+  describe("a CommonJS file without code", () => {
+    const names = ["a.cjs", "a.cts", "commonjs/a.js", "commonjs/a.ts", "module/a.cjs"];
+    const files = (text: string) => ({
+      ...Object.fromEntries(names.map(name => [name, text])),
+      "commonjs/package.json": `{ "type": "commonjs" }`,
+      "module/package.json": `{ "type": "module" }`,
+    });
+    const requests = names.map(name => `"./${name}"`);
+
+    describe.each(["", "\n \n", "// nothing\n"])("%j", text => {
+      test.each(Object.entries(imports))("exports an empty object to %s", async (_, load) => {
+        expect(
+          await run({
+            ...files(text),
+            ...programThatLoads(requests, load, "ns => console.log(JSON.stringify(ns.default))"),
+          }),
+        ).toEqual(prints(...names.map(() => "{}")));
+      });
+
+      test("is run in the wrapper that the program has set", async () => {
+        const program = programThatLoads(requests, loads["require()"], "it => console.log(JSON.stringify(it))");
+        program["main.mjs"] =
+          `require("node:module").wrapper[0] = "(function (exports) { exports.wrapped = true;";\n` +
+          program["main.mjs"];
+        expect(await run({ ...files(text), ...program })).toEqual(prints(...names.map(() => `{"wrapped":true}`)));
+      });
+    });
+  });
+
+  describe("the default export of a CommonJS file that sets __esModule goes by the type of its package", () => {
+    const flag = `exports.__esModule = true; exports.default = 1;`;
+    const bundled = `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {${flag}\n})\n`;
+    const padding = "\n//" + Buffer.alloc(64 * 1024, "-").toString();
+    const files = {
+      "untyped/package.json": `{}`,
+      "untyped/a.cjs": flag + padding,
+      "untyped/a.mjs": flag + padding,
+      "untyped/bundled.cjs": bundled,
+      "module/package.json": `{ "type": "module" }`,
+      "module/a.cjs": flag + padding,
+      "module/a.mjs": flag + padding,
+      "module/bundled.cjs": bundled,
+    };
+    const requests = Object.keys(files)
+      .filter(name => !name.endsWith(".json"))
+      .map(name => `"./${name}"`);
+    const expected = ["number", "number", "number", "object", "object", "object"];
+    const show = "ns => console.log(typeof ns.default)";
+
+    test.each(Object.entries(imports))("%s, with the transpiler's cache cold and warm", async (_, load) => {
+      using cache = tempDir("run-cjs-kind-cache", {});
+      expect(
+        await run(
+          { ...files, ...programThatLoads(requests, load, show) },
+          { BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache), BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1" },
+        ),
+      ).toEqual([prints(...expected), prints(...expected)]);
+    });
+
+    test.each(Object.entries(imports))("%s, under --hot", async (_, load) => {
+      using dir = tempDir("run-cjs-kind-hot", { ...files, ...programThatLoads(requests, load, show) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      let stdout = "";
+      for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        stdout += chunk;
+        if (stdout.split("\n").length > expected.length) break;
+      }
+      expect(stdout.trim().split("\n")).toEqual(expected);
+    });
+  });
+
+  test.each(Object.entries(imports))("WebAssembly under the name of a script is WebAssembly to %s", async (_, load) => {
+    const wasm = Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]);
+    const show = `it => console.log(require("node:path").basename(it.default))`;
+    expect(
+      await run({ "a.wasm": wasm, "a.js": wasm, ...programThatLoads([`"./a.wasm"`, `"./a.js"`], load, show) }),
+    ).toEqual(prints("a.wasm", "a.js"));
+  });
 });

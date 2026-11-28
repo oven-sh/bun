@@ -1,7 +1,7 @@
 const { expect, test } = require("bun:test");
 
-test("a require() returns the imported module", async () => {
-  await import("./plain.cjs");
-  expect(require("./plain.cjs").__esModule).toBe(true);
-  expect(globalThis.modes).toEqual(["strict"]);
+test("a require() returns the exports of the file that was imported", async () => {
+  const imported = await import("./plain.cjs");
+  expect(require("./plain.cjs")).toBe(imported.default);
+  expect(globalThis.modes).toEqual(["sloppy"]);
 });

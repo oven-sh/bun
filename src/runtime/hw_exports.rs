@@ -85,10 +85,12 @@ pub(crate) fn set_override_module_run_main(vm: &VirtualMachine, is_patched: bool
 pub(crate) fn set_override_module_run_main_promise(
     vm: &VirtualMachine,
     promise: *mut JSInternalPromise,
-) {
-    if vm.pending_internal_promise().is_none() {
+) -> bool {
+    let is_awaited = vm.pending_internal_promise().is_none() && !vm.is_in_preload.get();
+    if is_awaited {
         vm.set_pending_internal_promise(Some(promise));
     }
+    is_awaited
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.
@@ -127,8 +129,8 @@ pub(crate) fn specifier_is_eval_entry_point(this: &VirtualMachine, specifier: JS
     false
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
+/// Called by JSCommonJSModule.cpp for module "." so the run command reports origin
+/// `uncaughtException`. `main()` compare filters out a file that `Module.runMain()` was given.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub(crate) fn note_commonjs_evaluation(this: &VirtualMachine, specifier: JSValue) {
     if this.entry_point_result.evaluated_as_cjs.get() {

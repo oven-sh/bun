@@ -1226,7 +1226,9 @@ impl<'a> Transpiler<'a> {
         if source.contents.is_empty()
             || (source.contents.len() < 33 && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
-            if !loader.handles_empty_file() {
+            let needs_wrapper =
+                this_parse.allow_commonjs && this_parse.module_type == options::ModuleType::Cjs;
+            if !loader.handles_empty_file() && !needs_wrapper {
                 return Some(ParseResult::empty_with(
                     arena,
                     source.clone(),

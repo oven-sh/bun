@@ -175,6 +175,21 @@ test("coverage excludes node_modules directory", () => {
   expect(result.signalCode).toBeUndefined();
 });
 
+test("coverage lists a file whose extension is in capitals", async () => {
+  using dir = tempDir("cov", {
+    "capitals.JS": `export const a = 1;`,
+    "demo.test.js": `import { a } from "./capitals.JS";\nconsole.log(a);`,
+  });
+  await using proc = Bun.spawn([bunExe(), "test", "--coverage"], {
+    cwd: String(dir),
+    env: bunEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("capitals.JS");
+  expect(exitCode).toBe(0);
+});
+
 test("coverage leaves out the modules generated for ?worker, ?init and ?inline, and nothing else that has a query", async () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,

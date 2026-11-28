@@ -730,7 +730,7 @@ fn a_default_import_of_a_module_without_the_marker_is_its_exports() {
 }
 
 #[test]
-fn the_commonjs_files_of_a_graph_run_first() {
+fn the_commonjs_files_of_a_graph_run_behind_the_es_modules_ahead_of_them() {
     let files = [
         ("main.mjs", "import './a.mjs'; import './k1.cjs';"),
         (
@@ -747,9 +747,11 @@ fn the_commonjs_files_of_a_graph_run_first() {
     ];
     with_plan(&files, |plan| {
         let expected = [
-            "request k1.cjs hoisted",
-            "request k2.cjs hoisted",
             "request k3.cjs hoisted",
+            "request b.mjs hoisted",
+            "request k2.cjs hoisted",
+            "request a.mjs hoisted",
+            "request k1.cjs hoisted",
             "request a.mjs",
             "request k1.cjs",
         ];
@@ -846,7 +848,6 @@ fn an_es_module_that_is_required_links_a_graph_of_its_own() {
         ("k.cjs", "exports.one = 1;"),
     ];
     with_plan(&files, |plan| {
-        assert_eq!(plan.graph.prefix_roots(), [plan.file("a.mjs")]);
         let expected = ["request k.cjs hoisted", "request b.mjs"];
         assert_eq!(plan.requests("a.mjs"), expected);
     });
@@ -875,18 +876,16 @@ fn hoisted_below_required_root(imports: &[(&str, &[&str])]) -> Vec<String> {
     hoisted
 }
 
-// Each order below but the last is what `bun main.cjs` prints. While a require() drains the loader's queue, a file that is asked for a second time before its text has settled
-// overtakes what was asked for in front of it, and one that is asked for a third time is made on the spot: runtime/JSModuleLoader.cpp hostLoadImportedModule().
-// Where a ring lies below the root those steps cost many walks over the ring: the list stays breadth first, and the run time goes through the steps when a require() begins the load.
 #[test]
-fn below_a_require_commonjs_files_run_level_by_level_where_each_is_asked_for_once() {
+fn below_a_require_commonjs_files_run_in_the_order_of_the_imports() {
     let imports: [(&str, &[&str]); 4] = [
         ("m0.mjs", &["m1.mjs", "m2.mjs"]),
         ("m1.mjs", &["m3.mjs"]),
         ("m2.mjs", &["c2.cjs"]),
         ("m3.mjs", &["c1.cjs"]),
     ];
-    assert_eq!(hoisted_below_required_root(&imports), ["c2.cjs", "c1.cjs"]);
+    let expected = ["c1.cjs", "m1.mjs", "c2.cjs"];
+    assert_eq!(hoisted_below_required_root(&imports), expected);
 }
 
 #[test]
@@ -896,22 +895,23 @@ fn below_a_require_what_a_module_imported_twice_imports_runs_in_front() {
         ("m1.mjs", &["m2.mjs", "c1.cjs"]),
         ("m2.mjs", &["c2.cjs"]),
     ];
-    assert_eq!(hoisted_below_required_root(&imports), ["c2.cjs", "c1.cjs"]);
+    let expected = ["c2.cjs", "m2.mjs", "c1.cjs"];
+    assert_eq!(hoisted_below_required_root(&imports), expected);
 }
 
 #[test]
-fn below_a_require_a_commonjs_file_imported_twice_runs_in_front() {
+fn below_a_require_a_commonjs_file_imported_twice_runs_at_its_first_import() {
     let imports: [(&str, &[&str]); 3] = [
         ("m0.mjs", &["m1.mjs", "m2.mjs"]),
         ("m1.mjs", &["c1.cjs", "c3.cjs"]),
         ("m2.mjs", &["c2.cjs", "c3.cjs"]),
     ];
-    let expected = ["c3.cjs", "c1.cjs", "c2.cjs"];
+    let expected = ["c1.cjs", "c3.cjs", "m1.mjs", "c2.cjs"];
     assert_eq!(hoisted_below_required_root(&imports), expected);
 }
 
 #[test]
-fn below_a_require_a_ring_leaves_the_order_to_the_run_time() {
+fn below_a_require_a_ring_changes_nothing_of_the_order() {
     let imports: [(&str, &[&str]); 4] = [
         ("m0.mjs", &["m1.mjs", "m2.mjs", "m3.mjs"]),
         ("m1.mjs", &["c1.cjs", "m0.mjs"]),

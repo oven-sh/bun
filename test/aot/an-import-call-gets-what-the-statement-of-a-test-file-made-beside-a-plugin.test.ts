@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// The loader keeps one module for a path and a kind of `type`: none, "json", and every other type together. Whichever import comes first in a kind decides what the later ones get.
+// The loader keeps one module for a path and a `type`.
 // A plugin that a test file registers may answer for any file of data, so the statements of the test files are left to the loader. A call of import() behind such a statement has to
 // ask the loader too, whatever form of the file the build has bound the call to.
 const testFile = (text: string) => `import { test } from "bun:test";\n${text}\ntest("runs", () => {});\n`;
@@ -24,6 +24,7 @@ const files = {
     import * as jsonAsText from "./three.json" with { type: "text" };
     const show = (label, first, second) =>
       console.log(label + ":", JSON.stringify(first.default), JSON.stringify(second.default), first === second);
+    show("statement of text, call of text", jsonAsText, await import("./three.json", { with: { type: "text" } }));
     show("statement of text, call of toml", asText, await import("./one.txt", { with: { type: "toml" } }));
     const type = ["to", "ml"].join("");
     show("statement of text, a type known at run time", asText, await import("./one.txt", { with: { type } }));
@@ -37,10 +38,11 @@ const files = {
     show("statement of text, call without a type", jsonAsText, await import("./three.json"));`),
 };
 const printed = [
-  String.raw`statement of text, call of toml: "a = 1\n" "a = 1\n" true`,
-  String.raw`statement of text, a type known at run time: "a = 1\n" "a = 1\n" true`,
-  String.raw`call of text, call of toml: "a = 1\n" "a = 1\n" true`,
-  String.raw`statement of text, call of yaml: "{\"a\": 1}\n" "{\"a\": 1}\n" true`,
+  String.raw`statement of text, call of text: "{\"a\": 1}\n" "{\"a\": 1}\n" true`,
+  String.raw`statement of text, call of toml: "a = 1\n" {"a":1} false`,
+  String.raw`statement of text, a type known at run time: "a = 1\n" {"a":1} false`,
+  String.raw`call of text, call of toml: "a = 1\n" {"a":1} false`,
+  String.raw`statement of text, call of yaml: "{\"a\": 1}\n" {"a":1} false`,
   String.raw`statement of text, call of json: "{\"a\": 1}\n" {"a":1} false`,
   String.raw`statement of text, call without a type: "{\"a\": 1}\n" {"a":1} false`,
 ];

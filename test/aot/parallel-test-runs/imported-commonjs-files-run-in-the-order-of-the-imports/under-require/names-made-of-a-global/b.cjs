@@ -1,0 +1,1 @@
+exports.b = globalThis.material;

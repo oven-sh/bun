@@ -1699,87 +1699,81 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
 }
 
 #[test]
-fn file_found_for_a_load_is_read_as_that_load_reads_it() {
-    use bun_sema::module_format::ModuleFormat::{CommonJs, Esm};
-    const NO_KIND: &str = "globalThis.ran = true;";
-    const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.cjs";"#);
+fn file_follows_the_type_of_its_package_whatever_load_it_is_found_for() {
+    use bun_sema::module_format::ModuleFormat::Esm;
+    const NO_KIND: &str = "globalThis.ran = __filename;";
+    const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.jsx";"#);
     const WHOLE: (&str, &str) = ("load.cjs", "module.exports = name => require(name);");
-    let rows: [(&[(&str, &str)], &str, _); 11] = [
+    let rows: [(&[(&str, &str)], &str); 11] = [
         (
             &[
                 (
                     "main.cjs",
-                    r#"const say = require("./wrap.cjs")(require); say("./setup.cjs"); import("./setup.cjs");"#,
+                    r#"const say = require("./wrap.cjs")(require); say("./setup.jsx"); import("./setup.jsx");"#,
                 ),
                 ("wrap.cjs", "module.exports = load => text => [text, load];"),
-                ("setup.cjs", NO_KIND),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            Esm,
+            "setup.jsx",
         ),
         (
             &[
                 (
                     "main.cjs",
-                    r#"const tools = { load: name => require(name) }; const other = { load: text => text }; other.load("./setup.cjs"); import("./setup.cjs"); tools.load;"#,
+                    r#"const tools = { load: name => require(name) }; const other = { load: text => text }; other.load("./setup.jsx"); import("./setup.jsx"); tools.load;"#,
                 ),
-                ("setup.cjs", NO_KIND),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            CommonJs,
+            "setup.jsx",
         ),
         (
             &[
                 (
                     "main.cjs",
-                    r#"const say = require("./say.cjs"); say("./setup.cjs"); import("./setup.cjs");"#,
+                    r#"const say = require("./say.cjs"); say("./setup.jsx"); import("./setup.jsx");"#,
                 ),
                 (
                     "say.cjs",
                     r#"const load = require("./load.cjs"); module.exports = text => [text, load];"#,
                 ),
                 WHOLE,
-                ("setup.cjs", NO_KIND),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            Esm,
+            "setup.jsx",
         ),
         (
             &[
                 (
                     "main.cjs",
-                    r#"const tools = require("./tools.cjs"); tools.load("./setup.cjs"); import("./setup.cjs");"#,
+                    r#"const tools = require("./tools.cjs"); tools.load("./setup.jsx"); import("./setup.jsx");"#,
                 ),
                 ("tools.cjs", "exports.load = name => require(name);"),
-                ("setup.cjs", NO_KIND),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            CommonJs,
+            "setup.jsx",
         ),
         (
             &[
                 (
                     "main.cjs",
-                    r#"const other = { load: text => text }; other.load("./setup.cjs"); const bring = require("./load.cjs"); bring("./setup.cjs"); import("./setup.cjs");"#,
+                    r#"const other = { load: text => text }; other.load("./setup.jsx"); const bring = require("./load.cjs"); bring("./setup.jsx"); import("./setup.jsx");"#,
                 ),
                 (
                     "load.cjs",
                     "module.exports = name => require(name); module.exports.load = name => require(name);",
                 ),
-                ("setup.cjs", NO_KIND),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            CommonJs,
+            "setup.jsx",
         ),
         (
             &[
                 ("main.cjs", r#"require(require("./config.json").plugin);"#),
                 ("config.json", r#"{ "plugin": "./plug.mjs" }"#),
                 PLUG,
-                ("plain.cjs", NO_KIND),
+                ("plain.jsx", NO_KIND),
             ],
-            "plain.cjs",
-            CommonJs,
+            "plain.jsx",
         ),
         (
             &[
@@ -1787,57 +1781,53 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                     "main.mjs",
                     r#"import config from "./config.json"; await import(config.setup);"#,
                 ),
-                ("config.json", r#"{ "setup": "./setup.cjs" }"#),
-                ("setup.cjs", NO_KIND),
+                ("config.json", r#"{ "setup": "./setup.jsx" }"#),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            Esm,
+            "setup.jsx",
         ),
         (
             &[
                 ("main.cjs", r#"require("./tools.cjs").load("./plug.mjs");"#),
                 ("tools.cjs", "exports.load = name => require(name);"),
                 PLUG,
-                ("plain.cjs", NO_KIND),
+                ("plain.jsx", NO_KIND),
             ],
-            "plain.cjs",
-            CommonJs,
+            "plain.jsx",
         ),
         (
             &[
                 ("main.cjs", r#"require("./plug.mjs");"#),
                 PLUG,
-                ("plain.cjs", NO_KIND),
+                ("plain.jsx", NO_KIND),
             ],
-            "plain.cjs",
-            CommonJs,
+            "plain.jsx",
         ),
         (
             &[
                 (
                     "main.mjs",
-                    r#"import * as tools from "./tools.mjs"; await tools.load("./setup.cjs");"#,
+                    r#"import * as tools from "./tools.mjs"; await tools.load("./setup.jsx");"#,
                 ),
                 ("tools.mjs", "export const load = name => import(name);"),
-                ("setup.cjs", NO_KIND),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            Esm,
+            "setup.jsx",
         ),
         (
             &[
-                ("main.mjs", r#"await import("./setup.cjs");"#),
-                ("setup.cjs", NO_KIND),
+                ("main.mjs", r#"await import("./setup.jsx");"#),
+                ("setup.jsx", NO_KIND),
             ],
-            "setup.cjs",
-            Esm,
+            "setup.jsx",
         ),
     ];
-    for (files, asked, format) in rows {
-        load(&executable(files), |loaded| {
+    for (files, asked) in rows {
+        let files = [files, &[("package.json", r#"{ "type": "module" }"#)]].concat();
+        load(&executable(&files), |loaded| {
             let loaded = files_of(loaded);
             let analysis = loaded.analysis(file_named(loaded, asked));
-            assert_eq!(analysis.module_format, format, "{}", files[0].1);
+            assert_eq!(analysis.module_format, Esm, "{}", files[0].1);
         });
     }
 }

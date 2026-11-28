@@ -22,6 +22,17 @@ fn files_that_run_again<'a>(
 }
 
 #[test]
+fn a_dynamic_path_may_ask_for_what_the_loader_ran_behind_its_throw() {
+    let flaky = "globalThis.retry = () => require({ one: './flaky.cjs', two: './gauge.cjs' }[globalThis.name]);\nif (globalThis.first) throw 0;";
+    let files = [
+        ("a.test.mjs", "import './flaky.cjs';"),
+        ("flaky.cjs", flaky),
+        GAUGE,
+    ];
+    assert!(files_that_run_again(&files, 1, 0).contains(&"flaky.cjs"));
+}
+
+#[test]
 fn mocked_package_reloads_with_importers() {
     let es = r#"{ "type": "module", "main": "index.js" }"#;
     let test_file = "import { test, vi } from 'bun:test';\nimport './reader.ts';\nvi.mock('kit');\nvi.mock('old');\nvi.mock('./own.ts');\ntest('t', () => import('kit'));";

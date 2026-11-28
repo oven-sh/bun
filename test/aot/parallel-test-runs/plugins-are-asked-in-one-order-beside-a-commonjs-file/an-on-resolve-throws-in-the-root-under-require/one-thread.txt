@@ -1,0 +1,1 @@
+A plugin is asked about the imports of a file when a thread has read the file.

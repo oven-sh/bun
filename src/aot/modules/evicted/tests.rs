@@ -173,116 +173,90 @@ fn the_job_of_an_import_call_may_ask_for_the_running_file_behind_its_throw() {
 }
 
 #[test]
-fn a_file_of_a_required_graph_may_run_again_for_one_behind_it() {
+fn the_throw_of_a_file_ends_the_load_of_its_graph() {
     let graph = ("graph.mjs", "import './first.cjs';\nimport './second.cjs';");
     let first = ("first.cjs", "exports.value = 1;");
     let second = ("second.cjs", "exports.first = require('./first.cjs');");
-    let run_again = |main| files_that_run_again(&[main, graph, first, second]);
-    for required in [
-        "require('./graph.mjs');",
-        "exports.graph = require('./graph.mjs');",
-    ] {
-        assert_eq!(
-            run_again(("main.cjs", required)),
-            ["first.cjs"],
-            "{required}"
-        );
-    }
-    assert_eq!(
-        run_again(("main.mjs", "require('./graph.mjs');")),
-        ["first.cjs"]
-    );
-    for imported in ["import './graph.mjs';", "await import('./graph.mjs');"] {
-        assert!(run_again(("main.mjs", imported)).is_empty(), "{imported}");
-    }
-    let conditional = (
-        "second.cjs",
-        "if (globalThis.late) exports.first = require('./first.cjs');",
-    );
-    let main = ("main.cjs", "require('./graph.mjs');");
-    assert_eq!(
-        files_that_run_again(&[main, graph, first, conditional]),
-        ["first.cjs"]
-    );
-    let by_a_name = ("second.cjs", "require(globalThis.name);");
-    let spells = ("spells.cjs", "globalThis.name = './first.cjs';");
-    let graph = (
-        "graph.mjs",
-        "import './spells.cjs';\nimport './first.cjs';\nimport './second.cjs';",
-    );
-    assert_eq!(
-        files_that_run_again(&[main, graph, spells, first, by_a_name]),
-        ["spells.cjs", "first.cjs"]
-    );
-}
-
-#[test]
-fn what_files_of_a_required_graph_share_may_run_again() {
-    let files = [
+    for main in [
         ("main.cjs", "require('./graph.mjs');"),
-        ("graph.mjs", "import './first.cjs';\nimport './second.cjs';"),
+        ("main.mjs", "require('./graph.mjs');"),
+        ("main.mjs", "import './graph.mjs';"),
+        ("main.mjs", "await import('./graph.mjs');"),
+    ] {
+        let run_again = files_that_run_again(&[main, graph, first, second]);
+        assert!(run_again.is_empty(), "{main:?}: {run_again:?}");
+    }
+    let shared = [
+        ("main.cjs", "require('./graph.mjs');"),
+        graph,
         ("first.cjs", "exports.shared = require('./shared.cjs');"),
         ("second.cjs", "exports.shared = require('./shared.cjs');"),
-        ("shared.cjs", "exports.part = require('./part.cjs');"),
-        ("part.cjs", "exports.value = 1;"),
+        ("shared.cjs", "exports.value = 1;"),
     ];
-    assert_eq!(files_that_run_again(&files), ["shared.cjs", "part.cjs"]);
-    let mut within_one = files;
-    within_one[2].1 =
-        "exports.shared = require('./shared.cjs');\nexports.part = require('./part.cjs');";
-    within_one[3].1 = "exports.value = 1;";
-    assert!(files_that_run_again(&within_one).is_empty());
-    let mut ended_ahead = files;
-    ended_ahead[0].1 = "require('./shared.cjs');\nrequire('./graph.mjs');";
-    assert!(files_that_run_again(&ended_ahead).is_empty());
+    assert!(files_that_run_again(&shared).is_empty());
 }
 
 #[test]
-fn the_loader_may_run_a_file_of_a_required_graph_behind_a_file_that_required_it() {
-    let files = [
-        ("main.cjs", "require('./graph.mjs');"),
-        ("graph.mjs", "import './first.cjs';\nimport './below.mjs';"),
-        ("below.mjs", "import './second.cjs';"),
-        ("first.cjs", "exports.second = require('./second.cjs');"),
-        ("second.cjs", "exports.value = 1;"),
-    ];
-    assert_eq!(files_that_run_again(&files), ["second.cjs"]);
-    let mut required_by_nobody = files;
-    required_by_nobody[3].1 = "exports.value = 1;";
-    assert!(files_that_run_again(&required_by_nobody).is_empty());
+fn a_file_that_threw_under_a_caught_import_may_be_required_behind_it() {
+    let graph = ("graph.mjs", "import './flaky.cjs';");
+    let flaky = (
+        "flaky.cjs",
+        "if (globalThis.first) throw 0;\nexports.v = 1;",
+    );
+    let main = (
+        "main.mjs",
+        "try { await import('./graph.mjs'); } catch {}\nrequire('./flaky.cjs');",
+    );
+    assert_eq!(files_that_run_again(&[main, graph, flaky]), ["flaky.cjs"]);
 }
 
 #[test]
-fn a_graph_that_a_file_of_a_required_graph_requires_leaves_what_it_shares() {
-    let files = [
-        ("main.mjs", "import './legacy.cjs';"),
-        ("legacy.cjs", "require('./outer.mjs');"),
-        ("outer.mjs", "import './first.cjs';\nimport './second.cjs';"),
-        (
-            "first.cjs",
-            "require('./inner.mjs');\nrequire('./third.cjs');",
-        ),
-        ("inner.mjs", "import './third.cjs';"),
-        ("second.cjs", "exports.third = require('./third.cjs');"),
-        ("third.cjs", "exports.value = 1;"),
-    ];
-    assert_eq!(files_that_run_again(&files), ["third.cjs"]);
-    let mut without_second = files;
-    without_second[5].1 = "exports.value = 1;";
-    assert!(files_that_run_again(&without_second).is_empty());
-}
-
-#[test]
-fn what_the_loader_runs_keeps_its_error_and_runs_once() {
+fn what_the_loader_runs_may_be_required_behind_its_throw() {
     let asks_for_entry =
         "globalThis.retry = () => require('./main.cjs');\nif (globalThis.first) throw 0;";
-    assert!(files_that_run_again(&[("main.cjs", asks_for_entry)]).is_empty());
+    assert_eq!(
+        files_that_run_again(&[("main.cjs", asks_for_entry)]),
+        ["main.cjs"]
+    );
     let flaky = (
         "flaky.cjs",
         "globalThis.retry = () => require('./flaky.cjs');\nif (globalThis.first) throw 0;",
     );
     let imports = ("main.mjs", "import './flaky.cjs';");
-    assert!(files_that_run_again(&[imports, flaky]).is_empty());
+    assert_eq!(files_that_run_again(&[imports, flaky]), ["flaky.cjs"]);
     let requires = ("main.mjs", "require('./flaky.cjs');");
     assert_eq!(files_that_run_again(&[requires, flaky]), ["flaky.cjs"]);
+}
+
+#[test]
+fn what_the_loader_runs_keeps_its_error_for_imports_and_for_dynamic_paths() {
+    let other = ("other.cjs", "exports.value = 1;");
+    let above = ("above.mjs", "import './flaky.cjs';");
+    for load in [
+        "import('./flaky.cjs')",
+        "import('./above.mjs')",
+        "require('./above.mjs')",
+        "require(globalThis.name)",
+        "require({ one: './flaky.cjs', two: './other.cjs' }[globalThis.name])",
+        "[require][0]('./flaky.cjs')",
+    ] {
+        let text = format!("globalThis.retry = () => {load};\nif (globalThis.first) throw 0;");
+        let flaky = ("flaky.cjs", &*text);
+        for main in [
+            None,
+            Some(("main.mjs", "import './flaky.cjs';")),
+            Some(("main.mjs", "await import('./graph.mjs');")),
+            Some(("main.cjs", "require('./graph.mjs');")),
+        ] {
+            let graph = ("graph.mjs", "import './flaky.cjs';");
+            let files: Vec<_> = main
+                .into_iter()
+                .chain([flaky, graph, above, other])
+                .collect();
+            with_graph(&files, |graph, input| {
+                let runs_again = graph.may_be_reevaluated(file_named(input, "flaky.cjs"));
+                assert!(!runs_again, "{load}, {main:?}");
+            });
+        }
+    }
 }

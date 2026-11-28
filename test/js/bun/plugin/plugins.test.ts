@@ -1642,6 +1642,393 @@ it.concurrent("an onLoad in the namespace of builtins leaves their aliases alone
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
 });
 
+describe.concurrent("an onResolve in the namespace of builtins", () => {
+  const ways = {
+    "import statement": `import("./statement.mjs").then(it => it.default)`,
+    "import()": `import("os")`,
+    "import() of a name that is made": `import(made)`,
+    "import() with the prefix": `import("node:os")`,
+    "require()": `require("os")`,
+    "require() of a name that is made": `require(made)`,
+    "require() with the prefix": `require("node:os")`,
+    "require() in an imported file": `import("./imported.cjs").then(it => it.os)`,
+    "require() in a required file": `require("./required.cjs").os`,
+    "createRequire()": `require("node:module").createRequire(process.cwd() + "/absent.js")("os")`,
+  };
+  type Way = keyof typeof ways;
+  const everyWay = Object.keys(ways) as Way[];
+
+  // What each way gets: what from() of the replacement answers, or "builtin".
+  async function load(setup: string, files: Record<string, string>, order: Way[], command: string[] = []) {
+    const body = `
+      const made = ["o", "s"].join("");
+      const got = [];
+      for (const way of [${order.map(way => `() => ${ways[way]}`)}]) {
+        try {
+          const os = await way();
+          got.push(os.from?.() ?? (os.platform ? "builtin" : "empty"));
+        } catch (error) {
+          got.push(error.message);
+        }
+      }
+      console.log(JSON.stringify(got));
+    `;
+    using dir = tempDir("plugin-builtin-namespace", {
+      ...files,
+      "plugin.cjs": `Bun.plugin({ name: "replaces os", setup(build) { ${setup} } });`,
+      "statement.mjs": `import * as os from "os"; export default os;`,
+      "imported.cjs": `exports.os = require("os");`,
+      "required.cjs": `exports.os = require("os");`,
+      "main.test.mjs": command.length
+        ? `import { test } from "bun:test"; test("loads", async () => { ${body} });`
+        : body,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...command, "--preload", "./plugin.cjs", "./main.test.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(line => line.startsWith("["));
+    return { got: line ? JSON.parse(line) : stderr, exitCode };
+  }
+
+  const toFile = (file: string) =>
+    `build.onResolve({ filter: /^os$/, namespace: "node" }, () => ({ path: __dirname + "/${file}" }));`;
+  const toOnLoad = (callback: string) => `
+    build.onResolve({ filter: /^os$/, namespace: "node" }, ({ path }) => ({ path, namespace: "shim" }));
+    build.onLoad({ filter: /.*/, namespace: "shim" }, ${callback});
+  `;
+  const wraps = (os: string) => `() => "wraps a " + typeof ${os}.platform`;
+  const objectThatWraps = (os: string) => `{ exports: { from: ${wraps(os)} }, loader: "object" }`;
+
+  it.each([[[]], [["test"]], [["test", "--isolate"]]])("is asked about each way to load one: bun %j", async command => {
+    expect(await load(toFile("os.cjs"), { "os.cjs": `exports.from = () => "plugin";` }, everyWay, command)).toEqual({
+      got: everyWay.map(() => "plugin"),
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    ["an import comes first", everyWay],
+    ["a require() comes first", everyWay.toReversed()],
+  ])("the builtin itself is for what replaces it, %s", (_, order) => {
+    it.each<[string, string, Record<string, string>?]>([
+      ["require()", toFile("os.cjs"), { "os.cjs": `const os = require("os"); exports.from = ${wraps("os")};` }],
+      [
+        "require() with the prefix",
+        toFile("os.cjs"),
+        { "os.cjs": `const os = require("node:os"); exports.from = ${wraps("os")};` },
+      ],
+      ["a later require()", toFile("os.cjs"), { "os.cjs": `exports.from = ${wraps(`require("os")`)};` }],
+      [
+        "an import statement",
+        toFile("os.mjs"),
+        { "os.mjs": `import * as os from "os"; export const from = ${wraps("os")};` },
+      ],
+      [
+        "with a query",
+        toFile("os.cjs?query"),
+        { "os.cjs": `const os = require("os"); exports.from = ${wraps("os")};` },
+      ],
+      [
+        "a file that it requires",
+        toFile("os.cjs"),
+        {
+          "os.cjs": `module.exports = require("./helper.cjs");`,
+          "helper.cjs": `const os = require("os"); exports.from = ${wraps("os")};`,
+        },
+      ],
+      [
+        "a later require() two files below it",
+        toFile("os.mjs"),
+        {
+          "os.mjs": `export { from } from "./helper.mjs";`,
+          "helper.mjs": `export { from } from "dependency";`,
+          "node_modules/dependency/index.js": `exports.from = ${wraps(`require("os")`)};`,
+        },
+      ],
+      [
+        "a file that something else loaded first",
+        toFile("os.cjs") + `require("./helper.cjs");`,
+        {
+          "os.cjs": `module.exports = require("./helper.cjs");`,
+          "helper.cjs": `exports.from = ${wraps(`require("os")`)};`,
+        },
+      ],
+      ["an onLoad callback", toOnLoad(`() => { const os = require("os"); return ${objectThatWraps("os")}; }`)],
+      [
+        "an onLoad callback, with the prefix",
+        toOnLoad(`() => { const os = require("node:os"); return ${objectThatWraps("os")}; }`),
+      ],
+      [
+        "the contents of an onLoad",
+        toOnLoad(`() => ({ contents: 'import * as os from "os"; export const from = ${wraps("os")};', loader: "js" })`),
+      ],
+      [
+        "a file that an onLoad callback requires",
+        toOnLoad(`() => ({ exports: require("./helper.cjs"), loader: "object" })`),
+        { "helper.cjs": `exports.from = ${wraps(`require("os")`)};` },
+      ],
+      [
+        "the callback of module()",
+        `build.onResolve({ filter: /^os$/, namespace: "node" }, () => ({ path: "my-os" }));
+         build.module("my-os", () => { const os = require("os"); return ${objectThatWraps("os")}; });`,
+      ],
+    ])("%s", async (_, setup, files = {}) => {
+      expect(await load(setup, files, order)).toEqual({ got: order.map(() => "wraps a function"), exitCode: 0 });
+    });
+  });
+
+  describe("a replacement that require() can't wait for", () => {
+    const replacements: [string, string, Record<string, string>?][] = [
+      [
+        "an async onLoad",
+        toOnLoad(`async ({ path }) => { const os = await import(path); return ${objectThatWraps("os")}; }`),
+      ],
+      [
+        "an async onLoad that asks after an await",
+        toOnLoad(
+          `async () => { await new Promise(setImmediate); const os = await import("os"); return ${objectThatWraps("os")}; }`,
+        ),
+      ],
+      [
+        "the second of two onLoad callbacks",
+        toOnLoad(`async () => { await 0; }`) +
+          `build.onLoad({ filter: /.*/, namespace: "shim" }, () => { const os = require("os"); return ${objectThatWraps("os")}; });`,
+      ],
+      [
+        "top-level await",
+        toFile("os.mjs"),
+        {
+          "os.mjs": `const os = await import("os"); await new Promise(setImmediate); export const from = ${wraps("os")};`,
+        },
+      ],
+    ];
+
+    it.each(replacements)("is there for every way after an import: %s", async (_, setup, files = {}) => {
+      expect(await load(setup, files, everyWay)).toEqual({ got: everyWay.map(() => "wraps a function"), exitCode: 0 });
+    });
+
+    it.each(replacements)("leaves require() the builtin until then: %s", async (_, setup, files = {}) => {
+      const order: Way[] = ["require()", "require()", "require() in a required file", "import()", "require()"];
+      expect(await load(setup, files, order)).toEqual({
+        got: ["builtin", "builtin", "builtin", "wraps a function", "wraps a function"],
+        exitCode: 0,
+      });
+    });
+  });
+
+  it("one replacement can wrap another", async () => {
+    const setup = `build.onResolve({ filter: /^os$/, namespace: "node" }, ({ importer }) => ({
+      path: __dirname + (importer.endsWith("outer.cjs") ? "/inner.cjs" : "/outer.cjs"),
+    }));`;
+    const files = {
+      "outer.cjs": `const os = require("os"); exports.from = () => "outer " + os.from();`,
+      "inner.cjs": `const os = require("os"); exports.from = ${wraps("os")};`,
+    };
+    expect(await load(setup, files, everyWay)).toEqual({
+      got: everyWay.map(() => "outer wraps a function"),
+      exitCode: 0,
+    });
+  });
+
+  it("an import statement below the replacement still closes a cycle with it", async () => {
+    const files = {
+      "os.mjs": `export { from } from "./helper.mjs"; export const mark = "cycle";`,
+      "helper.mjs": `import * as os from "os"; export const from = () => os.mark;`,
+    };
+    expect(await load(toFile("os.mjs"), files, everyWay)).toEqual({ got: everyWay.map(() => "cycle"), exitCode: 0 });
+  });
+
+  it("gets the builtin in its own callback", async () => {
+    const setup = `build.onResolve({ filter: /^os$/, namespace: "node" }, () => ({
+      path: __dirname + "/" + typeof require("os").platform + ".cjs",
+    }));`;
+    expect(await load(setup, { "function.cjs": `exports.from = () => "plugin";` }, everyWay)).toEqual({
+      got: everyWay.map(() => "plugin"),
+      exitCode: 0,
+    });
+  });
+
+  it("comes after require.cache for require() without the prefix", async () => {
+    const setup = toFile("os.cjs") + `require.cache.os = { exports: { from: () => "cache" } };`;
+    const order: Way[] = ["require()", "require() in an imported file", "require() with the prefix", "import()"];
+    expect(await load(setup, { "os.cjs": `exports.from = () => "plugin";` }, order)).toEqual({
+      got: ["cache", "cache", "plugin", "plugin"],
+      exitCode: 0,
+    });
+  });
+
+  it.each(["os", "node:os"])("comes after a mock of %j", async name => {
+    const setup = toFile("os.cjs") + `require("bun:test").mock.module("${name}", () => ({ from: () => "mock" }));`;
+    expect(await load(setup, { "os.cjs": `exports.from = () => "plugin";` }, everyWay, ["test"])).toEqual({
+      got: everyWay.map(() => "mock"),
+      exitCode: 0,
+    });
+  });
+
+  it("is asked by the name of the module, and changes nothing unless it answers with another", async () => {
+    const source = `
+      const asked = [];
+      Bun.plugin({ name: "watches", setup(build) {
+        for (const namespace of ["node", "bun"])
+          build.onResolve({ filter: /.*/, namespace }, ({ path, kind }) => {
+            asked.push(namespace + ":" + path + " " + kind);
+            if (path === "os") return { path, namespace };
+          });
+      } });
+      const published = [];
+      const { tracingChannel } = process.getBuiltinModule("diagnostics_channel");
+      tracingChannel("module.require").subscribe({ start: ({ id }) => published.push(id) });
+      tracingChannel("module.import").subscribe({ start: ({ url }) => published.push(url) });
+      const got = [
+        require("sys") === process.getBuiltinModule("util"),
+        (await import("os")).default === process.getBuiltinModule("os"),
+        typeof require("ffi").dlopen,
+        typeof require("ws"),
+        require.resolve("os"),
+        require.resolve("path"),
+      ];
+      console.log(JSON.stringify({ got, asked, published }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      got: [true, true, "function", "function", "os", "path"],
+      asked: [
+        "node:util require-call",
+        "node:os dynamic-import",
+        "bun:ffi require-call",
+        "node:os require-resolve",
+        "node:path require-resolve",
+      ],
+      published: ["sys", "os", "ffi", "ws"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("is not asked about the names that the bundler has bound in an executable", async () => {
+    using dir = tempDir("plugin-builtin-namespace-executable", {
+      "main.mjs": `
+        Bun.plugin({ name: "replaces os", setup(build) { ${toOnLoad(`() => ({ exports: { from: "plugin" }, loader: "object" })`)} } });
+        const made = ["o", "s"].join("");
+        const got = [require("os"), require(made), await import("os"), await import(made), require("node:" + made)];
+        got.push(require(process.cwd() + "/on-disk.cjs"));
+        console.log(got.map(it => it.from ?? "builtin").join());
+      `,
+      "on-disk.cjs": `module.exports = require("os");`,
+    });
+    const executable = resolve(String(dir), isWindows ? "main.exe" : "main");
+    await Bun.$`${bunExe()} build --compile main.mjs --outfile ${executable}`.cwd(String(dir)).env(bunEnv).quiet();
+    await using proc = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "builtin,builtin,builtin,builtin,plugin,plugin\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+it.concurrent("require() gets what an async onLoad answered once an import has waited for it", async () => {
+  const source = `
+    Bun.plugin({ name: "async", setup(build) {
+      build.onResolve({ filter: /.*/, namespace: "late" }, ({ path }) => ({ path, namespace: "late" }));
+      build.onLoad({ filter: /.*/, namespace: "late" }, async () => {
+        await 0;
+        return { contents: "export const from = 'plugin';", loader: "js" };
+      });
+    } });
+    try { require("late:thing"); } catch (error) { console.log(error.message); }
+    console.log((await import("late:thing")).from, require("late:thing").from);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `require() async module "late:thing" is unsupported. use "await import()" instead.\nplugin plugin\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe.concurrent("require() of an ES module", () => {
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("plugin-require-esm", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it("calls onLoad once for a file that two modules import", async () => {
+    expect(
+      await run({
+        "main.cjs": `
+          Bun.plugin({ name: "counts", setup(build) {
+            build.onLoad({ filter: /shared[.]mjs$/ }, () => {
+              console.log("onLoad");
+              return { contents: "console.log('shared');", loader: "js" };
+            });
+          } });
+          require("./root.mjs");
+        `,
+        "root.mjs": `import "./a.mjs"; import "./b.mjs";`,
+        "a.mjs": `import "./shared.mjs";`,
+        "b.mjs": `import "./shared.mjs";`,
+        "shared.mjs": ``,
+      }),
+    ).toEqual({ lines: ["onLoad", "shared"], stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["never", ``, []],
+    ["at once", `import("./root.mjs");`, ["late", "behind", "root"]],
+    ["once onLoad has answered", `process.once("beforeExit", () => import("./root.mjs"));`, ["late", "behind", "root"]],
+  ])("runs nothing more once it has given up on an async onLoad, until an import: %s", async (_, then, lines) => {
+    expect(
+      await run({
+        "main.cjs": `
+          Bun.plugin({ name: "waits", setup(build) {
+            build.onLoad({ filter: /late[.]mjs$/ }, async () => {
+              console.log("onLoad");
+              await new Promise(setImmediate);
+              return { contents: "console.log('late');", loader: "js" };
+            });
+          } });
+          try { require("./root.mjs"); } catch (error) { console.log(error.code); }
+          ${then}
+        `,
+        "root.mjs": `import "./ahead.cjs"; import "./late.mjs"; import "./behind.cjs"; console.log("root");`,
+        "ahead.cjs": `console.log("ahead");`,
+        "behind.cjs": `console.log("behind");`,
+        "late.mjs": ``,
+      }),
+    ).toEqual({ lines: ["onLoad", "ahead", "ERR_REQUIRE_ASYNC_MODULE", ...lines], stderr: "", exitCode: 0 });
+  });
+});
+
+it.concurrent("require() loads a name that a plugin adds to the namespace of builtins", async () => {
+  const source = `
+    Bun.plugin({ name: "adds", setup(build) {
+      build.onResolve({ filter: /^added$/, namespace: "node" }, ({ path }) => ({ path, namespace: "node" }));
+      build.onLoad({ filter: /^added$/, namespace: "node" }, () => ({ exports: { from: "plugin" }, loader: "object" }));
+    } });
+    console.log(require("node:added").from, (await import("node:added")).from);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "plugin plugin\n", stderr: "", exitCode: 0 });
+});
+
 describe.concurrent("onResolve", () => {
   const files = {
     "a.mjs": `export const from = "a.mjs";`,
@@ -1915,7 +2302,7 @@ describe.concurrent("onLoad that declines", () => {
     ["a promise that is pending, then fulfilled with null", "async () => { await Bun.sleep(1); return null; }"],
   ];
   const unsupported = (way: string) =>
-    `TypeError: require() async module "/dep-${way}.ts" is unsupported. use "await import()" instead.`;
+    `Error: require() async module "/dep-${way}.ts" is unsupported. use "await import()" instead.`;
 
   describe.each([...settled.map(row => [...row, false] as const), ...pending.map(row => [...row, true] as const)])(
     "with %s",
@@ -2046,7 +2433,7 @@ describe.concurrent("onLoad that declines", () => {
       console.log(Object.keys(require.cache).filter(key => /dep-require|syntax-error/.test(key)));
     `;
     expect(await run(setup, { "entry.ts": entry, "syntax-error.ts": "export default (;" })).toEqual({
-      stdout: ["TypeError", "TypeError", "[]"],
+      stdout: ["Error", "Error", "[]"],
       stderr: "",
       exitCode: 0,
     });
@@ -3191,7 +3578,7 @@ describe.concurrent("`contents` from a plugin is loaded like a file with the sam
     `;
     const { stdout, stderr, exitCode } = await run({ "entry.ts": entry }, ["entry.ts"]);
     const namespace = { ...object, default: { ...object, default: 3 } };
-    const each = { json: [namespace, namespace], cjs: [object, { ...object, default: object }, true] };
+    const each = { json: [namespace, { ...object, default: 3 }], cjs: [object, { ...object, default: object }, true] };
     expect({ loaded: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
       loaded: { file: each, ".virtual": each },
       stderr: "",
@@ -4488,7 +4875,7 @@ describe.concurrent("an onLoad callback that loads an importer of the module it'
         "require(m): call 2 fails",
         'import(m), started first: {"m":"l+call 3"}',
         'import(k): {"a":"call 3"}',
-        "import(m): call 2 fails",
+        'import(m): {"m":"l+call 3"}',
         'import(imports-k): {"x":"x+call 3"}',
         "calls: 3",
       ],

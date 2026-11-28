@@ -1,4 +1,4 @@
-// A test run has no bundle: it answers as `bun test`, whose loader behind `import` asks the package alone and runs plain.mjs sloppy. An executable runs it strict.
+// plain.mjs is an ES module by its extension, whatever its package says.
 import { test } from "bun:test";
 import "./plain.mjs";
 const again = () => require("./plain.mjs");

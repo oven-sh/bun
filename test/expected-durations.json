@@ -392,7 +392,7 @@
     "default": 60000,
     "asan": 22400
   },
-  "aot/a-data-file-asked-for-with-a-type-by-a-path-of-the-run-is-another-module-in-a-test-run.test.ts": {
+  "aot/a-data-file-asked-for-with-its-own-type-by-a-path-of-the-run-is-the-same-module-in-a-test-run.test.ts": {
     "default": 26300,
     "asan": 33400
   },
@@ -400,7 +400,7 @@
     "default": 60000,
     "asan": 15000
   },
-  "aot/a-data-file-required-before-the-loader-comes-to-its-import-in-a-test-run.test.ts": {
+  "aot/a-data-file-that-is-imported-too-is-required-as-its-value-in-a-test-run.test.ts": {
     "default": 33900,
     "asan": 5100
   },
@@ -548,7 +548,7 @@
     "default": 60000,
     "asan": 14000
   },
-  "aot/a-file-that-the-build-only-guesses-is-left-out-where-it-would-decide-what-another-file-is.test.ts": {
+  "aot/a-file-that-the-build-only-guesses-comes-in-whole-or-not-at-all.test.ts": {
     "default": 60000,
     "asan": 98200
   },
@@ -716,7 +716,7 @@
     "default": 60000,
     "asan": 6400
   },
-  "aot/a-mock-that-import-names-again-is-called-ahead-of-a-commonjs-file-or-named.test.ts": {
+  "aot/a-mock-that-import-names-again-is-called-ahead-of-a-commonjs-file.test.ts": {
     "default": 60000,
     "asan": 2900
   },
@@ -1404,7 +1404,7 @@
     "default": 10100,
     "asan": 4900
   },
-  "aot/commonjs-files-below-a-require-run-as-the-loader-makes-them.test.ts": {
+  "aot/commonjs-files-below-a-require-run-in-the-order-of-the-imports.test.ts": {
     "default": 60000,
     "asan": 7500
   },
@@ -2800,7 +2800,7 @@
     "default": 60000,
     "asan": 6000
   },
-  "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts": {
+  "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-two-modules.test.ts": {
     "default": 60000,
     "asan": 21100
   },
@@ -3568,7 +3568,7 @@
     "default": 3900,
     "asan": 10500
   },
-  "aot/the-first-tick-of-each-isolated-test-file-runs-right-behind-its-file.test.ts": {
+  "aot/the-first-tick-of-each-isolated-test-file-runs-behind-the-load.test.ts": {
     "default": 60000,
     "asan": 10400
   },
@@ -3976,7 +3976,7 @@
     "default": 2900,
     "asan": 7900
   },
-  "aot/what-require-made-of-a-data-file-stays-with-require-in-a-test-run.test.ts": {
+  "aot/what-require-made-of-a-data-file-is-what-an-import-gets-in-a-test-run.test.ts": {
     "default": 60000,
     "asan": 17900
   },
@@ -51486,7 +51486,7 @@
     "default": 40600,
     "asan": 9300
   },
-  "aot/a-commonjs-file-that-throws-under-an-import-is-not-run-again-by-require.test.ts": {
+  "aot/a-commonjs-file-that-throws-under-an-import-is-run-again-by-require.test.ts": {
     "default": 34900,
     "asan": 3700
   },

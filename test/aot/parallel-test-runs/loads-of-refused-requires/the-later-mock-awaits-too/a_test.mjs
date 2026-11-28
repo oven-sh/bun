@@ -9,7 +9,7 @@ const said = async load => {
 const spinEventLoop = async () => {
   for (let turn = 0; turn < 20; turn++) await new Promise(done => setImmediate(done));
 };
-test("the required file runs over the later mock", async () => {
+test("the required file does not run over the later mock", async () => {
   const gates = [Promise.withResolvers(), Promise.withResolvers()];
   vi.doMock("./dep.mjs", async () => {
     await gates[0].promise;

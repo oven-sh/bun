@@ -2242,6 +2242,15 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     return Err(crate::Error::ModuleNotFound);
                 }
 
+                let tag_of_code = |is_commonjs_module: bool| {
+                    let is_in_package = is_commonjs_module && path.is_file();
+                    ResolvedSourceTag::of_code_in(
+                        is_in_package
+                            .then(|| package_json_of(jsc_vm, path))
+                            .flatten(),
+                    )
+                };
+
                 // already-bundled (bytecode cache hit).
                 if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
                     // The bytes live
@@ -2258,22 +2267,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         already_bundled: true,
                         bytecode_cache,
                         is_commonjs_module,
+                        tag: tag_of_code(is_commonjs_module),
                         ..Default::default()
                     });
-                }
-
-                // Empty .cjs/.cts: synthetic `(function(){})`.
-                if parse_result.empty && matches!(loader, L::Js | L::Ts) {
-                    let ext = bun_paths::extension(source.path.text);
-                    if ext == b".cjs" || ext == b".cts" {
-                        return Ok(ResolvedSource {
-                            source_code: bun_core::String::static_("(function(){})"),
-                            source_url: input_specifier.create_if_different(path.text),
-                            is_commonjs_module: true,
-                            tag: ResolvedSourceTag::Javascript,
-                            ..Default::default()
-                        });
-                    }
                 }
 
                 // RuntimeTranspilerCache hit: skip print.
@@ -2318,39 +2314,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         None
                     };
                     let source_code = core::mem::take(&mut entry.output_code);
-                    // When the cached entry was detected as
-                    // CJS but lives inside a `"type":"module"` package, emit
-                    // `package_json_type_module` so the C++ loader applies the
-                    // correct evaluation context on cache hits.
-                    let tag = if is_commonjs_module && source.path.is_file() {
-                        // SAFETY: JS thread;
-                        // `read_dir_info` is re-entrant on the JS
-                        // thread and returns a stable cache slot.
-                        let pkg = match unsafe {
-                            (*transpiler).resolver.read_dir_info(source.path.name().dir)
-                        } {
-                            Ok(Some(dir_info)) => {
-                                dir_info.package_json.or(dir_info.enclosing_package_json)
-                            }
-                            _ => None,
-                        };
-                        if pkg
-                            .map(|p| p.module_type == ModuleType::Esm)
-                            .unwrap_or(false)
-                        {
-                            ResolvedSourceTag::PackageJsonTypeModule
-                        } else {
-                            ResolvedSourceTag::Javascript
-                        }
-                    } else {
-                        ResolvedSourceTag::Javascript
-                    };
                     return Ok(ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
                         module_info,
-                        tag,
+                        tag: tag_of_code(is_commonjs_module),
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                         ..Default::default()
                     });
@@ -2445,38 +2414,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         )
                         .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;
+                    resolved_source.tag = tag_of_code(is_commonjs_module);
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
                     return Ok(resolved_source);
                 }
-
-                // Final ResolvedSource.
-                let tag = match loader {
-                    L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
-                    L::Js | L::Jsx | L::Ts | L::Tsx => {
-                        // A `.cjs` under `"type":"module"` still tags as `PackageJsonTypeModule`.
-                        let dir = path.name().dir;
-                        let module_type_ = if path.is_file() && bun_paths::is_absolute(dir) {
-                            // SAFETY: JS thread; `read_dir_info` is
-                            // re-entrant on the JS thread and returns a
-                            // stable cache slot.
-                            match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
-                                Ok(Some(dir_info)) => dir_info
-                                    .package_json
-                                    .or(dir_info.enclosing_package_json)
-                                    .map_or(module_type, |p| p.module_type),
-                                _ => module_type,
-                            }
-                        } else {
-                            module_type
-                        };
-                        match module_type_ {
-                            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
-                            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
-                            _ => ResolvedSourceTag::Javascript,
-                        }
-                    }
-                    _ => ResolvedSourceTag::Javascript,
-                };
 
                 let written = printer.ctx.get_written();
                 // Node compile cache hook (sync transpile path). `fetch` copies
@@ -2503,7 +2444,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 return Ok(ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     module_info,
-                    tag,
+                    tag: tag_of_code(is_commonjs_module),
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                     ..ResolvedSource::printed(printed_ast, source_code)
                 });
@@ -3193,10 +3134,76 @@ fn normalize_specifier_for_loader<'a>(
     (slice, specifier, query)
 }
 
+fn loader_named_by_specifier(jsc_vm: &VirtualMachine, specifier: &[u8]) -> Option<Loader> {
+    let (path, _, query) = normalize_specifier_for_loader(&jsc_vm.origin, specifier);
+    let loader = loader_for_path(
+        &Fs::Path::init(path),
+        &jsc_vm.transpiler.get().options.loaders,
+    );
+    options::ImportSuffix::find(query, loader)
+        .map(options::ImportSuffix::loader)
+        .or(loader)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__specifierNamesLoader(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+) -> bool {
+    loader_named_by_specifier(global.bun_vm(), specifier.to_utf8().slice()).is_some()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__typeMakesOtherFormOfFile(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    type_attribute: &bun_core::String,
+) -> bool {
+    let Some(asked) = type_attribute.as_utf8().and_then(Loader::from_string) else {
+        return false;
+    };
+    let (jsc_vm, specifier) = (global.bun_vm(), specifier.to_utf8());
+    let named = loader_named_by_specifier(jsc_vm, specifier.slice()).unwrap_or_else(|| {
+        match Fs::PathName::init(specifier.slice()).ext.is_empty() {
+            true => Loader::Tsx,
+            false => Loader::File,
+        }
+    });
+    let (path, ..) = normalize_specifier_for_loader(&jsc_vm.origin, specifier.slice());
+    asked.makes_other_data_than(named, path)
+}
+
+/// The name that stands for the loader that `type_attribute` names. Empty: an import without it gets the same module.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__typeThatTellsModuleApart(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    type_attribute: &bun_core::String,
+) -> bun_core::String {
+    let Some(asked) = type_attribute.as_utf8().and_then(Loader::from_string) else {
+        return bun_core::String::EMPTY;
+    };
+    let (jsc_vm, specifier) = (global.bun_vm(), specifier.to_utf8());
+    let (path, _, query) = normalize_specifier_for_loader(&jsc_vm.origin, specifier.slice());
+    let named = loader_for_path(
+        &Fs::Path::init(path),
+        &jsc_vm.transpiler.get().options.loaders,
+    );
+    let is_implied = bun_paths::is_absolute(path)
+        && named.is_some_and(|named| asked.is_implied_by(named, path))
+        && options::ImportSuffix::find(query, named).is_none();
+    match is_implied {
+        true => bun_core::String::EMPTY,
+        false => bun_core::String::static_(asked.type_attribute()),
+    }
+}
+
 /// Result of [`get_loader_and_virtual_source`] — mirrors
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
+    named_by_type: Option<Loader>,
+    named_by_path: Option<Loader>,
     virtual_source: Option<&'a bun_ast::Source<'a>>,
     path: Fs::Path<'a>,
     is_main: bool,
@@ -3225,6 +3232,7 @@ fn get_loader_and_virtual_source<'a>(
     } else {
         loader_for_path(&path, &jsc_vm.transpiler.get().options.loaders)
     };
+    let mut named_by_path = loader;
     let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
     let attribute_loader = type_attribute_str.and_then(Loader::from_string);
     let suffix = match attribute_loader {
@@ -3264,6 +3272,8 @@ fn get_loader_and_virtual_source<'a>(
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
                         path = Fs::Path::init(filename);
+                        named_by_path =
+                            loader_for_path(&path, &jsc_vm.transpiler.get().options.loaders);
                     }
                 }
 
@@ -3279,6 +3289,7 @@ fn get_loader_and_virtual_source<'a>(
         *virtual_source_to_use = Some(module);
         virtual_source = virtual_source_to_use.as_ref();
         path = Fs::Path::init(specifier);
+        named_by_path = None;
     } else if virtual_source.is_none()
         && let Some(written) = match attribute_loader
             .or_else(|| suffix.map(options::ImportSuffix::loader))
@@ -3341,6 +3352,8 @@ fn get_loader_and_virtual_source<'a>(
 
     Ok(LoaderResult {
         loader,
+        named_by_type: attribute_loader,
+        named_by_path,
         virtual_source,
         path,
         is_main,
@@ -3365,41 +3378,25 @@ fn package_json_of<'a>(
     }
 }
 
+/// `named`: the loader that the `type` of the import names, or else the name of the file. Where none does, the text decides.
 pub(crate) fn module_type_of(
     path: &Fs::Path<'_>,
+    named: Option<Loader>,
     package_json: Option<&bun_resolver::package_json::PackageJSON>,
 ) -> ModuleType {
     if path.text.starts_with(b"data:") {
         return ModuleType::Unknown;
     }
-    let ext = path.name().ext;
-    // regex /\.[cm][jt]s$/
-    if ext.len() == b".cjs".len() {
-        if ext == b".cjs" {
-            return ModuleType::Cjs;
-        }
-        if ext == b".mjs" {
-            return ModuleType::Esm;
-        }
-        if ext == b".cts" {
-            return ModuleType::Cjs;
-        }
-        if ext == b".mts" {
-            return ModuleType::Esm;
-        }
+    if let Some(module_type) = bun_resolver::resolver::module_type_from_ext(path.name().ext) {
+        return module_type;
     }
-    // regex /\.[jt]s$/
-    if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-        // Use the package.json module type if it exists.
-        return package_json
-            .map(|pkg| pkg.module_type)
-            .unwrap_or(ModuleType::Unknown);
+    match package_json {
+        Some(it) if named.is_some_and(Loader::is_java_script_like) => it.module_type,
+        _ => ModuleType::Unknown,
     }
-    // For JSX/TSX and other extensions, let the file contents decide.
-    ModuleType::Unknown
 }
 
-/// C++ entry point: whether the extension, or else `"type"` in package.json, makes the file an ES module.
+/// C++ entry point: whether the extension, or else `"type"` in package.json, makes the file an ES module to Node.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
     global: &JSGlobalObject,
@@ -3407,8 +3404,9 @@ pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
 ) -> bool {
     let path = path.to_utf8();
     let path = Fs::Path::init(path.slice());
+    let named = matches!(path.name().ext, b".js" | b".ts").then_some(Loader::Js);
     let package_json = package_json_of(global.bun_vm(), &path);
-    module_type_of(&path, package_json) == ModuleType::Esm
+    module_type_of(&path, named, package_json) == ModuleType::Esm
 }
 
 thread_local! {
@@ -3573,9 +3571,6 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     refusal
 }
 
-/// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
-const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
-
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
@@ -3737,10 +3732,10 @@ fn transpile_file<const DATA_ONLY: bool>(
         return ptr::null_mut();
     }
 
-    let module_type = module_type_of(&lr.path, lr.package_json);
-    let pkg_name: Option<&[u8]> = lr
-        .package_json
-        .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
+    let named = lr.named_by_type.or(lr.named_by_path);
+    let module_type = module_type_of(&lr.path, named, lr.package_json);
+    let is_code_by_type_alone = lr.named_by_type.is_some_and(Loader::is_java_script_like)
+        && !lr.named_by_path.is_some_and(Loader::is_java_script_like);
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can — today that's import statements and
@@ -3752,6 +3747,7 @@ fn transpile_file<const DATA_ONLY: bool>(
     if !DATA_ONLY
         && crate::read_ahead::is_enabled(jsc_vm)
         && let Some(loader) = lr.loader.filter(|it| it.is_java_script_like())
+        && lr.named_by_type.is_none()
         && lr.virtual_source.is_none()
         && !lr.is_main
         && lr.path.is_file()
@@ -3763,11 +3759,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             .with_mut(|t| t.find_aot_package_config(lr.path.text, loader))
             .is_none()
     {
-        let tag = match lr.package_json.map_or(module_type, |it| it.module_type) {
-            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
-            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
-            ModuleType::Unknown => ResolvedSourceTag::Javascript,
-        };
+        let tag = ResolvedSourceTag::of_code_in(lr.package_json);
         let loaded = crate::read_ahead::load(jsc_vm, specifier, &lr.path, loader, module_type, tag);
         if let Some(loaded) = loaded {
             *ret = ErrorableResolvedSource::ok(loaded);
@@ -3796,17 +3788,6 @@ fn transpile_file<const DATA_ONLY: bool>(
             // fetch hook sees every module.
             && !bun_jsc::node_compile_cache::is_enabled()
         {
-            // Disgusting workaround: polyfills like
-            // `reflect-metadata` are CJS-with-side-effects that other ESM
-            // depends on synchronously, so they must transpile on-thread.
-            if let Some(pkg_name_) = pkg_name {
-                for always_sync in ALWAYS_SYNC_MODULES {
-                    if pkg_name_ == *always_sync {
-                        break 'transpile_async;
-                    }
-                }
-            }
-
             let aot_package_config = (jsc_vm.transpiler)
                 .with_mut(|t| t.find_aot_package_config(lr.path.text, concurrent_loader));
             return jsc_vm.transpiler_store.transpile(
@@ -3815,13 +3796,18 @@ fn transpile_file<const DATA_ONLY: bool>(
                 specifier.clone(),
                 &lr.path,
                 referrer.clone(),
+                type_attribute.cloned().unwrap_or_default(),
+                is_code_by_type_alone,
                 concurrent_loader,
+                module_type,
                 lr.package_json,
                 aot_package_config,
                 module_loader,
             );
         }
     }
+
+    let has_no_extension = lr.path.name().ext.is_empty() || lr.path.text.starts_with(b"data:");
 
     // ── Synchronous-loader fallback ────────────────────────────────────────
     // Note: hoisted out of `unwrap_or_else` into a
@@ -3834,7 +3820,7 @@ fn transpile_file<const DATA_ONLY: bool>(
         let (has_loaded, is_in_preload) = (jsc_vm.has_loaded.get(), jsc_vm.is_in_preload.get());
         if has_loaded || is_in_preload {
             // Extensionless files in this context are treated as the JS loader.
-            if lr.path.name().ext.is_empty() || lr.path.text.starts_with(b"data:") {
+            if has_no_extension {
                 break 'loader Loader::Tsx;
             }
             // Unknown extensions are to be treated as file loader.
@@ -3908,7 +3894,12 @@ fn transpile_file<const DATA_ONLY: bool>(
     };
 
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
-        Ok(resolved) => *ret = ErrorableResolvedSource::ok(resolved),
+        Ok(mut resolved) => {
+            resolved.is_code_by_type_alone = is_code_by_type_alone;
+            resolved.depends_on_more_than_source |=
+                lr.named_by_type.is_some() || (lr.loader.is_none() && !has_no_extension);
+            *ret = ErrorableResolvedSource::ok(resolved);
+        }
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
                 *ret = ErrorableResolvedSource::err(value);
@@ -3959,8 +3950,7 @@ pub(crate) fn transpile_as_loaded(
     let virtual_source = bun_ast::Source::init_path_string(path, source);
     let mut log = bun_ast::Log::init();
     let fs_path = Fs::Path::init(path);
-    let loaders = &jsc_vm.transpiler.get().options.loaders;
-    let loader = loaders.get(fs_path.name().ext).copied()?;
+    let loader = loader_for_path(&fs_path, &jsc_vm.transpiler.get().options.loaders)?;
     if !loader.is_java_script_like() {
         return None;
     }
@@ -4094,7 +4084,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
 
     let module_type = if loader.is_java_script_like() {
-        module_type_of(&path, package_json_of(jsc_vm, &path))
+        let named = loader_for_path(&path, &jsc_vm.transpiler.get().options.loaders);
+        module_type_of(&path, named, package_json_of(jsc_vm, &path))
     } else {
         ModuleType::Unknown
     };

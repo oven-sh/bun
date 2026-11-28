@@ -1,4 +1,4 @@
-// plain.cjs says nothing of CommonJS, and real.cjs, which runs while the graph is loaded, may require it: it has its turn among the modules. No module has a turn where a name is missing.
+// plain.cjs says nothing of CommonJS, and real.cjs may require it. Both run before the names are checked.
 import { test } from "bun:test";
 test("the graph fails for the name", async () => {
   try {

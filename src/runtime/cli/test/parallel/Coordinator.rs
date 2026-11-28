@@ -525,7 +525,6 @@ impl<'a> Coordinator<'a> {
         let elapsed_ns = rd.u64();
         let (growth_of_worker, largest_child) = (rd.u32(), rd.u32());
         self.max_worker_peak_rss_mb = self.max_worker_peak_rss_mb.max(rd.u32());
-        rd.str().clone_into(&mut self.workers[slot].first_loads);
         // Of the two views of the children, one sees the short-lived and one sees those that run at once.
         let growth = growth_of_worker + largest_child.max(self.take_highest_of_children(slot));
         if let Some(file) = self.test_records.get_mut(idx) {

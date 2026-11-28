@@ -47,7 +47,7 @@ pub fn encode_loaders_given_to_build<E: AsRef<[u8]>>(table: &[(E, Loader)]) -> V
             let fields = [
                 ending.as_ref(),
                 b"\0",
-                type_attribute_of(*loader).as_bytes(),
+                loader.type_attribute().as_bytes(),
                 b"\0",
             ];
             encoded.extend_from_slice(&fields.concat());
@@ -127,14 +127,6 @@ fn is_jsonc_file_name(file_name: &[u8]) -> bool {
 
 pub fn loader_name(loader: Loader) -> &'static str {
     loader.into()
-}
-
-pub fn type_attribute_of(loader: Loader) -> &'static str {
-    match loader {
-        Loader::Bunsh => "sh",
-        Loader::SqliteEmbedded => "sqlite",
-        _ => loader_name(loader),
-    }
 }
 
 pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
@@ -287,10 +279,10 @@ mod tests {
             Loader::Bunsh,
             Loader::Sqlite,
         ] {
-            let written = type_attribute_of(loader).as_bytes();
+            let written = loader.type_attribute().as_bytes();
             assert_eq!(Loader::from_string(written), Some(loader));
         }
-        assert_eq!(type_attribute_of(Loader::SqliteEmbedded), "sqlite");
+        assert_eq!(Loader::SqliteEmbedded.type_attribute(), "sqlite");
     }
 
     #[test]

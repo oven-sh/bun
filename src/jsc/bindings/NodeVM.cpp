@@ -106,17 +106,17 @@ static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObj
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "javascript"_s));
         break;
     case JSC::ScriptFetchParameters::Type::Text:
-        // Unreachable with BUN_JSC_ADDITIONS (`type: "text"` parses as HostDefined); kept so the switch stays exhaustive.
+        // Unreachable with BUN_JSC_ADDITIONS (`type: "text"` is host-defined).
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "text"_s));
         break;
     case JSC::ScriptFetchParameters::Type::CSS:
         // Unreachable for the same reason.
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "css"_s));
         break;
-    case JSC::ScriptFetchParameters::Type::HostDefined:
-        obj->putDirect(vm, vm.propertyNames->type, jsString(vm, params->hostDefinedImportType()));
-        break;
     case JSC::ScriptFetchParameters::Type::None:
+        break;
+    default:
+        obj->putDirect(vm, vm.propertyNames->type, jsString(vm, params->hostDefinedImportType()));
         break;
     }
     return obj;

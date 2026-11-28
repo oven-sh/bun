@@ -268,8 +268,9 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
             let requests = graph.requests(file(name)).iter();
             requests.map(|request| request.target).collect()
         };
-        assert_eq!(targets("above.js"), [ModuleRef::File(file("broken.js"))]);
-        assert!(targets("broken.js").is_empty());
+        let imported = ["sibling.js", "broken.js"].map(|name| ModuleRef::File(file(name)));
+        assert_eq!(targets("above.js"), imported);
+        assert_eq!(targets("broken.js"), [ModuleRef::File(file("fine.js"))]);
         for name in ["above.js", "broken.js"] {
             let hir = input.files.hir(file(name));
             let is_erased = |statement| graph.erased(file(name), statement);
@@ -684,7 +685,7 @@ fn every_export_of_a_native_module_that_mirrors_an_object_may_be_deferred() {
 }
 
 #[test]
-fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
+fn no_type_is_left_to_the_loader_of_a_test_file() {
     let files = [
         (
             "a.test.js",
@@ -706,38 +707,26 @@ fn each_test_file_with_a_loader_of_its_own_says_which_type_comes_first() {
         ("alone.txt", "{ \"port\": 21 }\n"),
     ];
     with_graph_of_test_files(&files, 3, 0, |graph, input| {
-        let types_left_to_loader = |graph: &ModuleGraph, name: &str| -> Vec<_> {
-            let requests = graph.requests(file_named(input, name)).iter();
-            let left = requests.filter_map(|request| match request.target {
-                ModuleRef::External { type_attribute, .. } => Some(type_attribute),
-                _ => None,
-            });
-            left.collect()
-        };
-        let is_loaded_by_loader = |graph: &ModuleGraph, name: &str| {
-            graph.is_loaded_by_loader(ModuleRef::File(file_named(input, name)))
-        };
-        for name in ["a.test.js", "b.test.js", "c.test.js", "below.js"] {
-            assert!(types_left_to_loader(graph, name).is_empty(), "{name}");
-            assert!(!is_loaded_by_loader(graph, name), "{name}");
-        }
-        let graph = bind_whole_program(&BindInput {
+        let in_several_realms = bind_whole_program(&BindInput {
             runs_in_several_realms: true,
             ..*input
         });
-        let (jsonc, text) = (Some(bun_ast::Loader::Jsonc), Some(bun_ast::Loader::Text));
-        assert_eq!(types_left_to_loader(&graph, "a.test.js"), [jsonc]);
-        assert_eq!(types_left_to_loader(&graph, "below.js"), [text]);
-        assert!(is_loaded_by_loader(&graph, "a.test.js"));
-        assert!(types_left_to_loader(&graph, "c.test.js").is_empty());
-        for name in ["b.test.js", "below.js", "c.test.js"] {
-            assert!(!is_loaded_by_loader(&graph, name), "{name}");
+        for graph in [graph, &in_several_realms] {
+            for name in ["a.test.js", "b.test.js", "c.test.js", "below.js"] {
+                let file = file_named(input, name);
+                let mut requests = graph.requests(file).iter();
+                assert!(
+                    !requests.any(|it| matches!(it.target, ModuleRef::External { .. })),
+                    "{name}"
+                );
+                assert!(!graph.is_loaded_by_loader(ModuleRef::File(file)), "{name}");
+            }
         }
     });
 }
 
 #[test]
-fn a_preload_says_in_front_of_the_test_files_which_type_comes_first() {
+fn a_test_file_gets_its_own_type_behind_a_preload_that_asks_for_another() {
     let files = [
         (
             "a.test.js",
@@ -750,7 +739,7 @@ fn a_preload_says_in_front_of_the_test_files_which_type_comes_first() {
         ("conf.txt", "{ \"port\": 21 }\n"),
     ];
     with_graph_of_test_files(&files, 1, 1, |graph, input| {
-        for name in ["a.test.js", "first.js"] {
+        for (name, ending) in [("a.test.js", "conf.txt?jsonc"), ("first.js", "conf.txt")] {
             let requests = graph.requests(file_named(input, name)).iter();
             let forms = requests.filter_map(|request| match request.target {
                 ModuleRef::File(form) => Some(input.sources.public_path(form)),
@@ -758,7 +747,7 @@ fn a_preload_says_in_front_of_the_test_files_which_type_comes_first() {
             });
             let forms: Vec<&[u8]> = forms.collect();
             assert!(
-                matches!(forms[..], [form] if !form.ends_with(b"?jsonc")),
+                matches!(forms[..], [form] if form.ends_with(ending.as_bytes())),
                 "{name}"
             );
         }

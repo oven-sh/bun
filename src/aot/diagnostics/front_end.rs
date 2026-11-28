@@ -23,7 +23,6 @@ use crate::diagnostic_codes::Code;
 use crate::emit::EmitError;
 use crate::link::LinkError;
 use crate::load::sources::parsed_source;
-use crate::module_keys::type_attribute_of;
 use crate::modules::{FailureEffect, ModuleFailureKind, ModuleGraph, ModuleRef};
 use crate::statistics::{LimitValues, Stage};
 
@@ -158,7 +157,7 @@ impl Diagnostics {
                     let reason = reason.unwrap_or_default();
                     match source.and_then(|source| source.refused_at.as_ref()) {
                         Some((loader, _)) => {
-                            let kind = type_attribute_of(*loader).as_bytes();
+                            let kind = loader.type_attribute().as_bytes();
                             Diagnostic::new(Code::DataFileIsRefused, None, &[path, kind, reason])
                         }
                         None => Diagnostic::new(Code::FileIsNotAProgram, None, &[path, reason]),

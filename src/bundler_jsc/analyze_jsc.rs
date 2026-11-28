@@ -86,6 +86,15 @@ fn to_js_module_record<'a>(
         }
         .ok_or(analyze::ModuleInfoError::BadModuleInfo)
     };
+    // `ScriptFetchParameters::Type`, pinned by the static_asserts in BunAnalyzeTranspiledModule.cpp.
+    let request_type = |fetch| -> Result<u32, analyze::ModuleInfoError> {
+        Ok(match fetch {
+            RequestedModuleValue::None | RequestedModuleValue::Javascript => 1,
+            RequestedModuleValue::Webassembly => 2,
+            RequestedModuleValue::Json => 3,
+            host => JSC__ScriptFetchParameters__hostDefinedType(ready(StringID(host.0))?),
+        })
+    };
 
     let import_count = body
         .record_tags
@@ -141,7 +150,7 @@ fn to_js_module_record<'a>(
             host => JSC_JSModuleRecord__addRequestedModuleHostDefined(
                 module_record,
                 key,
-                ready(StringID(host.0))?,
+                request_type(host)?,
                 phase_defer,
             ),
         }
@@ -162,9 +171,7 @@ fn to_js_module_record<'a>(
                 } else {
                     ready(ids.next_id()?)?
                 };
-                let ty = ids
-                    .next_fetch(fetch_kind)?
-                    .to_script_fetch_parameters_type();
+                let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 if kind == RecordKind::ImportInfoSingle {
                     JSC_JSModuleRecord__addImportEntrySingle(
                         module_record,
@@ -186,9 +193,7 @@ fn to_js_module_record<'a>(
             RecordKind::ImportInfoNamespace | RecordKind::ImportInfoNamespaceDefer => {
                 let module_name = ready(ids.next_id()?)?;
                 let local_name = ready(ids.next_id()?)?;
-                let ty = ids
-                    .next_fetch(fetch_kind)?
-                    .to_script_fetch_parameters_type();
+                let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 if kind == RecordKind::ImportInfoNamespace {
                     JSC_JSModuleRecord__addImportEntryNamespace(
                         module_record,
@@ -210,9 +215,7 @@ fn to_js_module_record<'a>(
                 let import_id = ids.next_id()?;
                 let import_name = ready(import_id)?;
                 let module_name = ready(ids.next_id()?)?;
-                let ty = ids
-                    .next_fetch(fetch_kind)?
-                    .to_script_fetch_parameters_type();
+                let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 if import_id == StringID::STAR_NAMESPACE {
                     JSC_JSModuleRecord__addNamespaceExport(
                         module_record,
@@ -239,16 +242,12 @@ fn to_js_module_record<'a>(
             RecordKind::ExportInfoNamespace => {
                 let export_name = ready(ids.next_id()?)?;
                 let module_name = ready(ids.next_id()?)?;
-                let ty = ids
-                    .next_fetch(fetch_kind)?
-                    .to_script_fetch_parameters_type();
+                let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 JSC_JSModuleRecord__addNamespaceExport(module_record, export_name, module_name, ty)
             }
             RecordKind::ExportInfoStar => {
                 let module_name = ready(ids.next_id()?)?;
-                let ty = ids
-                    .next_fetch(fetch_kind)?
-                    .to_script_fetch_parameters_type();
+                let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 JSC_JSModuleRecord__addStarExport(module_record, module_name, ty)
             }
             _ => return Err(analyze::ModuleInfoError::BadModuleInfo),
@@ -344,7 +343,7 @@ unsafe extern "C" {
         export_name: &Identifier,
         import_name: &Identifier,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
     safe fn JSC_JSModuleRecord__addLocalExport(
         module_record: &JSModuleRecord,
@@ -355,12 +354,12 @@ unsafe extern "C" {
         module_record: &JSModuleRecord,
         export_name: &Identifier,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
     safe fn JSC_JSModuleRecord__addStarExport(
         module_record: &JSModuleRecord,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
 
     safe fn JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
@@ -383,10 +382,11 @@ unsafe extern "C" {
         module_name: &Identifier,
         phase_defer: bool,
     );
+    safe fn JSC__ScriptFetchParameters__hostDefinedType(name: &Identifier) -> u32;
     safe fn JSC_JSModuleRecord__addRequestedModuleHostDefined(
         module_record: &JSModuleRecord,
         module_name: &Identifier,
-        host_defined_import_type: &Identifier,
+        host_defined_import_type: u32,
         phase_defer: bool,
     );
 
@@ -395,25 +395,25 @@ unsafe extern "C" {
         import_name: &Identifier,
         local_name: &Identifier,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
     safe fn JSC_JSModuleRecord__addImportEntrySingleTypeScript(
         module_record: &JSModuleRecord,
         import_name: &Identifier,
         local_name: &Identifier,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
     safe fn JSC_JSModuleRecord__addImportEntryNamespace(
         module_record: &JSModuleRecord,
         local_name: &Identifier,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
     safe fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
         module_record: &JSModuleRecord,
         local_name: &Identifier,
         module_name: &Identifier,
-        module_request_type: u8,
+        module_request_type: u32,
     );
 }

@@ -9,7 +9,7 @@ use super::failures::{
 };
 use super::graph::StoredSiteAnswer;
 use super::interop::{ImportPhase, Interop, ModuleKind, file_interop};
-use super::module_set::{ImportTypeKind, ModuleSet};
+use super::module_set::ModuleSet;
 use super::order::{EvaluationOrder, PlannedSites};
 use super::{BindInput, ModuleRef};
 use crate::builtins::{RuntimeModule, table};
@@ -66,6 +66,7 @@ pub(super) struct FileScan {
     pub left_to_loader: Vec<(Atom, FileId)>,
     pub requests: Vec<RequestDraft>,
     pub failures: Vec<PendingFailure>,
+    pub is_never_linked: bool,
 }
 
 impl FileScan {
@@ -172,13 +173,10 @@ fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scan
     if !mentions_plugin(files) {
         return;
     }
-    let is_asked_of_plugins = |spelling: Atom, module: ModuleRef| match module {
+    let is_asked_of_plugins = |module: ModuleRef| match module {
         ModuleRef::File(_) => true,
         ModuleRef::Runtime(RuntimeModule::BunTest) => false,
-        ModuleRef::Runtime(_) => {
-            !is_replaced_by_object(module)
-                && strings::contains_char(files.atoms.bytes(spelling), b':')
-        }
+        ModuleRef::Runtime(_) => !is_replaced_by_object(module),
         _ => false,
     };
     for &file in files.compiled_files() {
@@ -192,7 +190,7 @@ fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scan
             ..
         } = scan;
         for spelled in spellings.iter_mut() {
-            spelled.is_left_to_loader |= is_asked_of_plugins(spelled.spelling, spelled.module);
+            spelled.is_left_to_loader |= is_asked_of_plugins(spelled.module);
         }
         for (site, answer) in files.analysis(file).import_sites.iter().zip(sites) {
             let is_call = matches!(
@@ -206,7 +204,7 @@ fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scan
             );
             if let (true, ImportSpecifier::Constant(spelling), &mut ScannedSite::Module(module)) =
                 (is_call, site.specifier, &mut *answer)
-                && is_asked_of_plugins(spelling, module)
+                && is_asked_of_plugins(module)
             {
                 let at = spellings.len() as u32;
                 spellings.push(SpelledModule {
@@ -486,6 +484,7 @@ fn scan_file(files: &Files<'_>, sources: &Sources, program: Program, file: FileI
         candidates: scanner.candidates,
         spellings: scanner.spellings,
         externals: scanner.externals,
+        is_never_linked: false,
         left_to_loader: Vec::new(),
         requests,
         failures: scanner.failures,
@@ -608,7 +607,10 @@ impl FileScanner<'_, '_> {
             && matches!(spelled.module, ModuleRef::Runtime(_))
             && match is_followed_further_than_bundler(self.files, self.file, site) {
                 true => strings::contains_char(name, b':'),
-                false => name.starts_with(b"bun:"),
+                false => {
+                    name.starts_with(b"bun:")
+                        && !self.is_name_for_transpiler_alone(spelled.spelling)
+                }
             }
     }
 
@@ -877,6 +879,25 @@ impl FileScanner<'_, '_> {
     }
 }
 
+/// What the statements of the file ask the resolver for: a name once for each type.
+pub(super) fn list_names_of_statements(files: &Files<'_>, file: FileId) -> Vec<Atom> {
+    let mut requests = FxHashSet::default();
+    let sites = files.analysis(file).import_sites.iter();
+    let written = sites.filter_map(|site| match (site.kind, site.specifier) {
+        (
+            ImportSiteKind::JsxRuntime
+            | ImportSiteKind::JsxPackage
+            | ImportSiteKind::Import(_)
+            | ImportSiteKind::ExportFrom(_)
+            | ImportSiteKind::ExportStar(_),
+            ImportSpecifier::Constant(name),
+        ) => Some((name, find_type_attribute(files, files.hir(file), site))),
+        _ => None,
+    });
+    let written = written.filter(|&request| requests.insert(request));
+    written.map(|(name, _)| name).collect()
+}
+
 fn find_type_attribute(
     files: &Files<'_>,
     hir: &hir::File<'_>,
@@ -974,24 +995,14 @@ pub(super) fn import_phase(hir: &hir::File<'_>, import: ImportId) -> ImportPhase
     }
 }
 
-pub(super) fn import_call_type_kind(
-    files: &Files<'_>,
-    hir: &hir::File<'_>,
-    site: &ImportSite,
-    call: ExprId,
-) -> Option<ImportTypeKind> {
+pub(super) fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite, call: ExprId) -> bool {
     let has_options = match hir[call].kind {
         ExprKind::ImportCall { args } => args.len() > 1,
         _ => true,
     };
-    if !has_options {
-        return Some(ImportTypeKind::None);
-    }
-    let written = hir.import_attribute(site.attributes.some()?, bun_sema::atom::known::r#type)?;
-    Some(match files.atoms.bytes(written) {
-        b"json" => ImportTypeKind::Json,
-        _ => ImportTypeKind::HostDefined,
-    })
+    let written = (site.attributes.some())
+        .and_then(|it| hir.import_attribute(it, bun_sema::atom::known::r#type));
+    has_options && written.is_none()
 }
 
 fn phase_of_request(target: ModuleKind, written: ImportPhase) -> ImportPhase {

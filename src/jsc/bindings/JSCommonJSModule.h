@@ -15,6 +15,7 @@ class SourceCode;
 class JSSourceCode;
 class ProgramExecutable;
 class AbstractModuleRecord;
+class SyntheticModuleRecord;
 }
 
 namespace Bun {
@@ -98,8 +99,16 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // Until it starts.
+    bool isGivenToRunMain { false };
     // False means no parent's m_children holds this module, so addChild need not search. Unlike isListedAsChild, it stays true once set.
     bool hasBeenAddedAsChild { false };
+    // The loader has filled `exports` with an ES module or with data.
+    bool holdsESModuleOrData : 1 { false };
+    // ResolvedSource::is_code_by_type_alone
+    bool isCodeByTypeAlone : 1 { false };
+    // Its key in the require cache belongs to another module.
+    bool isKeptOutOfRequireCache : 1 { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
@@ -208,30 +217,23 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 // Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
 JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
 
-// `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
-// its require cache), or null for the global object's loader.
-std::optional<JSC::SourceCode> createCommonJSModule(
-    Zig::GlobalObject* globalObject,
-    JSModuleGraph* graph,
-    JSC::JSString* specifierValue,
-    ResolvedSource& source,
-    bool isBuiltIn);
+// What an import of a CommonJS file fetches. `graph`: the Bun.ModuleGraph whose loader is importing the file (the module
+// goes in its require cache), or null for the global object's loader.
+JSC::JSSourceCode* createCommonJSModule(Zig::GlobalObject*, JSModuleGraph* graph, ResolvedSource&);
+JSC::JSSourceCode* createCommonJSModule(Zig::GlobalObject*, JSModuleGraph* graph, Ref<JSC::SourceProvider>&&, bool ignoreESModuleAnnotation);
 
-std::optional<JSC::SourceCode> createCommonJSModule(
-    Zig::GlobalObject* globalObject,
-    JSModuleGraph* graph,
-    JSC::JSString* specifierValue,
-    Ref<JSC::SourceProvider>&& provider,
-    bool ignoreESModuleAnnotation);
+// It answers imports alone. require() and require.cache go by the module object.
+bool isRecordOfCommonJSFile(JSC::JSGlobalObject*, JSC::AbstractModuleRecord*);
+bool isCommonJSFileRunning(JSC::JSGlobalObject*, JSC::JSModuleLoader*, const String& key);
+bool isEntryPoint(JSC::JSGlobalObject*, const String& key);
+// What `require.main` of a file that is not compiled answers, also once the module has left the require cache.
+JSC::JSValue mainModule(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSC::JSValue path);
+// For Module.runMain(). False: it is an ES module, or a plugin takes its time to load it.
+bool runMainModuleUnlessImported(Zig::GlobalObject*, JSC::JSString* key);
 
-inline std::optional<JSC::SourceCode> createCommonJSModule(
-    Zig::GlobalObject* globalObject,
-    JSModuleGraph* graph,
-    JSC::JSString* specifierValue,
-    ResolvedSource& source)
-{
-    return createCommonJSModule(globalObject, graph, specifierValue, source, false);
-}
+// For a require() that comes to the file before the import that fetched it is done with it.
+bool hasImportedCommonJSFileStarted(JSC::SyntheticModuleRecord*);
+void evaluateImportedCommonJSFile(Zig::GlobalObject*, JSC::SyntheticModuleRecord*, JSCommonJSModule*);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

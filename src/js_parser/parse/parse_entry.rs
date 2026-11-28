@@ -306,6 +306,8 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 

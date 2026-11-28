@@ -249,6 +249,12 @@ pub fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     HardcodedModule::Alias::get(name, bun_ast::Target::Bun, alias_cfg())
 }
 
+/// `node:util` for "util", "sys", "node:util" and "node:sys". `None` for a builtin in no namespace, like "ws".
+pub fn key_of_builtin_in_namespace(name: &[u8]) -> Option<&'static [u8]> {
+    let key = bun_aliases_get(name)?.path.as_bytes();
+    (key.starts_with(b"node:") || key.starts_with(b"bun:")).then_some(key)
+}
+
 /// Node's `--expose-internals`.
 pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSourceTag)> {
     let rest = spec.strip_prefix(b"internal/")?;

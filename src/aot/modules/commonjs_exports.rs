@@ -57,7 +57,6 @@ pub(super) struct CommonJsInput<'a, 'b, 's> {
     pub modules: &'a ModuleSet,
     pub half: &'a (dyn Fn(ModuleRef) -> bool + Sync),
     pub half_at_link: &'a (dyn Fn(ModuleRef) -> bool + Sync),
-    pub is_prefix_root: &'a (dyn Fn(FileId) -> bool + Sync),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

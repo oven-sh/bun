@@ -24,6 +24,7 @@ using namespace JSC;
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
+void throwIfResolvedFileIsRefused(JSC::JSGlobalObject*, JSC::JSValue resolvedPath, JSC::JSValue written, JSC::JSValue from);
 
 class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:

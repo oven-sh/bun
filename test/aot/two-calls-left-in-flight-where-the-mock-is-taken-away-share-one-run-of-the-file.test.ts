@@ -20,7 +20,7 @@ afterEach(() => {
   vi.doUnmock("./part.mjs");
 });
 `;
-const unsupported = `TypeError require() async module "between.mjs" is unsupported. use "await import()" instead.`;
+const unsupported = `Error require() async module "between.mjs" is unsupported. use "await import()" instead.`;
 const forms = {
   "the body of the file runs once": {
     files: { "part.mjs": `console.log("the body of the file runs");\nexport const opening = "its own";\n` },
@@ -41,9 +41,9 @@ const forms = {
       "the test ends",
       "the body of the file begins",
       "the file between begins",
-      "the file below runs",
       `the call failed: ${unsupported}`,
       `the call for the file above failed: ${unsupported}`,
+      "the file below runs",
     ],
   },
 };

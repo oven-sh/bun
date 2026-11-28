@@ -7,7 +7,7 @@ use crate::ir::parallel::map_each;
 use crate::load::loaders::{HostLoaderKind, host_loader_kind};
 use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind};
-use crate::module_keys::{DEFAULT_LOADERS, loader_named_by_path, parses_text_as_data};
+use crate::module_keys::{parses_text_as_data, path_without_form};
 use bun_ast::Loader;
 use bun_core::strings;
 use bun_sema::atom::Atom;
@@ -15,14 +15,7 @@ use bun_sema::hir::FnId;
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{CodeAnswer, FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
-use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum ImportTypeKind {
-    None,
-    Json,
-    HostDefined,
-}
+use bun_sema::util::{FxHashSet, SharedSort};
 
 pub(super) struct ModuleSet {
     pub compiled_files: Vec<FileId>,
@@ -40,7 +33,7 @@ pub(super) struct ModuleSet {
     forms: Vec<(FileId, FileId)>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
     pub(super) folders_of_databases: Vec<FileId>,
-    sibling_forms: Vec<(FileId, FileId, ImportTypeKind)>,
+    sibling_forms: Vec<(FileId, FileId)>,
 }
 
 impl ModuleSet {
@@ -132,10 +125,9 @@ impl ModuleSet {
         matches!(module, ModuleRef::File(file) if forms.binary_search_by_key(&file, |entry| entry.0).is_ok())
     }
 
-    pub(super) fn sibling_forms_of_kind(
+    pub(super) fn sibling_forms_of(
         &self,
         module: ModuleRef,
-        kind: Option<ImportTypeKind>,
     ) -> impl Iterator<Item = ModuleRef> + '_ {
         let siblings = match module {
             ModuleRef::File(file) => {
@@ -145,10 +137,7 @@ impl ModuleSet {
             }
             _ => &[],
         };
-        let matching = siblings
-            .iter()
-            .filter(move |entry| kind.is_none_or(|kind| kind == entry.2));
-        matching.map(|entry| ModuleRef::File(entry.1))
+        siblings.iter().map(|entry| ModuleRef::File(entry.1))
     }
 
     pub(super) fn table_file(&self, module: ModuleRef) -> Option<FileId> {
@@ -292,11 +281,20 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         runs_code_out_of_sight,
     );
     for &file in &compiled_files {
-        if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
-            it.kind == ModuleKind::Data && it.require_result != RequireResult::Namespace
-        }) {
-            interop.loader_returns_namespace = stands_for_string(input, file);
-        }
+        let Some(interop) = interops[file.idx()]
+            .as_mut()
+            .filter(|it| it.kind == ModuleKind::Data)
+        else {
+            continue;
+        };
+        interop.type_of_other_form_of_file = parsed_source(files, file)
+            .filter(|it| it.is_other_form_of_file)
+            .map(|it| it.loader);
+        interop.loader_returns_namespace = stands_for_string(input, file)
+            && !matches!(
+                interop.require_result,
+                RequireResult::Namespace | RequireResult::HeldNamespace
+            );
     }
     let mut other_modules = Vec::new();
     let mut other_modules_seen = FxHashSet::default();
@@ -418,18 +416,19 @@ fn find_sibling_forms(
     input: &BindInput<'_, '_>,
     compiled_files: &[FileId],
     interops: &[Option<Interop>],
-) -> Vec<(FileId, FileId, ImportTypeKind)> {
+) -> Vec<(FileId, FileId)> {
     let files = input.files;
     let is_data =
         |file: &&FileId| interops[file.idx()].is_some_and(|it| it.kind == ModuleKind::Data);
-    let kind_of = |file: FileId| match files.compiled(file).map(|it| host_loader_kind(it.loader)) {
-        Some(Some(HostLoaderKind::Loader(Loader::Json))) => ImportTypeKind::Json,
-        Some(Some(HostLoaderKind::Loader(_))) => ImportTypeKind::HostDefined,
-        Some(Some(HostLoaderKind::ByName) | None) | None => ImportTypeKind::None,
+    let has_type = |file: &&FileId| {
+        let loader = files.compiled(**file).map(|it| it.loader);
+        matches!(
+            loader.and_then(host_loader_kind),
+            Some(HostLoaderKind::Loader(_))
+        )
     };
     let path_of = |file: FileId| files.module(file).path.text;
-    let typed = compiled_files.iter().filter(is_data);
-    let typed = typed.filter(|&&file| kind_of(file) != ImportTypeKind::None);
+    let typed = compiled_files.iter().filter(is_data).filter(has_type);
     let mut typed_paths: Vec<&[u8]> = typed.map(|&file| path_of(file)).collect();
     if typed_paths.is_empty() {
         return Vec::new();
@@ -444,16 +443,20 @@ fn find_sibling_forms(
         for &(_, form) in same_path {
             let others = same_path.iter().map(|other| &other.1).filter(is_data);
             let others = others.filter(|&&other| other != form);
-            siblings.extend(others.map(|&other| (form, other, kind_of(other))));
+            siblings.extend(others.map(|&other| (form, other)));
         }
     }
-    siblings.shared_sort_unstable_by_key(|entry| (entry.0, entry.1));
+    siblings.shared_sort_unstable();
     siblings
 }
 
 fn stands_for_string(input: &BindInput<'_, '_>, file: FileId) -> bool {
     parsed_source(input.files, file)
         .is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md))
+}
+
+fn is_other_form_of_file(input: &BindInput<'_, '_>, file: FileId) -> bool {
+    parsed_source(input.files, file).is_some_and(|it| it.is_other_form_of_file)
 }
 
 fn answer_require_with_what_the_loader_holds(
@@ -507,56 +510,42 @@ fn answer_require_with_what_the_loader_holds(
             }
         }
     }
+    let is_named_both_ways = |file: FileId| {
+        (is_any_imported || is_imported[file.idx()]) && (is_any_required || is_required[file.idx()])
+    };
     for &file in compiled_files {
-        let is_named_both_ways = (is_any_imported || is_imported[file.idx()])
-            && (is_any_required || is_required[file.idx()]);
         let is_text = stands_for_string(input, file);
         let is_value = is_text
             || parsed_source(input.files, file)
                 .is_some_and(|it| parses_text_as_data(it.loader) || it.loader == Loader::Css);
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
-            is_named_both_ways
+            is_named_both_ways(file)
                 && is_value
                 && it.kind == ModuleKind::Data
                 && it.require_result == RequireResult::DefaultExport
         }) {
-            interop.require_result = match is_text && is_imported[file.idx()] {
-                true => RequireResult::Namespace,
-                false => RequireResult::NamespaceIfImported,
+            let has_type = path_without_form(input.sources.public_path(file)).is_some();
+            interop.require_result = match is_text {
+                true if is_imported[file.idx()] || has_type => RequireResult::Namespace,
+                true => RequireResult::NamespaceIfImported,
+                false if is_other_form_of_file(input, file) => RequireResult::DefaultExport,
+                false => RequireResult::HeldDefaultExport,
             };
         }
     }
     let mut checked_first: Vec<(FileId, FileId)> = Vec::new();
-    let mut code_checked_first: Vec<(FileId, FileId)> = Vec::new();
-    let mut keeps_entries = None;
     for &(file, form) in forms {
-        let Some(interop) = interops[file.idx()].filter(|it| it.kind == ModuleKind::Data) else {
-            if interops[file.idx()].is_none() {
-                continue;
-            }
-            // Once the code at the path has been required, require() of a typed form answers with its exports.
-            if is_any_required || is_required[form.idx()] {
-                code_checked_first.push((form, file));
-            }
-            let is_imported_after_require = (is_any_required || is_required[form.idx()])
-                && (is_any_imported || is_imported[file.idx()]);
-            if (is_any_required || is_required[file.idx()] || is_imported_after_require)
-                && *keeps_entries.get_or_insert_with(|| {
-                    !runs_code_out_of_sight && keeps_entries_of_module_cache(input, compiled_files)
-                })
-            {
-                checked_first.push((file, form));
-            }
-            continue;
-        };
-        let is_read_by_require =
-            interop.require_result != RequireResult::Namespace || stands_for_string(input, file);
-        if !is_read_by_require || !(is_any_required || is_required[file.idx()]) {
+        if is_other_form_of_file(input, form)
+            || !interops[file.idx()].is_some_and(|it| it.kind == ModuleKind::Data)
+            || !(is_any_required || is_required[file.idx()])
+        {
             continue;
         }
-        let is_first_form = checked_first.last().is_none_or(|last| last.0 != file);
-        if is_first_form && interop.require_result == RequireResult::NamespaceIfImported {
-            checked_first.push((file, file));
+        if let Some(interop) = interops[file.idx()]
+            .as_mut()
+            .filter(|it| it.require_result == RequireResult::Namespace && is_named_both_ways(file))
+        {
+            interop.require_result = RequireResult::HeldNamespace;
         }
         checked_first.push((file, form));
     }
@@ -565,86 +554,22 @@ fn answer_require_with_what_the_loader_holds(
         compiled_files,
         interops,
     ));
-    for &(file, form) in &checked_first {
-        if let Some(interop) = &mut interops[form.idx()] {
-            interop.require_result = RequireResult::NamespaceIfImported;
-        }
-        // While a text form is loaded and has not run, require() returns the namespace of the file without a type.
-        if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
-            stands_for_string(input, form)
-                && !stands_for_string(input, file)
-                && it.kind == ModuleKind::Data
-                && it.require_result == RequireResult::DefaultExport
-        }) {
-            interop.require_result = RequireResult::NamespaceIfImported;
-        }
+    for &(_, form) in &checked_first {
+        let Some(interop) = &mut interops[form.idx()] else {
+            continue;
+        };
+        let is_path = parsed_source(input.files, form)
+            .is_some_and(|it| it.is_path_of_file_that_names_no_loader);
+        interop.require_result = match interop.require_result {
+            RequireResult::Namespace => RequireResult::HeldNamespace,
+            _ if stands_for_string(input, form) => RequireResult::HeldNamespace,
+            RequireResult::DefaultExport if is_path => RequireResult::NamespaceIfImported,
+            RequireResult::DefaultExport => RequireResult::HeldDefaultExport,
+            held => held,
+        };
     }
-    checked_first.extend(code_checked_first);
-    checked_first.extend(find_module_forms(input, compiled_files, interops));
-    let is_read_as_json =
-        |form: FileId| parsed_source(input.files, form).is_some_and(|it| it.loader == Loader::Json);
-    checked_first.shared_sort_unstable_by_key(|&(file, form)| {
-        (file, form != file, is_read_as_json(form), form)
-    });
+    checked_first.shared_sort_unstable();
     checked_first
-}
-
-fn keeps_entries_of_module_cache(input: &BindInput<'_, '_>, compiled_files: &[FileId]) -> bool {
-    if input.runs_tests || input.files_are_named_out_of_sight {
-        return false;
-    }
-    compiled_files.iter().all(|&file| {
-        if input.sources.kind(file) != SourceKind::Program {
-            return true;
-        }
-        parsed_source(input.files, file).is_some_and(|source| {
-            let builtins = &source.builtins;
-            !builtins.reaches_module_cache()
-                && !builtins.loses_sight_of_module_cache()
-                && !builtins.resets_modules()
-                && builtins.keys_taken_out_of_module_cache().is_empty()
-                && builtins.places_that_hand_module_cache_on().is_empty()
-                && !builtins.evaluator_comes_out()
-        })
-    })
-}
-
-/// The CommonJS files that are ES modules too where an import loads them, each with that module.
-fn find_module_forms(
-    input: &BindInput<'_, '_>,
-    compiled_files: &[FileId],
-    interops: &[Option<Interop>],
-) -> Vec<(FileId, FileId)> {
-    let path_of = |file: FileId| input.sources.public_path(file);
-    let is_kind = |file: FileId, kind: ModuleKind| {
-        interops[file.idx()].is_some_and(|interop| interop.kind == kind)
-    };
-    let has_type = |file: FileId| {
-        let loader = input.files.compiled(file).map(|it| it.loader);
-        matches!(
-            loader.and_then(host_loader_kind),
-            Some(HostLoaderKind::Loader(_))
-        )
-    };
-    let forms = compiled_files.iter().copied();
-    let forms = forms.filter(|&form| is_kind(form, ModuleKind::SourceText) && has_type(form));
-    let forms: Vec<(&[u8], FileId)> = forms
-        .filter_map(|form| {
-            let path = path_of(form);
-            let mark = strings::last_index_of_char(path, b'?')?;
-            Some((&path[..mark], form))
-        })
-        .collect();
-    if forms.is_empty() {
-        return Vec::new();
-    }
-    let files = compiled_files.iter().copied();
-    let files = files.filter(|&file| is_kind(file, ModuleKind::CommonJs));
-    let file_by_path: FxHashMap<&[u8], FileId> = files.map(|it| (path_of(it), it)).collect();
-    let forms = forms.into_iter();
-    forms
-        .filter_map(|(path, form)| Some((*file_by_path.get(path)?, form)))
-        .collect()
 }
 
 fn find_paths_that_answer_in_place_of_code(
@@ -658,26 +583,29 @@ fn find_paths_that_answer_in_place_of_code(
     let path_of = |file: FileId| input.sources.public_path(file);
     let mut paths: Vec<(&[u8], FileId)> = Vec::new();
     for &file in compiled_files {
-        let is_path = parsed_source(input.files, file).is_some_and(|it| it.loader == Loader::File)
-            && loader_named_by_path(DEFAULT_LOADERS, path_of(file)).is_none();
+        let is_path = parsed_source(input.files, file)
+            .is_some_and(|it| it.is_path_of_file_that_names_no_loader);
         if let Some(interop) = interops[file.idx()]
             .as_mut()
             .filter(|it| is_path && it.kind == ModuleKind::Data)
         {
             interop.require_result = RequireResult::NamespaceIfImported;
-            paths.push((path_of(file), file));
+            let path = path_of(file);
+            paths.push((path_without_form(path).unwrap_or(path), file));
         }
     }
     paths.shared_sort_unstable();
     let is_code =
         |file: &&FileId| interops[file.idx()].is_some_and(|it| it.kind != ModuleKind::Data);
-    let answered = compiled_files.iter().filter(is_code).filter_map(|&code| {
+    let mut answered = Vec::new();
+    for &code in compiled_files.iter().filter(is_code) {
         let path = path_of(code);
-        let mark = strings::last_index_of_char(path, b'?')?;
-        let at = paths.binary_search_by(|entry| entry.0.cmp(&path[..mark]));
-        Some((code, paths[at.ok()?].1))
-    });
-    answered.collect()
+        let path = path_without_form(path).unwrap_or(path);
+        let first = paths.partition_point(|entry| entry.0 < path);
+        let of_file = paths[first..].iter().take_while(|entry| entry.0 == path);
+        answered.extend(of_file.map(|entry| (code, entry.1)));
+    }
+    answered
 }
 
 fn find_files_required_from_loader(

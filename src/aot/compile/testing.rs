@@ -770,9 +770,6 @@ impl TestProject {
             entry_points: self.entry_points.clone(),
             code: CodeOptions {
                 builds_executable: self.builds_executable,
-                entry_points_that_run_first: (paths_of_preloads.iter())
-                    .map(|path| from_native(path))
-                    .collect(),
                 ..CodeOptions::bun_run(&from_native(&self.directory))
             },
             typescript_libs: libs,

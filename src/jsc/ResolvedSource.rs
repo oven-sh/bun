@@ -19,6 +19,8 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
+    /// Without the `type` of the import, the file is something else.
+    pub is_code_by_type_alone: bool,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,
 
@@ -36,7 +38,8 @@ pub struct ResolvedSource {
     /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
     /// record from the graph.
     pub is_prelinked_module: bool,
-    /// `source_code` also depends on macro results or `import.meta.glob` matches, so `IsolatedModuleCache` skips it.
+    /// `source_code` also depends on macro results, `import.meta.glob` matches or how the file was asked for, so
+    /// `IsolatedModuleCache` skips it.
     pub depends_on_more_than_source: bool,
     /// `JSC::SourceProvenance::Static`: `source_code` comes from where the program is stored or from Bun itself, not from
     /// a JavaScript value. `--disallow-code-generation-from-strings=strict` runs nothing else.
@@ -172,5 +175,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_code_by_type_alone @ 49, is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

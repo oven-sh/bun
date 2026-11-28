@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, Heap, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -3015,6 +3016,164 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
     expect(stderr).toContain(" 2 pass");
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent.each(isolateFlags)("%s: the SourceProvider cache keeps what any load of a path gets", flag => {
+  async function expectToPass(dir: string, files: string[], env: Record<string, string> = {}) {
+    const { stderr, exitCode } = await runTests(dir, [flag], files, { ...bunEnv, ...env });
+    expect(stderr).toContain(` ${files.length} pass\n 0 fail\n`);
+    expect(exitCode).toBe(0);
+  }
+
+  test.each([
+    ["an ES module", `export default 1;`],
+    ["a CommonJS file", `module.exports = 1;`],
+  ])("not %s that a type made of a text", async (_, code) => {
+    const file = `
+      import { expect, test } from "bun:test";
+      test("both", async () => {
+        expect((await import("./code.txt", { with: { type: "js" } })).default).toBe(1);
+        expect((await import("./code.txt")).default).toBe(${JSON.stringify(code)});
+      });
+    `;
+    using dir = tempDir("isolate-typed-code", { "code.txt": code, "a.test.js": file, "b.test.js": file });
+    await expectToPass(String(dir), ["./a.test.js", "./b.test.js"]);
+  });
+
+  test("not the code that require() made of a file of an unknown type", async () => {
+    using dir = tempDir("isolate-required-unknown", {
+      "code.unknown": `module.exports = 1;`,
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        test("requires", () => expect(require("./code.unknown")).toBe(1));
+      `,
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        test("imports", async () => expect((await import("./code.unknown")).default).toEndWith("code.unknown"));
+      `,
+    });
+    await expectToPass(String(dir), ["./a.test.js", "./b.test.js"]);
+  });
+
+  const comparesGlobals = (helper: string) => `
+    import { expect, test } from "vitest";
+    import { globalTest } from "./${helper}";
+    test("the helper has the globals of vitest", () => expect(globalTest).toBe(test));
+  `;
+
+  test("not a CommonJS file that was read under the globals of one runner and ran under another's", async () => {
+    using dir = tempDir("isolate-read-ahead-of-vitest", {
+      "bunfig.toml": `[test]\npreload = ["./preload.mjs"]\n`,
+      "preload.mjs": `
+        if (Bun.main.endsWith("a.test.mjs")) {
+          const asked = Promise.withResolvers(), gate = Promise.withResolvers();
+          Bun.plugin({
+            name: "gate",
+            setup(build) {
+              build.onLoad({ filter: /gate\\.mjs$/ }, () => (asked.resolve(), gate.promise));
+            },
+          });
+          const loaded = import("./root.mjs");
+          globalThis.finish = () => (gate.resolve({ contents: "", loader: "js" }), loaded);
+          await asked.promise;
+          await new Promise(setImmediate);
+        }
+      `,
+      "root.mjs": `import "./gate.mjs"; import "./helper.cjs";`,
+      "gate.mjs": ``,
+      "helper.cjs": `exports.globalTest = test;`,
+      "a.test.mjs": `import { test } from "vitest"; test("lets the load end", () => finish());`,
+      "b.test.mjs": comparesGlobals("helper.cjs"),
+    });
+    await expectToPass(String(dir), ["./a.test.mjs", "./b.test.mjs"], {
+      BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+    });
+  });
+
+  // The pool has two threads. A read of a FIFO holds one of them until the writer is closed, and one thread takes its jobs in turn.
+  describe.skipIf(!isLinux)("a load that a file leaves in flight", () => {
+    function projectWithPool(files: Record<string, string>) {
+      const dir = tempDir("isolate-load-in-flight", {
+        ...files,
+        "pool.cjs": `
+          const fs = require("node:fs");
+          const isFileOf = (fd, { ino }) => { try { return fs.fstatSync(fd).ino === ino; } catch { return false; } };
+          exports.waitFor = (what, isSo) => {
+            for (const deadline = performance.now() + 4000; !isSo(); ) {
+              if (performance.now() > deadline) throw new Error("no thread has " + what);
+            }
+          };
+          exports.hold = fifo => {
+            const writer = fs.openSync(fifo, "r+"), stat = fs.fstatSync(writer);
+            fs.writeFileSync(fifo + ".fd", String(writer));
+            fs.promises.readFile(fifo);
+            exports.waitFor("opened the FIFO", () => fs.readdirSync("/proc/self/fd").filter(fd => isFileOf(+fd, stat)).length === 2);
+          };
+          exports.free = fifo => fs.closeSync(Number(fs.readFileSync(fifo + ".fd", "utf8")));
+        `,
+      });
+      for (const fifo of ["one", "two"]) mkfifo(join(String(dir), fifo));
+      return dir;
+    }
+
+    test("is not kept under the globals of the next file's runner", async () => {
+      using dir = projectWithPool({
+        "helper.mjs": `export const globalTest = test;`,
+        "a.test.cjs": `
+          const fs = require("node:fs");
+          require("bun:test").test("ends when a thread has read the helper", async () => {
+            const { hold, waitFor } = require("./pool.cjs");
+            hold("one");
+            // Behind an immediate, the runner goes on to the next file before it takes what the threads have finished.
+            await new Promise(setImmediate);
+            import("./helper.mjs").catch(() => {});
+            // A tick runs when no microtask is left, and by then the import has given its job to the pool.
+            await new Promise(resolve => queueMicrotask(() => process.nextTick(resolve)));
+            fs.promises.writeFile("behind", "");
+            waitFor("written the file", () => fs.existsSync("behind"));
+          });
+        `,
+        "b.test.mjs": `
+          import { test } from "vitest";
+          test("runs the event loop", async () => {
+            require("./pool.cjs").free("one");
+            await new Promise(setImmediate);
+          });
+        `,
+        "c.test.mjs": comparesGlobals("helper.mjs"),
+      });
+      await expectToPass(String(dir), ["./a.test.cjs", "./b.test.mjs", "./c.test.mjs"], { UV_THREADPOOL_SIZE: "2" });
+    });
+
+    test("does not run a macro in the next file", async () => {
+      using dir = projectWithPool({
+        "macro.js": `import { writeFileSync } from "node:fs"; export const macro = () => writeFileSync("ran", "");`,
+        "calls-macro.js": `import { macro } from "./macro.js" with { type: "macro" }; macro();`,
+        "a.test.cjs": `
+          Bun.plugin({ name: "idle", setup(build) { build.onLoad({ filter: /never$/ }, () => {}); } });
+          require("bun:test").test("ends before a thread has read the file", async () => {
+            const { hold } = require("./pool.cjs");
+            hold("one");
+            hold("two");
+            import("./calls-macro.js").catch(() => {});
+            await new Promise(setImmediate);
+          });
+        `,
+        "b.test.cjs": `
+          const fs = require("node:fs");
+          const { expect, test } = require("bun:test");
+          test("waits for the thread", async () => {
+            const { free } = require("./pool.cjs");
+            free("one");
+            await fs.promises.stat(".");
+            free("two");
+            expect(fs.existsSync("ran")).toBe(false);
+          });
+        `,
+      });
+      await expectToPass(String(dir), ["./a.test.cjs", "./b.test.cjs"], { UV_THREADPOOL_SIZE: "2" });
+    });
   });
 });
 

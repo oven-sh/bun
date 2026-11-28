@@ -272,6 +272,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
         // ESM
+        mod->holdsESModuleOrData = true;
         JSC::JSFunction* requireESM = global->requireESMFromHijackedExtension();
         JSC::MarkedArgumentBuffer args;
         args.append(specifier);

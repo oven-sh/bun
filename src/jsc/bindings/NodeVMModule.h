@@ -75,7 +75,7 @@ protected:
     WriteBarrier<Unknown> m_evaluationResult;
     WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
-    WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
+    WTF::HashMap<JSC::AbstractModuleRecord::StarExportEntry, WriteBarrier<JSObject>, JSC::AbstractModuleRecord::StarExportEntryHash> m_resolveCache;
     WriteBarrier<JSC::Exception> m_evaluationException;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);

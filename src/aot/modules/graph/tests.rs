@@ -131,7 +131,6 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         reexport_paths: Default::default(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: Vec::new(),
-        module_forms: Box::default(),
         folders_of_databases: Vec::new(),
         star_names_left_out: StarNamesLeftOut::default(),
         names_laid_on_object_prototype: Vec::new(),
@@ -587,65 +586,31 @@ fn file_flags_are_read_per_file() {
 }
 
 #[test]
-fn file_imported_in_front_of_a_ring_back_to_its_importer_is_read_as_an_es_module() {
-    let quiet = ("quiet.cjs", "console.log(1);");
-    let in_front = "import './quiet.cjs'; import './asker.cjs'; import './pages.mjs';";
-    let behind = "import './asker.cjs'; import './quiet.cjs'; import './pages.mjs';";
+fn file_imported_beside_a_ring_through_a_require_follows_the_type_of_its_package() {
+    let quiet = ("quiet.jsx", "console.log(__filename);");
     let asks_for_pages = ("asker.cjs", "require('./pages.mjs');");
-    let back_to_main = ("pages.mjs", "import './main.mjs';");
-    let rows: [(&[(&str, &str)], ModuleKind); 6] = [
+    let package = ("package.json", r#"{ "type": "module" }"#);
+    let back_to_main = "import './main.mjs';";
+    let rows = [
         (
-            &[("main.mjs", in_front), quiet, asks_for_pages, back_to_main],
-            ModuleKind::SourceText,
+            "import './quiet.jsx'; import './asker.cjs'; import './pages.mjs';",
+            back_to_main,
         ),
         (
-            &[
-                ("main.mjs", in_front),
-                quiet,
-                asks_for_pages,
-                ("pages.mjs", "import './between.mjs';"),
-                ("between.mjs", "import './main.mjs';"),
-            ],
-            ModuleKind::SourceText,
+            "import './asker.cjs'; import './quiet.jsx'; import './pages.mjs';",
+            back_to_main,
         ),
         (
-            &[
-                ("main.mjs", "import './quiet.cjs'; import './asker.cjs';"),
-                quiet,
-                ("asker.cjs", "require('./main.mjs');"),
-            ],
-            ModuleKind::SourceText,
-        ),
-        (
-            &[
-                ("main.mjs", in_front),
-                quiet,
-                asks_for_pages,
-                ("pages.mjs", ""),
-            ],
-            ModuleKind::SourceText,
-        ),
-        (
-            &[("main.mjs", behind), quiet, asks_for_pages, back_to_main],
-            ModuleKind::CommonJs,
-        ),
-        (
-            &[
-                ("main.mjs", "import './asker.cjs'; import './pages.mjs';"),
-                quiet,
-                asks_for_pages,
-                ("pages.mjs", "import './quiet.cjs'; import './main.mjs';"),
-            ],
-            ModuleKind::CommonJs,
+            "import './asker.cjs'; import './pages.mjs';",
+            "import './quiet.jsx'; import './main.mjs';",
         ),
     ];
-    for (files, expected) in rows {
-        with_graph(files, |graph, input| {
-            assert_eq!(
-                graph.kind(file_named(input, "quiet.cjs")),
-                expected,
-                "{files:?}"
-            );
+    for (main, pages) in rows {
+        let (main, pages) = (("main.mjs", main), ("pages.mjs", pages));
+        let files = [main, quiet, asks_for_pages, pages, package];
+        with_graph(&files, |graph, input| {
+            let kind = graph.kind(file_named(input, "quiet.jsx"));
+            assert_eq!(kind, ModuleKind::SourceText, "{files:?}");
         });
     }
 }

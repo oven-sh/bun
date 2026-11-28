@@ -1,6 +1,7 @@
 #![cfg(not(miri))]
 
 use super::*;
+use crate::module_format::DeclaredModuleType;
 use crate::program::code_test_host::{
     EMBEDDED_FILE_LOADER, HostEvent, StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
 };
@@ -210,6 +211,45 @@ fn order_does_not_depend_on_threads() {
             host.threads
         );
     }
+}
+
+#[test]
+fn file_is_loaded_again_once_a_type_names_its_loader() {
+    const CODE_LOADER: HostLoader = HostLoader(9);
+    let declared_behind = |late: &'static str| {
+        let files = vec![
+            ("/main.ts", "require(\"./a.cjs\")\nimport(\"./late\")"),
+            ("/late.ts", late),
+            ("/a.cjs", "a"),
+        ];
+        let host = StatementsHost {
+            loaders: &[
+                ("/a.cjs", None, CODE_LOADER),
+                ("/a.cjs", Some("ts"), CODE_LOADER),
+            ],
+            without_loader_by_name: &["/a.cjs"],
+            read_by_plugin: &[("/late.ts", "/a.cjs")],
+            ..host_of(files.leak())
+        }
+        .with_process_io_pool(4);
+        let declared = with_code_files(&host, &["/main.ts"], |files| {
+            let code = find_entry(files, "/a.cjs").code.lock();
+            let code = code.as_ref().expect("the file is code");
+            code.analyzed.declared_module_type
+        });
+        assert!(!host.has_waited_in_vain.load(Ordering::Relaxed));
+        let events = host.events();
+        let loads = events.iter().filter(|&it| *it == parsed("/a.cjs"));
+        (declared, loads.count())
+    };
+    assert_eq!(
+        declared_behind("require(\"./a.cjs\")"),
+        (DeclaredModuleType::Unknown, 1)
+    );
+    assert_eq!(
+        declared_behind("import \"./a.cjs\" with { type: \"ts\" }"),
+        (DeclaredModuleType::CommonJs, 2)
+    );
 }
 
 #[test]

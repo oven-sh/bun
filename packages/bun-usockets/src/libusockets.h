@@ -432,6 +432,12 @@ int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
 /* After us_listen_socket_close(ls) the resolver still runs for accepted connections, with NULL in place of `ls`. */
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
+/* Keep each ClientHello this listener receives, for us_socket_client_hello. Off by default. */
+void us_listen_socket_capture_client_hello(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* The ClientHello handshake message body of an accepted socket whose listener
+ * captures it, valid until the socket closes. NULL (and *length untouched)
+ * for any other socket. */
+const unsigned char *us_socket_client_hello(us_socket_r s, unsigned int *length) nonnull_fn_decl;
 /* Resume a handshake suspended by an async SNICallback (the dynamic resolver
  * set abort_handshake = 2). `ctx` may be NULL (use the default context); the
  * call consumes the reference. `error` != 0 aborts the handshake. Safe to call

@@ -227,6 +227,8 @@ struct us_ssl_rare_t : us_allocated_t {
   us_unique_ptr<struct us_ssl_pending_event_t, us_ssl_pending_events_free> pending_head;
   struct us_ssl_pending_event_t *pending_tail;
   us_session_sink_ptr session_sink{nullptr, nullptr};
+  /* Set once, inside the early callback, for a listener with capture_client_hello. */
+  us_unique_ptr<struct us_ssl_client_hello_t, us_free> client_hello;
   uint64_t reneg_window_start_ms;
   uint32_t reneg_count;
 };
@@ -3108,6 +3110,8 @@ void us_socket_start_tls_handshake(struct us_socket_t *s) {
 /* A ClientHello can arrive after its listen socket closed: one reference for the listen socket, one per accepted SSL. */
 struct us_server_names_t : us_allocated_t {
   unsigned int refs;
+  /* us_listen_socket_capture_client_hello ran: us_select_cert_cb keeps a copy of each ClientHello. */
+  unsigned char capture_client_hello;
   /* NULL once the listen socket closed. */
   struct us_listen_socket_t *ls;
   /* NULL until the first name is added. */
@@ -3237,6 +3241,32 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
   return 0;
 }
 
+/* The one place a ClientHello is kept: copied inside the early callback (the
+ * only time BoringSSL exposes it), owned by the SSL's us_ssl_rare_t, freed with
+ * it at SSL_free. The bytes are the handshake message body, with neither the
+ * record header nor the 4-byte handshake header. */
+void us_internal_ssl_capture_client_hello(const SSL_CLIENT_HELLO *hello) {
+  struct us_ssl_client_hello_t *copy =
+      (struct us_ssl_client_hello_t *)us_malloc(sizeof(*copy) + hello->client_hello_len);
+  if (!copy) return;
+  copy->length = (unsigned int)hello->client_hello_len;
+  memcpy(copy->data, hello->client_hello, hello->client_hello_len);
+  us_ssl_rare_ensure(hello->ssl)->client_hello.reset(copy);
+}
+
+/* lsquic frees its SSL once the handshake is done: the QUIC socket takes the copy over. */
+struct us_ssl_client_hello_t *us_internal_ssl_take_client_hello(SSL *ssl) {
+  struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
+  return rare ? rare->client_hello.release() : NULL;
+}
+
+const unsigned char *us_socket_client_hello(struct us_socket_t *s, unsigned int *length) {
+  struct us_ssl_rare_t *rare = s->ssl ? us_ssl_rare(s_ssl(s)) : NULL;
+  if (!rare || !rare->client_hello) return NULL;
+  *length = rare->client_hello->length;
+  return rare->client_hello->data;
+}
+
 /* The async-capable certificate selector. Registered (instead of relying on
  * sni_cb alone) on listener contexts that have a dynamic JS resolver, so an
  * SNICallback that cannot answer synchronously suspends the handshake
@@ -3248,6 +3278,9 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (!s) return ssl_select_cert_success;
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   struct us_server_names_t *names = rare ? rare->server_names.get() : NULL;
+
+  /* A suspended handshake comes back here with the same ClientHello. */
+  if (names && names->capture_client_hello && !rare->client_hello) us_internal_ssl_capture_client_hello(hello);
 
   /* A previous suspension being resumed: consume the stored result. */
   if (s->ssl_sni_pending == US_SNI_RESOLVED) {
@@ -3406,7 +3439,7 @@ void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
   if (names && names->tree) {
     SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
   }
-  if (names && names->on_server_name) {
+  if (names && (names->on_server_name || names->capture_client_hello)) {
     SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
   }
   if (ls->ssl_ctx) {
@@ -3424,6 +3457,15 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
    * so register it on the listener's default context. The servername-stage
    * sni_cb stays registered for the static SNI tree (it is a no-op when the
    * early callback already installed a context). */
+  SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
+}
+
+/* The SSL_CTX can be shared with other listeners: the flag is per listener, and
+ * us_select_cert_cb does nothing for an SSL whose listener has neither the flag
+ * nor a resolver. */
+void us_listen_socket_capture_client_hello(struct us_listen_socket_t *ls) {
+  if (!ls->ssl_ctx) return;
+  us_listen_socket_server_names(ls)->capture_client_hello = 1;
   SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
 }
 

@@ -190,6 +190,15 @@ impl Response {
     }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn mark_needs_more(&mut self) {}
+    pub(crate) fn client_hello(&mut self) -> Option<&[u8]> {
+        let mut len: u32 = 0;
+        let ptr = c::uws_h3_res_get_client_hello(self, &mut len);
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: usockets keeps `len` bytes at `ptr` until the connection closes.
+        Some(unsafe { bun_core::ffi::slice(ptr, len as usize) })
+    }
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -406,6 +415,10 @@ impl App {
         }
         Ok(())
     }
+    /// Keep the ClientHello of every connection. Call before `listen`.
+    pub fn capture_client_hello(&mut self) {
+        c::uws_h3_app_capture_client_hello(self)
+    }
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
@@ -598,6 +611,7 @@ mod c {
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h3_app_capture_client_hello(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
@@ -768,6 +782,11 @@ mod c {
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
+        // NULL, with `length` untouched, when there is none.
+        pub(super) safe fn uws_h3_res_get_client_hello(
+            res: &mut Response,
+            length: &mut u32,
+        ) -> *const u8;
 
         pub(super) safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
         // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C

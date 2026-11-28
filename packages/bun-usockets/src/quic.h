@@ -54,6 +54,9 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options);
 
+/* Server context: keep each connection's ClientHello for us_quic_socket_client_hello. Off by default. Call before listen. */
+void us_quic_socket_context_capture_client_hello(us_quic_socket_context_t *ctx);
+
 void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx);
 struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx);
 
@@ -174,6 +177,10 @@ int us_quic_stream_headers_too_large(us_quic_stream_t *s);
 void *us_quic_socket_ext(us_quic_socket_t *s);
 us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
+/* The ClientHello handshake message body of a connection whose server context
+ * captures it, valid until the connection closes. NULL (and *length untouched)
+ * otherwise. */
+const unsigned char *us_quic_socket_client_hello(us_quic_socket_t *s, unsigned int *length);
 void us_quic_socket_close(us_quic_socket_t *s);
 
 #ifdef __cplusplus

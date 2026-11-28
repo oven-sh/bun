@@ -1337,6 +1337,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
+/// `server.clientHello(request)`: `null` once the response ended, as for `request_ip`.
+fn request_client_hello(global: &JSGlobalObject, request: JsLocal<'_>) -> JsResult<JSValue> {
+    let request = request
+        .as_class_ref::<Request>()
+        .ok_or_else(|| global.throw_invalid_arguments(format_args!("Expected Request object")))?;
+    let Some(raw) = request
+        .request_context
+        .get()
+        .with_client_hello(|bytes| ArrayBuffer::create_uint8_array(global, bytes))
+    else {
+        return Ok(JSValue::NULL);
+    };
+    let hello = JSValue::create_empty_object(global, 1);
+    hello.put(global, b"raw", raw?);
+    Ok(hello)
+}
+
 fn set_request_timeout<'a>(
     address: &server_config::Address,
     heap: &JsHeap<'a>,
@@ -1501,6 +1518,14 @@ where
             u16::try_from(info.port).expect("int cast"),
             info.is_ipv6,
         )
+    }
+
+    pub(crate) fn client_hello(
+        &self,
+        cx: &mut JsScope<'_>,
+        request: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        request_client_hello(cx.global(), request)
     }
 
     pub(crate) fn timeout<'a>(

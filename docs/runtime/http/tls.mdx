@@ -134,3 +134,137 @@ Bun.serve({
 ```
 
 If two entries share a `serverName`, the later entry replaces the earlier one. This matches `tls.Server#addContext()`. A trailing dot is ignored, so `my-server1.com.` and `my-server1.com` name the same host. Names are compared case-insensitively, and a `*` stands for exactly one label on every transport: `*.my-server1.com` matches `a.my-server1.com` but not `a.b.my-server1.com`.
+
+---
+
+## ClientHello
+
+The ClientHello is the first message of a TLS handshake. It lists the cipher suites and the extensions that the client supports, in the order the client chose. To read it, set `clientHello` in the `tls` object and call `server.clientHello(request)`.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    clientHello: true, // [!code ++]
+  },
+  fetch(req, server) {
+    const hello = server.clientHello(req); // { raw: Uint8Array } | null
+    return new Response(hello ? `${hello.raw.length} bytes` : "none");
+  },
+});
+```
+
+`raw` is the body of the ClientHello handshake message ([RFC 8446, section 4.1.2](https://datatracker.ietf.org/doc/html/rfc8446#section-4.1.2)). It starts at the 2-byte `legacy_version`. The TLS record header and the 4-byte handshake header are not part of it.
+
+- The ClientHello belongs to the connection. Each request on a keep-alive, HTTP/2 or HTTP/3 connection returns the same bytes, and each call returns a new copy.
+- `server.clientHello(request)` returns `null` over plain HTTP, when `clientHello` is not set, and after the response ended.
+- If the server sends a HelloRetryRequest, `raw` is the first ClientHello.
+- The option belongs to the server. With an array of `tls` objects, set `clientHello` on the first one, because the server reads the ClientHello before it selects an entry by `serverName`. `Bun.serve` throws if a later entry has the option.
+- `Bun.serve` throws if `clientHello` is `true` in a `tls` object that has no certificate, and if the value is not a boolean.
+- The server keeps one copy per connection until the connection closes. A ClientHello is at most 16 KB (100 KB with `requestCert`). The ClientHello of `fetch` in Bun is about 1.5 KB.
+- `server.reload()` does not change the option.
+
+### Parse the ClientHello
+
+`Bun.serve` does not parse the message. This function reads the cipher suites and the extensions in the order the client sent them:
+
+```ts
+function parseClientHello(raw: Uint8Array) {
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  let offset = 2 + 32; // legacy_version, random
+  offset += 1 + view.getUint8(offset); // legacy_session_id
+
+  const cipherSuites: number[] = [];
+  const cipherSuitesEnd = offset + 2 + view.getUint16(offset);
+  for (offset += 2; offset < cipherSuitesEnd; offset += 2) cipherSuites.push(view.getUint16(offset));
+
+  offset += 1 + view.getUint8(offset); // legacy_compression_methods
+
+  const extensions: { type: number; data: Uint8Array }[] = [];
+  if (offset < raw.length) {
+    const extensionsEnd = offset + 2 + view.getUint16(offset);
+    for (offset += 2; offset < extensionsEnd;) {
+      const length = view.getUint16(offset + 2);
+      extensions.push({ type: view.getUint16(offset), data: raw.subarray(offset + 4, offset + 4 + length) });
+      offset += 4 + length;
+    }
+  }
+  return { legacyVersion: view.getUint16(0), cipherSuites, extensions };
+}
+```
+
+### Compute a JA4 fingerprint
+
+[JA4](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md) is a fingerprint of a TLS client. It names the TLS version and counts the cipher suites and the extensions, then adds a hash of the cipher suites and a hash of the extensions and the signature algorithms. This function computes it from `raw` with `parseClientHello`:
+
+```ts
+import { createHash } from "node:crypto";
+
+const isGrease = (value: number) => (value & 0x0f0f) === 0x0a0a && value >> 8 === (value & 0xff);
+const hex4 = (value: number) => value.toString(16).padStart(4, "0");
+const count = (values: number[]) => String(Math.min(values.length, 99)).padStart(2, "0");
+const hash = (list: string) => (list ? createHash("sha256").update(list).digest("hex").slice(0, 12) : "000000000000");
+const isAlphanumeric = (byte: number) => /[0-9A-Za-z]/.test(String.fromCharCode(byte));
+const versions: Record<number, string> = { 0x0304: "13", 0x0303: "12", 0x0302: "11", 0x0301: "10", 0x0300: "s3" };
+
+function u16List(data: Uint8Array | undefined, start: number) {
+  const values: number[] = [];
+  for (let i = start; data && i + 1 < data.length; i += 2) values.push((data[i] << 8) | data[i + 1]);
+  return values.filter(value => !isGrease(value));
+}
+
+// `transport` is "t" for TLS over TCP (HTTP/1.1, HTTP/2) and "q" for QUIC (HTTP/3).
+function ja4(raw: Uint8Array, transport: "t" | "q") {
+  const { legacyVersion, cipherSuites, extensions } = parseClientHello(raw);
+  const extension = (type: number) => extensions.find(e => e.type === type)?.data;
+
+  const ciphers = cipherSuites.filter(cipher => !isGrease(cipher));
+  const types = extensions.map(e => e.type).filter(type => !isGrease(type));
+  const version = Math.max(...u16List(extension(0x002b), 1), 0) || legacyVersion; // supported_versions
+  const signatureAlgorithms = u16List(extension(0x000d), 2);
+
+  // application_layer_protocol_negotiation: the first and the last character of the first protocol.
+  const alpn = extension(0x0010);
+  const protocol = alpn && alpn.length > 3 ? alpn.subarray(3, 3 + alpn[2]) : new Uint8Array();
+  const first = protocol[0];
+  const last = protocol[protocol.length - 1];
+  const alpnCharacters = !protocol.length
+    ? "00"
+    : isAlphanumeric(first) && isAlphanumeric(last)
+      ? String.fromCharCode(first, last)
+      : (first >> 4).toString(16) + (last & 0x0f).toString(16);
+
+  const a =
+    transport +
+    (versions[version] ?? "00") +
+    (extension(0x0000) ? "d" : "i") + // server_name
+    count(ciphers) +
+    count(types) +
+    alpnCharacters;
+  const b = hash(ciphers.map(hex4).sort().join(","));
+  const sorted = types
+    .filter(type => type !== 0x0000 && type !== 0x0010)
+    .map(hex4)
+    .sort()
+    .join(",");
+  const c = hash(
+    sorted && signatureAlgorithms.length ? `${sorted}_${signatureAlgorithms.map(hex4).join(",")}` : sorted,
+  );
+  return `${a}_${b}_${c}`;
+}
+```
+
+```ts
+Bun.serve({
+  tls: { key: Bun.file("./key.pem"), cert: Bun.file("./cert.pem"), clientHello: true },
+  http3: true,
+  fetch(req, server) {
+    const hello = server.clientHello(req);
+    if (!hello) return new Response("no ClientHello");
+    // The ClientHello of a QUIC connection has the quic_transport_parameters extension.
+    const overQuic = parseClientHello(hello.raw).extensions.some(e => e.type === 0x0039);
+    return new Response(ja4(hello.raw, overQuic ? "q" : "t")); // for example t13d1516h2_8daaf6152771_e5627efa2ab1
+  },
+});
+```

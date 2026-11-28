@@ -93,6 +93,8 @@ private:
         SslCtxPtr ctx;
     };
     std::vector<PendingServerName> pendingServerNames;
+    /* captureClientHello() ran: replayed onto each us_listen_socket_t, like the names above. */
+    bool capturesClientHello = false;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
@@ -139,6 +141,19 @@ public:
             if (success) *success = true;
         }
 
+        return std::move(*this);
+    }
+
+    /* Keep the ClientHello of every TLS connection this app accepts (us_socket_client_hello). */
+    TemplatedApp &&captureClientHello() {
+        if constexpr (SSL) {
+            if (!constructorFailed()) {
+                capturesClientHello = true;
+                forEachListenSocket([](us_listen_socket_t *ls) {
+                    us_listen_socket_capture_client_hello(ls);
+                });
+            }
+        }
         return std::move(*this);
     }
 
@@ -374,6 +389,7 @@ private:
             if (httpContext->getSocketContextData()->missingServerNameHandler) {
                 us_listen_socket_on_server_name(ls, &onMissingServerName);
             }
+            if (capturesClientHello) us_listen_socket_capture_client_hello(ls);
         }
         return ls;
     }

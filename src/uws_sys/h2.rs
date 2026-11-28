@@ -138,6 +138,15 @@ impl Response {
     }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn mark_needs_more(&mut self) {}
+    pub(crate) fn client_hello(&mut self) -> Option<&[u8]> {
+        let mut len: u32 = 0;
+        let ptr = c::uws_h2_res_get_client_hello(self, &mut len);
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: usockets keeps `len` bytes at `ptr` until the connection closes.
+        Some(unsafe { bun_core::ffi::slice(ptr, len as usize) })
+    }
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -672,5 +681,10 @@ mod c {
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
+        // NULL, with `length` untouched, when there is none.
+        pub(super) safe fn uws_h2_res_get_client_hello(
+            res: &mut Response,
+            length: &mut u32,
+        ) -> *const u8;
     }
 }

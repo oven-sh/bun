@@ -204,6 +204,11 @@ uint64_t uws_h2_res_get_remote_address_info(uws_h2_res_t* res, const char** dest
     return uws_res_get_remote_address_info((uws_res_t*)((Http2Response*)res)->conn->s, dest, port, is_ipv6);
 }
 
+const unsigned char* uws_h2_res_get_client_hello(uws_h2_res_t* res, unsigned int* length)
+{
+    return us_socket_client_hello(((Http2Response*)res)->conn->s, length);
+}
+
 #pragma clang attribute pop
 
 } // extern "C"

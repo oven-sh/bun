@@ -821,6 +821,37 @@ declare module "bun" {
         }
     );
 
+    /**
+     * The `tls` options of {@link Bun.serve}: {@link Bun.TLSOptions}, and the options only `Bun.serve` has.
+     */
+    interface TLSOptions extends Bun.TLSOptions {
+      /**
+       * Keep the TLS ClientHello of each connection, for {@link Server.clientHello}.
+       *
+       * The option belongs to the server. With an array of `tls` objects, set
+       * it on the first one: the server reads the ClientHello before it
+       * selects an entry by `serverName`. `Bun.serve` throws if a later entry
+       * has the option, or if the `tls` object has no certificate.
+       *
+       * {@link Server.reload} does not change it.
+       *
+       * @default false
+       */
+      clientHello?: boolean;
+    }
+
+    /**
+     * What {@link Server.clientHello} returns.
+     */
+    interface ClientHello {
+      /**
+       * The body of the ClientHello handshake message (RFC 8446, section 4.1.2).
+       * It starts at the 2-byte `legacy_version`. The TLS record header and the
+       * 4-byte handshake header are not part of it.
+       */
+      raw: Uint8Array<ArrayBuffer>;
+    }
+
     interface BaseServeOptions<WebSocketData> {
       /**
        * Set options for using TLS with this server
@@ -1219,6 +1250,28 @@ declare module "bun" {
      * ```
      */
     requestIP(request: Request): SocketAddress | null;
+
+    /**
+     * Returns the TLS ClientHello that the client of the given Request opened its connection with.
+     *
+     * The server keeps it only with `tls: { clientHello: true }`. Without that
+     * option, over plain HTTP, and after the response ended, this returns null.
+     *
+     * All requests on one connection get the same bytes, over HTTP/1.1, HTTP/2 and HTTP/3.
+     * Each call returns a new copy.
+     *
+     * @example
+     * ```js
+     * Bun.serve({
+     *   tls: { cert, key, clientHello: true },
+     *   fetch(request, server) {
+     *     const hello = server.clientHello(request);
+     *     return new Response(hello ? `${hello.raw.length} bytes` : "no ClientHello");
+     *   },
+     * });
+     * ```
+     */
+    clientHello(request: Request): Serve.ClientHello | null;
 
     /**
      * Reset the idle timeout of the given Request to the given number of seconds. `0` means no timeout.

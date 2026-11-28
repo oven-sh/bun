@@ -209,6 +209,10 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
+    pub(crate) fn with_client_hello<R>(self, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        dispatch!(self, None, |_T, ctx| ctx.with_client_hello(f))
+    }
+
     pub(crate) fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
             ctx.req.set(None);

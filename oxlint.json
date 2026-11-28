@@ -56,10 +56,6 @@
     "src/js/internal/repl/await.ts",
     "src/js/internal/repl/acorn.ts",
     "src/js/internal/repl/acorn-walk.ts",
-    "src/js/ahead-of-time/node/repl.ts",
-    "src/js/ahead-of-time/node/readline.ts",
-    "src/js/ahead-of-time/internal/readline/**",
-    "src/js/ahead-of-time/internal/repl/history.ts",
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors

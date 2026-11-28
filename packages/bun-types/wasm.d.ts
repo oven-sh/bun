@@ -26,7 +26,6 @@ declare module "bun" {
     }
 
     interface Global<T extends ValueType = ValueType> {
-      // <T extends ValueType = ValueType> {
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Global/value) */
       value: ValueTypeMap[T];
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Global/valueOf) */

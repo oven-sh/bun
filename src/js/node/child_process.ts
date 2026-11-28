@@ -44,6 +44,10 @@ const StringPrototypeSlice = String.prototype.slice;
 var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
+// Not the globals, which user code can replace: https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L76
+const setTimeout: typeof globalThis.setTimeout = $newCppFunction("node/NodeTimers.cpp", "functionSetTimeout", 1);
+const clearTimeout: typeof globalThis.clearTimeout = $newCppFunction("node/NodeTimers.cpp", "functionClearTimeout", 1);
+
 const MAX_BUFFER = 1024 * 1024;
 
 const childProcessChannel = builtinChannel("child_process");
@@ -185,7 +189,7 @@ function spawn(file, args, options) {
           child.emit("error", err);
         }
       }
-    }, timeout).unref();
+    }, timeout);
 
     const clear = () => {
       if (timeoutId) {
@@ -193,6 +197,7 @@ function spawn(file, args, options) {
         timeoutId = null;
       }
     };
+    // Node clears on 'close' alone (https://github.com/nodejs/node/blob/v26.12.1/lib/child_process.js#L874-L880). Here 'exit' is not always followed by 'close'.
     child.once("exit", clear);
     child.once("close", clear);
   }
@@ -270,7 +275,6 @@ function execFile(file, args, options?, callback?: ExecCallback) {
   const child = spawn(file, args, {
     cwd: options.cwd,
     env: options.env,
-    timeout: options.timeout,
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
@@ -376,7 +380,9 @@ function execFile(file, args, options?, callback?: ExecCallback) {
     timeoutId = setTimeout(function delayedKill() {
       timeoutId = null;
       kill();
-    }, optionsTimeout).unref();
+    }, optionsTimeout);
+    // Past 'exit' the deadline only bounds the wait for 'close', which Bun can lose, so it stops holding the process.
+    child.once("exit", () => timeoutId?.unref());
   }
 
   function addOnDataListener(child_buffer: $Node.Readable, _buffer: (string | Buffer)[], kind: string) {

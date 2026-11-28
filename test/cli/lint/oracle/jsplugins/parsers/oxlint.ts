@@ -29,6 +29,7 @@ const config = {
     "no-empty": "error",
     "no-console": "error",
     "prefer-const": "error",
+    "no-unassigned-vars": "error",
     "no-use-before-define": "error",
     "getter-return": "error",
     "typescript/no-explicit-any": "error",

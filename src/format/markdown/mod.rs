@@ -180,7 +180,13 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
         gfm: with.gfm,
         math: with.math,
     };
-    let root = parse::parse_lines(read, tree, syntax, front_matter.map_or(0, |it| it.2 + 1))?;
+    let root = parse::parse_lines(
+        read,
+        tree,
+        syntax,
+        false,
+        front_matter.map_or(0, |it| it.2 + 1),
+    )?;
     if let Some((start, end, fence_end)) = front_matter {
         let node = tree.add(ast::Kind::FrontMatter, 0, fence_end as u32);
         if let Some(node) = tree.get_mut(node) {
@@ -588,7 +594,9 @@ fn with_document<R>(
     } else {
         parse::Syntax::Markdown
     };
-    let root = parse::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
+    let joins_code_lines = options.prose_wrap != crate::options::ProseWrap::Preserve;
+    let root = parse::parse(text, original, syntax, joins_code_lines, tree)
+        .ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
         original,

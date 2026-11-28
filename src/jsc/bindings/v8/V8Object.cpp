@@ -58,12 +58,12 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     PutPropertySlot slot(object, false);
 
     Identifier identifier = k.toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    V8_RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     // TODO: investigate if we should use the return value (seems like not)
     bool success = object->methodTable()->put(object, globalObject, identifier, v, slot);
     (void)success;
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    V8_RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     return Just(true);
 }
 
@@ -79,7 +79,7 @@ Maybe<bool> Object::Set(Local<Context> context, uint32_t index, Local<Value> val
     // TODO: investigate if we should use the return value (seems like not)
     bool success = object->methodTable()->putByIndex(object, globalObject, index, v, false);
     (void)success;
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    V8_RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     return Just(true);
 }
@@ -94,10 +94,11 @@ MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     Identifier identifier = k.toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
 
     JSValue result = object->get(globalObject, identifier);
     if (scope.exception()) [[unlikely]] {
+        shim::reportUncaughtException();
         return MaybeLocal<Value>();
     }
 
@@ -115,6 +116,7 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
 
     JSValue result = object->get(globalObject, index);
     if (scope.exception()) [[unlikely]] {
+        shim::reportUncaughtException();
         return MaybeLocal<Value>();
     }
 
@@ -198,7 +200,7 @@ Maybe<bool> Object::DefineOwnProperty(Local<Context> context, Local<Name> key, L
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     Identifier identifier = k.toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    V8_RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     unsigned jscAttrs = 0;
     if (attributes & ReadOnly) jscAttrs |= JSC::PropertyAttribute::ReadOnly;
@@ -207,7 +209,7 @@ Maybe<bool> Object::DefineOwnProperty(Local<Context> context, Local<Name> key, L
 
     JSC::PropertyDescriptor descriptor(v, jscAttrs);
     bool success = object->methodTable()->defineOwnProperty(object, globalObject, identifier, descriptor, false);
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    V8_RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     return Just(success);
 }
 

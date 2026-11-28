@@ -19,7 +19,7 @@ MaybeLocal<Map> Map::Set(Local<Context> context, Local<Value> key, Local<Value> 
     RELEASE_ASSERT(jsMap, "v8::Map::Set called on non-Map value");
 
     jsMap->set(globalObject, key->localToJSValue(), value->localToJSValue());
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Map>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Map>());
 
     return context->currentHandleScope()->createLocal<Map>(vm, jsMap);
 }
@@ -34,7 +34,7 @@ Maybe<bool> Map::Delete(Local<Context> context, Local<Value> key)
     RELEASE_ASSERT(jsMap, "v8::Map::Delete called on non-Map value");
 
     bool result = jsMap->remove(globalObject, key->localToJSValue());
-    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    V8_RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     return Just(result);
 }

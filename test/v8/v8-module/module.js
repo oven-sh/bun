@@ -1,9 +1,159 @@
+const fs = require("node:fs");
 const path = require("node:path");
+const { Worker } = require("node:worker_threads");
+
+function thrower(name) {
+  return function () {
+    console.log(name, "runs");
+    throw new Error(`thrown by ${name}`);
+  };
+}
+
+function revokedProxy() {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  return proxy;
+}
+
+// Cases for run_entry in main.cpp: [entry, description, a, b]. In each one the entry runs JavaScript that throws.
+const entriesThatThrow = {
+  calls: () => [
+    ["Function::Call", "a function that throws", thrower("function")],
+    ["Function::Call", "a class constructor", class {}],
+    ["Function::NewInstance", "a constructor that throws", thrower("constructor")],
+    ["Function::NewInstance", "an arrow function", () => {}],
+  ],
+  properties: () => [
+    ["Object::Get(key)", "a getter that throws", Object.defineProperty({}, "key", { get: thrower("getter") }), "key"],
+    ["Object::Get(key)", "a Proxy trap that throws", new Proxy({}, { get: thrower("get trap") }), "key"],
+    ["Object::Get(key)", "a key whose toString throws", {}, { toString: thrower("toString") }],
+    ["Object::Get(index)", "a getter that throws", Object.defineProperty({}, 0, { get: thrower("getter") })],
+    ["Object::Get(index)", "a Proxy trap that throws", new Proxy({}, { get: thrower("get trap") })],
+    ["Object::Set(key)", "a setter that throws", Object.defineProperty({}, "key", { set: thrower("setter") }), "key"],
+    ["Object::Set(key)", "a Proxy trap that throws", new Proxy({}, { set: thrower("set trap") }), "key"],
+    ["Object::Set(index)", "a setter that throws", Object.defineProperty({}, 0, { set: thrower("setter") })],
+    ["Object::Set(index)", "a Proxy trap that throws", new Proxy({}, { set: thrower("set trap") })],
+    [
+      "Object::DefineOwnProperty",
+      "a Proxy trap that throws",
+      new Proxy({}, { defineProperty: thrower("defineProperty trap") }),
+      "key",
+    ],
+    ["Array::Iterate", "an element getter that throws", Object.defineProperty([], 0, { get: thrower("getter") })],
+  ],
+  conversions: () => [
+    ["Value::ToString", "a toString that throws", { toString: thrower("toString") }],
+    ["Value::ToInt32", "a valueOf that throws", { valueOf: thrower("valueOf") }],
+    ["Value::ToInteger", "a valueOf that throws", { valueOf: thrower("valueOf") }],
+  ],
+  oneCall: () => [["Function::Call", "a function that throws", thrower("function")]],
+  makeCallback: () => [["node::MakeCallback", "a callback that throws", thrower("callback")]],
+  // The engine or the addon throws, and no JavaScript runs.
+  withoutJavaScript: () => [
+    ["Object::Get(key)", "a revoked Proxy", revokedProxy(), "key"],
+    ["Object::Get(key)", "a key that has no primitive value", {}, Object.create(null)],
+    ["Object::Get(index)", "a revoked Proxy", revokedProxy()],
+    ["Object::Set(key)", "a revoked Proxy", revokedProxy(), "key"],
+    ["Object::DefineOwnProperty", "a revoked Proxy", revokedProxy(), "key"],
+    ["Value::ToString", "a Symbol", Symbol()],
+    ["Value::ToInt32", "a Symbol", Symbol()],
+    ["Value::ToInt32", "a BigInt", 1n],
+    ["Value::ToInteger", "a Symbol", Symbol()],
+    ["Isolate::ThrowException", "an Error"],
+    ["Isolate::ThrowError", "a message"],
+    ["Array::New, the callback throws", "two elements"],
+    ["Array::Iterate, the callback throws", "one element", [1]],
+  ],
+  typedArray: () => [["Uint8Array::New", "an ArrayBuffer that is too short", new ArrayBuffer(8)]],
+};
+
+// The tests throw errors with this prefix. Every other error is the engine's, and V8 and JSC word those differently.
+function describeError(error) {
+  return String(error.message).startsWith("thrown by") ? error.message : error.constructor.name;
+}
 
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
+
+  // Runs each case in a libuv callback of its own, `times` times in a row.
+  async function runEntriesFromEventLoop(cases, times) {
+    for (const [entry, description, a, b] of cases) {
+      console.log(`${entry} with ${description}`);
+      const { promise, resolve } = Promise.withResolvers();
+      nativeModule.run_entry_from_event_loop(entry, times, a, b, () => {
+        console.log("after() runs");
+        setImmediate(resolve);
+      });
+      await promise;
+    }
+  }
+
   return {
     ...nativeModule,
+
+    test_entries_throw_from_event_loop(group, times = 1) {
+      process.on("uncaughtException", error => console.log("uncaughtException:", describeError(error)));
+      runEntriesFromEventLoop(entriesThatThrow[group](), times);
+    },
+
+    test_entry_throws_from_event_loop_with_queued_jobs() {
+      process.on("uncaughtException", error => console.log("uncaughtException:", describeError(error)));
+      const throwAfterQueueing = () => {
+        process.nextTick(() => console.log("tick"));
+        Promise.resolve().then(() => console.log("microtask"));
+        throw new Error("thrown by function");
+      };
+      runEntriesFromEventLoop([["Function::Call", "a function that queues jobs and throws", throwAfterQueueing]], 1);
+    },
+
+    test_entry_throws_from_event_loop_and_listener_calls_addon() {
+      process.on("uncaughtException", error => {
+        console.log("uncaughtException:", describeError(error));
+        nativeModule.run_entry_from_js("Object::Get(key)", { key: 1 }, "key");
+      });
+      runEntriesFromEventLoop(entriesThatThrow.oneCall(), 1);
+    },
+
+    test_entry_throws_from_event_loop_without_listener() {
+      process.on("uncaughtExceptionMonitor", error => console.log("uncaughtExceptionMonitor:", describeError(error)));
+      process.on("exit", code => console.log("exit:", code));
+      runEntriesFromEventLoop(entriesThatThrow.oneCall(), 1);
+    },
+
+    // An uncaught exception ends a Worker that has no listener. The addon's callback still runs to its end.
+    test_entry_throws_from_event_loop_in_worker() {
+      const events = [];
+      const worker = new Worker(path.join(__dirname, "main.js"), {
+        argv: ["entry_throws_from_event_loop_in_this_worker", "[]", "null", debugMode ? "debug" : "release"],
+      });
+      worker.on("error", error => events.push(`worker error: ${describeError(error)}`));
+      // The Worker's thread has left the addon's callback when it exits.
+      worker.on("exit", code => console.log([...events, `worker exit code: ${code}`].join("\n")));
+    },
+
+    // console.log in a Worker of Node goes through the main thread. A write to the descriptor keeps the order.
+    entry_throws_from_event_loop_in_this_worker() {
+      const log = line => fs.writeSync(1, line + "\n");
+      process.on("exit", code => log(`worker exit handler: ${code}`));
+      const throws = () => {
+        log("function runs");
+        throw new Error("thrown by function");
+      };
+      nativeModule.run_entry_from_event_loop("Function::Call", 2, throws, undefined, () => log("after() runs"));
+    },
+
+    test_entries_throw_from_js(...groups) {
+      process.on("uncaughtException", error => console.log("uncaughtException:", describeError(error)));
+      for (const [entry, description, a, b] of groups.flatMap(group => entriesThatThrow[group]())) {
+        console.log(`${entry} with ${description}`);
+        try {
+          nativeModule.run_entry_from_js(entry, a, b);
+          console.log("did not throw");
+        } catch (error) {
+          console.log("JS caller caught:", describeError(error));
+        }
+      }
+    },
 
     test_v8_function_script_origin() {
       function namedFunction(a, b) {

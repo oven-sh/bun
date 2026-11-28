@@ -6041,11 +6041,19 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
   const packageJson = (...dependencies: (string | Buffer)[]) =>
     bytes(`{"name":"app","version":"1.0.0","dependencies":{`, ...dependencies, `}}`);
 
-  /** Records request lines byte for byte (as Latin-1). Answers 404, or `manifest` to what is not a tarball. */
+  /**
+   * Records request lines byte for byte (as Latin-1). Answers 404, or `manifest` to what is not a tarball, or the
+   * tarball that `tarballs` has for the path.
+   */
   function rawServer({
     secure = false,
     manifest,
-  }: { secure?: boolean; manifest?: (host: string, line: string) => Buffer } = {}) {
+    tarballs = {},
+  }: {
+    secure?: boolean;
+    manifest?: (host: string, line: string) => Buffer;
+    tarballs?: Record<string, Uint8Array>;
+  } = {}) {
     const requests: { line: string; authorization: string | null }[] = [];
     const listener = Bun.listen({
       hostname: "127.0.0.1",
@@ -6056,7 +6064,9 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
           const head = chunk.toString("latin1");
           const line = head.slice(0, head.indexOf("\r\n"));
           requests.push({ line, authorization: /\r\nauthorization: ([^\r]*)/i.exec(head)?.[1] ?? null });
-          const body = manifest && !line.includes(".tgz") ? manifest(host, line) : Buffer.alloc(0);
+          const body = line.includes(".tgz")
+            ? Buffer.from(tarballs[line.split(" ")[1]] ?? [])
+            : (manifest?.(host, line) ?? Buffer.alloc(0));
           const status = body.length ? "200 OK" : "404 Not Found";
           socket.end(
             bytes(
@@ -6154,6 +6164,115 @@ describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () 
       { line: "GET /f/pkg-\x82A\x9bA.tgz HTTP/1.1", authorization: "Bearer registry-token" },
     ]);
     expect(exitCode).toBe(1);
+  });
+
+  // bun.lock is where the next install takes the URL from. U+FFFD for such a byte is the URL of another file.
+  describe("in bun.lock", () => {
+    const tarball = Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")).bytes();
+    const integrity = async () => `sha512-${new Bun.CryptoHasher("sha512").update(await tarball).digest("base64")}`;
+
+    /** `bun install` in `dir`, which stays. Every install of `install()` has its own directory. */
+    async function installIn(dir: string, ...args: string[]) {
+      const home = join(dir, "home");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: dir,
+        env: {
+          ...env,
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: undefined,
+          BUN_INSTALL_CACHE_DIR: join(dir, ".cache"),
+          BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+      return { stderr: Buffer.from(stderr).toString("latin1"), exitCode };
+    }
+
+    test.each([
+      [
+        "a tarball URL that package.json names",
+        (host: string) => ({ "package.json": packageJson(`"bar":"http://${host}/f/bar-`, bad, `.tgz"`) }),
+        (host: string) => [
+          `"bar": "http://${host}/f/bar-\x82A\x9bA.tgz",`,
+          `"bar": ["bar@http://${host}/f/bar-\x82A\x9bA.tgz", {}, "INTEGRITY"],`,
+        ],
+        [],
+      ],
+      [
+        "a tarball URL that a manifest names",
+        (host: string) => ({
+          "package.json": packageJson(`"bar":"0.0.2"`),
+          ".npmrc": `registry=http://${host}/reg/\n`,
+        }),
+        (host: string) => [
+          `"bar": "0.0.2",`,
+          `"bar": ["bar@0.0.2", "http://${host}/f/bar-\x82A\x9bA.tgz", {}, "INTEGRITY"],`,
+        ],
+        ["GET /reg/bar HTTP/1.1"],
+      ],
+    ])("%s is there as written, and an install from bun.lock requests it again", async (_, files, rows, before) => {
+      const sha512 = await integrity();
+      using server = rawServer({
+        tarballs: { "/f/bar-\x82A\x9bA.tgz": await tarball },
+        manifest: host =>
+          bytes(
+            `{"name":"bar","dist-tags":{"latest":"0.0.2"},"versions":{"0.0.2":{"name":"bar","version":"0.0.2","dist":{"integrity":"${sha512}","tarball":"http://${host}/f/bar-`,
+            bad,
+            `.tgz"}}}}`,
+          ),
+      });
+      using dir = tempDir("npmrc-not-utf8-lock", { "home/.keep": "", ...files(server.host) });
+      const tarballRequest = "GET /f/bar-\x82A\x9bA.tgz HTTP/1.1";
+
+      expect((await installIn(String(dir))).exitCode).toBe(0);
+      expect(server.requests.map(request => request.line)).toEqual([...before, tarballRequest]);
+      const lock = Buffer.from(await Bun.file(join(String(dir), "bun.lock")).bytes()).toString("latin1");
+      expect(
+        lock
+          .split("\n")
+          .filter(line => line.includes(`"bar"`))
+          .map(line => line.trim().replace(sha512, "INTEGRITY")),
+      ).toEqual(rows(server.host));
+
+      // As on another machine: nothing is installed and nothing is in the cache.
+      await Promise.all(
+        ["node_modules", ".cache"].map(name => rm(join(String(dir), name), { recursive: true, force: true })),
+      );
+      server.requests.length = 0;
+      const frozen = await installIn(String(dir), "--frozen-lockfile");
+      expect(server.requests.map(request => request.line)).toEqual([tarballRequest]);
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "node_modules", "bar", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+    });
+
+    // A string of bun.lock that has an escape is decoded, and one that has none is not. Both keep such a byte.
+    test("a tarball URL with an escape beside the byte is requested as bun.lock has it", async () => {
+      const sha512 = await integrity();
+      using server = rawServer({ tarballs: { "/f/bar-\x82A\x9bA'.tgz": await tarball } });
+      using dir = tempDir("npmrc-not-utf8-lock-escape", {
+        "home/.keep": "",
+        "package.json": packageJson(`"bar":"0.0.2"`),
+        ".npmrc": `registry=http://${server.host}/reg/\n`,
+        "bun.lock": bytes(
+          `{"lockfileVersion":1,"workspaces":{"":{"name":"app","dependencies":{"bar":"0.0.2"}}},"packages":{"bar":["bar@0.0.2","http://${server.host}/f/bar-`,
+          bad,
+          `\\u0027.tgz",{},"${sha512}"]}}`,
+        ),
+      });
+
+      const { stderr, exitCode } = await installIn(String(dir), "--frozen-lockfile");
+      expect(server.requests.map(request => request.line)).toEqual(["GET /f/bar-\x82A\x9bA'.tgz HTTP/1.1"]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
   });
 
   test.each([

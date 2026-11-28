@@ -546,7 +546,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[inline]
     fn decode_escapes(&mut self, body: &[u8], buf: &mut Vec<u8>) -> PResult {
-        decode_string_escapes::<false, _>(self, body, buf)
+        if self.opts.keep_ill_formed_bytes {
+            decode_string_escapes::<false, true, _>(self, body, buf)
+        } else {
+            decode_string_escapes::<false, false, _>(self, body, buf)
+        }
     }
 
     fn parse_scalar(&mut self, loc: Loc) -> PResult<Expr> {
@@ -1310,7 +1314,13 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
+/// With `KEEP_ILL_FORMED_BYTES`, what is not an escape is copied as it is in `body`.
+fn decode_string_escapes<
+    's,
+    const ALLOW_RAW_CONTROL: bool,
+    const KEEP_ILL_FORMED_BYTES: bool,
+    L: LexerLog<'s, Err = crate::Error>,
+>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
@@ -1328,7 +1338,11 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
                 }
                 unreachable!()
             }
-            push_codepoint(buf, c);
+            if KEEP_ILL_FORMED_BYTES {
+                buf.extend_from_slice(&body[iter.i as usize..][..iter.width as usize]);
+            } else {
+                push_codepoint(buf, c);
+            }
             continue;
         }
         if !iterator.next(&mut iter) {
@@ -1423,6 +1437,6 @@ pub(crate) fn decode_auto_quoted(
         body = &body[1..];
     }
     let mut buf: Vec<u8> = Vec::with_capacity(body.len());
-    decode_string_escapes::<true, _>(&mut l, body, &mut buf)?;
+    decode_string_escapes::<true, false, _>(&mut l, body, &mut buf)?;
     Ok(E::String::init(bump.alloc_slice_copy(&buf)))
 }

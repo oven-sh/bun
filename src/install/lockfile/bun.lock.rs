@@ -1,15 +1,12 @@
 //! Text lockfile (bun.lock) stringifier and parser.
 
-use core::fmt::Write as _;
-
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{DynamicBitSet, HashContext, HashMap, StringHashMap, index_sort};
+use bun_core::printer::write_json_string_body_keeping_bytes;
 use bun_core::strings;
 use bun_core::{self};
-use bun_semver::semver_string::{
-    Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
-};
+use bun_semver::semver_string::{Buf as StringBuf, Builder as StringBuilder};
 use bun_semver::{self as Semver, ExternalString, String};
 
 use crate::bin_real::ToJsonStyle;
@@ -41,16 +38,6 @@ use super::{
     PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
-use bun_io::AsFmt;
-
-/// `Bin::to_json` indent callback typed against `AsFmt`.
-fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
-    for _ in 0..*indent {
-        w.write_str("  ")?;
-    }
-    Ok(())
-}
-
 /// `true` if `url` points at a resource under `registry`: the registry href
 /// (sans trailing slash) must be an exact prefix and the byte after it must be
 /// a path separator, so `https://registry.example.com.evil.com/x.tgz` does not
@@ -76,11 +63,103 @@ macro_rules! sbuf {
     };
 }
 
-// Dyn dispatch for now — the trait shape is unsettled.
-type Writer = dyn bun_io::Write;
-// `bun_io::Write` returns `core::result::Result<_, crate::Error>` (see
-// `bun_io::write::Result`), so the writer error is just the global `crate::Error`.
-type WriteError = crate::Error;
+/// bun.lock while it is written. Not a `fmt::Write` or a `bun_io::Write` on purpose: `Display` makes U+FFFD of a byte that is not UTF-8.
+#[derive(Default)]
+pub(crate) struct Writer {
+    text: Vec<u8>,
+}
+
+/// A `Writer` appends to a `Vec`, which does not fail.
+pub(crate) type WriteError = core::convert::Infallible;
+
+// `#[inline(never)]`: a row calls these for each of its parts, and inlined they add 13 KB to the serializer.
+impl Writer {
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.text
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.text
+    }
+
+    /// The JSON syntax around the values. It is `'static`, so a string of the lockfile does not fit.
+    #[inline(never)]
+    pub(crate) fn write_all(&mut self, syntax: &'static [u8]) -> Result<(), WriteError> {
+        self.text.extend_from_slice(syntax);
+        Ok(())
+    }
+
+    pub(crate) fn write_byte(&mut self, syntax: u8) -> Result<(), WriteError> {
+        self.text.push(syntax);
+        Ok(())
+    }
+
+    /// A string of the lockfile as a JSON string.
+    #[inline(never)]
+    pub(crate) fn string(&mut self, text: &[u8]) -> Result<(), WriteError> {
+        self.text.push(b'"');
+        write_json_string_body_keeping_bytes(text, &mut self.text);
+        self.text.push(b'"');
+        Ok(())
+    }
+
+    /// [`Self::string`] without the quotes, for a JSON string that has several parts.
+    #[inline(never)]
+    pub(crate) fn string_body(&mut self, text: &[u8]) -> Result<(), WriteError> {
+        write_json_string_body_keeping_bytes(text, &mut self.text);
+        Ok(())
+    }
+
+    /// `"key": "value"`
+    #[inline(never)]
+    pub(crate) fn entry(&mut self, key: &[u8], value: &[u8]) -> Result<(), WriteError> {
+        self.string(key)?;
+        self.write_all(b": ")?;
+        self.string(value)
+    }
+
+    /// A number, a hash or an `os`/`cpu` list: ASCII whatever the lockfile holds.
+    fn ascii(&mut self, value: impl core::fmt::Display) -> Result<(), WriteError> {
+        use core::fmt::Write as _;
+
+        struct Ascii<'a>(&'a mut Vec<u8>);
+
+        impl core::fmt::Write for Ascii<'_> {
+            fn write_str(&mut self, text: &str) -> core::fmt::Result {
+                debug_assert!(text.is_ascii());
+                self.0.extend_from_slice(text.as_bytes());
+                Ok(())
+            }
+        }
+
+        // `Ascii` does not fail, so neither does a `Display` that writes to it.
+        let _ = write!(Ascii(&mut self.text), "{value}");
+        Ok(())
+    }
+
+    /// The prerelease and build tags are strings of the lockfile.
+    fn version(&mut self, version: &Semver::Version, buf: &[u8]) -> Result<(), WriteError> {
+        self.ascii(format_args!(
+            "{}.{}.{}",
+            version.major, version.minor, version.patch
+        ))?;
+        if version.tag.has_pre() {
+            self.write_byte(b'-')?;
+            self.string_body(version.tag.pre.slice(buf))?;
+        }
+        if version.tag.has_build() {
+            self.write_byte(b'+')?;
+            self.string_body(version.tag.build.slice(buf))?;
+        }
+        Ok(())
+    }
+
+    /// What another `Writer` has written.
+    fn append(&mut self, written: &Writer) -> Result<(), WriteError> {
+        self.text.extend_from_slice(&written.text);
+        Ok(())
+    }
+}
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -343,17 +422,14 @@ impl Stringifier {
                     let dep = &deps_buf[dep_id as usize];
 
                     // clobber, there isn't data
-                    let mut key: Vec<u8> = Vec::new();
-                    {
-                        use std::io::Write;
-                        let _ = write!(
-                            &mut key,
-                            "{}{}{}",
-                            bstr::BStr::new(node.relative_path),
-                            if node.depth == 0 { "" } else { "/" },
-                            bstr::BStr::new(dep.name.slice(buf)),
-                        );
+                    let name = dep.name.slice(buf);
+                    let mut key: Vec<u8> =
+                        Vec::with_capacity(node.relative_path.len() + 1 + name.len());
+                    key.extend_from_slice(node.relative_path.as_bytes());
+                    if node.depth != 0 {
+                        key.push(b'/');
                     }
+                    key.extend_from_slice(name);
                     pkg_map.put(&key, ());
                 }
             }
@@ -367,10 +443,14 @@ impl Stringifier {
         Self::inc_indent(writer, indent)?;
         {
             let lockfile_version = Self::version_to_write(lockfile);
-            writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
+            writer.write_all(b"\"lockfileVersion\": ")?;
+            writer.ascii(lockfile_version as u32)?;
+            writer.write_all(b",\n")?;
             Self::write_indent(writer, *indent)?;
 
-            writeln!(writer, "\"configVersion\": {},", config_version as u32)?;
+            writer.write_all(b"\"configVersion\": ")?;
+            writer.ascii(config_version as u32)?;
+            writer.write_all(b",\n")?;
             Self::write_indent(writer, *indent)?;
 
             writer.write_all(b"\"workspaces\": {\n")?;
@@ -452,6 +532,7 @@ impl Stringifier {
                     let dep = &deps_buf[dep_id as usize];
 
                     if lockfile.patched_dependencies.count() > 0 {
+                        // Through `Display`, as every other place spells the key that a patch is looked up by.
                         use std::io::Write;
                         let _ = write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf)));
                         match res.tag {
@@ -513,7 +594,8 @@ impl Stringifier {
                 *indent += 1;
                 for dep_name in found_trusted_dependencies.values() {
                     Self::write_indent(writer, *indent)?;
-                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
+                    writer.string(dep_name.slice(buf))?;
+                    writer.write_all(b",\n")?;
                 }
 
                 Self::dec_indent(writer, indent)?;
@@ -533,15 +615,8 @@ impl Stringifier {
                 for value in found_patched_dependencies.values() {
                     let (name_and_version, patch_path) = value;
                     Self::write_indent(writer, *indent)?;
-                    writeln!(
-                        writer,
-                        "{}: {},",
-                        bun_core::fmt::format_json_string_utf8(
-                            name_and_version,
-                            Default::default()
-                        ),
-                        patch_path.fmt_json(buf, Default::default()),
-                    )?;
+                    writer.entry(name_and_version, patch_path.slice(buf))?;
+                    writer.write_all(b",\n")?;
                 }
 
                 Self::dec_indent(writer, indent)?;
@@ -599,11 +674,8 @@ impl Stringifier {
 
                 for (catalog_name, catalog_deps) in lockfile.catalogs.groups.iter() {
                     Self::write_indent(writer, *indent)?;
-                    writeln!(
-                        writer,
-                        "{}: {{",
-                        catalog_name.fmt_json(buf, Default::default())
-                    )?;
+                    writer.string(catalog_name.slice(buf))?;
+                    writer.write_all(b": {\n")?;
                     *indent += 1;
 
                     Self::write_catalog(writer, *indent, catalog_deps, buf)?;
@@ -618,15 +690,15 @@ impl Stringifier {
             let extension_lines = if lockfile.package_extensions.applied.is_empty() {
                 Vec::new()
             } else {
-                lockfile.package_extension_lines()
+                lockfile.package_extension_lines()?
             };
             if !extension_lines.is_empty() {
                 Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"packageExtensions\": {\n")?;
                 *indent += 1;
-                for line in extension_lines {
+                for line in &extension_lines {
                     Self::write_indent(writer, *indent)?;
-                    writer.write_all(&line)?;
+                    writer.append(line)?;
                 }
                 Self::dec_indent(writer, indent)?;
                 writer.write_all(b"},\n")?;
@@ -667,14 +739,7 @@ impl Stringifier {
 
                     writer.write_byte(b'"')?;
                     // relative_path is empty string for root resolutions
-                    write!(
-                        writer,
-                        "{}",
-                        bun_core::fmt::format_json_string_utf8(
-                            relative_path,
-                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                        ),
-                    )?;
+                    writer.string_body(relative_path)?;
 
                     if *depth != 0 {
                         writer.write_byte(b'/')?;
@@ -693,14 +758,8 @@ impl Stringifier {
                     }
                     let pkg_key: &[u8] = &pkg_key_buf;
 
-                    write!(
-                        writer,
-                        "{}\": ",
-                        bun_core::fmt::format_json_string_utf8(
-                            dep_name,
-                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                        ),
-                    )?;
+                    writer.string_body(dep_name)?;
+                    writer.write_all(b"\": ")?;
 
                     let pkg_name = pkg_names[pkg_id as usize];
                     let pkg_meta = &pkg_metas[pkg_id as usize];
@@ -749,12 +808,10 @@ impl Stringifier {
 
                     match res.tag {
                         ResolutionTag::Root => {
-                            write!(
-                                writer,
-                                "[\"{}@root:\", ",
-                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // we don't read the root package version into the binary lockfile
-                            )?;
+                            writer.write_all(b"[\"")?;
+                            writer.string_body(pkg_name.slice(buf))?;
+                            // we don't read the root package version into the binary lockfile
+                            writer.write_all(b"@root:\", ")?;
 
                             writer.write_byte(b'{')?;
                             if pkg_bin.tag != BinTag::None {
@@ -765,12 +822,11 @@ impl Stringifier {
                                 })?;
 
                                 // TODO(dylan-conway) move this to "workspaces" object
-                                pkg_bin.to_json::<_, { ToJsonStyle::SingleLine }>(
+                                pkg_bin.to_json::<{ ToJsonStyle::SingleLine }>(
                                     None,
                                     buf,
                                     extern_strings,
-                                    &mut AsFmt::new(writer),
-                                    write_indent_fmt,
+                                    writer,
                                 )?;
 
                                 writer.write_all(b" }]")?;
@@ -779,18 +835,17 @@ impl Stringifier {
                             }
                         }
                         tag @ (ResolutionTag::Folder | ResolutionTag::Symlink) => {
-                            let (prefix, path) = if tag == ResolutionTag::Folder {
-                                ("file:", res.folder())
+                            let (prefix, path): (&'static [u8], _) = if tag == ResolutionTag::Folder
+                            {
+                                (b"@file:", res.folder())
                             } else {
-                                ("link:", res.symlink())
+                                (b"@link:", res.symlink())
                             };
-                            write!(
-                                writer,
-                                "[\"{}@{}{}\", ",
-                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                prefix,
-                                path.fmt_json(buf, JsonOpts { quote: false }),
-                            )?;
+                            writer.write_all(b"[\"")?;
+                            writer.string_body(pkg_name.slice(buf))?;
+                            writer.write_all(prefix)?;
+                            writer.string_body(path.slice(buf))?;
+                            writer.write_all(b"\", ")?;
 
                             write_info!();
 
@@ -802,59 +857,52 @@ impl Stringifier {
                             } else {
                                 res.remote_tarball()
                             };
-                            write!(
-                                writer,
-                                "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                tarball.fmt_json(buf, JsonOpts { quote: false }),
-                            )?;
+                            writer.write_all(b"[\"")?;
+                            writer.string_body(pkg_name.slice(buf))?;
+                            writer.write_byte(b'@')?;
+                            writer.string_body(tarball.slice(buf))?;
+                            writer.write_all(b"\", ")?;
 
                             write_info!();
 
                             if pkg_meta.integrity.tag.is_supported() {
-                                write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
+                                Self::write_integrity(writer, &pkg_meta.integrity)?;
                             } else {
                                 writer.write_byte(b']')?;
                             }
                         }
                         ResolutionTag::Npm => {
-                            write!(
-                                writer,
-                                "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.npm().version.fmt(buf),
-                            )?;
+                            writer.write_all(b"[\"")?;
+                            writer.string_body(pkg_name.slice(buf))?;
+                            writer.write_byte(b'@')?;
+                            writer.version(&res.npm().version, buf)?;
+                            writer.write_all(b"\", ")?;
 
                             // only write the registry if it's not the default. empty string means default registry
                             let url = res.npm().url;
                             let url_slice = url.slice(buf);
-                            write!(
-                                writer,
-                                "\"{}\", ",
-                                bun_core::fmt::format_json_string_utf8(
-                                    if url_is_under_registry(
-                                        url_slice,
-                                        Npm::Registry::DEFAULT_URL.as_bytes(),
-                                    ) {
-                                        b"" as &[u8]
-                                    } else {
-                                        url_slice
-                                    },
-                                    bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                                ),
+                            writer.string(
+                                if url_is_under_registry(
+                                    url_slice,
+                                    Npm::Registry::DEFAULT_URL.as_bytes(),
+                                ) {
+                                    b""
+                                } else {
+                                    url_slice
+                                },
                             )?;
+                            writer.write_all(b", ")?;
 
                             write_info!();
 
-                            write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
+                            Self::write_integrity(writer, &pkg_meta.integrity)?;
                         }
                         ResolutionTag::Workspace => {
-                            write!(
-                                writer,
-                                "[\"{}@workspace:{}\"]",
-                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.workspace().fmt_json(buf, JsonOpts { quote: false }),
-                            )?;
+                            writer.write_all(b"[\"")?;
+                            writer.string_body(pkg_name.slice(buf))?;
+                            writer.write_all(b"@workspace:")?;
+                            writer.string_body(res.workspace().slice(buf))?;
+                            writer.write_all(b"\"]")?;
                         }
                         tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                             // inline .git, .github
@@ -864,30 +912,20 @@ impl Stringifier {
                             } else {
                                 "github:"
                             };
-                            {
-                                use std::io::Write;
-                                let _ = write!(&mut temp_buf, "{}", repo.fmt(prefix, buf));
-                            }
-                            write!(
-                                writer,
-                                "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                bun_core::fmt::format_json_string_utf8(
-                                    temp_buf.as_slice(),
-                                    bun_core::fmt::JSONFormatterUTF8Options { quote: false }
-                                ),
-                            )?;
+                            let _ = repo.fmt(prefix, buf).write_to(&mut temp_buf);
+                            writer.write_all(b"[\"")?;
+                            writer.string_body(pkg_name.slice(buf))?;
+                            writer.write_byte(b'@')?;
+                            writer.string_body(temp_buf.as_slice())?;
+                            writer.write_all(b"\", ")?;
                             temp_buf.clear();
 
                             write_info!();
 
-                            write!(
-                                writer,
-                                ", {}",
-                                repo.resolved.fmt_json(buf, Default::default())
-                            )?;
+                            writer.write_all(b", ")?;
+                            writer.string(repo.resolved.slice(buf))?;
                             if pkg_meta.integrity.tag.is_supported() {
-                                write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
+                                Self::write_integrity(writer, &pkg_meta.integrity)?;
                             } else {
                                 writer.write_byte(b']')?;
                             }
@@ -909,6 +947,13 @@ impl Stringifier {
         Ok(())
     }
 
+    /// Ends a `packages` row.
+    fn write_integrity(writer: &mut Writer, integrity: &Integrity) -> Result<(), WriteError> {
+        writer.write_all(b", \"")?;
+        writer.ascii(integrity)?;
+        writer.write_all(b"\"]")
+    }
+
     fn write_catalog(
         writer: &mut Writer,
         indent: u32,
@@ -917,12 +962,8 @@ impl Stringifier {
     ) -> Result<(), WriteError> {
         for dep in catalog.values() {
             Self::write_indent(writer, indent)?;
-            writeln!(
-                writer,
-                "{}: {},",
-                dep.name.fmt_json(buf, Default::default()),
-                dep.version.literal.fmt_json(buf, Default::default()),
-            )?;
+            writer.entry(dep.name.slice(buf), dep.version.literal.slice(buf))?;
+            writer.write_all(b",\n")?;
         }
         Ok(())
     }
@@ -977,15 +1018,7 @@ impl Stringifier {
                     writer.write_all(b", ")?;
                 }
 
-                write!(
-                    writer,
-                    "{}: {}",
-                    bun_core::fmt::format_json_string_utf8(dep.name.slice(buf), Default::default()),
-                    bun_core::fmt::format_json_string_utf8(
-                        dep.version.literal.slice(buf),
-                        Default::default()
-                    ),
-                )?;
+                writer.entry(dep.name.slice(buf), dep.version.literal.slice(buf))?;
 
                 if dep.behavior.contains(Behavior::PEER)
                     && !dep.behavior.contains(Behavior::OPTIONAL)
@@ -1014,22 +1047,21 @@ impl Stringifier {
                 continue;
             }
             debug_assert!(any);
-            write!(writer, ", \"{key}\": [")?;
+            writer.write_all(b", \"")?;
+            writer.write_all(key.as_bytes())?;
+            writer.write_all(b"\": [")?;
 
             for (i, name) in names.iter().enumerate() {
-                write!(
-                    writer,
-                    "{}{}{}",
-                    if i != 0 { " " } else { "" },
-                    bun_core::fmt::format_json_string_utf8(name.slice(buf), Default::default()),
-                    if i != names.len() - 1 { "," } else { "" },
-                )?;
+                if i != 0 {
+                    writer.write_all(b", ")?;
+                }
+                writer.string(name.slice(buf))?;
             }
 
             writer.write_byte(b']')?;
         }
 
-        let mut write_key = |writer: &mut Writer, key: &[u8]| -> Result<(), WriteError> {
+        let mut write_key = |writer: &mut Writer, key: &'static [u8]| -> Result<(), WriteError> {
             if core::mem::replace(&mut any, true) {
                 writer.write_byte(b',')?;
             }
@@ -1043,12 +1075,16 @@ impl Stringifier {
 
         if meta.os != Npm::OperatingSystem::ALL {
             write_key(&mut *writer, b" \"os\": ")?;
-            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut AsFmt::new(writer))?;
+            writer.ascii(core::fmt::from_fn(|out| {
+                Negatable::<Npm::OperatingSystem>::to_json(meta.os, out)
+            }))?;
         }
 
         if meta.arch != Npm::Architecture::ALL {
             write_key(&mut *writer, b" \"cpu\": ")?;
-            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
+            writer.ascii(core::fmt::from_fn(|out| {
+                Negatable::<Npm::Architecture>::to_json(meta.arch, out)
+            }))?;
         }
 
         // Only a restriction to a single libc matters. It's written by name instead of
@@ -1072,13 +1108,7 @@ impl Stringifier {
                     b" \"bin\": "
                 },
             )?;
-            bin.to_json::<_, { ToJsonStyle::SingleLine }>(
-                None,
-                buf,
-                extern_strings,
-                &mut AsFmt::new(writer),
-                write_indent_fmt,
-            )?;
+            bin.to_json::<{ ToJsonStyle::SingleLine }>(None, buf, extern_strings, writer)?;
         }
 
         if any {
@@ -1122,36 +1152,26 @@ impl Stringifier {
             if !root_name.is_empty() {
                 writer.write_byte(b'\n')?;
                 Self::inc_indent(writer, indent)?;
-                write!(
-                    writer,
-                    "\"name\": {}",
-                    bun_core::fmt::format_json_string_utf8(root_name, Default::default()),
-                )?;
+                writer.write_all(b"\"name\": ")?;
+                writer.string(root_name)?;
 
                 // TODO(dylan-conway) should we save version?
                 any = true;
             }
         } else {
-            write!(
-                writer,
-                "{}: {{",
-                bun_core::fmt::format_json_string_utf8(res.slice(buf), Default::default()),
-            )?;
+            writer.string(res.slice(buf))?;
+            writer.write_all(b": {")?;
             writer.write_byte(b'\n')?;
             Self::inc_indent(writer, indent)?;
-            write!(
-                writer,
-                "\"name\": {}",
-                bun_core::fmt::format_json_string_utf8(
-                    pkg_names[pkg_id as usize].slice(buf),
-                    Default::default()
-                ),
-            )?;
+            writer.write_all(b"\"name\": ")?;
+            writer.string(pkg_names[pkg_id as usize].slice(buf))?;
 
             if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id as usize]) {
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, *indent)?;
-                write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
+                writer.write_all(b"\"version\": \"")?;
+                writer.version(version, buf)?;
+                writer.write_byte(b'"')?;
             }
 
             if pkg_bins[pkg_id as usize].tag != BinTag::None {
@@ -1163,12 +1183,11 @@ impl Stringifier {
                 } else {
                     writer.write_all(b"\"bin\": ")?;
                 }
-                bin.to_json::<_, { ToJsonStyle::MultiLine }>(
+                bin.to_json::<{ ToJsonStyle::MultiLine }>(
                     Some(indent),
                     buf,
                     extern_strings,
-                    &mut AsFmt::new(writer),
-                    write_indent_fmt,
+                    writer,
                 )?;
             }
 
@@ -1218,15 +1237,7 @@ impl Stringifier {
                     Self::write_indent(writer, *indent)?;
                 }
 
-                let name = dep.name.slice(buf);
-                let version = dep.version.literal.slice(buf);
-
-                write!(
-                    writer,
-                    "{}: {}",
-                    bun_core::fmt::format_json_string_utf8(name, Default::default()),
-                    bun_core::fmt::format_json_string_utf8(version, Default::default()),
-                )?;
+                writer.entry(dep.name.slice(buf), dep.version.literal.slice(buf))?;
             }
 
             if !first {
@@ -1246,15 +1257,14 @@ impl Stringifier {
             debug_assert!(any);
             writer.write_all(b",\n")?;
             Self::write_indent(writer, *indent)?;
-            writeln!(writer, "\"{key}\": [")?;
+            writer.write_byte(b'"')?;
+            writer.write_all(key.as_bytes())?;
+            writer.write_all(b"\": [\n")?;
             *indent += 1;
             for name in names {
                 Self::write_indent(writer, *indent)?;
-                writeln!(
-                    writer,
-                    "{},",
-                    bun_core::fmt::format_json_string_utf8(name.slice(buf), Default::default()),
-                )?;
+                writer.string(name.slice(buf))?;
+                writer.write_all(b",\n")?;
             }
             Self::dec_indent(writer, indent)?;
             writer.write_byte(b']')?;
@@ -1296,16 +1306,11 @@ impl Stringifier {
         buf: &[u8],
     ) -> Result<(), WriteError> {
         Self::write_indent(writer, indent)?;
-        writeln!(
-            writer,
-            "{}: {},",
-            bun_core::fmt::format_json_string_utf8(
-                Self::override_selector_key(key_buf, name, range),
-                Default::default()
-            ),
-            value.fmt_json(buf, Default::default()),
+        writer.entry(
+            Self::override_selector_key(key_buf, name, range),
+            value.slice(buf),
         )?;
-        Ok(())
+        writer.write_all(b",\n")
     }
 
     /// Scoped rules live in selector-keyed objects; a flat rule folds into its name's unranged group as `"."`.
@@ -1392,14 +1397,12 @@ impl Stringifier {
             };
 
             Self::write_indent(writer, indent)?;
-            writeln!(
-                writer,
-                "{}: {{",
-                bun_core::fmt::format_json_string_utf8(
-                    Self::override_selector_key(&mut key_buf, group.name, group.literal),
-                    Default::default()
-                ),
-            )?;
+            writer.string(Self::override_selector_key(
+                &mut key_buf,
+                group.name,
+                group.literal,
+            ))?;
+            writer.write_all(b": {\n")?;
 
             let dot: Option<String> = if group.literal.is_empty() {
                 match flat.get(f) {
@@ -1423,11 +1426,9 @@ impl Stringifier {
             };
             if let Some(value) = dot {
                 Self::write_indent(writer, indent + 1)?;
-                writeln!(
-                    writer,
-                    "\".\": {},",
-                    value.fmt_json(buf, Default::default())
-                )?;
+                writer.write_all(b"\".\": ")?;
+                writer.string(value.slice(buf))?;
+                writer.write_all(b",\n")?;
             }
 
             while let Some(rule) = scoped.get(g) {
@@ -1457,7 +1458,7 @@ impl Stringifier {
         Ok(())
     }
 
-    fn write_indent(writer: &mut Writer, indent: u32) -> Result<(), WriteError> {
+    pub(crate) fn write_indent(writer: &mut Writer, indent: u32) -> Result<(), WriteError> {
         for _ in 0..indent {
             writer.write_all(b"  ")?;
         }

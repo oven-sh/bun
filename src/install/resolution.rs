@@ -665,6 +665,15 @@ impl fmt::Display for StoreURLFormatter<'_> {
     }
 }
 
+/// `fmt_path` for text that is saved to a file: it keeps bytes that are not UTF-8.
+fn path_for_file(path: &[u8], path_sep: PathSep) -> Cow<'_, [u8]> {
+    match path_sep {
+        PathSep::Any => Cow::Borrowed(path),
+        PathSep::Auto => bun_paths::to_native(path),
+        PathSep::Posix => bun_paths::to_portable(path),
+    }
+}
+
 pub struct URLFormatter<'a, SemverInt: VersionInt> {
     resolution: &'a ResolutionType<SemverInt>,
 
@@ -686,25 +695,13 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
         let res = self.resolution;
         match res.tag {
             Tag::Npm => writer.write_all(res.npm().url.slice(buf)),
-            Tag::LocalTarball => write!(
-                writer,
-                "{}",
-                fmt_path(
-                    &res.local_tarball_path(buf),
-                    PathFormatOptions {
-                        path_sep: PathSep::Posix,
-                        ..Default::default()
-                    },
-                )
-            ),
+            Tag::LocalTarball => {
+                writer.write_all(&path_for_file(&res.local_tarball_path(buf), PathSep::Posix))
+            }
             Tag::Folder => writer.write_all(res.folder().slice(buf)),
             Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
-            // `Repository::format_as` still goes through `fmt::Write`
-            // (and uses `BStr` internally); git/github URLs are ASCII in
-            // practice so byte-exactness is preserved. A follow-up shard owns
-            // `repository.rs` if that ever needs a byte-level path too.
-            Tag::Git => write!(writer, "{}", res.git().fmt("git+", buf)),
-            Tag::Github => write!(writer, "{}", res.github().fmt("github:", buf)),
+            Tag::Git => res.git().fmt("git+", buf).write_to(writer),
+            Tag::Github => res.github().fmt("github:", buf).write_to(writer),
             Tag::Workspace => {
                 writer.write_all(b"workspace:")?;
                 writer.write_all(res.workspace().slice(buf))
@@ -789,58 +786,20 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
         let res = self.resolution;
         match res.tag {
             Tag::Npm => write!(writer, "{}", res.npm().version.fmt(buf)),
-            Tag::LocalTarball => write!(
-                writer,
-                "{}",
-                fmt_path(
-                    &self.local_tarball(),
-                    PathFormatOptions {
-                        path_sep: self.path_sep,
-                        ..Default::default()
-                    },
-                )
-            ),
-            Tag::Folder => write!(
-                writer,
-                "{}",
-                fmt_path(
-                    res.folder().slice(buf),
-                    PathFormatOptions {
-                        path_sep: self.path_sep,
-                        ..Default::default()
-                    },
-                )
-            ),
+            Tag::LocalTarball => {
+                writer.write_all(&path_for_file(&self.local_tarball(), self.path_sep))
+            }
+            Tag::Folder => writer.write_all(&path_for_file(res.folder().slice(buf), self.path_sep)),
             Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
-            Tag::Git => write!(writer, "{}", res.git().fmt("git+", buf)),
-            Tag::Github => write!(writer, "{}", res.github().fmt("github:", buf)),
+            Tag::Git => res.git().fmt("git+", buf).write_to(writer),
+            Tag::Github => res.github().fmt("github:", buf).write_to(writer),
             Tag::Workspace => {
                 writer.write_all(b"workspace:")?;
-                write!(
-                    writer,
-                    "{}",
-                    fmt_path(
-                        res.workspace().slice(buf),
-                        PathFormatOptions {
-                            path_sep: self.path_sep,
-                            ..Default::default()
-                        },
-                    )
-                )
+                writer.write_all(&path_for_file(res.workspace().slice(buf), self.path_sep))
             }
             Tag::Symlink => {
                 writer.write_all(b"link:")?;
-                write!(
-                    writer,
-                    "{}",
-                    fmt_path(
-                        res.symlink().slice(buf),
-                        PathFormatOptions {
-                            path_sep: self.path_sep,
-                            ..Default::default()
-                        },
-                    )
-                )
+                writer.write_all(&path_for_file(res.symlink().slice(buf), self.path_sep))
             }
             Tag::SingleFileModule => {
                 writer.write_all(b"module:")?;

@@ -641,7 +641,7 @@ impl Lockfile {
         if lockfile_format == LockfileFormat::Text {
             let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
-            let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
+            let parsed = match JSON::ParsedJson::parse_bun_lock(&source, log) {
                 Ok(j) => j,
                 Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format),
             };
@@ -2074,19 +2074,14 @@ impl Lockfile {
 
         let bytes: Vec<u8> = 'bytes: {
             if save_format == LockfileFormat::Text {
-                let mut writer_buf: Vec<u8> = Vec::new();
-
-                if let Err(_e) = TextLockfile::Stringifier::save_from_binary(
+                let mut writer = TextLockfile::Writer::default();
+                let Ok(()) = TextLockfile::Stringifier::save_from_binary(
                     self,
                     load_result,
                     config_version,
-                    &mut writer_buf,
-                ) {
-                    // The only write failure on an allocating writer is OOM.
-                    bun_core::out_of_memory();
-                }
-
-                break 'bytes writer_buf;
+                    &mut writer,
+                );
+                break 'bytes writer.into_bytes();
             }
 
             // Only an install has the scripts to hash the new spelling with.

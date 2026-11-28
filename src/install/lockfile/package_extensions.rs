@@ -1,16 +1,14 @@
 //! `packageExtensions`. The dependencies that an extension adds become ordinary dependencies in the
 //! lockfile. `Applied` records which ones were added, so that removing an extension can undo it.
 
-use std::io::Write as _;
-
 use bun_alloc::AllocError;
 use bun_ast::Expr;
 use bun_collections::index_sort;
-use bun_core::fmt::format_json_string_utf8;
 use bun_semver::string::Builder;
 use bun_semver::{self as semver, SlicedString, String as SemverString};
 
 use crate::dependency::{self, Behavior, TagExt as _, VersionTag};
+use crate::lockfile_real::bun_lock::{WriteError, Writer};
 use crate::lockfile_real::override_selector::parse_package_segment;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice};
@@ -685,12 +683,12 @@ impl Lockfile {
     /// The entries of `packageExtensions` in bun.lock, one line each, sorted.
     #[cold]
     #[inline(never)]
-    pub(crate) fn package_extension_lines(&self) -> Vec<Vec<u8>> {
+    pub(crate) fn package_extension_lines(&self) -> Result<Vec<Writer>, WriteError> {
         let buf = self.buffers.string_bytes.as_slice();
         let applied = &self.package_extensions.applied;
         let hoisted = &self.buffers.hoisted_dependencies;
         let resolutions = &self.buffers.resolutions;
-        let mut lines: Vec<Vec<u8>> = Vec::new();
+        let mut lines: Vec<Writer> = Vec::new();
         for id in 0..self.packages.len() {
             if self.packages.items_resolution()[id].tag != ResolutionTag::Npm {
                 continue;
@@ -709,7 +707,7 @@ impl Lockfile {
             }
             let rows =
                 self.packages.items_dependencies()[id].get(self.buffers.dependencies.as_slice());
-            let mut line: Vec<u8> = Vec::new();
+            let mut line = Writer::default();
             for (kind, key) in KINDS {
                 let mut names: Vec<&[u8]> = rows
                     .iter()
@@ -723,32 +721,29 @@ impl Lockfile {
                     continue;
                 }
                 index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
-                let _ = if line.is_empty() {
-                    write!(
-                        line,
-                        "{}: {{",
-                        format_json_string_utf8(&label, Default::default())
-                    )
+                if line.bytes().is_empty() {
+                    line.string(&label)?;
+                    line.write_all(b": {")?;
                 } else {
-                    line.write_all(b",")
-                };
-                let _ = write!(line, " \"{key}\": [");
-                for (i, name) in names.iter().enumerate() {
-                    let _ = write!(
-                        line,
-                        "{}{}",
-                        if i == 0 { "" } else { ", " },
-                        format_json_string_utf8(name, Default::default()),
-                    );
+                    line.write_byte(b',')?;
                 }
-                line.push(b']');
+                line.write_all(b" \"")?;
+                line.write_all(key.as_bytes())?;
+                line.write_all(b"\": [")?;
+                for (i, name) in names.iter().enumerate() {
+                    if i != 0 {
+                        line.write_all(b", ")?;
+                    }
+                    line.string(name)?;
+                }
+                line.write_byte(b']')?;
             }
-            if !line.is_empty() {
-                line.extend_from_slice(b" },\n");
+            if !line.bytes().is_empty() {
+                line.write_all(b" },\n")?;
                 lines.push(line);
             }
         }
-        index_sort::sort_slice_unstable_by(&mut lines, |a, b| a.cmp(b));
-        lines
+        index_sort::sort_slice_unstable_by(&mut lines, |a, b| a.bytes().cmp(b.bytes()));
+        Ok(lines)
     }
 }

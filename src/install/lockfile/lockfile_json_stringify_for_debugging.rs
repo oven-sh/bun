@@ -1,7 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_core::fmt as bun_fmt;
 use bun_semver::ExternalString;
-use bun_semver::string::JsonFormatterOptions;
 
 use crate::bin::Tag as BinTag;
 use crate::dependency::{Behavior, URI, Value};
@@ -109,7 +108,10 @@ where
             w.object_field(b"version")?;
             w.print(format_args!(
                 "\"catalog:{}\"",
-                info.fmt_json(sb, JsonFormatterOptions { quote: false })
+                bun_fmt::format_json_string_utf8(
+                    info.slice(sb),
+                    bun_fmt::JSONFormatterUTF8Options { quote: false }
+                )
             ))?;
 
             let _ = w.end_object();

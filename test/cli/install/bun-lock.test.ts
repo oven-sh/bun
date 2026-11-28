@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, readlinkSync, realpathSync, statSync } from "fs";
-import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
+import { access, copyFile, cp, exists, mkdir, open, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -1106,6 +1106,39 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   expect(await exited).toBe(0);
 });
 
+// Without the escape the next install does not parse bun.lock.
+it("escapes a double quote in a trusted dependency name when saving bun.lock", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "app", dependencies: { 'a"b': "file:./pkg" }, trustedDependencies: ['a"b'] }),
+    ),
+    write(join(packageDir, "pkg", "package.json"), JSON.stringify({ name: "pkg", version: "1.0.0" })),
+  ]);
+  // Windows has no file name with a quote, so nothing is installed.
+  const install = async (...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only", ...args],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  };
+
+  expect((await install()).exitCode).toBe(0);
+  const lock = await file(join(packageDir, "bun.lock")).text();
+  expect(lock).toContain('  "trustedDependencies": [\n    "a\\"b",\n  ],\n');
+
+  const frozen = await install("--frozen-lockfile");
+  expect(frozen.err).not.toContain("Ignoring lockfile");
+  expect(frozen.exitCode).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lock);
+});
+
 // --frozen-lockfile compares the tree built from bun.lock with the tree a clean install
 // builds, so an entry nothing depends on (the clean drops it) must not change the
 // outcome, wherever it sits in the file. The comparison used to skip the loaded side's
@@ -1301,6 +1334,450 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
 
   // No yarn.lock line is forged from the version literal's contents.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
+});
+
+// U+FFFD in place of such a byte reads back as another path or name. Only Linux lets a file name carry one: APFS
+// refuses it, and Windows names are UTF-16.
+describe.concurrent.skipIf(!isLinux)("a string that is not UTF-8 is in bun.lock byte for byte", () => {
+  /** One byte for each character of `text`: "\xff" is the byte FF, which a JS string as UTF-8 never has. */
+  const raw = (text: string) => Buffer.from(text, "latin1");
+  /** One character for each byte, so that U+FFFD (EF BF BD) does not pass for the byte it replaced. */
+  const latin1 = (bytes: Uint8Array) => Buffer.from(bytes).toString("latin1");
+  const read = async (...path: string[]) => latin1(await file(join(...path)).bytes());
+  /** The lines of a lockfile that have `text`. */
+  const rows = (lock: string, text: string) =>
+    lock
+      .split("\n")
+      .filter(line => line.includes(text))
+      .map(line => line.trim());
+  const script = "#!/usr/bin/env node\n";
+
+  /** Names and texts are what `raw` makes of them. An object is written as JSON. */
+  async function writeFiles(packageDir: string, files: Record<string, string | object>) {
+    await Promise.all(
+      Object.entries(files).map(async ([name, text]) => {
+        const path = raw(`${packageDir}/${name}`);
+        await mkdir(path.subarray(0, path.lastIndexOf("/")), { recursive: true });
+        await writeFile(path, raw(typeof text === "string" ? text : JSON.stringify(text)));
+      }),
+    );
+  }
+
+  async function run(cwd: string, ...cmd: string[]) {
+    await using proc = spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.bytes(), proc.exited]);
+    return { out: latin1(out), err: latin1(err), exitCode };
+  }
+
+  /** A frozen install into an empty node_modules accepts the bun.lock, and an install leaves the file as it is. */
+  async function expectRoundTrip(packageDir: string) {
+    const lock = await read(packageDir, "bun.lock");
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const frozen = await run(packageDir, bunExe(), "install", "--frozen-lockfile");
+    expect(frozen.err).not.toContain("lockfile had changes");
+    expect(frozen.exitCode).toBe(0);
+    const again = await run(packageDir, bunExe(), "install");
+    expect(again.err).not.toContain("Saved lockfile");
+    expect({ lock: await read(packageDir, "bun.lock"), exitCode: again.exitCode }).toEqual({ lock, exitCode: 0 });
+  }
+
+  it.each([
+    ["a byte that starts no sequence", "\xff", "\xff"],
+    ["a lead byte that no continuation byte follows", "\xe9", "\xe9"],
+    ["three bytes of a four-byte sequence", "\xf0\x9f\x98", "\xf0\x9f\x98"],
+    ["an overlong sequence", "\xc0\xaf", "\xc0\xaf"],
+    ["a surrogate pair as two three-byte sequences", "\xed\xa0\xbd\xed\xb8\x80", "\xed\xa0\xbd\xed\xb8\x80"],
+    ["half a surrogate pair", "\xed\xa0\xbd", "\\uD83D"],
+  ])("a file: folder whose path has %s", async (_, dir, written) => {
+    const { packageDir } = await registry.createTestDir();
+    await writeFiles(packageDir, {
+      "package.json": { name: "app", dependencies: { pkg: `file:./f${dir}/pkg` } },
+      [`f${dir}/pkg/package.json`]: { name: "pkg", version: "1.0.0" },
+    });
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    expect(rows(await read(packageDir, "bun.lock"), "pkg")).toEqual([
+      `"pkg": "file:./f${written}/pkg",`,
+      `"pkg": ["pkg@file:f${written}/pkg", {}],`,
+    ]);
+    await expectRoundTrip(packageDir);
+  });
+
+  /** `bun add` of a tarball in the directory `d<dir>`. A JS string cannot put the byte into an argument. */
+  async function addTarball(dir: string, octal: string) {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const tarball = join(__dirname, "bar-0.0.2.tgz");
+    await write(packageJson, JSON.stringify({ name: "app" }));
+    await mkdir(raw(`${packageDir}/d${dir}`));
+    await copyFile(tarball, raw(`${packageDir}/d${dir}/bar-0.0.2.tgz`));
+
+    const add = await run(packageDir, "sh", "-c", `exec "$0" add "$(printf './d\\${octal}/bar-0.0.2.tgz')"`, bunExe());
+    expect(add.exitCode).toBe(0);
+
+    const integrity = new Bun.CryptoHasher("sha512").update(await file(tarball).bytes()).digest("base64");
+    expect(rows(await read(packageDir, "bun.lock"), "bar")).toEqual([
+      `"bar": "./d${dir}/bar-0.0.2.tgz",`,
+      `"bar": ["bar@./d${dir}/bar-0.0.2.tgz", {}, "sha512-${integrity}"],`,
+    ]);
+    await expectRoundTrip(packageDir);
+    expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.2",
+    });
+  }
+
+  it("a tarball path that bun add was given", () => addTarball("\xff", "377"));
+  // The package.json that bun add writes has NUL for a lead byte and not the bytes after it, so the install fails.
+  it.todo("a tarball path with a lead byte that bun add was given", () => addTarball("\xe9", "351"));
+
+  /** A project whose workspaces are the directories `packages/<dir>`, with the names `ws-0`, `ws-1` and so on. */
+  const workspaces = (packageDir: string, dirs: string[]) =>
+    writeFiles(packageDir, {
+      "package.json": { name: "app", workspaces: ["packages/*"] },
+      ...Object.fromEntries(
+        dirs.map((dir, i) => [`packages/${dir}/package.json`, { name: `ws-${i}`, version: "1.0.0" }]),
+      ),
+    });
+
+  // `w\xfe` and `w\xff` are two keys. Where a quote or a backslash is an escape beside the byte, bun.lock is read
+  // byte for byte too. 95 5C is a character of Shift_JIS.
+  it("workspaces that a glob finds", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await workspaces(packageDir, ["w\xfe", "w\xff", 'q\xff"q', "\x95\\"]);
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    expect(rows(await read(packageDir, "bun.lock"), "packages/")).toEqual([
+      `"packages/q\xff\\"q": {`,
+      `"packages/w\xfe": {`,
+      `"packages/w\xff": {`,
+      `"packages/\x95\\\\": {`,
+      `"ws-0": ["ws-0@workspace:packages/w\xfe"],`,
+      `"ws-1": ["ws-1@workspace:packages/w\xff"],`,
+      `"ws-2": ["ws-2@workspace:packages/q\xff\\"q"],`,
+      `"ws-3": ["ws-3@workspace:packages/\x95\\\\"],`,
+    ]);
+    await expectRoundTrip(packageDir);
+
+    // `import` of bun.lock has another reader. It has a row for each package too, also in a bundle.
+    await write(
+      join(packageDir, "rows.js"),
+      `import lock from "./bun.lock";\nconsole.log(Object.keys(lock.packages).join());\n`,
+    );
+    const imported = { out: "ws-0,ws-1,ws-2,ws-3\n", exitCode: 0 };
+    expect(await run(packageDir, bunExe(), "rows.js")).toMatchObject(imported);
+    expect(await run(packageDir, bunExe(), "build", "rows.js", "--outfile=bundle.js")).toMatchObject({ exitCode: 0 });
+    expect(await run(packageDir, bunExe(), "bundle.js")).toMatchObject(imported);
+  });
+
+  // What bun.lock is read as is compared with the names that the glob finds again. The longer names are for
+  // surrogates: two escapes side by side read as one character above U+FFFF.
+  it("every one or two of the bytes that UTF-8 or JSON give a meaning to", async () => {
+    const special = ['"', "\\", "\x7f", "\x80", "\xbf", "\xc2", "\xe9", "\xed", "\xa0", "\xb0", "\xf0", "\xff"];
+    const lead = "\xed\xa0\xbd";
+    const trail = "\xed\xb8\x80";
+    const { packageDir } = await registry.createTestDir();
+    await workspaces(packageDir, [
+      ...special,
+      ...special.flatMap(a => special.map(b => a + b)),
+      lead + trail,
+      trail + lead,
+      lead + '"' + trail,
+      lead + "\xff" + trail,
+      lead + lead + trail,
+      lead + trail + trail,
+      "\xf0\x9f\x98\x80",
+      "\xe2\x80\xa8",
+      "\xef\xbb\xbf",
+    ]);
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    await expectRoundTrip(packageDir);
+  });
+
+  // A dependency name, a catalog and its entry, an override, a trusted dependency, a bin name and its file.
+  it("the strings of dependencies, catalogs, overrides and trustedDependencies", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await writeFiles(packageDir, {
+      "package.json": {
+        name: "app",
+        workspaces: { packages: ["packages/*"], catalogs: { "g\xff": { pkg: "file:./f\xff/pkg" } } },
+        dependencies: { "n\xff": "file:./f\xff/pkg" },
+        overrides: { bar: "file:./f\xff/pkg" },
+        trustedDependencies: ["n\xff"],
+      },
+      "packages/one/package.json": { name: "one", version: "1.0.0", dependencies: { pkg: "catalog:g\xff" } },
+      "f\xff/pkg/package.json": { name: "pkg", version: "1.0.0", bin: { "b\xff": "./c\xff.js" } },
+      "f\xff/pkg/c\xff.js": script,
+    });
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    expect(rows(await read(packageDir, "bun.lock"), "\xff").sort()).toEqual([
+      `"bar": "file:./f\xff/pkg",`,
+      `"g\xff": {`,
+      `"n\xff",`,
+      `"n\xff": "file:./f\xff/pkg",`,
+      `"n\xff": ["pkg@file:f\xff/pkg", { "bin": { "b\xff": "./c\xff.js" } }],`,
+      `"one/pkg": ["pkg@file:f\xff/pkg", { "bin": { "b\xff": "./c\xff.js" } }],`,
+      `"pkg": "catalog:g\xff",`,
+      `"pkg": "file:./f\xff/pkg",`,
+    ]);
+    await expectRoundTrip(packageDir);
+    expect(latin1(await readlink(raw(`${packageDir}/node_modules/.bin/b\xff`), "buffer"))).toBe("../n\xff/c\xff.js");
+  });
+
+  // The names of the root and of a workspace, every kind of bin, a peer, a dependency that does not resolve, an
+  // override with a scope, the file of a patch.
+  it("the strings of workspaces, bins, peers, scoped overrides and patches", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await writeFiles(packageDir, {
+      "package.json": {
+        name: "app\xff",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        bin: { "rb\xff": "./rootbin\xff.js", rb2: "./r2.js" },
+        dependencies: { "self\xff": "file:.", "pkg\xff": "file:./f\xff/pkg", bar: "./bar-0.0.2.tgz" },
+        optionalDependencies: { "u\xff": "catalog:" },
+        overrides: { "pkg\xff@1": { ".": "file:./f\xff/pkg", "q\xff@1": "file:./f\xff/r" } },
+        patchedDependencies: { "bar@./bar-0.0.2.tgz": "patches\xff/bar.patch" },
+      },
+      "rootbin\xff.js": script,
+      "r2.js": script,
+      "packages/m/package.json": {
+        name: "m\xff",
+        version: "1.0.0",
+        bin: { "mb\xff": "./m\xff.js" },
+        dependencies: { "u\xff": "file:../../f\xff/u" },
+      },
+      "packages/m/m\xff.js": script,
+      "packages/s/package.json": {
+        name: "s",
+        version: "1.0.0",
+        bin: "./s\xff.js",
+        peerDependencies: { "p\xff": "*" },
+        peerDependenciesMeta: { "p\xff": { optional: true } },
+      },
+      "packages/s/s\xff.js": script,
+      "packages/d/package.json": { name: "d", version: "1.0.0", directories: { bin: "./bin\xff" } },
+      "packages/d/bin\xff/tool": script,
+      "packages/t/package.json": { name: "t", version: "1.0.0", bin: { "tb\xff": "./t\xff.js", tb2: "./t2.js" } },
+      "packages/t/t\xff.js": script,
+      "packages/t/t2.js": script,
+      "f\xff/pkg/package.json": {
+        name: "pkg",
+        version: "1.0.0",
+        directories: { bin: "./bin\xff" },
+        optionalDependencies: { "u\xff": "catalog:" },
+      },
+      "f\xff/pkg/bin\xff/tool": script,
+      "f\xff/u/package.json": { name: "u", version: "1.0.0", bin: "./u\xff.js" },
+      "f\xff/u/u\xff.js": script,
+      "f\xff/r/package.json": { name: "r", version: "1.0.0" },
+      "patches\xff/bar.patch": [
+        "diff --git a/index.js b/index.js",
+        "new file mode 100644",
+        "index 0000000000000000000000000000000000000000..cdb0e9a11f97ed0ff06f407047bb9512c2e79fa3",
+        "--- /dev/null",
+        "+++ b/index.js",
+        "@@ -0,0 +1 @@",
+        "+module.exports=2;",
+        "",
+      ].join("\n"),
+    });
+    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    expect(rows(await read(packageDir, "bun.lock"), "\xff")).toEqual([
+      `"name": "app\xff",`,
+      `"pkg\xff": "file:./f\xff/pkg",`,
+      `"self\xff": "file:.",`,
+      `"u\xff": "catalog:",`,
+      `"u\xff",`,
+      `"binDir": "./bin\xff",`,
+      `"name": "m\xff",`,
+      `"mb\xff": "./m\xff.js",`,
+      `"u\xff": "file:../../f\xff/u",`,
+      `"bin": "./s\xff.js",`,
+      `"p\xff": "*",`,
+      `"p\xff",`,
+      `"tb\xff": "./t\xff.js",`,
+      `"bar@./bar-0.0.2.tgz": "patches\xff/bar.patch",`,
+      `"pkg\xff@1": {`,
+      `".": "file:./f\xff/pkg",`,
+      `"q\xff@1": "file:./f\xff/r",`,
+      `"m\xff": ["m\xff@workspace:packages/m"],`,
+      `"pkg\xff": ["pkg@file:f\xff/pkg", { "optionalDependencies": { "u\xff": "catalog:" }, "unresolved": ["u\xff"], "binDir": "./bin\xff" }],`,
+      `"self\xff": ["app\xff@root:", { "bin": { "rb\xff": "./rootbin\xff.js", "rb2": "./r2.js" } }],`,
+      `"m\xff/u\xff": ["u@file:f\xff/u", { "bin": "./u\xff.js" }],`,
+      `"self\xff/pkg\xff": ["pkg@file:f\xff/pkg", { "optionalDependencies": { "u\xff": "catalog:" }, "unresolved": ["u\xff"], "binDir": "./bin\xff" }],`,
+    ]);
+    await expectRoundTrip(packageDir);
+  });
+
+  // The names that an extension adds are the strings of a registry package's row and of `packageExtensions`.
+  it("the names that packageExtensions adds", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await writeFiles(packageDir, {
+      "package.json": {
+        name: "app",
+        dependencies: { "a-dep": "1.0.5" },
+        packageExtensions: {
+          "a-dep": {
+            dependencies: { "d\xff": "npm:no-deps@^1.0.0" },
+            peerDependencies: { "p\xff": "*" },
+            peerDependenciesMeta: { "p\xff": { optional: true } },
+          },
+        },
+      },
+    });
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    const lock = (await read(packageDir, "bun.lock"))
+      .replaceAll(/localhost:\d+/g, "localhost:1234")
+      .replaceAll(/sha512-[^"]+/g, "sha512-");
+    expect(rows(lock, "\xff")).toEqual([
+      `"a-dep@1.0.5": { "dependencies": ["d\xff"], "peerDependencies": ["p\xff"] },`,
+      `"a-dep": ["a-dep@1.0.5", "http://localhost:1234/a-dep/-/a-dep-1.0.5.tgz", { "dependencies": { "d\xff": "npm:no-deps@^1.0.0" }, "peerDependencies": { "p\xff": "*" }, "optionalPeers": ["p\xff"] }, "sha512-"],`,
+      `"d\xff": ["no-deps@1.1.0", "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz", {}, "sha512-"],`,
+    ]);
+    await expectRoundTrip(packageDir);
+  });
+
+  // bun.lockb has the bytes, and so has what `bun bun.lockb` prints and the bun.lock that is written from it. The
+  // row that provides the peer is found by the bytes of its name, so the peer is not in `optionalPeers`.
+  it("a bun.lock that is written from bun.lockb", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+    const lockfiles = () => Promise.all(["bun.lock", "bun.lockb"].map(name => exists(join(packageDir, name))));
+    await writeFiles(packageDir, {
+      "package.json": { name: "app", dependencies: { "n\xff": "file:./f\xff/pkg", "p\xff": "file:./f\xff/peer" } },
+      "f\xff/pkg/package.json": { name: "pkg", version: "1.0.0", peerDependencies: { "p\xff": "*" } },
+      "f\xff/peer/package.json": { name: "peer", version: "1.0.0" },
+    });
+
+    expect((await run(packageDir, bunExe(), "install")).exitCode).toBe(0);
+    expect(await lockfiles()).toEqual([false, true]);
+    const printed = await run(packageDir, bunExe(), "bun.lockb");
+    expect({ rows: rows(printed.out, "\xff"), exitCode: printed.exitCode }).toEqual({
+      rows: [
+        `peer@*, "peer@file:./f\xff/peer":`,
+        `version "f\xff/peer"`,
+        `resolved "f\xff/peer"`,
+        `"pkg@file:./f\xff/pkg":`,
+        `version "f\xff/pkg"`,
+        `resolved "f\xff/pkg"`,
+      ],
+      exitCode: 0,
+    });
+
+    const converted = await run(packageDir, bunExe(), "install", "--save-text-lockfile", "--frozen-lockfile");
+    expect(converted.exitCode).toBe(0);
+    expect(await lockfiles()).toEqual([true, false]);
+    expect(rows(await read(packageDir, "bun.lock"), "\xff")).toEqual([
+      `"n\xff": "file:./f\xff/pkg",`,
+      `"p\xff": "file:./f\xff/peer",`,
+      `"n\xff": ["pkg@file:f\xff/pkg", { "peerDependencies": { "p\xff": "*" } }],`,
+      `"p\xff": ["peer@file:f\xff/peer", {}],`,
+    ]);
+    await expectRoundTrip(packageDir);
+  });
+
+  // The row of a repository is put together from its owner, its URL and the commit. yarn.lock has the row too, and
+  // an install that starts from yarn.lock has to find the commit in it.
+  it.skipIf(!Bun.which("git"))("the URL of a git repository", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const git = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: [
+          "git",
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "-c",
+          "commit.gpgsign=false",
+          ...args,
+        ],
+        cwd: packageDir,
+        env: { ...env, GIT_CONFIG_NOSYSTEM: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ err, exitCode }).toEqual({ err: expect.any(String), exitCode: 0 });
+      return out.trim();
+    };
+    /** A JS string cannot name `r\xff` for git, so the repository has the name `r` while git works on it. */
+    const commitAndPush = async (version: string) => {
+      await write(join(packageDir, "work", "package.json"), JSON.stringify({ name: "dep", version }));
+      await git("-C", "work", "add", ".");
+      await git("-C", "work", "commit", "--quiet", "--message", version);
+      if (await exists(join(packageDir, "work", ".cloned"))) {
+        await rename(raw(`${packageDir}/r\xff`), join(packageDir, "r"));
+        await git("-C", "work", "push", "--quiet", join("..", "r", "repo.git"), "HEAD");
+      } else {
+        await git("clone", "--quiet", "--bare", "work", join("r", "repo.git"));
+      }
+      await rename(join(packageDir, "r"), raw(`${packageDir}/r\xff`));
+      return await git("-C", "work", "rev-parse", "HEAD");
+    };
+    await git("init", "--quiet", "work");
+    const commit = await commitAndPush("1.0.0");
+    const url = `git+file://${packageDir}/r\xff/repo.git`;
+    await writeFiles(packageDir, { "package.json": { name: "app", dependencies: { dep: url } } });
+
+    expect((await run(packageDir, bunExe(), "install", "--yarn")).exitCode).toBe(0);
+    const lockRows = [`"dep": "${url}",`, `"dep": ["dep@${url}#${commit}", {}, "${commit}"],`];
+    expect(rows(await read(packageDir, "bun.lock"), "repo.git")).toEqual(lockRows);
+    expect(rows(await read(packageDir, "yarn.lock"), "\xff")).toEqual([
+      `"dep@${url}":`,
+      `version "${url}#${commit}"`,
+      `resolved "${url}#${commit}"`,
+    ]);
+    await expectRoundTrip(packageDir);
+
+    await write(join(packageDir, "work", ".cloned"), "");
+    await commitAndPush("2.0.0");
+    await Promise.all(
+      ["bun.lock", "node_modules"].map(name => rm(join(packageDir, name), { recursive: true, force: true })),
+    );
+    const migrated = await run(packageDir, bunExe(), "install");
+    expect(migrated.err).toContain("migrated lockfile from yarn.lock");
+    expect(migrated.exitCode).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "dep", "package.json")).json()).toEqual({
+      name: "dep",
+      version: "1.0.0",
+    });
+    expect(rows(await read(packageDir, "bun.lock"), "repo.git")).toEqual(lockRows);
+  });
+
+  // yarn.lock has the bytes in its strings with quotes, as in those without.
+  it("yarn.lock", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await writeFiles(packageDir, {
+      "package.json": { name: "app", dependencies: { pkg: "file:./f\xff/pkg", bar: "./d\xff/bar-0.0.2.tgz" } },
+      "f\xff/pkg/package.json": {
+        name: "pkg",
+        version: "1.0.0",
+        dependencies: { "@s/n\xff": "file:../../f\xff/other" },
+      },
+      "f\xff/other/package.json": { name: "other", version: "1.0.0" },
+    });
+    await mkdir(raw(`${packageDir}/d\xff`));
+    await copyFile(join(__dirname, "bar-0.0.2.tgz"), raw(`${packageDir}/d\xff/bar-0.0.2.tgz`));
+
+    expect((await run(packageDir, bunExe(), "install", "--yarn")).exitCode).toBe(0);
+    expect(rows(await read(packageDir, "yarn.lock"), "\xff")).toEqual([
+      `"@s/n\xff@file:../../f\xff/other":`,
+      `version "f\xff/other"`,
+      `resolved "f\xff/other"`,
+      `"bar@./d\xff/bar-0.0.2.tgz":`,
+      `version "./d\xff/bar-0.0.2.tgz"`,
+      `resolved "./d\xff/bar-0.0.2.tgz"`,
+      `"pkg@file:./f\xff/pkg":`,
+      `version "f\xff/pkg"`,
+      `resolved "f\xff/pkg"`,
+      `"@s/n\xff" "file:../../f\xff/other"`,
+    ]);
+  });
 });
 
 describe.concurrent("yarn.lock and --dry-run", () => {

@@ -50,7 +50,78 @@ private:
     /* Current URL cache */
     std::string_view currentUrl = {};
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
+    /* Percent-decoded view of each segment, used for static (literal) segment
+     * comparison only. Param captures keep the raw bytes so downstream decoding
+     * (ServerRouteList) is not applied twice. Falls back to the raw view when
+     * the segment has no '%' or contains a malformed escape. */
+    std::string_view urlMatchSegmentVector[MAX_URL_SEGMENTS] = {};
+    std::string urlDecodedStorage[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
+
+    static int hexValue(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
+    /* Percent-decode one path segment. Returns false - leaving out untouched -
+     * when the segment has no escapes (the common case, one memchr) or when any
+     * escape is malformed, in which case callers compare the raw bytes. */
+    static bool decodePercentSegment(std::string_view segment, std::string &out) {
+        size_t first = segment.find('%');
+        if (first == std::string_view::npos) {
+            return false;
+        }
+        out.clear();
+        out.reserve(segment.length());
+        out.append(segment.substr(0, first));
+        for (size_t i = first; i < segment.length(); ) {
+            if (segment[i] == '%') {
+                if (i + 2 >= segment.length()) {
+                    return false;
+                }
+                int hi = hexValue(segment[i + 1]);
+                int lo = hexValue(segment[i + 2]);
+                if (hi < 0 || lo < 0) {
+                    return false;
+                }
+                out.push_back((char) ((hi << 4) | lo));
+                i += 3;
+            } else {
+                out.push_back(segment[i]);
+                i++;
+            }
+        }
+        return true;
+    }
+
+    /* Decode a literal pattern segment the same way request segments are
+     * decoded, so '/robots.tx%74' and '/robots.txt' register the same node.
+     * Segments whose decoded form would be mistaken for a param or wildcard
+     * node (':', '*') keep their raw spelling. */
+    static void normalizePatternSegment(std::string &segment) {
+        if (segment.starts_with(':') || segment.starts_with('*')) {
+            return;
+        }
+        std::string decoded;
+        if (decodePercentSegment(segment, decoded) && decoded[0] != ':' && decoded[0] != '*') {
+            segment = std::move(decoded);
+        }
+    }
+
+    /* Collapse a pattern segment to the form add() stores in the tree: param
+     * segments become only ":", literal segments are percent-decoded. Both
+     * add() and findHandler() navigate with this one rule, so remove() finds
+     * exactly what add() stored (findHandler's param arm matches on
+     * starts_with(':'), so the collapse is harmless there). */
+    static void normalizeRegistrationSegment(std::string &segment) {
+        if (segment.length() > 1 && segment[0] == ':') {
+            segment.resize(1);
+        } else {
+            normalizePatternSegment(segment);
+        }
+    }
 
     /* The matching tree */
     struct Node {
@@ -142,21 +213,20 @@ private:
             auto segmentLength = currentUrl.find('/');
             if (segmentLength == std::string::npos) {
                 segmentLength = currentUrl.length();
-
-                /* Push to url segment vector */
-                urlSegmentVector[urlSegment] = currentUrl.substr(0, segmentLength);
-                urlSegmentTop++;
-
-                /* Update currentUrl */
-                currentUrl = currentUrl.substr(segmentLength);
-            } else {
-                /* Push to url segment vector */
-                urlSegmentVector[urlSegment] = currentUrl.substr(0, segmentLength);
-                urlSegmentTop++;
-
-                /* Update currentUrl */
-                currentUrl = currentUrl.substr(segmentLength);
             }
+
+            /* Push to url segment vector */
+            std::string_view segment = currentUrl.substr(0, segmentLength);
+            urlSegmentVector[urlSegment] = segment;
+            if (decodePercentSegment(segment, urlDecodedStorage[urlSegment])) {
+                urlMatchSegmentVector[urlSegment] = urlDecodedStorage[urlSegment];
+            } else {
+                urlMatchSegmentVector[urlSegment] = segment;
+            }
+            urlSegmentTop++;
+
+            /* Update currentUrl */
+            currentUrl = currentUrl.substr(segmentLength);
         }
         /* In any case we return it */
         return {urlSegmentVector[urlSegment], false};
@@ -188,14 +258,17 @@ private:
                     }
                 }
             } else if (p->name.starts_with(':') && !segment.empty()) {
-                /* Parameter match */
+                /* Parameter match (raw bytes; decoded later by the params consumer) */
                 routeParameters.push(segment);
                 if (executeHandlers(p.get(), urlSegment + 1, userData)) {
                     return true;
                 }
                 routeParameters.pop();
-            } else if (p->name == segment) {
-                /* Static match */
+            } else if (p->name == urlMatchSegmentVector[urlSegment] ||
+                       (urlMatchSegmentVector[urlSegment].data() != segment.data() && p->name == segment)) {
+                /* Static match, against the percent-decoded segment. The raw
+                 * spelling also matches so pattern segments that keep their raw
+                 * form (see normalizePatternSegment) stay reachable. */
                 if (executeHandlers(p.get(), urlSegment + 1, userData)) {
                     return true;
                 }
@@ -213,6 +286,7 @@ private:
                 for (int i = 0; !getUrlSegment(i).second; i++) {
                     /* Go to next segment or quit */
                     std::string segment(getUrlSegment(i).first);
+                    normalizeRegistrationSegment(segment);
                     Node *next = nullptr;
                     for (const std::unique_ptr<Node> &child : n->children) {
                         if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
@@ -288,10 +362,7 @@ public:
             setUrl(pattern);
             for (int i = 0; !getUrlSegment(i).second; i++) {
                 std::string strippedSegment(getUrlSegment(i).first);
-                if (strippedSegment.length() > 1 && strippedSegment[0] == ':') {
-                    /* Parameter routes must be named only : */
-                    strippedSegment.resize(1);
-                }
+                normalizeRegistrationSegment(strippedSegment);
                 node = getNode(node, strippedSegment, priority == HIGH_PRIORITY);
             }
             /* Insert handler in order sorted by priority (most significant 1 byte) */

@@ -6,6 +6,8 @@ export const { Z_NO_FLUSH, Z_PARTIAL_FLUSH, Z_SYNC_FLUSH, Z_FULL_FLUSH, Z_FINISH
 export type Mode = "Deflate" | "DeflateRaw" | "Gzip" | "Inflate" | "InflateRaw" | "Gunzip" | "Unzip";
 
 export class Engine {
+  #mode: Mode;
+  #options?: zlib.ZlibOptions;
   #stream: any;
   #chunk: Buffer;
   #used = 0;
@@ -15,11 +17,19 @@ export class Engine {
   written = 0;
   /** The code and the message. A stream cannot be used any more then. */
   error?: string;
+  /** How often `reset()` went on in a new object. */
+  refusedResets = 0;
 
   constructor(mode: Mode, options?: zlib.ZlibOptions) {
-    this.#stream = new (zlib[mode] as any)(options);
-    this.#stream._handle.onerror = (message: string, _: number, code: string) => (this.error = `${code} ${message}`);
+    [this.#mode, this.#options] = [mode, options];
+    this.#stream = this.#open();
     this.#chunk = Buffer.alloc(this.#stream._chunkSize);
+  }
+
+  #open() {
+    const stream = new (zlib[this.#mode] as any)(this.#options);
+    stream._handle.onerror = (message: string, _: number, code: string) => (this.error = `${code} ${message}`);
+    return stream;
   }
 
   /**
@@ -54,8 +64,19 @@ export class Engine {
     this.#stream._handle.writeSync(Z_NO_FLUSH, input, 0, input.length, Buffer.alloc(room), 0, room);
   }
 
+  /**
+   * Like Node.js, node:zlib refuses to reset a gzip member that has given output. zlib does not, and the recorded
+   * results are its own, so the next member comes from a new object then, as the message of the refusal says.
+   */
   reset() {
+    const { error } = this;
     this.#stream.reset();
+    if (this.#mode === "Gzip" && this.error?.startsWith("ERR_ZLIB_INCOMPLETE_FRAME ")) {
+      this.error = error;
+      this.refusedResets++;
+      this.#stream.close();
+      this.#stream = this.#open();
+    }
   }
 
   get output() {

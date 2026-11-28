@@ -31,6 +31,7 @@ impl Error {
     }
 }
 
+pub(crate) const Z_STREAM_ERROR: c_int = -2;
 pub(crate) const Z_BUF_ERROR: c_int = -5;
 
 #[repr(u8)]

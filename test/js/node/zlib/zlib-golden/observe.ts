@@ -88,7 +88,8 @@ export function deflate(c: DeflateCase) {
     lengths.push(engine.written);
   }
   write(source.length, Z_FINISH);
-  return { source, lengths, streams, output: engine.output, error: engine.error };
+  const { output, error, refusedResets } = engine;
+  return { source, lengths, streams, output, error, refusedResets };
 }
 
 export const WRONG = "wrong:";

@@ -158,7 +158,7 @@ impl<'a, T: Format<'a>> Format<'a> for FormatSpecifier<'a, T> {
 /// The specifiers between an import's or export's braces, and the [`AstNodes`] variant that wraps each one.
 pub(crate) struct FormatSpecifiers<'a, T>(pub(crate) List<'a, T>, pub(crate) fn(T) -> AstNodes<'a>);
 
-impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'a, T> {
+impl<'a, T: Handle<'a> + Format<'a>> Format<'a> for FormatSpecifiers<'a, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let FormatSpecifiers(specifiers, as_node) = *self;
         let format_specifiers = format_with(|f| {

@@ -85,7 +85,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Formats `content` only to see whether it breaks. The comments in it aren't marked as printed.
-    pub(crate) fn speculate_will_break(&mut self, content: &(impl Format<'a> + Spanned)) -> bool {
+    pub(crate) fn speculate_will_break(&mut self, content: &impl Format<'a>) -> bool {
         let snapshot = self.comments().snapshot();
         let will_break = match self.intern(content) {
             Some(element) => element.will_break(self),
@@ -98,7 +98,7 @@ impl<'a> Formatter<'a> {
 
 impl<'a, Separator: Format<'a>> JoinBuilder<'_, 'a, Separator> {
     /// Writes `separator` after each entry. `trailing_separator` decides whether it's written after the last one.
-    pub(crate) fn entries_with_trailing_separator<F: Format<'a> + Spanned>(
+    pub(crate) fn entries_with_trailing_separator<F: Format<'a>>(
         &mut self,
         entries: impl IntoIterator<Item = F>,
         separator: &'static str,

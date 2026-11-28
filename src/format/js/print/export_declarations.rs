@@ -153,11 +153,7 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
 
 /// `export default e`
 #[inline(never)]
-pub(crate) fn write_export_default_expression<'a>(
-    _statement: Stmt<'a>,
-    expression: Expr<'a>,
-    f: &mut Formatter<'a>,
-) {
+pub(crate) fn write_export_default_expression<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, ["export default ", expression, OptionalSemicolon]);
 }
 

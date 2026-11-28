@@ -1601,12 +1601,6 @@ impl<'a> Format<'a> for FormatAlternative<'a> {
     }
 }
 
-impl Spanned for FormatAlternative<'_> {
-    fn span(&self) -> Span {
-        self.0.span()
-    }
-}
-
 /// Prettier's `printMatchOrPattern`.
 fn write_match_or_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut Formatter<'a>) {
     let patterns = alternatives(pattern);

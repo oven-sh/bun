@@ -460,15 +460,8 @@ struct Merge<'t> {
 }
 
 impl<'f> Collector<'f, '_> {
-    fn push(
-        &mut self,
-        site: ReferenceSite,
-        pos: u32,
-        name: Atom,
-        flags: ReferenceFlags,
-        write: ExprId,
-    ) {
-        self.push_write(site, (pos, pos), name, flags, write);
+    fn push(&mut self, site: ReferenceSite, pos: u32, name: Atom, flags: ReferenceFlags) {
+        self.push_write(site, (pos, pos), name, flags, ExprId::NONE);
     }
 
     /// `Referencer.visitPattern` creates the references for all of a pattern's names before it
@@ -712,7 +705,7 @@ impl<'f> Collector<'f, '_> {
                 && name != known::empty
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
             {
-                self.push(ReferenceSite::Expr(id), e.pos, name, READ, ExprId::NONE);
+                self.push(ReferenceSite::Expr(id), e.pos, name, READ);
             }
         }
     }
@@ -1173,7 +1166,7 @@ impl<'f> Collector<'f, '_> {
                         }
                         false => ty.pos,
                     };
-                    self.push(ReferenceSite::Predicate(id), pos, param, READ, ExprId::NONE);
+                    self.push(ReferenceSite::Predicate(id), pos, param, READ);
                 }
                 _ => {}
             }
@@ -1189,13 +1182,7 @@ impl<'f> Collector<'f, '_> {
                 for keyword in ["export", "as", "namespace"] {
                     pos = crate::tokens::skip_trivia(hir.text, pos + keyword.len() as u32);
                 }
-                self.push(
-                    ReferenceSite::ExportAsNamespace(id),
-                    pos,
-                    name,
-                    READ,
-                    ExprId::NONE,
-                );
+                self.push(ReferenceSite::ExportAsNamespace(id), pos, name, READ);
             }
         }
         for (i, import) in hir.import_equals.iter().enumerate() {
@@ -1206,7 +1193,7 @@ impl<'f> Collector<'f, '_> {
                     .filter(|_| !names.is_empty())
             {
                 let site = ReferenceSite::ImportEquals(hir::ImportEqualsId(i as u32));
-                self.push(site, first.pos(), first.text, READ, ExprId::NONE);
+                self.push(site, first.pos(), first.text, READ);
             }
         }
     }
@@ -1238,13 +1225,7 @@ impl<'f> Collector<'f, '_> {
                         pos,
                         ..
                     }) if !self.is_javascript => {
-                        self.push(
-                            ReferenceSite::JsxName(tag),
-                            *pos,
-                            known::this,
-                            READ,
-                            ExprId::NONE,
-                        );
+                        self.push(ReferenceSite::JsxName(tag), *pos, known::this, READ);
                         continue;
                     }
                     _ => continue,
@@ -1257,17 +1238,11 @@ impl<'f> Collector<'f, '_> {
                         let parts = [(0, &text[..colon]), (colon + 1, &text[colon + 1..])];
                         for (offset, part) in parts {
                             let part = file.atoms.intern(part);
-                            self.push(
-                                ReferenceSite::JsxName(tag),
-                                pos + offset as u32,
-                                part,
-                                READ,
-                                ExprId::NONE,
-                            );
+                            self.push(ReferenceSite::JsxName(tag), pos + offset as u32, part, READ);
                         }
                     }
                     None if is_component_name(text) => {
-                        self.push(ReferenceSite::JsxName(tag), *pos, *name, READ, ExprId::NONE);
+                        self.push(ReferenceSite::JsxName(tag), *pos, *name, READ);
                     }
                     None => {}
                 }
@@ -1294,7 +1269,7 @@ impl<'f> Collector<'f, '_> {
                 (false, false) => READ | ReferenceFlags::TYPE,
             };
             let site = ReferenceSite::ExportSpec(hir::ExportSpecId(i as u32));
-            self.push(site, spec.local_pos, spec.local, flags, ExprId::NONE);
+            self.push(site, spec.local_pos, spec.local, flags);
         }
     }
 

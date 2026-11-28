@@ -706,12 +706,10 @@ impl<'f, 'a> Collector<'f, 'a> {
         if (count(hir::TypeTag::Cond), count(hir::TypeTag::Mapped)) != (Some(0), Some(0)) {
             (0..hir.types.len()).for_each(|i| self.ty(i));
         }
-        hir.interfaces
-            .iter()
-            .for_each(|it| self.interface(Some(it)));
-        hir.aliases.iter().for_each(|it| self.alias(Some(it)));
-        hir.enums.iter().for_each(|it| self.enumeration(Some(it)));
-        hir.modules.iter().for_each(|it| self.module(Some(it)));
+        hir.interfaces.iter().for_each(|it| self.interface(it));
+        hir.aliases.iter().for_each(|it| self.alias(it));
+        hir.enums.iter().for_each(|it| self.enumeration(it));
+        hir.modules.iter().for_each(|it| self.module(it));
     }
 
     #[inline]
@@ -1013,28 +1011,23 @@ impl<'f, 'a> Collector<'f, 'a> {
         }
     }
 
-    fn interface(&mut self, it: Option<&hir::Interface>) {
-        if let Some(it) = it.filter(|it| !it.type_params.is_empty()) {
+    fn interface(&mut self, it: &hir::Interface) {
+        if !it.type_params.is_empty() {
             self.declaration(ScopeKind::Type, it.stmt, it.name_pos);
         }
     }
 
-    fn alias(&mut self, it: Option<&hir::Alias>) {
-        if let Some(it) = it.filter(|it| !it.type_params.is_empty()) {
+    fn alias(&mut self, it: &hir::Alias) {
+        if !it.type_params.is_empty() {
             self.declaration(ScopeKind::Type, it.stmt, it.name_pos);
         }
     }
 
-    fn enumeration(&mut self, it: Option<&hir::Enum>) {
-        if let Some(it) = it {
-            self.declaration(ScopeKind::TsEnum, it.stmt, it.name_pos);
-        }
+    fn enumeration(&mut self, it: &hir::Enum) {
+        self.declaration(ScopeKind::TsEnum, it.stmt, it.name_pos);
     }
 
-    fn module(&mut self, it: Option<&'a hir::Module>) {
-        let Some(it) = it else {
-            return;
-        };
+    fn module(&mut self, it: &'a hir::Module) {
         // `namespace A.B.C { }` is one declaration, which the HIR stores as three.
         if self.file.has_oxc_scopes() {
             self.declaration(ScopeKind::TsModule, it.stmt, it.name_pos);

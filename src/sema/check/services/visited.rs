@@ -10,9 +10,8 @@ use crate::node::{Kind, Node, NodeData, Part};
 pub(in crate::check) enum VisitedKind {
     /// A HIR expression, without the enclosing parentheses.
     Expression(ExprId),
-    /// A `ParenthesizedExpression` around the expression, with its index counted from the
-    /// outermost.
-    Parenthesized(ExprId, u32),
+    /// A `ParenthesizedExpression` around the expression.
+    Parenthesized(ExprId),
     /// The `b` of `a.b`, the `target` of `new.target`, the `meta` of `import.meta`.
     AccessName(ExprId),
     /// An identifier in place of the required string of `import a = require("m")` or
@@ -166,11 +165,7 @@ impl Checker<'_, '_> {
                 }
                 _ => VisitedKind::Expression(e),
             },
-            NodeData::Paren(p) => {
-                let e = hir.parens[p.idx()].0;
-                let outer_parens = hir.parens[p.idx() + 1..].iter().take_while(|p| p.0 == e);
-                VisitedKind::Parenthesized(e, outer_parens.count() as u32)
-            }
+            NodeData::Paren(p) => VisitedKind::Parenthesized(hir.parens[p.idx()].0),
             NodeData::Pat(pat) => match hir.data(parent) {
                 NodeData::Param(p) if hir[bound.param_fn[p.idx()]].this_param == p => {
                     VisitedKind::ThisParameter(bound.param_fn[p.idx()])

@@ -24,7 +24,7 @@ impl Checker<'_, '_> {
         }
         match kind {
             VisitedKind::Expression(e)
-            | VisitedKind::Parenthesized(e, _)
+            | VisitedKind::Parenthesized(e)
             | VisitedKind::AccessName(e) => self.type_of_visited_expression(file, e),
             VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
             // `IsJsxTagName`: the identifier is an expression (`checkIdentifier`). The name `a-b`
@@ -707,10 +707,6 @@ impl Services<'_, '_, '_> {
                 },
                 _ => TypeId::ERROR,
             },
-            NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::Null) => {
-                let ty = self.c.get_type_of_expression_after_check(file, e);
-                self.c.regular(ty)
-            }
             // An identifier or a qualified name: the declared type of what it refers to.
             _ => match self
                 .symbol_at_location(node)

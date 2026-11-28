@@ -713,21 +713,6 @@ impl<'a> AssignmentLike<'a> {
     }
 }
 
-/// Something to format, paired with a span it doesn't know itself.
-struct WithSpan<T>(T, Span);
-
-impl<'a, T: Format<'a>> Format<'a> for WithSpan<T> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        self.0.fmt(f);
-    }
-}
-
-impl<T> Spanned for WithSpan<T> {
-    fn span(&self) -> Span {
-        self.1
-    }
-}
-
 /// `a = /** @type {T} */ (⏎/**⏎ * comment⏎ */⏎b)`: oxfmt looks at all comments before `b`.
 fn block_comment_in_parentheses_of_cast_breaks(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
@@ -1173,9 +1158,9 @@ fn is_complex_type_arguments<'a>(
     params: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) -> bool {
-    let Some(span) = params.angle_brackets_span() else {
+    if params.angle_brackets_span().is_none() {
         return false;
-    };
+    }
     if params.len() > 1 {
         return true;
     }
@@ -1187,7 +1172,7 @@ fn is_complex_type_arguments<'a>(
     }) {
         return true;
     }
-    f.speculate_will_break(&WithSpan(type_arguments(params, Node::Expr(owner)), span))
+    f.speculate_will_break(&type_arguments(params, Node::Expr(owner)))
 }
 
 /// Prettier's `isComplexTypeAnnotation`: `A<B<C>, D>`.

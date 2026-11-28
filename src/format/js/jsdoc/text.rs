@@ -4,8 +4,7 @@ use bun_core::strings;
 
 /// `str::trim_start_matches`
 pub(super) fn trim_start_matches(mut text: &[u8], matches: impl Fn(char) -> bool) -> &[u8] {
-    while let Some((char, len)) = crate::text::first_char(text).filter(|it| matches(it.0)) {
-        let _ = char;
+    while let Some((_, len)) = crate::text::first_char(text).filter(|it| matches(it.0)) {
         text = &text[len..];
     }
     text

@@ -390,17 +390,13 @@ fn skip(elements: &mut std::slice::Iter<'_, FormatElement>, count: u32) {
 pub(crate) struct Elements<'f> {
     storage: &'f Storage,
     elements: &'f [FormatElement],
-    /// Set if already known.
-    will_break: Option<bool>,
+    will_break: bool,
 }
 
 impl<'f> Elements<'f> {
     #[inline]
     pub(crate) fn will_break(self) -> bool {
-        match self.will_break {
-            Some(will_break) => will_break,
-            None => self.storage.will_break(self.elements),
-        }
+        self.will_break
     }
 
     pub(crate) fn may_directly_break(self, flavor: Flavor) -> bool {
@@ -818,7 +814,7 @@ impl<'a> Formatter<'a> {
         Elements {
             storage: &self.storage,
             elements: self.storage.pool.get(start..).unwrap_or_default(),
-            will_break: Some(self.tracker.will_break_from(start)),
+            will_break: self.tracker.will_break_from(start),
         }
     }
 
@@ -826,7 +822,7 @@ impl<'a> Formatter<'a> {
         Elements {
             storage: &self.storage,
             elements: self.storage.interned(interned),
-            will_break: Some(self.storage.summary_of(interned).1),
+            will_break: self.storage.summary_of(interned).1,
         }
     }
 

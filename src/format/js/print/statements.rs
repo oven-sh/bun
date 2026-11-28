@@ -330,22 +330,12 @@ fn write_while_or_with_statement<'a>(
 }
 
 #[inline(never)]
-pub(crate) fn write_while_statement<'a>(
-    _statement: Stmt<'a>,
-    test: Expr<'a>,
-    body: Stmt<'a>,
-    f: &mut Formatter<'a>,
-) {
+pub(crate) fn write_while_statement<'a>(test: Expr<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
     write_while_or_with_statement("while", test, body, f);
 }
 
 #[inline(never)]
-pub(crate) fn write_with_statement<'a>(
-    _statement: Stmt<'a>,
-    object: Expr<'a>,
-    body: Stmt<'a>,
-    f: &mut Formatter<'a>,
-) {
+pub(crate) fn write_with_statement<'a>(object: Expr<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
     write_while_or_with_statement("with", object, body, f);
 }
 
@@ -358,15 +348,6 @@ impl<'a> Format<'a> for FormatForHead<'a> {
         match self.0.kind() {
             StmtKind::Expr(expression) => write!(f, expression),
             _ => write!(f, self.0),
-        }
-    }
-}
-
-impl Spanned for FormatForHead<'_> {
-    fn span(&self) -> Span {
-        match self.0.kind() {
-            StmtKind::Expr(expression) => expression.span(),
-            _ => self.0.span(),
         }
     }
 }
@@ -556,7 +537,6 @@ fn boundary_before_parenthesis(f: &Formatter<'_>) -> Option<LineSuffixBoundary> 
 
 #[inline(never)]
 pub(crate) fn write_for_in_statement<'a>(
-    _statement: Stmt<'a>,
     left: Stmt<'a>,
     right: Expr<'a>,
     body: Stmt<'a>,
@@ -582,7 +562,6 @@ pub(crate) fn write_for_in_statement<'a>(
 
 #[inline(never)]
 pub(crate) fn write_for_of_statement<'a>(
-    _statement: Stmt<'a>,
     left: Stmt<'a>,
     right: Expr<'a>,
     body: Stmt<'a>,

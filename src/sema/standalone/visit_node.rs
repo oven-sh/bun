@@ -101,7 +101,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match kind {
             VisitedKind::Expression(e)
-            | VisitedKind::Parenthesized(e, _)
+            | VisitedKind::Parenthesized(e)
             | VisitedKind::AccessName(e)
             | VisitedKind::ModuleSpecifier(e)
             | VisitedKind::ImportDeferName(e)

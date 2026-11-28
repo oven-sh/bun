@@ -511,6 +511,177 @@ it("getProtectedObjects returns only objects", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
+// JSC answers is<InternalFieldTuple>() and is<JSWeakSet>() from the JSType byte of a cell alone (the table in JSCast.h),
+// so a cell of any other class that has one of those bytes passes for one.
+it("no other class has the JSType of InternalFieldTuple or of WeakSet", async () => {
+  const script = /* js */ `
+    import { read } from "bun:ffi";
+    import { generateHeapSnapshotForDebugging } from "bun:jsc";
+    import { mock } from "bun:test";
+
+    try { Buffer.alloc(-1); } catch {} // The first error with a code creates the realm's ErrorCodeCache.
+    mock(() => {})(); // The first call of a mock creates a set of mocks, an ActiveSpySet.
+    globalThis.referenceWeakSet = new WeakSet();
+
+    const { nodes, nodeClassNames, edges, edgeTypes, edgeNames } = generateHeapSnapshotForDebugging();
+    // A node is [id, size, class name, flags, label, cell address, wrapped address]. An edge is [from, to, type, name].
+    const nodeOf = new Map();
+    for (let at = 0; at < nodes.length; at += 7) nodeOf.set(nodes[at], at);
+    const property = edgeTypes.indexOf("Property");
+    const name = edgeNames.indexOf("referenceWeakSet");
+    let globalObject, referenceWeakSet;
+    for (let at = 0; at < edges.length; at += 4)
+      if (edges[at + 2] === property && edges[at + 3] === name) [globalObject, referenceWeakSet] = [edges[at], edges[at + 1]];
+    // Only the cells that the global object references are read. Nothing frees those while this runs.
+    const held = new Set();
+    for (let at = 0; at < edges.length; at += 4) if (edges[at] === globalObject) held.add(edges[at + 1]);
+    const typeOf = id => read.u8(Number(nodes[nodeOf.get(id) + 5]), 5); // JSCell::m_type
+    const classNameOf = id => nodeClassNames[nodes[nodeOf.get(id) + 2]];
+    const classNamesOf = new Map();
+    for (const id of held) {
+      const type = typeOf(id);
+      if (!classNamesOf.has(type)) classNamesOf.set(type, new Set());
+      classNamesOf.get(type).add(classNameOf(id));
+    }
+    const heldClassNames = new Set([...held].map(classNameOf));
+    console.log(JSON.stringify({
+      heldByTheGlobalObject: ["InternalModuleRegistry", "ErrorCodeCache", "ActiveSpySet"].filter(name => heldClassNames.has(name)),
+      withTheTypeOfInternalFieldTuple: [...classNamesOf.values()].filter(names => names.has("InternalFieldTuple")).flatMap(names => [...names]).sort(),
+      withTheTypeOfWeakSet: [...classNamesOf.get(typeOf(referenceWeakSet))].sort(),
+    }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      heldByTheGlobalObject: ["InternalModuleRegistry", "ErrorCodeCache", "ActiveSpySet"],
+      withTheTypeOfInternalFieldTuple: ["InternalFieldTuple"],
+      withTheTypeOfWeakSet: ["WeakSet"],
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// bun:sqlite writes the changes of run() into the InternalFieldTuple it is given: fields 0 and 1. The inspector gives its
+// client any object of a heap snapshot, so a client can give run() a cell that only has the JSType of one.
+it("Statement#native.run() does not write into the ErrorCodeCache or the InternalModuleRegistry", async () => {
+  using dir = tempDir("internal-cells-are-not-tuples", {
+    "inspectee.js": `
+      import { Database } from "bun:sqlite";
+      import { EventEmitter, on } from "node:events";
+
+      const db = new Database(":memory:");
+      db.run("create table t (a)");
+      globalThis.statement = db.prepare("insert into t values (1)");
+      try { Buffer.alloc(-1); } catch {} // The first error with a code creates the realm's ErrorCodeCache.
+      // Fields 0 and 1 of the cache are the Structures of ABORT_ERR and ERR_ACCESS_DENIED. Field 1 of the registry is bun:ffi.
+      globalThis.afterRun = () => {
+        let abortError;
+        try {
+          on(new EventEmitter(), "x", { signal: AbortSignal.abort() });
+        } catch (error) {
+          abortError = error.code;
+        }
+        const { rows } = db.query("select count(*) as rows from t").get();
+        return JSON.stringify({ abortError, ffi: typeof require("bun:ffi"), rows });
+      };
+      setInterval(() => {}, 60_000);
+      console.error("inspectee is ready");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const { promise: inspectorUrl, resolve: foundUrl, reject: noUrl } = Promise.withResolvers<string>();
+  const stderrDone = (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      // Only complete lines: a chunk can end in the middle of the URL.
+      const lines = stderr
+        .split("\n")
+        .slice(0, -1)
+        .map(line => line.trim());
+      const url = lines.find(line => line.startsWith("ws://"));
+      // The inspector takes commands before the inspectee has run its module, so the inspectee says when it has.
+      if (url && lines.includes("inspectee is ready")) foundUrl(url);
+    }
+    noUrl(new Error(`The inspectee did not get ready:\n${stderr}`));
+  })().catch(noUrl);
+
+  const ws = new WebSocket(await inspectorUrl);
+  const { promise: failed, reject: fail } = Promise.withResolvers<never>();
+  failed.catch(() => {});
+  let done = false;
+  // The inspectee's stderr says why the socket went away, so it is read to the end first. The sleep bounds that:
+  // an inspectee that is still alive keeps the pipe open.
+  async function failWith(what: string) {
+    if (done) return;
+    await Promise.race([Promise.allSettled([stderrDone, proc.exited]), Bun.sleep(1_000)]);
+    const exit = proc.exitCode ?? proc.signalCode ?? "still running";
+    fail(new Error(`${what} (inspectee exit: ${exit})\ninspectee stderr:\n${stderr}`));
+  }
+  ws.addEventListener("error", () => failWith("WebSocket error"));
+  ws.addEventListener("close", () => failWith("WebSocket closed"));
+  proc.exited.then(() => failWith("inspectee exited"));
+
+  const replies = new Map<number, (reply: any) => void>();
+  ws.addEventListener("message", ({ data }) => {
+    const reply = JSON.parse(String(data));
+    replies.get(reply.id)?.(reply);
+  });
+  let lastId = 0;
+  function send(method: string, params: object = {}): Promise<any> {
+    const id = ++lastId;
+    const reply = new Promise(resolve => replies.set(id, resolve));
+    ws.send(JSON.stringify({ id, method, params }));
+    return Promise.race([reply, failed]);
+  }
+
+  try {
+    await Promise.race([new Promise(resolve => ws.addEventListener("open", resolve)), failed]);
+    const { nodes, nodeClassNames } = JSON.parse((await send("Heap.snapshot")).result.snapshotData);
+    const ran: string[] = [];
+    // A node is [id, size, class name, flags].
+    for (let at = 0; at < nodes.length; at += 4) {
+      const className = nodeClassNames[nodes[at + 2]];
+      if (className !== "ErrorCodeCache" && className !== "InternalModuleRegistry") continue;
+      const cell = (await send("Heap.getRemoteObject", { heapObjectId: nodes[at] })).result.result;
+      const reply = await send("Runtime.callFunctionOn", {
+        objectId: cell.objectId,
+        functionDeclaration: "function () { statement.native.run(this); return 'ran'; }",
+        returnByValue: true,
+      });
+      // A run() that throws writes no changes, so the reply has to say that it returned.
+      ran.push(
+        `${className}: ${reply.result?.wasThrown === false ? reply.result.result.value : JSON.stringify(reply)}`,
+      );
+    }
+    const after = await send("Runtime.evaluate", { expression: "afterRun()", returnByValue: true });
+    const value = after.result?.result?.value;
+    expect({ ran: ran.sort(), after: typeof value === "string" ? JSON.parse(value) : after }).toEqual({
+      ran: ["ErrorCodeCache: ran", "InternalModuleRegistry: ran"],
+      // Each run() inserted one row.
+      after: { abortError: "ABORT_ERR", ffi: "object", rows: 2 },
+    });
+  } finally {
+    done = true;
+    ws.close();
+  }
+});
+
 it("serialize rejects a CryptoKey created with extractable set to false", async () => {
   // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
   // structured-clone buffer to the caller, so a key imported with

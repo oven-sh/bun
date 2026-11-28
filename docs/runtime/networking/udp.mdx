@@ -129,6 +129,20 @@ const socket = await Bun.udpSocket({
 });
 ```
 
+### Handle errors
+
+`error` is called with the socket as `this` and the failure as its only argument. A receive failure has `code`, `errno`, and `syscall`. On Linux, an ICMP report about an earlier send also sets `errqueue`.
+
+```ts
+const socket = await Bun.udpSocket({
+  socket: {
+    error(error) {
+      console.log(error.code, this.port);
+    },
+  },
+});
+```
+
 ### Socket options
 
 UDP sockets support setting various socket options:

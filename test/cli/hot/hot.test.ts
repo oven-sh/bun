@@ -12,7 +12,18 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  untilEveryThreadIs,
+  waitForFileToExist,
+} from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -1057,6 +1068,95 @@ it.if(isWindows)("dev server survives a burst of file events that includes a del
   writeFileSync(join(root, "main.ts"), main(1, "second bundle"));
   while (!(await bundle()).includes("second bundle"));
 });
+
+/** Linux only. Stops the process while `change` runs, so all of its file events are queued when it continues. */
+async function whileStopped(pid: number, change: () => void) {
+  process.kill(pid, "SIGSTOP");
+  try {
+    await untilEveryThreadIs("T", pid);
+    change();
+  } finally {
+    process.kill(pid, "SIGCONT");
+  }
+}
+
+/** Linux only. Queues more events than one read of the watcher takes. None of them is a change to the program. */
+function queueMoreEventsThanOneRead(folder: string) {
+  // An event with this name is 272 bytes, and the 263,168 bytes of the watcher's buffer are not a multiple of that.
+  const sibling = join(folder, Buffer.alloc(250, "n").toString());
+  for (let i = 0; i < 1000; i++) {
+    writeFileSync(sibling, "");
+    unlinkSync(sibling);
+  }
+}
+
+it.skipIf(!isLinux).each(["--hot", "--watch"])(
+  "bun %s keeps watching after a burst of events that ends short of the end of the watcher's buffer",
+  async mode => {
+    const program = (version: string) => `console.log("run of ${version}");\nsetInterval(() => {}, 1e6);\n`;
+    using dir = tempDir("watch-burst", { "app/main.js": program("v0"), "staging/next.js": "" });
+    const cwd = join(String(dir), "app");
+    await using runner = spawn({
+      cmd: [bunExe(), mode, "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    const stderr = follow(runner.stderr);
+    expect(await stdout("run of v0")).toBe(true);
+
+    await whileStopped(runner.pid, () => queueMoreEventsThanOneRead(cwd));
+
+    const next = join(String(dir), "staging", "next.js");
+    writeFileSync(next, program("v1"));
+    renameSync(next, join(cwd, "main.js"));
+    const watcherStopped = stderr("Watcher crashed").then(() => "the watcher stopped");
+    expect(await Promise.race([stdout("run of v1"), watcherStopped])).toBe(true);
+  },
+);
+
+it.skipIf(!isLinux)(
+  "dev server keeps watching after a burst of events that ends short of the end of the watcher's buffer",
+  async () => {
+    using dir = tempDir("dev-server-watch-burst", {
+      "index.html": `<script type="module" src="./main.ts"></script>`,
+      "main.ts": `console.log("first bundle");\n`,
+      "server.ts": `
+        import html from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        await Bun.write("url", server.url.href);
+        console.log("listening");
+      `,
+    });
+    const root = String(dir);
+    await using runner = spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    expect(await follow(runner.stdout)("listening")).toBe(true);
+    const url = readFileSync(join(root, "url"), "utf8");
+    const bundle = async () => {
+      const src = /src="([^"]+)"/.exec(await (await fetch(url)).text())?.[1];
+      return src ? await (await fetch(new URL(src, url))).text() : "";
+    };
+    expect(await bundle()).toContain("first bundle");
+
+    await whileStopped(runner.pid, () => queueMoreEventsThanOneRead(root));
+
+    let watcherStopped = false;
+    void follow(runner.stderr)("hot-reloading is disabled").then(() => (watcherStopped = true));
+    writeFileSync(join(root, "main.ts"), `console.log("second bundle");\n`);
+    while (!watcherStopped && !(await bundle()).includes("second bundle"));
+    expect(watcherStopped).toBe(false);
+  },
+);
 
 // Other platforms evict the deleted import and stop watching its path, so "second" is never printed.
 it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => {

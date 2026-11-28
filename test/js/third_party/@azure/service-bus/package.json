@@ -1,6 +1,7 @@
 {
   "name": "@azure/service-bus",
   "dependencies": {
-    "@azure/service-bus": "7.9.4"
+    "@azure/service-bus": "7.9.4",
+    "rhea": "3.0.2"
   }
 }

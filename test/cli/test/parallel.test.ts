@@ -959,7 +959,7 @@ test.skipIf(!isLinux)("--parallel prints each GitHub Actions annotation as one w
   using dir = tempDir("parallel-github-annotation", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=8"],
-    env: { ...bunEnv, GITHUB_ACTIONS: "true" },
+    env: { ...bunEnv, GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: undefined },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "ignore",

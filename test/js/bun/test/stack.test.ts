@@ -143,7 +143,8 @@ test.skipIf(!isLinux).each([
       `
         const { readFileSync } = require("fs");
         const syscw = () => Number(readFileSync("/proc/thread-self/io", "utf8").match(/^syscw: (\\d+)$/m)[1]);
-        const error = new Error("title\\n\\n" + "a\\tb \\u65e5\\n".repeat(20));
+        const line = "a\\tb \\u65e5\\n";
+        const error = new Error("title\\n\\n" + Buffer.alloc(20 * Buffer.byteLength(line), line).toString());
         const before = syscw();
         reportError(error);
         const after = syscw();

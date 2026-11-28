@@ -1,6 +1,6 @@
 vendor
 test/snapshots
-# written by Jest and Vitest, and compared byte for byte
+# written by Jest, Vitest and Bun 1.4.4, and compared byte for byte
 test/js/bun/test/snapshot-tests/formats
 test/bundler/transpiler/react-compiler-fixtures
 src/**/*.generated.rs

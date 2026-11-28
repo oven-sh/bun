@@ -99,3 +99,66 @@ test("a lazy property whose builtin fails to load throws from the read", async (
     exitCode: 0,
   });
 });
+
+test.concurrent("spyOn works on $, sql, postgres and SQL before their first read", async () => {
+  // test/preload.ts reads Bun.$ in every test process, so this runs in a fresh process where
+  // the spy is each property's first touch.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { spyOn } from "bun:test";
+       const results = {};
+       for (const name of ["$", "sql", "postgres", "SQL"]) {
+         try {
+           const spy = spyOn(Bun, name).mockImplementation(() => "mocked");
+           const mocked = Bun[name] === spy && Bun[name]();
+           spy.mockRestore();
+           results[name] = [mocked, Bun[name] !== spy && typeof Bun[name]];
+         } catch (e) {
+           results[name] = e.message;
+         }
+       }
+       console.log(JSON.stringify(results));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      $: ["mocked", "function"],
+      sql: ["mocked", "function"],
+      postgres: ["mocked", "function"],
+      SQL: ["mocked", "function"],
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("an assignment through a Proxy sets $, sql, postgres and SQL before their first read", async () => {
+  // A fresh process for the same reason as the spyOn test: the assignment has to be the first touch.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const results = {};
+       for (const name of ["$", "sql", "postgres", "SQL"]) {
+         new Proxy(Bun, {})[name] = 5;
+         results[name] = Bun[name] === 5 ? 5 : typeof Bun[name];
+       }
+       console.log(JSON.stringify(results));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ $: 5, sql: 5, postgres: 5, SQL: 5 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});

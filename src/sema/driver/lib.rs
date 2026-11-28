@@ -6310,24 +6310,27 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         if let Some(after_file) = request.after_file
             && !request.plan_options.after_file_only_for_checked_files
         {
-            let mut is_checked = vec![false; program.files.modules.len()];
+            let mut is_skipped = vec![false; program.files.modules.len()];
             for file in to_check.iter().chain(&only_emitted) {
-                is_checked[file.idx()] = true;
+                is_skipped[file.idx()] = true;
             }
-            for i in 0..program.files.modules.len() {
-                let (file, module) = (FileId(i as u32), &program.files.modules[i]);
+            for (i, module) in program.files.modules.iter().enumerate() {
                 // TypeScript's own libraries aren't the caller's files. With `libReplacement` a library can be any
                 // file.
-                let is_excluded = match module.is_lib {
+                is_skipped[i] |= match module.is_lib {
                     true => !options.lib_replacement,
                     false => !matches!(module.facts.kind, FileKind::Declaration | FileKind::Json),
                 };
-                if is_excluded || is_checked[i] {
-                    continue;
-                }
-                let mut checker = boxed_checker(None);
-                checker.begin_stack_budget();
-                after_file(&mut checker, file);
+            }
+            // In a region, like every other checker: the calling thread may have less stack than a task needs.
+            if is_skipped.contains(&false) {
+                host.parallel(1, &|_| {
+                    for i in (0..is_skipped.len()).filter(|&i| !is_skipped[i]) {
+                        let mut checker = boxed_checker(None);
+                        checker.begin_stack_budget();
+                        after_file(&mut checker, FileId(i as u32));
+                    }
+                });
             }
         }
     }

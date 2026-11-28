@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const project = {
@@ -171,6 +171,61 @@ export { join };
     expect(filesIn(join(root, "a/out"))).toEqual(WRITTEN);
     expect(filesIn(join(root, "b/out"))).toEqual(WRITTEN.filter(path => path !== "join.d.ts"));
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
+  });
+
+  // https://github.com/oven-sh/bun/issues/49457
+  // A declaration file that a build emits is not checked with skipLibCheck, which is the default without a tsconfig.json,
+  // nor is one that nothing imports.
+  describe.concurrent.each([
+    ["without a tsconfig.json", {}],
+    ["skipLibCheck", { "tsconfig.json": JSON.stringify({ compilerOptions: { skipLibCheck: true, types: [] } }) }],
+    [
+      "a declaration file that nothing imports",
+      {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { types: [] } }),
+        "env.d.ts": `declare const DEV: boolean;\n`,
+      },
+    ],
+  ])("a declaration file that is not checked: %s", (_, files) => {
+    test.each([
+      [
+        "the type of a constant",
+        `export const X = [1];\nexport type T = typeof X;\n`,
+        `import type { T } from "./a.ts";\nexport type D = T;\n`,
+        `export declare const X: number[];\nexport type T = typeof X;\n`,
+        `import type { T } from "./a.js";\nexport type D = T;\n`,
+      ],
+      [
+        "a class",
+        `export class View {}\n`,
+        `import type { View } from "./a.ts";\nexport function f(v: View): void {}\n`,
+        `export declare class View {\n}\n`,
+        `import type { View } from "./a.js";\nexport declare function f(v: View): void;\n`,
+      ],
+    ])("%s of another file", async (_, a, b, declarationsOfA, declarationsOfB) => {
+      using dir = tempDir("build-api-dts-unchecked", {
+        ...files,
+        "a.ts": a,
+        "b.ts": b,
+        "build.ts": `const built = await Bun.build({ entrypoints: ["./b.ts"], outdir: "./out", dts: true, throw: false });
+console.log(JSON.stringify({ success: built.success, logs: built.logs.map(String) }));
+`,
+      });
+      const root = String(dir);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        cwd: root,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `{"success":true,"logs":[]}\n`, stderr: "" });
+      expect(filesIn(join(root, "out"))).toEqual(["a.d.ts", "b.aot.ts", "b.d.ts", "b.js"]);
+      expect(readFileSync(join(root, "out/a.d.ts"), "utf8")).toBe(declarationsOfA);
+      expect(readFileSync(join(root, "out/b.d.ts"), "utf8")).toBe(declarationsOfB);
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("cannot be used with compile", () => {

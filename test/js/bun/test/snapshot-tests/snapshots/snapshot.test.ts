@@ -1202,13 +1202,52 @@ test("error snapshots", () => {
     throw undefined; // this one doesn't work in jest because it doesn't think the function threw
   }).toThrowErrorMatchingInlineSnapshot(`undefined`);
   expect(() => {
-    expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    try {
+      expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
+    } catch (error) {
+      (error as Error).message = Bun.stripANSI((error as Error).message);
+      throw error;
+    }
   }).toThrowErrorMatchingInlineSnapshot(`
-"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+"expect(received).toThrowErrorMatchingInlineSnapshot()
 
-\x1B[1mMatcher error\x1B[0m: Received function did not throw
+Matcher error: Received function did not throw
 "
 `);
+});
+test.concurrent("the error of a snapshot matcher has colors when colors are on", async () => {
+  using dir = tempDir("snapshot-error-colors", {
+    "colors.test.js": `
+      test("does not throw", () => {
+        try {
+          expect(() => {}).toThrowErrorMatchingInlineSnapshot();
+        } catch (error) {
+          console.log(JSON.stringify([error.message]));
+        }
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./colors.test.js"],
+    env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [bold, dim, red, reset] = ["\x1b[1m", "\x1b[2m", "\x1b[31m", "\x1b[0m"];
+  expect({
+    message: stdout
+      .split("\n")
+      .filter(line => line.startsWith("["))
+      .map(line => JSON.parse(line)[0])[0],
+    stderr: exitCode ? stderr : "",
+    exitCode,
+  }).toEqual({
+    message: `${dim}expect(${reset}${red}received${reset}${dim}).${reset}toThrowErrorMatchingInlineSnapshot${dim}(${reset}${dim})${reset}\n\n${bold}Matcher error${reset}: Received function did not throw\n`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 test("error inline snapshots", () => {
   expect(() => {

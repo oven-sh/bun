@@ -9,10 +9,9 @@
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
 
-use bun_threading::UnboundedQueue;
-use bun_threading::unbounded_queue::{Link, Linked};
+use bun_ptr::Unique;
+use bun_threading::{Link, UnboundedQueue};
 
 // ─── Task (hot-dispatch tag+ptr, see PORTING.md §Dispatch) ──────────────────
 // Low tier (event_loop) stores `(tag, payload)`; `bun_runtime::dispatch::run_task`
@@ -287,9 +286,6 @@ impl Task {
 #[repr(C)]
 pub struct ConcurrentTask {
     task: Task,
-    /// Intrusive MPSC link for [`Queue`]. Plain `AtomicPtr` so the enqueue hot
-    /// path (`atomic_store_next`, called once per completed work-pool task via
-    /// `Queue::push`) is a single release-store — no read-modify-write.
     next: Link<ConcurrentTask>,
     /// If `true`, the task is heap-owned and freed by the event loop after
     /// dispatch. Immutable after construction; read only on the consumer thread,
@@ -318,7 +314,7 @@ impl Default for ConcurrentTask {
 // of `next`: `Task` is already two words here (tag is not packed into the
 // pointer), so the struct was never 16B, and profiling (build/create-next
 // benches) showed
-// the packed form costs a Relaxed load + OR on every `atomic_store_next` —
+// the packed form costs a Relaxed load + OR on every store of the link —
 // turning the MPSC enqueue's single release-store into a load-then-store on a
 // cache line that is bouncing between producer threads and the JS-thread
 // consumer. The extra word of padding is cheap; the contended RMW is not.
@@ -328,29 +324,18 @@ const _: () = assert!(
     "ConcurrentTask = Task + next ptr + auto_delete (padded)"
 );
 
-// SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
-// field; `UnboundedQueue` only calls it with a valid, non-null, aligned `item`.
-// The blanket `impl<T: Linked> Node for T` supplies the four accessors as
-// straight `AtomicPtr` load/store — no bit-masking, no preservation load.
-unsafe impl Linked for ConcurrentTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const Link<Self> {
-        // SAFETY: caller (UnboundedQueue) guarantees `item` is valid; we only
-        // form a raw pointer to the field, no intermediate `&`/`&mut`.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(ConcurrentTask, next: Link<Self>);
 
 /// A node that is in no [`Queue`]. No `Drop`, as [`Task`].
-pub struct OwnedConcurrentTask(NonNull<ConcurrentTask>);
+pub struct OwnedConcurrentTask(Unique<ConcurrentTask>);
 
 impl ConcurrentTask {
     pub fn create<T: Taskable>(payload: T::Payload) -> OwnedConcurrentTask {
-        OwnedConcurrentTask(bun_core::heap::alloc_nn(ConcurrentTask {
+        OwnedConcurrentTask(Unique::from(Box::new(ConcurrentTask {
             task: Task::new::<T>(payload),
             next: Link::new(),
             auto_delete: true,
-        }))
+        })))
     }
 
     pub fn create_boxed<T: BoxedTask>(task: Box<T>) -> OwnedConcurrentTask {
@@ -377,24 +362,23 @@ impl ConcurrentTask {
                 next: Link::new(),
                 auto_delete: false,
             };
-            OwnedConcurrentTask(NonNull::new_unchecked(node))
+            OwnedConcurrentTask(Unique::from_raw(node))
         }
     }
 }
 
 impl OwnedConcurrentTask {
     pub fn tag(&self) -> TaskTag {
-        // SAFETY: live until `self` is consumed.
-        unsafe { self.0.as_ref() }.task.tag
+        self.0.task.tag
     }
 
     /// Frees the node if `create` made it.
     pub(crate) fn into_task(self) -> Task {
-        // SAFETY: as `tag`, and nothing reads the node's copy of the task afterwards.
+        // SAFETY: nothing reads the node's copy of the task afterwards, and only `create` sets the flag.
         unsafe {
-            let task = core::ptr::read(&raw const (*self.0.as_ptr()).task);
-            if self.0.as_ref().auto_delete {
-                bun_core::heap::destroy(self.0.as_ptr());
+            let task = core::ptr::read(&raw const self.0.task);
+            if self.0.auto_delete {
+                bun_core::heap::destroy(self.0.into_raw());
             }
             task
         }
@@ -402,7 +386,7 @@ impl OwnedConcurrentTask {
 }
 
 #[derive(Default)]
-pub struct Queue(UnboundedQueue<ConcurrentTask>);
+pub struct Queue(UnboundedQueue<Unique<ConcurrentTask>>);
 
 impl Queue {
     pub fn push(&self, OwnedConcurrentTask(node): OwnedConcurrentTask) {
@@ -410,12 +394,7 @@ impl Queue {
     }
 
     pub fn pop_batch(&self) -> impl ExactSizeIterator<Item = Task> + use<> {
-        let batch = self.0.pop_batch();
-        let mut nodes = batch.iterator();
-        (0..batch.count).map(move |_| {
-            // SAFETY: the batch holds `count` nodes, and the iterator is past the one it returns.
-            OwnedConcurrentTask(unsafe { NonNull::new_unchecked(nodes.next()) }).into_task()
-        })
+        (self.0.pop_batch()).map(|node| OwnedConcurrentTask(node).into_task())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -461,7 +440,10 @@ mod tests {
 
     #[test]
     fn queue_hands_over_what_other_threads_push() {
-        let (queue, alive) = (Queue::default(), Arc::new(()));
+        struct Shared(Queue);
+        // SAFETY: only `Boxed` goes through it.
+        unsafe impl Sync for Shared {}
+        let (shared, alive) = (&Shared(Queue::default()), Arc::new(()));
         let boxed = || {
             Box::new(Boxed {
                 node: ConcurrentTask::default(),
@@ -472,12 +454,14 @@ mod tests {
         std::thread::scope(|scope| {
             for _ in 0..2 {
                 scope.spawn(|| {
+                    // The braces capture `shared`, not its field.
+                    let Shared(queue) = { shared };
                     queue.push(ConcurrentTask::create_boxed(boxed()));
                     queue.push(ConcurrentTask::in_box(boxed(), |task| &mut task.node));
                 });
             }
             while left > 0 {
-                for task in queue.pop_batch() {
+                for task in shared.0.pop_batch() {
                     // SAFETY: nothing else is pushed.
                     let task = unsafe { task.into_payload::<Boxed>() };
                     assert!(Arc::ptr_eq(&task.alive, &alive));
@@ -486,7 +470,7 @@ mod tests {
                 std::thread::yield_now();
             }
         });
-        assert!(queue.is_empty());
+        assert!(shared.0.is_empty());
         assert_eq!(Arc::strong_count(&alive), 1);
     }
 }

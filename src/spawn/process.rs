@@ -814,16 +814,12 @@ pub mod waiter_thread_posix {
         pub(crate) next: bun_threading::Link<TaskQueueEntry<T>>,
     }
 
-    // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
-    unsafe impl<T: ProcessLike> bun_threading::Linked for TaskQueueEntry<T> {
-        #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
-        }
-    }
+    bun_core::intrusive_field!([T: ProcessLike] TaskQueueEntry<T>, next: bun_threading::Link<Self>);
 
-    pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
+    // SAFETY: the waiter thread reads what never changes, and drops a ref only if there is no loop to post to.
+    unsafe impl Send for TaskQueueEntry<Process> {}
+
+    pub type ConcurrentQueue<T> = UnboundedQueue<Box<TaskQueueEntry<T>>>;
 
     /// Posted to the JS event loop from the waiter thread when a `wait4()`
     /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
@@ -917,7 +913,7 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: RefPtr<T>) {
             self.watched.fetch_add(1, Ordering::SeqCst);
-            self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
+            self.queue.push(Box::new(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
             }));
@@ -925,21 +921,7 @@ pub mod waiter_thread_posix {
 
         /// `active` is the waiter thread's list of the processes it has taken off the queue and not reaped yet.
         fn loop_(&self, active: &mut Vec<RefPtr<T>>) {
-            {
-                let batch = self.queue.pop_batch();
-                active.reserve(batch.count);
-                let mut iter = batch.iterator();
-                loop {
-                    let task = iter.next();
-                    if task.is_null() {
-                        break;
-                    }
-                    // SAFETY: task was heap-allocated in append(). Its process crosses threads here: this one
-                    // reads what never changes, and drops a ref only if there is no loop to post to.
-                    let task = unsafe { bun_core::heap::take(task) };
-                    active.push(task.process);
-                }
-            }
+            active.extend(self.queue.pop_batch().map(|task| task.process));
 
             let mut i: usize = 0;
             while i < active.len() {

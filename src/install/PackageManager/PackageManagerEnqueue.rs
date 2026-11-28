@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
@@ -8,6 +7,7 @@ use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths::portable::from_portable_rooted;
 use bun_paths::{Path, from_portable};
+use bun_ptr::Unique;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -328,8 +328,7 @@ fn enqueue_download(
         dependency_id,
         &package,
     )? {
-        let request = task.take_request();
-        this.network_tarball_batch.push(request);
+        this.network_tarball_batch.push(task.into_request());
         let _ = run_tasks::schedule_tasks(this);
     }
     Ok(())
@@ -361,7 +360,7 @@ fn enqueue_tarball_for_reading(
         &resolution,
         Some(&integrity),
     );
-    this.task_batch.push(ThreadPool::Batch::from(task));
+    this.task_batch.push(task.into_batch());
     Ok(())
 }
 
@@ -533,27 +532,19 @@ fn offline_git_miss(
     true
 }
 
-/// # Safety
-/// `network_task` must point to a live, exclusively-owned `NetworkTask` pool
-/// slot for the duration of the enqueued resolve task.
-pub unsafe fn enqueue_parse_npm_package(
+pub fn enqueue_parse_npm_package(
     this: &mut PackageManager,
     task_id: Task::Id,
     name: StringOrTinyString,
-    network_task: *mut NetworkTask,
-) -> *mut ThreadPool::Task {
-    // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
-    // before this task is done, which is what the `'static` stands for.
-    let network = unsafe { &mut *network_task };
+    network: Unique<NetworkTask>,
+) -> Unique<Task::Task> {
     let job = Task::Job::PackageManifest {
         name,
         network,
         temp_dir: this.manifest_cache_temporary_directory(),
         manifest: None,
     };
-    let task = Task::Task::create(this, task_id, job);
-    // SAFETY: `task` points to a freshly initialized pool slot.
-    unsafe { &raw mut (*task.as_ptr()).threadpool_task }
+    Task::Task::create(this, task_id, job)
 }
 
 pub enum DependencyToEnqueue {
@@ -784,12 +775,12 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
     result
 }
 
-pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
+pub fn enqueue_network_task(this: &mut PackageManager, task: Unique<NetworkTask>) {
     if this.network_task_fifo.writable_length() == 0 {
         run_tasks::flush_network_queue(this);
     }
 
-    this.network_task_fifo.write_item_assume_capacity(task);
+    (this.network_task_fifo.write_item(task)).expect("there is room");
 }
 
 pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
@@ -852,26 +843,15 @@ fn enqueue_manifest_download(
     // A list for the task, even an empty one, tells `run_tasks` that a dependency wants it.
     task_callback_list(this, task_id);
 
-    let network_task = run_tasks::get_network_task(this);
-    // SAFETY: `network_task` is the unique handle to a
-    // freshly-vended pool slot. `write_init` resets every
-    // defaulted field (callback is uninitialized and
-    // overwritten by `for_manifest`).
-    unsafe {
-        NetworkTask::write_init(network_task, task_id, bun_ptr::ParentRef::new(this));
-    }
-
-    let scope = this.scope_for_package_name(name);
-    // SAFETY: network_task points to a valid initialized NetworkTask slot
-    let built = unsafe {
-        (*network_task).for_manifest(
-            name,
-            scope,
-            cached,
-            is_optional,
-            this.options.minimum_release_age_ms.is_some(),
-        )
-    };
+    let mut network_task = NetworkTask::create(this, task_id);
+    let built = network_task.for_manifest(
+        this,
+        name,
+        this.scope_for_package_name(name),
+        cached,
+        is_optional,
+        this.options.minimum_release_age_ms.is_some(),
+    );
     if let Err(err) = built {
         // `for_manifest` has logged why. The next dependency on this package must not wait for a
         // request that was never sent.
@@ -2434,32 +2414,28 @@ fn bind_row_without_manifest(
                 if !this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                     let task =
                         enqueue_local_tarball(this, task_id, id, dependency.name, &res, None);
-                    this.task_batch.push(ThreadPool::Batch::from(task));
+                    this.task_batch.push(task.into_batch());
                 }
                 return Ok(());
             }
 
-            // Convert to `*mut` right away, so the borrow of `this` ends before
-            // `enqueue_network_task` reborrows it.
-            let network_task: Option<*mut NetworkTask> =
-                match run_tasks::generate_network_task_for_tarball(
-                    this,
-                    task_id,
-                    github_url.as_deref(),
-                    dependency.behavior.is_required(),
-                    id,
-                    &Package {
-                        name: dependency.name,
-                        name_hash: dependency.name_hash,
-                        resolution: res,
-                        ..Package::default()
-                    },
-                ) {
-                    // An `--offline` miss. It was already reported if required, or skipped if
-                    // optional.
-                    Err(ForTarballError::Offline) => return Ok(()),
-                    other => other?.map(std::ptr::from_mut::<NetworkTask>),
-                };
+            let network_task = match run_tasks::generate_network_task_for_tarball(
+                this,
+                task_id,
+                github_url.as_deref(),
+                dependency.behavior.is_required(),
+                id,
+                &Package {
+                    name: dependency.name,
+                    name_hash: dependency.name_hash,
+                    resolution: res,
+                    ..Package::default()
+                },
+            ) {
+                // An `--offline` miss. It was already reported if required, or skipped if optional.
+                Err(ForTarballError::Offline) => return Ok(()),
+                other => other?,
+            };
             if let Some(network_task) = network_task {
                 enqueue_network_task(this, network_task);
             }
@@ -2752,34 +2728,38 @@ fn requires_local_target(
     !omitted && dependency.behavior.is_required()
 }
 
+fn tarball_to_extract(this: &PackageManager, network: &NetworkTask) -> ExtractTarball {
+    let tarball = network.tarball();
+    ExtractTarball {
+        skip_verify: this.skips_verify(tarball.resolution.tag),
+        ..*tarball
+    }
+}
+
 /// Allocated up front on the main thread, because `preallocated_resolve_tasks` isn't thread-safe.
 pub(crate) fn create_extract_task_for_streaming(
     this: &mut PackageManager,
-    network_task: *mut NetworkTask,
-) -> *mut Task::Task {
-    // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
-    // before this task is done, which is what the `'static` stands for.
-    let network = unsafe { &mut *network_task };
-    let id = network.task_id;
-    let tarball = network.tarball();
+    network: &NetworkTask,
+) -> Unique<Task::Task> {
     let job = Task::Job::Extract {
-        tarball: ExtractTarball {
-            skip_verify: this.skips_verify(tarball.resolution.tag),
-            ..*tarball
-        },
-        source: Task::TarballSource::Network(network),
+        tarball: tarball_to_extract(this, network),
+        source: Task::TarballSource::Network(None),
         data: None,
     };
-    Task::Task::create(this, id, job).as_ptr()
+    Task::Task::create(this, network.task_id, job)
 }
 
 pub fn enqueue_extract_npm_package(
     this: &mut PackageManager,
-    network_task: *mut NetworkTask,
-) -> *mut ThreadPool::Task {
-    let task = create_extract_task_for_streaming(this, network_task);
-    // SAFETY: a valid, initialized pool slot
-    unsafe { &raw mut (*task).threadpool_task }
+    network: Unique<NetworkTask>,
+) -> Unique<Task::Task> {
+    let id = network.task_id;
+    let job = Task::Job::Extract {
+        tarball: tarball_to_extract(this, &network),
+        source: Task::TarballSource::Network(Some(network)),
+        data: None,
+    };
+    Task::Task::create(this, id, job)
 }
 
 fn enqueue_git_clone(
@@ -2787,7 +2767,7 @@ fn enqueue_git_clone(
     task_id: Task::Id,
     name: SemverString,
     repository: &Repository,
-) -> NonNull<Task::Task> {
+) -> Unique<Task::Task> {
     let job = Task::Job::GitClone {
         request: Task::GitCloneRequest {
             name: stored_string(this.lockfile.str(&name)),
@@ -2805,7 +2785,7 @@ fn enqueue_git_commit(
     clone_id: Task::Id,
     name: SemverString,
     committish: SemverString,
-) -> NonNull<Task::Task> {
+) -> Unique<Task::Task> {
     let job = Task::Job::GitCommit {
         request: Task::GitCommitRequest {
             clone_id,
@@ -2827,7 +2807,7 @@ pub fn enqueue_git_checkout(
     resolved: StringOrTinyString,
     // the package to patch and its name-and-version hash, if an apply step follows the checkout
     patch: Option<(PackageID, u64)>,
-) -> NonNull<Task::Task> {
+) -> Unique<Task::Task> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in
@@ -2870,7 +2850,7 @@ fn enqueue_local_tarball(
     resolution: &Resolution,
     // Of the package in the loaded lockfile.
     locked_integrity: Option<&Integrity>,
-) -> *mut ThreadPool::Task {
+) -> Unique<Task::Task> {
     let temp_dir = get_temporary_directory(this);
     let path = this.lockfile.str(resolution.local_tarball());
     // Resolve the on-disk tarball path here on the main thread. The task
@@ -2912,9 +2892,7 @@ fn enqueue_local_tarball(
         },
         data: None,
     };
-    let task = Task::Task::create(this, task_id, job).as_ptr();
-    // SAFETY: `task` points to a freshly initialized pool slot.
-    unsafe { &raw mut (*task).threadpool_task }
+    Task::Task::create(this, task_id, job)
 }
 
 /// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
@@ -3039,7 +3017,7 @@ fn is_bare_add_request(this: &PackageManager, dependency: &Dependency, id: Depen
 
 pub(crate) enum ResolvedPackageTask {
     /// Pending network task to schedule
-    NetworkTask(*mut NetworkTask),
+    NetworkTask(Unique<NetworkTask>),
 
     /// Apply patch task or calc patch hash task
     PatchTask(Box<PatchTask>),

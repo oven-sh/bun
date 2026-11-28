@@ -500,7 +500,7 @@ impl DirTask {
             },
         });
         // SAFETY: freshly allocated.
-        bun_threading::work_pool::WorkPool::schedule(unsafe { &raw mut (*this).work_task });
+        unsafe { bun_threading::work_pool::WorkPool::schedule(&raw mut (*this).work_task) };
     }
 
     /// Recover `*mut DirTask` from the intrusive `*WorkPoolTask`.

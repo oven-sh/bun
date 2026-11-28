@@ -8,6 +8,7 @@ use bun_core::fmt::EscapeControlChars;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, OSPath, Path};
+use bun_ptr::IntrusivePtr;
 use bun_sys::{self as sys, Fd};
 use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
 
@@ -67,7 +68,7 @@ pub struct Installer<'a> {
 
     pub(crate) store: &'a Store,
 
-    pub(crate) task_queue: UnboundedQueue<Task>, // intrusive via .next
+    pub(crate) task_queue: UnboundedQueue<Returned>,
     pub(crate) tasks: Box<[Task]>,
     /// Counts the tasks on the thread pool. `start_task` adds one, and `Task::task` removes itself
     /// when it's done.
@@ -157,7 +158,9 @@ impl<'a> Installer<'a> {
 
         task.result = Result::None;
         self.tasks_in_flight.add_one();
-        THREAD_POOL.schedule(thread_pool::Batch::from(&raw mut task.task.task));
+        // SAFETY: an entry starts once, then only after its last run left `task_queue`. `tasks` is not freed
+        // before `tasks_in_flight` is done.
+        THREAD_POOL.schedule(unsafe { thread_pool::Batch::from(&raw mut task.task.task) });
     }
 
     /// Called from main thread, for an existing project-local store entry.
@@ -948,12 +951,21 @@ pub struct Task {
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
-unsafe impl bun_threading::Linked for Task {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+bun_core::intrusive_field!(Task, next: bun_threading::Link<Self>);
+
+/// From the pool thread that ran it.
+pub(crate) struct Returned(*mut Task);
+
+// SAFETY: an element of `Installer::tasks`, which is not started again before it has left the queue.
+unsafe impl IntrusivePtr for Returned {
+    type Target = Task;
+
+    fn into_raw(self) -> *mut Task {
+        self.0
+    }
+
+    unsafe fn from_raw(ptr: *mut Task) -> Self {
+        Self(ptr)
     }
 }
 
@@ -1366,7 +1378,7 @@ impl Task {
                 Result::Err(err)
             }
         };
-        installer.task_queue.push(core::ptr::NonNull::from(this));
+        installer.task_queue.push(Returned(this));
         INBOX.wake();
     }
 }

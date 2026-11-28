@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use bun_core::{MutableString, Output, strings};
 use bun_http::{AsyncHTTP, HTTPClientResult, HTTPResponseMetadata};
+use bun_ptr::Unique;
 use bun_threading::{Condition, Guarded};
 
 use crate::package_manager_real::run_tasks::download_outcome;
@@ -15,7 +16,7 @@ use crate::{NetworkTask, PackageManager};
 /// `pending_task_count` adds `len()`.
 #[derive(Default)]
 pub(crate) struct RetryQueue {
-    waiting: Vec<(Instant, *mut NetworkTask)>,
+    waiting: Vec<(Instant, Unique<NetworkTask>)>,
     /// True once "registry requests failed, retrying" has been printed. It's printed at most once
     /// per install, after a timeout.
     announced: bool,
@@ -29,7 +30,7 @@ impl RetryQueue {
         self.waiting.len()
     }
 
-    pub(crate) fn pop_due(&mut self) -> Option<*mut NetworkTask> {
+    pub(crate) fn pop_due(&mut self) -> Option<Unique<NetworkTask>> {
         if self.waiting.is_empty() {
             return None;
         }
@@ -39,17 +40,32 @@ impl RetryQueue {
     }
 }
 
-/// Returns the wait. `attempt` is 1 for the first retry.
-pub(crate) fn retry(
+#[derive(Default)]
+#[must_use]
+pub(crate) struct Retry {
+    pub(crate) wait: Duration,
+    /// `None` is now.
+    due: Option<Instant>,
+}
+
+impl Retry {
+    pub(crate) fn enqueue(self, manager: &mut PackageManager, task: Unique<NetworkTask>) {
+        match self.due {
+            Some(due) => manager.retry_queue.waiting.push((due, task)),
+            None => enqueue::enqueue_network_task(manager, task),
+        }
+    }
+}
+
+/// Sets the timer if there is a wait. `attempt` is 1 for the first retry.
+pub(crate) fn arm(
     manager: &mut PackageManager,
-    task: *mut NetworkTask,
     attempt: u16,
     response: &HTTPClientResult<'static>,
-) -> Duration {
+) -> Retry {
     let (wait, asked) = wait_before(manager, attempt, response);
     if wait.is_zero() {
-        enqueue::enqueue_network_task(manager, task);
-        return Duration::ZERO;
+        return Retry::default();
     }
     // A host that never answers costs minutes per attempt, so that is said at the first retry, also
     // with `--verbose`, whose lines are only printed once everything is resolved.
@@ -79,11 +95,12 @@ pub(crate) fn retry(
 
     let due = Instant::now() + wait;
     if !wake_at(due) {
-        enqueue::enqueue_network_task(manager, task);
-        return Duration::ZERO;
+        return Retry::default();
     }
-    manager.retry_queue.waiting.push((due, task));
-    wait
+    Retry {
+        wait,
+        due: Some(due),
+    }
 }
 
 impl PackageManager {

@@ -20,6 +20,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, Output, env_var, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
+use bun_ptr::Unique;
 #[cfg(windows)]
 use bun_sys::Dir;
 #[cfg(not(windows))]
@@ -658,7 +659,12 @@ impl TarballStream {
             // `(*this).extraction.extract_task` is a raw `*mut Task` (not `&mut`), so this
             // is the only writer — no aliasing with a stored reference.
             // `populate_result` does not touch `(*this).extraction.extract_task`.
-            let Job::Extract { tarball, data, .. } = &mut (*task).job else {
+            let Job::Extract {
+                tarball,
+                source,
+                data,
+            } = &mut (*task).job
+            else {
                 unreachable!("`create_extract_task_for_streaming` built it");
             };
             match (*this).populate_result(tarball, &mut (*task).log) {
@@ -684,7 +690,7 @@ impl TarballStream {
                 (*network).response.fail = Some(err);
                 (*network).streaming_committed = false;
                 drop((*network).tarball_stream.take());
-                (INBOX.network_tasks).push(core::ptr::NonNull::new_unchecked(network));
+                (INBOX.network_tasks).push(Unique::from_raw(network));
                 INBOX.wake();
                 return;
             }
@@ -706,7 +712,8 @@ impl TarballStream {
             // Publish last: once the task is on `resolve_tasks` the main
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
-            (INBOX.resolve_tasks).push(core::ptr::NonNull::new_unchecked(task));
+            *source = TarballSource::Network(Some(Unique::from_raw(network)));
+            (INBOX.resolve_tasks).push(Unique::from_raw(task));
             INBOX.wake();
         } // unsafe
     }
@@ -924,5 +931,5 @@ fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[
     }
 }
 
-use crate::package_manager_task::{Job, Status as TaskStatus, Task};
+use crate::package_manager_task::{Job, Status as TaskStatus, TarballSource, Task};
 use crate::resolution::Tag as ResolutionTag;

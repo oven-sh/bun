@@ -36,14 +36,7 @@ pub struct PatchTask {
 
 bun_threading::intrusive_work_task!(PatchTask, task);
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
-unsafe impl bun_threading::Linked for PatchTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(PatchTask, next: bun_threading::Link<Self>);
 
 pub enum Callback {
     CalcHash(CalcPatchHash),
@@ -233,7 +226,7 @@ impl OwnedTask for PatchTask {
                 bun_core::handle_oom(self.apply());
             }
         }
-        INBOX.patch_tasks.push(bun_core::heap::into_raw_nn(self));
+        INBOX.patch_tasks.push(self);
         INBOX.wake();
     }
 }
@@ -345,19 +338,18 @@ impl PatchTask {
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = dep_behavior.is_required();
-                    let network_task: *mut crate::NetworkTask =
-                        match package_manager::generate_network_task_for_tarball(
-                            manager,
-                            task_id,
-                            None,
-                            is_required,
-                            dep_id,
-                            &pkg,
-                        ) {
-                            // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
-                            other => other?.unwrap_or_else(|| unreachable!()),
-                        };
+                    let network_task = match package_manager::generate_network_task_for_tarball(
+                        manager,
+                        task_id,
+                        None,
+                        is_required,
+                        dep_id,
+                        &pkg,
+                    ) {
+                        // --offline and not cached: already reported / skipped; nothing to patch
+                        Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                        other => other?.unwrap_or_else(|| unreachable!()),
+                    };
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
                         package_manager::enqueue_network_task(manager, network_task);

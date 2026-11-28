@@ -846,6 +846,8 @@ macro_rules! intrusive_field {
             const OFFSET: usize = ::core::mem::offset_of!($T, $field);
             #[inline(always)]
             fn field_mut(&mut self) -> &mut $F {
+                // A reference would also accept a field that derefs to `$F`.
+                let _: *const $F = &raw const self.$field;
                 &mut self.$field
             }
         }

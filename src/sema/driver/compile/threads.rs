@@ -67,7 +67,8 @@ pub unsafe extern "C" fn run_on_region_thread(
         run,
         argument,
     }));
-    region_pool().schedule(Batch::from(call.cast::<Task>()));
+    // SAFETY: the first field of the box above, which `call` takes back.
+    region_pool().schedule(unsafe { Batch::from(call.cast::<Task>()) });
 }
 
 pub fn wake_idle_region_threads() {
@@ -328,23 +329,20 @@ mod tests {
     }
 
     fn task_that_calls(run: impl FnOnce() + Send + 'static) -> Batch {
-        #[repr(C)]
         struct Call {
             task: Task,
             run: Box<dyn FnOnce() + Send>,
         }
-        unsafe fn call(task: *mut Task) {
-            // SAFETY: the first field of the `Call` allocated below, which is queued once.
-            let call = unsafe { bun_core::heap::take(task.cast::<Call>()) };
-            (call.run)();
+        bun_threading::intrusive_work_task!(Call, task);
+        impl bun_threading::work_pool::OwnedTask for Call {
+            fn run(self: Box<Self>) {
+                (self.run)();
+            }
         }
-        let task = Task {
-            node: Node::default(),
-            callback: call,
-        };
-        let run: Box<dyn FnOnce() + Send> = Box::new(run);
-        let call = bun_core::heap::into_raw(Box::new(Call { task, run }));
-        Batch::from(call.cast::<Task>())
+        Batch::from_owned(Box::new(Call {
+            task: Task::default(),
+            run: Box::new(run),
+        }))
     }
 
     fn wait_until(is_done: impl Fn() -> bool, what: &str) {

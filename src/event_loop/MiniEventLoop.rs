@@ -29,6 +29,7 @@ use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 #[cfg(not(windows))]
 use bun_io::file_poll::Store as FilePollStore;
+use bun_ptr::Unique;
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
@@ -37,16 +38,9 @@ use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, MiniTask};
 use crate::EventLoopHandle;
 
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
-type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
+type ConcurrentTaskQueue = UnboundedQueue<Unique<AnyTaskWithExtraContext>>;
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
-unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(AnyTaskWithExtraContext, next: bun_threading::Link<Self>);
 
 /// FIFO of the nodes of queued tasks.
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
@@ -166,12 +160,11 @@ impl MiniEventLoop {
         // SAFETY: no task runs in this borrow.
         let tasks = unsafe { &mut *self.tasks.get() };
         let concurrent = self.inbox.tasks.pop_batch();
-        let count = concurrent.count;
+        let count = concurrent.len();
         if count == 0 {
             return tasks.readable_length();
         }
 
-        let mut iter = concurrent.iterator();
         // `ensure_unused_capacity` early-returns without realigning when
         // capacity is already sufficient, and `writable_slice(0)` only yields
         // the first contiguous segment `buf[head+count..]` — so an empty fifo
@@ -185,12 +178,8 @@ impl MiniEventLoop {
         let mut written: usize = 0;
         {
             let mut writable = tasks.writable_with_size(count).expect("unreachable");
-            loop {
-                let task = iter.next();
-                if task.is_null() {
-                    break;
-                }
-                writable[0] = task;
+            for task in concurrent {
+                writable[0] = task.into_raw();
                 writable = &mut writable[1..];
                 written += 1;
                 if writable.is_empty() {
@@ -249,7 +238,7 @@ impl MiniEventLoop {
     /// # Safety
     /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
-    /// with caller).
+    /// with caller). The field is in no queue, and nothing uses it until `callback` is called.
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
         &self,
         ctx: *mut C,
@@ -266,8 +255,7 @@ impl MiniEventLoop {
                 ),
                 next: bun_threading::Link::new(),
             });
-            self.inbox
-                .enqueue_task_concurrent(NonNull::new_unchecked(task));
+            self.inbox.enqueue_task_concurrent(Unique::from_raw(task));
         }
     }
 }
@@ -281,7 +269,7 @@ impl Inbox {
     ) {
         let task = bun_core::heap::into_raw_nn(task);
         // SAFETY: nothing else can reach the box before the callback takes it back.
-        let node = node(unsafe { &mut *task.as_ptr() });
+        let mut node = unsafe { Unique::from_raw(node(&mut *task.as_ptr())) };
         *node = AnyTaskWithExtraContext {
             ctx: Some(task.cast()),
             callback: |task, _| {
@@ -290,10 +278,10 @@ impl Inbox {
             },
             next: bun_threading::Link::new(),
         };
-        self.enqueue_task_concurrent(NonNull::from(node));
+        self.enqueue_task_concurrent(node);
     }
 
-    fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+    fn enqueue_task_concurrent(&self, task: Unique<AnyTaskWithExtraContext>) {
         // Read first: the push lets a bundle finish and drop `self`.
         let uws_loop = self.uws_loop.load(Ordering::Relaxed);
         self.tasks.push(task);

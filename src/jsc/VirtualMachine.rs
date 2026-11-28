@@ -2169,6 +2169,10 @@ impl VirtualMachine {
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
 
+        if self.is_inspector_enabled() {
+            crate::debugger::Debugger::flush_before_exit();
+        }
+
         if !self.should_destruct_main_thread_on_exit() {
             self.close_sqlite_databases_for_exit();
             bun_core::Global::exit(u32::from(self.exit_handler.exit_code.get()))

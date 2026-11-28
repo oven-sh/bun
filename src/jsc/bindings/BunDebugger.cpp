@@ -49,6 +49,32 @@ static PausedWait& pausedWait()
     return instance;
 }
 
+// Frontend output the process exit would lose: messages handed to the debugger thread and not yet
+// passed to onMessageFn, plus one per transport that may hold bytes the kernel has not taken.
+// https://github.com/oven-sh/bun/issues/34218
+static std::atomic<uint64_t> unsentFrontendOutput { 0 };
+static constexpr Seconds exitFlushTimeout = 5_s;
+
+struct ExitFlushWait {
+    WTF::Lock lock;
+    WTF::Condition condition;
+};
+
+static ExitFlushWait& exitFlushWait()
+{
+    static ExitFlushWait instance;
+    return instance;
+}
+
+static void releaseUnsentFrontendOutput(uint64_t count)
+{
+    if (unsentFrontendOutput.fetch_sub(count) != count)
+        return;
+    auto& wait = exitFlushWait();
+    Locker<Lock> locker(wait.lock);
+    wait.condition.notifyAll();
+}
+
 static bool waitingForConnection = false;
 static bool bunControllerInstalled = false;
 // Tracks whether connectFrontend has ever been called on the Bun-installed
@@ -393,12 +419,15 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
-        if (!jsBunDebuggerOnMessageFunction)
+        size_t messageCount = messages.size();
+        if (!jsBunDebuggerOnMessageFunction) {
+            releaseUnsentFrontendOutput(messageCount);
             return;
+        }
 
         JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(messages.size());
+        arguments.ensureCapacity(messageCount);
         auto& vm = debuggerGlobalObject->vm();
 
         for (auto& message : messages) {
@@ -408,6 +437,8 @@ public:
         messages.clear();
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
+        // After the call: a transport that kept bytes has counted itself by now.
+        releaseUnsentFrontendOutput(messageCount);
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
@@ -415,6 +446,8 @@ public:
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
+            // Under the lock, so the swap in receiveMessagesOnDebuggerThread never subtracts a message not yet counted.
+            ++unsentFrontendOutput;
         }
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
@@ -926,6 +959,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+// Called by internal/debugger.ts on the debugger thread when a transport starts or stops holding unsent bytes.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetTransportHasUnsentData);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetTransportHasUnsentData, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    if (callFrame->argument(0).toBoolean(globalObject))
+        ++unsentFrontendOutput;
+    else
+        releaseUnsentFrontendOutput(1);
+    return JSValue::encode(jsUndefined());
+}
+
 extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, const BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
     if (!debuggerScriptExecutionContext)
@@ -953,6 +997,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsBoolean(isUrlServer));
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("setTransportHasUnsentData"_s), jsFunctionSetTransportHasUnsentData, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();
@@ -1025,6 +1070,20 @@ extern "C" NEVER_INLINE void Debugger__willDispatchAsyncCall(JSGlobalObject* glo
         return;
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
+    JSC_END_REMOVABLE_ENTRY_POINT
+}
+
+// The process exit kills the debugger thread wherever it is: first let it hand the kernel what
+// the frontends have not yet been sent, for at most exitFlushTimeout.
+extern "C" NEVER_INLINE void Bun__Debugger__flushBeforeExit()
+{
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    if (!unsentFrontendOutput)
+        return;
+
+    auto& wait = exitFlushWait();
+    Locker<Lock> locker(wait.lock);
+    wait.condition.waitFor(wait.lock, exitFlushTimeout, [] { return !unsentFrontendOutput; });
     JSC_END_REMOVABLE_ENTRY_POINT
 }
 

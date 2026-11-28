@@ -167,6 +167,7 @@ unsafe extern "C" {
         is_connect: bool,
         is_node_inspector: bool,
     );
+    safe fn Bun__Debugger__flushBeforeExit();
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
@@ -321,6 +322,12 @@ impl Debugger {
                 Wait::Off => break,
             }
         }
+    }
+
+    /// Blocks, for a bounded time, until the debugger thread has handed the kernel every protocol
+    /// message produced so far; the process exit that follows would lose them.
+    pub(crate) fn flush_before_exit() {
+        Bun__Debugger__flushBeforeExit();
     }
 
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the

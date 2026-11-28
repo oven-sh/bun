@@ -1150,6 +1150,13 @@ function bunMimalloc(wk: WebKitBuild, path: string): string {
   return path.startsWith(vendored) ? join(depSourceDir(wk.cfg, "mimalloc"), relative(vendored, path)) : path;
 }
 
+/**
+ * Debug: -O3 (after the global -O0) for bmalloc and for wtf/FastMalloc.cpp, which inlines bmalloc's fast paths, so
+ * that not every allocation runs unoptimized code. As their CMakeLists do, except under MSVC
+ * (https://commits.webkit.org/324626@main).
+ */
+const allocatorDebugFlags = (cfg: Config): string[] => (cfg.debug && !cfg.windows ? ["-O3"] : []);
+
 function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags, lists: LibraryLists): SourceGroup {
   const { cfg, B } = wk;
   return {
@@ -1173,6 +1180,7 @@ function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags, lists: LibraryLists):
       // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the
       // unix -march levels already imply it).
       ...(cfg.windows && cfg.x64 ? ["-mcx16"] : []),
+      ...allocatorDebugFlags(cfg),
     ],
     cxxflags: flags.cxx,
   };
@@ -1223,6 +1231,7 @@ function wtfGroup(
       desc: "mig MachExceptions.defs",
     });
   }
+  const fastMalloc = join(WTF, "wtf", "FastMalloc.cpp");
   return {
     group: {
       name: "WTF",
@@ -1233,7 +1242,8 @@ function wtfGroup(
       // Likewise without three files for WebCore, which call parts of ICU that src/icu does not have.
       sources: lists
         .paths("WTF_SOURCES")
-        .filter(s => !s.endsWith(".mm") && !/^(URLHelpers|CollatorICU|UnicodeExtras)\.cpp$/.test(basename(s))),
+        .filter(s => !s.endsWith(".mm") && !/^(URLHelpers|CollatorICU|UnicodeExtras)\.cpp$/.test(basename(s)))
+        .map(path => (path === fastMalloc ? { path, cflags: allocatorDebugFlags(cfg) } : path)),
       includes: [...lists.paths("WTF_PRIVATE_INCLUDE_DIRECTORIES"), ...flags.bmallocConsumerIncludes],
       cflags: [
         ...flags.common,

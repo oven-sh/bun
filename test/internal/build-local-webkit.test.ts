@@ -10,6 +10,7 @@ import { basename, join, relative, resolve } from "node:path";
 
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { mimalloc } from "../../scripts/build/deps/mimalloc.ts";
 import {
   jscPrograms,
   prebuiltHasProgramObjects,
@@ -527,6 +528,75 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinTableEngineBindings.cpp",
     ]);
     expect(sourcesWithFlagIn("Debug")).toEqual([]);
+  });
+
+  /**
+   * The optimization levels in the commands that compile a checkout with wtf/FastMalloc.cpp, as the graph has them.
+   * `ofEveryDep` comes first in each command. `own` has the sources whose command goes on to another: the compiler
+   * takes the last.
+   */
+  function optimizationLevels(partial: PartialConfig, retarget = (cfg: Config) => cfg) {
+    const wtfLists = "Source/WTF/wtf/CMakeLists.txt";
+    using local = checkOut(partial, {
+      ...checkout,
+      [wtfLists]: checkout[wtfLists].replace("Assertions.cpp", "Assertions.cpp FastMalloc.cpp"),
+      "mimalloc/src/static.c": "",
+    });
+    const target = retarget(local.cfg);
+    // WebKit's compiles wait for mimalloc, which is a folder of the checkout here: resolving a dep that is fetched
+    // removes a vendor/mimalloc whose stamp is not that of the pin.
+    const localDeps = { ...target.localDeps, mimalloc: join(target.localDeps.WebKit!, "mimalloc") };
+    const cfg: Config = { ...target, localDeps };
+    const n = new Ninja({ buildDir: cfg.buildDir });
+    registerAllRules(n, cfg);
+    const resolved = new Map<DepName, ResolvedDep>();
+    resolved.set("mimalloc", resolveDep(n, cfg, mimalloc, resolved)!);
+    resolveDep(n, cfg, webkit, resolved);
+    const ofEveryDep = new Set<string>();
+    const own: Record<string, string> = {};
+    for (const { inputs, bindings } of readManifest(n.toString()).edges) {
+      const flags = bindings.cflags ?? bindings.cxxflags;
+      const source = local.short(resolve(cfg.buildDir, inputs[0] ?? ""));
+      if (flags === undefined || !/^(bmalloc|WTF|JSC)\//.test(source)) continue;
+      const [first = "none", ...rest] = flags.split(" ").filter(flag => /^(-O|\/O[d12sx])/.test(flag));
+      ofEveryDep.add(first);
+      if (rest.length > 0) own[source] = rest.join(" ");
+    }
+    return { ofEveryDep: [...ofEveryDep], own };
+  }
+
+  test.each([true, false])(
+    "a debug build optimizes the allocator and LowLevelInterpreter.cpp, as WebKit's cmake does (asan: %p)",
+    asan => {
+      expect(optimizationLevels({ buildType: "Debug", asan })).toEqual({
+        ofEveryDep: ["-O0"],
+        own: {
+          "bmalloc/bmalloc/Heap.cpp": "-O3",
+          "bmalloc/libpas/as_cxx.c": "-O3",
+          "bmalloc/libpas/pas.c": "-O3",
+          "WTF/wtf/FastMalloc.cpp": "-O3",
+          "JSC/llint/LowLevelInterpreter.cpp": "-O1",
+        },
+      });
+    },
+  );
+
+  test("a release build gives no source an optimization level of its own", () => {
+    expect(optimizationLevels({ buildType: "Release", asan: false })).toEqual({ ofEveryDep: ["-O3"], own: {} });
+  });
+
+  test("a debug build for Windows gives clang-cl neither -O3 nor -O1", () => {
+    // resolveConfig() takes a local WebKit for Windows on Windows alone, where msbuild builds its ICU. No step runs
+    // here, so this is the configuration of the prebuilt, turned to the checkout.
+    const forWindows = ({ buildDir, localDeps }: Config): Config => ({
+      ...resolveConfig(
+        { os: "windows", arch: "x64", winsysroot: "/fake/winsysroot", buildType: "Debug", buildDir },
+        mockToolchain(),
+      ),
+      webkit: "local",
+      localDeps,
+    });
+    expect(optimizationLevels({}, forWindows)).toEqual({ ofEveryDep: ["/Od"], own: {} });
   });
 
   test("--unified-sources=off compiles each source of aot/ by itself", () => {

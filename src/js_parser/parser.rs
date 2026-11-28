@@ -708,9 +708,22 @@ pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
+    /// `P::specifier_is_written_as_identifier` of the specifier, taken before its visit.
+    pub(crate) specifier_written_as_identifier: bool,
+    /// The start of the `import()` / `require()` / `require.resolve()` call.
     pub(crate) loc: bun_ast::Loc,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
+}
+
+impl TransposeState {
+    /// An inlined value keeps the position of its initializer, which is before the call.
+    #[inline]
+    pub(crate) fn is_inlined_const(&self, leaf: &Expr) -> bool {
+        self.specifier_written_as_identifier
+            && matches!(leaf.data, js_ast::ExprData::EString(_))
+            && leaf.loc.start < self.loc.start
+    }
 }
 
 impl Default for TransposeState {
@@ -719,6 +732,7 @@ impl Default for TransposeState {
             is_await_target: false,
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
+            specifier_written_as_identifier: false,
             loc: bun_ast::Loc::EMPTY,
             import_loader: None,
             import_options: Expr::EMPTY,

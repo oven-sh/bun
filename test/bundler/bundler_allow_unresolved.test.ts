@@ -226,4 +226,65 @@ describe("bundler", () => {
     backend: "cli",
     allowUnresolved: ["./locales/*.json"],
   });
+
+  // 17. minifySyntax inlines `const` values. A specifier that the source
+  // writes as an identifier is still not a string literal, so the result is
+  // the same as without minifySyntax.
+  itBundled("allow-unresolved/MinifySyntaxRejectsConstSpecifier", {
+    files: {
+      "/entry.js": /* js */ `
+        const someVar = "./dynamic.js";
+        import(someVar);
+        require(someVar);
+        require.resolve(someVar);
+      `,
+      "/dynamic.js": `module.exports = 1;`,
+    },
+    outdir: "/out",
+    minifySyntax: true,
+    allowUnresolved: [],
+    bundleErrors: {
+      "/entry.js": [
+        "This import() expression will not be bundled",
+        "This require() expression will not be bundled",
+        "This require.resolve() expression will not be bundled",
+      ],
+    },
+  });
+
+  // 18. minifySyntax substitutes the single-use variable and visits the
+  // ternary again. The import() is reported once, at the call.
+  itBundled("allow-unresolved/MinifySyntaxReportsSubstitutedSpecifierOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        export function viaImport(c) { let name = "./dynamic.js"; return c ? import(name) : null; }
+      `,
+      "/dynamic.js": `module.exports = 1;`,
+    },
+    outdir: "/out",
+    minifySyntax: true,
+    allowUnresolved: [],
+    bundleErrors: {
+      "/entry.js": ["This import() expression will not be bundled"],
+    },
+  });
+
+  // 19. minifySyntax: a specifier that is not a variable in the source is
+  // still a string literal for the bundler.
+  itBundled("allow-unresolved/MinifySyntaxAcceptsDefineAndLiteralSpecifier", {
+    files: {
+      "/entry.js": /* js */ `
+        import(DEF);
+        require(DEF);
+        require.resolve(DEF);
+        require(globalThis.c ? DEF : "./dynamic.js");
+        require.resolve(globalThis.c ? DEF : "./dynamic.js");
+      `,
+      "/dynamic.js": `module.exports = 1;`,
+    },
+    outdir: "/out",
+    minifySyntax: true,
+    allowUnresolved: [],
+    define: { DEF: '"./dynamic.js"' },
+  });
 });

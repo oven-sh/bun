@@ -204,7 +204,7 @@ function serializeConfigObject(given, index) {
         prefix,
         // `else`: the file itself can have put it where it was found.
         {
-          ...(locateDeep(plugin) ?? { config: path, index }),
+          ...withReanimatedCheck(prefix, locateDeep(plugin) ?? { config: path, index }),
           else: { config: path, index },
           twin: twinOf(prefix, plugin) || undefined,
           described: describedOnce(prefix, plugin),

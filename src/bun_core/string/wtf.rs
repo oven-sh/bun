@@ -4,12 +4,6 @@ use crate::strings;
 // The struct layout lives in `bun_alloc` (lowest-tier crate).
 pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
-/// Behaves like `WTF::Ref<WTF::StringImpl>`. The
-/// [`crate::external_shared::ExternalSharedDescriptor`] impl lives alongside
-/// the trait in `bun_core::external_shared` (orphan rule: trait owner gets
-/// the impl since the type is foreign — defined in `bun_alloc`).
-pub use crate::external_shared::WTFString;
-
 /// Extension methods on [`WTFStringImplStruct`] that depend on
 /// `bun_core` types ([`Utf8Bytes`], `crate::ZBox`) or
 /// `crate::strings::*` transcoding. Kept as a trait because the struct is

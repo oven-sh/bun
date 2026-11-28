@@ -57,7 +57,7 @@ async function publish(dryRun?: boolean): Promise<void> {
   }
 }
 
-async function buildRootModule(dryRun?: boolean) {
+async function buildRootModule() {
   log("Building:", `${module}@${version}`);
   const cwd = join("npm", module);
   const define = {
@@ -116,12 +116,7 @@ without *requiring* a postinstall script.
       postinstall: "node install.js",
     },
     optionalDependencies: Object.fromEntries(
-      platforms
-        .filter(p => !p.alias)
-        .map(({ bin }) => [
-          `${owner}/${bin}`,
-          dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
-        ]),
+      platforms.filter(p => !p.alias).map(({ bin }) => [`${owner}/${bin}`, version]),
     ),
     bin: {
       bun: "bin/bun.exe",
@@ -179,14 +174,7 @@ function publishModule(name: string, dryRun?: boolean): void {
   if (!dryRun) {
     const { exitCode, stdout, stderr } = spawn(
       "npm",
-      [
-        "publish",
-        "--access",
-        "public",
-        "--tag",
-        version.includes("canary") ? "canary" : "latest",
-        ...(dryRun ? ["--dry-run"] : []),
-      ],
+      ["publish", "--access", "public", "--tag", version.includes("canary") ? "canary" : "latest"],
       {
         cwd: join("npm", name),
       },

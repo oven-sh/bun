@@ -25,8 +25,7 @@ pub use js_cell::JsCell;
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
 // `bun_string → bun_core` merge); re-exported here unchanged.
-pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 
@@ -476,12 +475,6 @@ unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 pub struct DetachablePtr<T>(core::cell::Cell<*mut T>);
 
 impl<T> DetachablePtr<T> {
-    /// A detached (null) slot.
-    #[inline]
-    pub const fn null() -> Self {
-        DetachablePtr(core::cell::Cell::new(core::ptr::null_mut()))
-    }
-
     /// Construct with an initial parked pointer. Establishes the type
     /// invariant: `ptr` (if non-null) must satisfy the contract on [`set`].
     #[inline]
@@ -525,13 +518,6 @@ impl<T> DetachablePtr<T> {
         // live `&mut T` whose originating borrow has not ended; the paired
         // `detach()` nulls the slot before it does. Sole live `&mut` per call.
         unsafe { self.0.get().as_mut() }
-    }
-}
-
-impl<T> Default for DetachablePtr<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::null()
     }
 }
 

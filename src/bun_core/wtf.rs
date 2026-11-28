@@ -37,6 +37,4 @@ pub fn parse_date(buf: &[u8]) -> Result<f64, InvalidDate> {
 // `WTF::parseDouble` — re-exported from the merged `string::wtf` module so
 // `bun_core::wtf::parse_double` (formerly `bun_core::wtf::parse_double`)
 // resolves unchanged.
-pub use crate::string::wtf::{
-    InvalidCharacter, WTFString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct, parse_double,
-};
+pub use crate::string::wtf::parse_double;

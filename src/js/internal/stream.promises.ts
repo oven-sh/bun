@@ -6,8 +6,6 @@ const { isIterable, isNodeStream, isWebStream } = require("internal/streams/util
 const { pipelineImpl: pl } = require("internal/streams/pipeline");
 const { finished } = require("internal/streams/end-of-stream");
 
-// require("internal/stream");
-
 function pipeline(...streams) {
   return new Promise((resolve, reject) => {
     let signal;

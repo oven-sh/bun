@@ -2,6 +2,8 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -453,6 +455,118 @@ describe("unix domain socket without websocket", () => {
     test("BUN_INSPECT='unix:' bun --inspect", async () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
+    });
+
+    // The client reads nothing until the script has logged all messages, so the
+    // inspector's socket holds all of them as unsent bytes. The kernel then takes
+    // them in many partial sends.
+    test("a client that reads late receives a backlog of large console messages in order", async () => {
+      const count = 32;
+      const size = 256 * 1024;
+      const path = randomSocketPath();
+      const { promise: connection, resolve: onConnection } = Promise.withResolvers<net.Socket>();
+      // Rejects when the server or the socket fails. Each wait below races it.
+      const { promise: failed, reject: onFailure } = Promise.withResolvers<never>();
+      failed.catch(() => {});
+      const server = net.createServer(onConnection);
+      server.on("error", onFailure);
+      let socket: net.Socket | undefined;
+      try {
+        server.listen(path);
+        await once(server, "listening");
+
+        const { promise: logged, resolve: onLogged } = Promise.withResolvers<void>();
+        await using inspectee = spawn({
+          cmd: [bunExe(), "--inspect-wait=unix:" + path, join(import.meta.dir, "inspectee-console-backlog.js")],
+          env: { ...bunEnv, BACKLOG_COUNT: String(count), BACKLOG_SIZE: String(size) },
+          stdout: "ignore",
+          stderr: "inherit",
+          stdin: "ignore",
+          ipc: message => {
+            if (message === "logged") onLogged();
+          },
+        });
+        // An inspectee that exits early fails the wait at once.
+        const orFailure = <T>(wait: Promise<T>, what: string) =>
+          Promise.race([
+            failed,
+            wait,
+            inspectee.exited.then(code => {
+              throw new Error(`the inspectee exited with code ${code} before ${what}`);
+            }),
+          ]);
+
+        socket = await orFailure(connection, "it connected");
+        const { promise: received, resolve: onReceived } = Promise.withResolvers<void>();
+        const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+        let next = 0;
+        let mismatches = 0;
+        socket.on("error", onFailure);
+        socket.on("close", () => {
+          if (next < count) onFailure(new Error("the socket closed before the client had all messages"));
+          onClosed();
+        });
+        // Frames are a 4-byte big-endian length, then that many bytes of JSON.
+        let chunks: Buffer[] = [];
+        let buffered = 0;
+        let wanted = 4;
+        let inHeader = true;
+        socket.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+          buffered += chunk.length;
+          while (buffered >= wanted) {
+            const all = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+            const part = all.subarray(0, wanted);
+            chunks = all.length > wanted ? [all.subarray(wanted)] : [];
+            buffered = all.length - wanted;
+            if (inHeader) {
+              wanted = part.readUInt32BE(0);
+              inHeader = false;
+              continue;
+            }
+            wanted = 4;
+            inHeader = true;
+            const { method, params } = JSON.parse(part.toString());
+            if (method !== "Console.messageAdded") continue;
+            if (params.message.text !== `#${next} ${Buffer.alloc(size, 97 + (next % 26)).toString()}`) mismatches++;
+            if (++next === count) onReceived();
+          }
+        });
+        for (const method of ["Inspector.enable", "Console.enable", "Runtime.enable", "Inspector.initialized"]) {
+          const body = Buffer.from(JSON.stringify({ id: 1, method }));
+          const frame = Buffer.alloc(4 + body.length);
+          frame.writeUInt32BE(body.length, 0);
+          body.copy(frame, 4);
+          socket.write(frame);
+        }
+        socket.pause();
+        await orFailure(logged, "it logged all messages");
+        const receivedWhilePaused = next;
+        socket.resume();
+        await orFailure(received, "the client had all messages");
+        inspectee.send("done");
+        // The counts are final once the socket has closed.
+        const [exitCode] = await Promise.race([failed, Promise.all([inspectee.exited, closed])]);
+
+        expect({
+          receivedWhilePaused,
+          received: next,
+          mismatches,
+          bytesOfPartialFrame: buffered,
+          atFrameBoundary: inHeader,
+          exitCode,
+        }).toEqual({
+          receivedWhilePaused: 0,
+          received: count,
+          mismatches: 0,
+          bytesOfPartialFrame: 0,
+          atFrameBoundary: true,
+          exitCode: 0,
+        });
+      } finally {
+        socket?.destroy();
+        server.close();
+      }
     });
   }
 });

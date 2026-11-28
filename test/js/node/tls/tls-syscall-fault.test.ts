@@ -1,4 +1,5 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
@@ -6,6 +7,7 @@ import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
+import { bytesWrittenUntil, patterned, receive } from "../net/unsent-bytes-helpers";
 
 const skip = !fault.available() || isWindows;
 
@@ -668,6 +670,83 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect({ events: client.events, errors: client.errors, destroyed: c.destroyed, secureConnect }).toEqual({
       ...RESET_CLOSE,
       secureConnect: false,
+    });
+  });
+});
+
+// The queue of a TLS handle holds plaintext that SSL_write did not take. TLS
+// has no writev arm: a write behind a queued tail is added to the queue, then
+// one SSL_write sends from its front.
+describe.skipIf(skip)("node:tls queue of unsent bytes under short sends", () => {
+  test("writes that writable events drain arrive in order", async () => {
+    using p = await connectedTLSPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(1024 * 1024);
+    const second = patterned(256 * 1024, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({
+      tailIsQueued: queuedTail > 0 && queuedTail < first.length,
+      bytesWritten,
+      allocatedAfterDrain,
+      ...state,
+    }).toEqual({
+      tailIsQueued: true,
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // The queue drops its sent prefix when a chunk arrives behind a tail that is
+  // more than half sent. The chunk then fits in the allocation of the tail.
+  test("a write behind a tail that is mostly sent does not grow the allocation", async () => {
+    using p = await connectedTLSPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(1024 * 1024);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
+    while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
+    const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({
+      tailIsQueued: queuedTail > 0 && queuedTail < first.length,
+      allocatedBefore: allocatedBefore - queuedTail,
+      allocatedAfter: allocatedAfter - queuedTail,
+      bytesWritten,
+      ...state,
+    }).toEqual({
+      tailIsQueued: true,
+      allocatedBefore: 0,
+      allocatedAfter: 0,
+      bytesWritten: [expected.length],
+      received: expected.length,
+      intact: true,
     });
   });
 });

@@ -894,18 +894,18 @@ pub fn normalize_source_path(name: &[u8]) -> Option<Box<[u8]>> {
     Some(absolute_key(name)?.as_bytes().into())
 }
 
-/// Whether nobody but this user and the system can have laid `path` where it is, or can replace it. Every folder and link on the way counts.
+/// Whether nobody but this user and the system can have laid the file `path` where it is, can replace it, or can lay a library that it loads beside it. Every folder and link on the way counts.
 #[cfg(unix)]
 fn only_this_user_can_write(path: &[u8]) -> bool {
-    // SAFETY: both take no arguments and cannot fail.
-    let (user, group) = unsafe { (libc::geteuid(), libc::getegid()) };
+    // SAFETY: it takes no arguments and cannot fail.
+    let user = unsafe { libc::geteuid() };
     // The group of administrators, who can become root.
     let administrators = if cfg!(target_os = "macos") { 80 } else { 0 };
     let is_safe = |it: &bun_sys::Stat, may_be_sticky: bool| {
         let mode = it.st_mode as u32;
         let is_sticky = may_be_sticky && mode & 0o1000 != 0;
-        let is_groups_own = it.st_gid == group || it.st_gid == 0 || it.st_gid == administrators;
-        let others = if is_groups_own { 0o002 } else { 0o022 };
+        let is_administrators = it.st_gid == 0 || it.st_gid == administrators;
+        let others = if is_administrators { 0o002 } else { 0o022 };
         (it.st_uid == user || it.st_uid == 0) && (is_sticky || mode & others == 0)
     };
     let mut at: Vec<u8> = Vec::new();
@@ -929,7 +929,7 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
     while let Some(component) = pending.pop() {
         let parent = at.len();
         if *component == *b".." {
-            at.truncate(at.iter().rposition(|&it| it == b'/').unwrap_or(0));
+            at.truncate(strings::last_index_of_char(&at, b'/').unwrap_or(0) as usize);
             continue;
         }
         at.push(b'/');
@@ -939,7 +939,12 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
             return false;
         };
         if !bun_sys::S::ISLNK(stat.st_mode as u32) {
-            if !is_safe(&stat, bun_sys::S::ISDIR(stat.st_mode as u32)) {
+            let is_folder = bun_sys::S::ISDIR(stat.st_mode as u32);
+            // In a sticky folder others can make files, but not replace this one. Nothing is loaded out of one.
+            let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
+            if !is_safe(&stat, is_folder)
+                || !is_folder && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
+            {
                 return false;
             }
             continue;
@@ -960,9 +965,7 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
 }
 
 #[cfg(windows)]
-fn only_this_user_can_write(_path: &[u8]) -> bool {
-    true
-}
+use bun_sys::windows::private_folder::only_this_user_can_write;
 
 /// Which of the two is meant by a source path at which the disk has a file and the executable too.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -2444,8 +2447,7 @@ impl StandaloneModuleGraph {
         if bun_sys::exists(key.as_bytes()) {
             let is_embedded_meant = disk_wins == DiskWins::IfOnlyThisUserCanWrite
                 && !program.preserves_source_paths
-                && *file.name == *key_in_graph
-                && !only_this_user_can_write(key.as_bytes());
+                && !Self::only_this_user_can_write(name, key.as_bytes());
             return is_embedded_meant.then_some(file);
         }
         let has_source = |it: &[u8]| self.has_source_on_disk(it, key.as_bytes());
@@ -2453,6 +2455,21 @@ impl StandaloneModuleGraph {
             || self.is_file_for_file_system_alone(file)
                 && under_own_root.as_deref().is_some_and(has_source);
         (!is_gone && !is_removed_by_program(file.name)).then_some(file)
+    }
+
+    /// `key` is `name` without `..`, which the system resolves through the links in front of it.
+    fn only_this_user_can_write(name: &[u8], key: &[u8]) -> bool {
+        if cfg!(windows) {
+            return only_this_user_can_write(key);
+        }
+        if bun_paths::is_absolute(name) {
+            return only_this_user_can_write(name);
+        }
+        let mut working_directory = path_buffer_pool::get();
+        bun_sys::getcwd(&mut working_directory).is_ok_and(|length| {
+            let path = [&working_directory[..length], b"/", name].concat();
+            only_this_user_can_write(&path)
+        })
     }
 
     /// Whether the program runs beside its sources, as far as `key` tells: the disk has the source of a compiled file from the nearest folder around `key` that holds one. Then a file that nobody named is gone if the disk says so. `key_in_graph` is `key` in the executable. Neither the folder nor a data file tells: a container often has the folder of the build with only the executable in it, and one file may be laid at its old place to stand for the embedded one.

@@ -1,11 +1,12 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isRoot, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   chownSync,
   copyFileSync,
   cpSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -14,6 +15,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { slot } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
@@ -948,11 +950,14 @@ test.skipIf(!systemCC)(
 );
 
 // `__dirname` holds the folder of the build. On another machine anybody may be able to make that folder.
-test.skipIf(!systemCC || isWindows)(
+test.skipIf(!systemCC)(
   "an embedded library is not looked for in the folder of the build where other users can write it",
   async () => {
-    using dir = tempDir("aot-library-laid-in-the-folder-of-the-build", {
-      "library.c": "int number(void) { return NUMBER; }\n",
+    // Any user may make files in the temporary folder of Windows' services, which is what CI can run as.
+    const home = isWindows ? mkdtempSync(join(homedir(), "bun-aot-library-")) : undefined;
+    await using _ = { [Symbol.asyncDispose]: async () => home && rmSync(home, { recursive: true, force: true }) };
+    const files = {
+      "library.c": `${isWindows ? "__declspec(dllexport) " : ""}int number(void) { return NUMBER; }\n`,
       "app/native/.keep": "",
       "app/main.cjs": `const { copyFileSync, symlinkSync, unlinkSync } = require("node:fs");
 const path = require("node:path");
@@ -963,14 +968,21 @@ if (how === "write") copyFileSync(from, name);
 if (how === "link") (unlinkSync(name), symlinkSync(from, name));
 console.log(dlopen(name, { number: { args: [], returns: "int" } }).symbols.number());
 `,
-    });
-    const folder = String(dir);
+    };
+    using dir = tempDir("aot-library-laid-in-the-folder-of-the-build", home ? {} : files);
+    const folder = home ?? String(dir);
+    if (home) {
+      for (const [name, text] of Object.entries(files)) {
+        mkdirSync(join(home, name, ".."), { recursive: true });
+        writeFileSync(join(home, name), text);
+      }
+    }
     const [app, native] = [join(folder, "app"), join(folder, "app", "native")];
     for (const [number, to] of [
       [1, join(native, "library.bin")],
       [2, join(folder, "other.bin")],
     ]) {
-      const command = [systemCC!, "-shared", "-fPIC", `-DNUMBER=${number}`];
+      const command = [systemCC!, "-shared", ...(isWindows ? [] : ["-fPIC"]), `-DNUMBER=${number}`];
       expect(await run(folder, [...command, "library.c", "-o", `${to}`])).toMatchObject({ exitCode: 0 });
     }
     const built = await run(app, [
@@ -992,16 +1004,36 @@ console.log(dlopen(name, { number: { args: [], returns: "int" } }).symbols.numbe
     expect(await loads()).toEqual(loaded(1));
     mkdirSync(native, { recursive: true });
     copyFileSync(other, laid);
+    // Everyone, under the name that it has in any language.
+    const everyone = "*S-1-1-0";
+    const openToAll = async (path: string) =>
+      isWindows
+        ? expect(await run(folder, ["icacls", path, "/grant", `${everyone}:(M)`])).toMatchObject({ exitCode: 0 })
+        : chmodSync(path, 0o777);
+    const close = async (path: string) =>
+      isWindows
+        ? expect(await run(folder, ["icacls", path, "/remove:g", everyone])).toMatchObject({ exitCode: 0 })
+        : chmodSync(path, 0o755);
     for (const path of [laid, native, app]) {
-      chmodSync(path, 0o777);
+      await openToAll(path);
       expect({ path, loads: await loads() }).toEqual({ path, loads: loaded(1) });
-      chmodSync(path, 0o755);
+      await close(path);
     }
     // What the user lays there is loaded, and so is what the program does, then and at the next start.
     expect(await loads()).toEqual(loaded(2));
     rmSync(laid);
     expect(await loads()).toEqual(loaded(1));
     expect(await loads("write", other)).toEqual(loaded(2));
+    expect(await loads()).toEqual(loaded(2));
+    if (isWindows) return;
+    // Nobody can write to the temporary folder, so the embedded library cannot be loaded, and the other one is not.
+    chmodSync(laid, 0o777);
+    mkdirSync(join(folder, "read-only"), { mode: 0o555 });
+    if (!isRoot) {
+      const failed = await run(folder, [executable], { ...env, BUN_TMPDIR: join(folder, "read-only") });
+      expect({ stdout: failed.stdout, exitCode: failed.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    }
+    chmodSync(laid, 0o755);
     expect(await loads("link", other)).toEqual(loaded(2));
     expect(await loads()).toEqual(loaded(2));
     chmodSync(other, 0o777);

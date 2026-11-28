@@ -17,6 +17,11 @@ const LOCAL_SYSTEM: c_int = 22;
 const BUILTIN_ADMINISTRATORS: c_int = 26;
 const ACCESS_ALLOWED_ACE: u8 = 0;
 const ACCESS_DENIED_ACE: u8 = 1;
+const INHERIT_ONLY_ACE: u8 = 8;
+/// `FILE_DELETE_CHILD`, `DELETE`, `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL` and `GENERIC_WRITE`.
+const REPLACE: u32 = 0x0040 | 0x0001_0000 | 0x0004_0000 | 0x0008_0000 | 0x1000_0000 | 0x4000_0000;
+/// `FILE_WRITE_DATA` and `FILE_APPEND_DATA`, which in a folder make files and folders.
+const WRITE: u32 = 0x0002 | 0x0004;
 const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 
 #[repr(C)]
@@ -119,6 +124,36 @@ impl User {
     }
 
     fn has_exclusive_access(&self, handle: HANDLE) -> bool {
+        // SAFETY: `is_owner_and_dacl` hands over valid SIDs.
+        self.is_owner_and_dacl(
+            handle,
+            &|owner| unsafe { self.trusts(owner) },
+            &|ace, sid| ace.kind == ACCESS_DENIED_ACE || unsafe { self.trusts(sid) },
+        )
+    }
+
+    /// Whether only this user, the system and the administrators have any of the rights `rights`.
+    fn alone_has(&self, handle: HANDLE, rights: u32) -> bool {
+        // SAFETY: `is_owner_and_dacl` hands over valid SIDs.
+        self.is_owner_and_dacl(
+            handle,
+            &|owner| unsafe { self.trusts(owner) || is_installer_or_owner(owner) },
+            &|ace, sid| {
+                ace.kind == ACCESS_DENIED_ACE
+                    || ace.flags & INHERIT_ONLY_ACE != 0
+                    || ace.mask & rights == 0
+                    || unsafe { self.trusts(sid) || is_installer_or_owner(sid) }
+            },
+        )
+    }
+
+    /// Whether the owner and every entry of the list pass. Entries other than allowed and denied never do.
+    fn is_owner_and_dacl(
+        &self,
+        handle: HANDLE,
+        owner_passes: &dyn Fn(PSID) -> bool,
+        ace_passes: &dyn Fn(&Ace, PSID) -> bool,
+    ) -> bool {
         let mut needed: DWORD = 0;
         // SAFETY: a length of 0 asks for the length only.
         unsafe { GetKernelObjectSecurity(handle, OWNER_AND_DACL, null_mut(), 0, &mut needed) };
@@ -144,8 +179,7 @@ impl User {
         if !is_read || owner.is_null() || is_present == 0 || dacl.is_null() {
             return false;
         }
-        // SAFETY: `owner` is the SID of a descriptor that the system handed over.
-        if !unsafe { self.trusts(owner) } {
+        if !owner_passes(owner) {
             return false;
         }
         // SAFETY: `dacl` is a valid ACL, which begins with this header.
@@ -158,8 +192,9 @@ impl User {
             }
             // SAFETY: an entry of either kind that is let through is a header, a mask and a SID.
             unsafe {
-                let (kind, sid) = ((*ace).kind, (&raw mut (*ace).sid).cast());
-                kind == ACCESS_DENIED_ACE || (kind == ACCESS_ALLOWED_ACE && self.trusts(sid))
+                let sid = (&raw mut (*ace).sid).cast();
+                matches!((*ace).kind, ACCESS_ALLOWED_ACE | ACCESS_DENIED_ACE)
+                    && ace_passes(&*ace, sid)
             }
         })
     }
@@ -199,6 +234,52 @@ impl User {
         // SAFETY: `path` is NUL-terminated; `descriptor` outlives the call.
         unsafe { win32::CreateDirectoryW(path.as_ptr(), &mut attributes) };
     }
+}
+
+/// TrustedInstaller, which owns the root of the system drive, and the entry that stands for whoever the owner is.
+///
+/// # Safety
+/// `sid` points to a valid SID.
+unsafe fn is_installer_or_owner(sid: PSID) -> bool {
+    const OWNER_RIGHTS: &str = "S-1-3-4";
+    const INSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+    let mut text: *mut u16 = null_mut();
+    // SAFETY: a valid SID by the contract, and a valid out-param.
+    if unsafe { ConvertSidToStringSidW(sid, &mut text) } == 0 {
+        return false;
+    }
+    let text = Local(text);
+    // SAFETY: the system wrote a NUL-terminated string.
+    let text = String::from_utf16_lossy(unsafe { bun_core::ffi::wstr_units(text.0) });
+    text == OWNER_RIGHTS || text == INSTALLER
+}
+
+/// Whether nobody but this user and the system can have laid the file where it is, or can replace it. `path` is absolute. A folder on the way that is a link is an answer of no.
+pub fn only_this_user_can_write(path: &[u8]) -> bool {
+    let Some(user) = User::current() else {
+        return false;
+    };
+    bun_paths::ancestors(path).enumerate().all(|(depth, at)| {
+        // A library that the file loads is looked for in its folder too.
+        let rights = if depth < 2 { REPLACE | WRITE } else { REPLACE };
+        let Ok(wide) = crate::long_path(at, crate::Tag::open) else {
+            return false;
+        };
+        let Ok(handle) = super::CreateFileW(
+            &wide,
+            win32::READ_CONTROL,
+            win32::FILE_SHARE_READ | win32::FILE_SHARE_WRITE,
+            win32::OPEN_EXISTING,
+            win32::FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        ) else {
+            return false;
+        };
+        let handle = handle.as_raw_handle();
+        super::GetFileInformationByHandle(handle).is_ok_and(|found| {
+            found.dwFileAttributes & win32::FILE_ATTRIBUTE_REPARSE_POINT == 0
+                && user.alone_has(handle, rights)
+        })
+    })
 }
 
 /// Makes the folder unless there is something at `path`.

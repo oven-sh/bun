@@ -646,6 +646,8 @@ mod tests {
         let value = LoadValue::Success(LoadSuccess {
             source_code: Box::from(&b"from plugin"[..]),
             loader: Loader::Json,
+            watch_files: Vec::new(),
+            watch_dirs: Vec::new(),
         });
         let loaded = loaded_from_value(
             value,

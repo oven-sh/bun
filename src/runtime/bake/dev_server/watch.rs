@@ -59,10 +59,12 @@ impl bun_watcher::WatcherContext for WatchContext {
                 bun_watcher::Kind::Directory => {
                     let names = event.names(changed_files);
                     if names.is_empty() {
-                        pending.event.append_dir(file_path, None);
+                        pending.event.append_dir(file_path, None, event.op);
                     }
                     for &sub_path in names {
-                        pending.event.append_dir(file_path, Some(sub_path));
+                        pending
+                            .event
+                            .append_dir(file_path, Some(sub_path), event.op);
                     }
                 }
             }

@@ -382,6 +382,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "answer_jsc.bind.ts": null,
   "bake_plugins.bind.ts": null,
   "bindgen_test.bind.ts": null,
+  "bundle.bind.ts": null,
   "bun_string_jsc.bind.ts": null,
   "checker_queries_testing.bind.ts": null,
   "code_resolver_testing.bind.ts": null,

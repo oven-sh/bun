@@ -3,9 +3,10 @@
 // a remainder below zero used as a key. A generator of random programs seldom puts just those three statements into one turn, and what it lays around them hides them. Here nothing lies around them:
 // no print in the loop, no closure that holds a variable, no counter of the module but where a statement is one. Each program is built alone and says at its end what every variable holds, with its kind.
 //
-//   bun write-turn-sweep.ts <folder> <from> <count> [stride] [lists|numbers|objects|records|grids|generators|texts|handed|quiet|pairs]      writes the programs number <from> .. <from> + <count> - 1 of a row; `bun write-turn-sweep.ts count [row]` prints how many it has
+//   bun write-turn-sweep.ts <folder> <from> <count> [stride] [lists|numbers|objects|records|grids|generators|texts|handed|quiet|pairs|held]      writes the programs number <from> .. <from> + <count> - 1 of a row; `bun write-turn-sweep.ts count [row]` prints how many it has
 //   bun write-turn-sweep.ts named <row> <pattern> <folder> [most]      writes the programs of the row whose names the pattern finds.
 //   With a stride that shares no factor with the length of the row, step n is program n * stride: the steps go through the whole row once, and any stretch of them is spread over all lists and heads.
+//   A test file imports `stretch()` and `programNamed()` and starts no process for them: ../../harness/turns-of-three-statements.ts.
 //
 // The row goes list by list, head by head, and within a head through all triples, so that its beginning is the plainest: a list of integers, a loop that counts up.
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -910,51 +911,93 @@ export {};
   };
 }
 
-const rows: Record<string, [number, (at: number, isTypeScript: boolean) => { name: string; text: string }]> = {
-  lists: [all, program],
-  numbers: [headsOfNumbers.length * operations.length ** 3, programOfNumbers],
-  objects: [headsOfObjects.length * deeds.length ** 3, programOfObjects],
-  records: [kindsOfRecords.length * headsOfRecords.length * doings.length ** 3, programOfRecords],
-  grids: [kindsOfGrids.length * headsOfGrids.length * steps.length ** 3, programOfGrids],
-  generators: [walked.length * consumers.length * producers.length * takings.length ** 3, programOfGenerators],
-  texts: [headsOfTexts.length * writings.length ** 3, programOfTexts],
-  handed: [listsHanded.length * headsOfHandings.length * handings.length ** 3, programOfHandings],
-  quiet: [kindsOfQuiet.length * headsOfQuiet.length * quietSteps.length ** 3, programOfQuiet],
-  pairs: [kindsOfMaps.length * headsOfPairs.length * dealings.length ** 3, programOfPairs],
-  held: [holders.length * kindsOfHeld.length * headsOfHeld.length * heldSteps.length ** 3, programOfHeld],
+/** A program under the name of its file. */
+type ProgramFile = { name: string; text: string };
+const rows: Record<
+  string,
+  [
+    length: number,
+    write: (at: number, isTypeScript: boolean) => { name: string; text: string },
+    statements: [string, string][],
+  ]
+> = {
+  lists: [all, program, statements],
+  numbers: [headsOfNumbers.length * operations.length ** 3, programOfNumbers, operations],
+  objects: [headsOfObjects.length * deeds.length ** 3, programOfObjects, deeds],
+  records: [kindsOfRecords.length * headsOfRecords.length * doings.length ** 3, programOfRecords, doings],
+  grids: [kindsOfGrids.length * headsOfGrids.length * steps.length ** 3, programOfGrids, steps],
+  generators: [walked.length * consumers.length * producers.length * takings.length ** 3, programOfGenerators, takings],
+  texts: [headsOfTexts.length * writings.length ** 3, programOfTexts, writings],
+  handed: [listsHanded.length * headsOfHandings.length * handings.length ** 3, programOfHandings, handings],
+  quiet: [kindsOfQuiet.length * headsOfQuiet.length * quietSteps.length ** 3, programOfQuiet, quietSteps],
+  pairs: [kindsOfMaps.length * headsOfPairs.length * dealings.length ** 3, programOfPairs, dealings],
+  held: [holders.length * kindsOfHeld.length * headsOfHeld.length * heldSteps.length ** 3, programOfHeld, heldSteps],
 };
-if (process.argv[2] === "count") console.log(rows[process.argv[3] ?? "lists"][0]);
-else if (process.argv[2] === "named") {
-  // The programs of a row whose names a pattern finds: a fault that is known by its cells is asked for by their names, however thin the row has become.
-  const [row, pattern, folder, most] = [
-    process.argv[3],
-    new RegExp(process.argv[4]),
-    process.argv[5],
-    Number(process.argv[6] ?? 500),
-  ];
-  const [length, write] = rows[row];
-  mkdirSync(folder, { recursive: true });
-  let written = 0;
-  for (let at = 0; at < length && written < most; at++) {
-    const isTypeScript = (at & 1) === 1;
-    const { name, text } = write(at, isTypeScript);
-    if (!pattern.test(name)) continue;
-    writeFileSync(`${folder}/${name}.${isTypeScript ? "ts" : "mjs"}`, text);
-    written++;
-  }
-  console.log(written);
-} else {
-  const [folder, from, count, stride] = [
-    process.argv[2],
-    ...[process.argv[3] ?? 0, process.argv[4] ?? 3000, process.argv[5] ?? 1].map(Number),
-  ] as [string, number, number, number];
-  const [length, write] = rows[process.argv[6] ?? "lists"];
-  mkdirSync(folder, { recursive: true });
-  for (let step = from; step < Math.min(length, from + count); step++) {
-    const at = (step * stride) % length;
-    // Every second program is TypeScript.
-    const isTypeScript = (at & 1) === 1;
-    const { name, text } = write(at, isTypeScript);
-    writeFileSync(`${folder}/${name}.${isTypeScript ? "ts" : "mjs"}`, text);
+
+/** Program number `at` of a row: its name, and its file. Every second program is TypeScript. */
+function numbered(row: string, at: number): { name: string; file: ProgramFile } {
+  const isTypeScript = (at & 1) === 1;
+  const { name, text } = rows[row][1](at, isTypeScript);
+  return { name, file: { name: `${name}.${isTypeScript ? "ts" : "mjs"}`, text } };
+}
+
+/** The programs number `from` .. `from + count - 1` of a row, each made when it is asked for. A row that does not exist throws at the call, before any is asked for. */
+export function stretch(row: string, from: number, count: number, stride = 1): Generator<ProgramFile> {
+  const length = rows[row][0];
+  return (function* () {
+    for (let step = from; step < Math.min(length, from + count); step++)
+      yield numbered(row, (step * stride) % length).file;
+  })();
+}
+
+/**
+ * The program of a row that has just this name behind its number, and the first of them if several have it. That none has it is an error.
+ * The three statements of a name say where the program stands among the turns of one head, for a number ends with their places. What stands in front of them differs from row to row.
+ * So the program at that place is made under every list and head of the row, 128 of them in the row that has most, and asked for its name. The command `named` makes every program in front of the one that its pattern finds.
+ */
+export function programNamed(row: string, name: string): ProgramFile {
+  const [length, , table] = rows[row];
+  const size = table.length;
+  const [front, ...lastTwo] = name.split("--");
+  const [second, third] = lastTwo.map(asked => table.findIndex(([each]) => each === asked));
+  // The first of the three ends what stands in front of the other two. Where the name of one statement ends the name of another, both are tried.
+  const firsts = table.flatMap(([each], place) => (front.endsWith("-" + each) ? [place] : []));
+  if (lastTwo.length === 2 && second >= 0 && third >= 0)
+    for (let head = 0; head < length; head += size ** 3)
+      for (const first of firsts) {
+        const { name: found, file } = numbered(row, head + (first * size + second) * size + third);
+        if (found.slice(found.indexOf("-") + 1) === name) return file;
+      }
+  throw new Error(`no program of the row ${row} is named ${name}`);
+}
+
+if (import.meta.main) {
+  if (process.argv[2] === "count") console.log(rows[process.argv[3] ?? "lists"][0]);
+  else if (process.argv[2] === "named") {
+    // The programs of a row whose names a pattern finds: a fault that is known by its cells is asked for by their names, however thin the row has become.
+    const [row, pattern, folder, most] = [
+      process.argv[3],
+      new RegExp(process.argv[4]),
+      process.argv[5],
+      Number(process.argv[6] ?? 500),
+    ];
+    const length = rows[row][0];
+    mkdirSync(folder, { recursive: true });
+    let written = 0;
+    for (let at = 0; at < length && written < most; at++) {
+      const { name, file } = numbered(row, at);
+      if (!pattern.test(name)) continue;
+      writeFileSync(`${folder}/${file.name}`, file.text);
+      written++;
+    }
+    console.log(written);
+  } else {
+    const [folder, from, count, stride] = [
+      process.argv[2],
+      ...[process.argv[3] ?? 0, process.argv[4] ?? 3000, process.argv[5] ?? 1].map(Number),
+    ] as [string, number, number, number];
+    const programs = stretch(process.argv[6] ?? "lists", from, count, stride);
+    mkdirSync(folder, { recursive: true });
+    for (const { name, text } of programs) writeFileSync(`${folder}/${name}`, text);
   }
 }

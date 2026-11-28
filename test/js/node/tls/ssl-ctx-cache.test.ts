@@ -9,7 +9,7 @@ import { once } from "node:events";
 import tls from "node:tls";
 // debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCerts } from "harness";
+import { bunEnv, bunExe, expiredTls, isLinux, tempDir, tls as tlsCerts } from "harness";
 import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -374,6 +374,45 @@ test("setDefaultCACertificates() override applies to plain tls.connect (no expli
     tls.setDefaultCACertificates(prev);
   }
 });
+
+// Only Linux reads the "system" list from files a test can choose.
+test.concurrent.each(isLinux ? ["extra", "system"] : ["extra"])(
+  "setDefaultCACertificates() keeps no second copy of what getCACertificates(%j) holds",
+  async type => {
+    using dir = tempDir("tls-default-ca-strings", { "roots.pem": tls.rootCertificates.join("\n") + "\n" });
+    const roots = join(String(dir), "roots.pem");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const tls = require("node:tls");
+        const { heapStats } = require("bun:jsc");
+        const stringBytes = () => (Bun.gc(true), heapStats().extraMemorySize);
+        const list = tls.getCACertificates(process.argv[1]);
+        tls.setDefaultCACertificates([list[0]]);
+        const before = stringBytes();
+        tls.setDefaultCACertificates(list);
+        const grown = stringBytes() - before;
+        console.log(JSON.stringify({
+          count: list.length,
+          sameText: tls.getCACertificates("default").join("") === list.join(""),
+          grown,
+          bytes: list.join("").length,
+        }));
+        `,
+        type,
+      ],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: roots, SSL_CERT_FILE: roots, SSL_CERT_DIR: String(dir) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { grown, bytes, ...rest } = stdout ? JSON.parse(stdout) : { stderr };
+    expect(rest).toEqual({ count: tls.rootCertificates.length, sameText: true });
+    expect(grown).toBeLessThan(bytes / 10);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("ca: [] skips the setDefaultCACertificates override (distinct from ca: undefined)", async () => {
   // Providing any `ca` value - including an empty array - bypasses the

@@ -970,7 +970,9 @@ pub(crate) fn defines_from_transform_options(
         )?;
     }
 
-    if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
+    if behavior != api::DotEnvBehavior::LoadAllWithoutInlining
+        && framework_env.is_none_or(|env| env.implicit_defines == ImplicitDefines::BuildTime)
+    {
         let quoted_node_env: Box<[u8]> = 'brk: {
             if let Some(node_env) = node_env {
                 if !node_env.is_empty() {
@@ -2220,6 +2222,17 @@ pub struct Env {
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
+
+    pub implicit_defines: ImplicitDefines,
+}
+
+/// Who gives `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` a value without a `define`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImplicitDefines {
+    /// The transpiler replaces them with the mode and the target of the build.
+    BuildTime,
+    /// They stay as written, and the program reads them when it runs.
+    LeftToRuntime,
 }
 
 impl Default for Env {
@@ -2229,6 +2242,7 @@ impl Default for Env {
             prefix: Box::default(),
             files: Box::default(),
             disable_default_env_files: false,
+            implicit_defines: ImplicitDefines::BuildTime,
         }
     }
 }

@@ -19,6 +19,8 @@ pub(crate) fn apply_standalone_runtime_flags(
     } else {
         DotEnvBehavior::LoadAllWithoutInlining
     };
+    // Modules from disk read NODE_ENV, BUN_ENV and process.browser when they run, in either mode.
+    b.options.env.implicit_defines = bun_bundler::options::ImplicitDefines::LeftToRuntime;
 
     b.resolver.opts.load_tsconfig_json =
         !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_TSCONFIG);

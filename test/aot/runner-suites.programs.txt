@@ -352,6 +352,8 @@ test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigD
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabled
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabledCLI
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabledWithExecArgv
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadDotenvDisabledReadsNodeEnvAtRuntime
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadDotenvDisabledReadsNodeEnvAtRuntimeWorkerCLI
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsCLI
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsEnabled
 test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsCLI

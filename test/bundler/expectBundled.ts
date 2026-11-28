@@ -432,7 +432,7 @@ export interface BundlerTestRunOptions {
    */
   errorLineMatch?: RegExp;
 
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
 
   runtime?: "bun" | "node";
 

@@ -5,6 +5,8 @@ test("t", async () => {
   const first = import("./module.mjs");
   vi.doMock("./module.mjs", async original => { calls++; return { ...(await original()), added: 1 }; });
   const second = import("./module.mjs");
-  console.log("SAID", await describe(first, "first"), "|", await describe(second, "second"), "|", calls, globalThis.ran);
+  // Both are listened to before either is awaited. A rejection that nobody listens to fails the test, and the second call now and then rejects a turn before the first is heard.
+  const [one, two] = [describe(first, "first"), describe(second, "second")];
+  console.log("SAID", await one, "|", await two, "|", calls, globalThis.ran);
   console.log("SAID", await describe(import("./module.mjs"), "again"), calls, globalThis.ran);
 }, 9000);

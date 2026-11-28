@@ -1,0 +1,13 @@
+{
+  "why": "nobody awaits the calls that the test leaves in flight: on a busy machine `bun test` now and then calls the factory for them, and on one thread always: the calls then get the mock",
+  "printed": [
+    "SAID dep begins",
+    "SAID mid begins dep",
+    "SAID part begins mid dep",
+    "SAID \"call 1 came\" \"part mid dep\" undefined",
+    "SAID \"call 2 came\" \"part mid dep\" undefined",
+    "SAID \"call 3 came\" \"part mid dep\" undefined"
+  ],
+  "tests": ["(pass) one"],
+  "exitCode": 0
+}

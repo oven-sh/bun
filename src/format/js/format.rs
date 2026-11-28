@@ -876,19 +876,8 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
     if ignored_node_terminator_follows_semi(f) {
         return write_ignored_statement_without_terminator(statement, span, f);
     }
-    let has_semicolon = match statement.kind() {
-        // `export var a` is an `ExportNamedDeclaration`.
-        StmtKind::Var(_)
-            if statement.is_exported() && span.start < statement.span_without_export().start =>
-        {
-            span.end < statement.span().end
-        }
-        // Prettier adds one in the head of a `for` too: `for (/* prettier-ignore */ const a; of b)`.
-        StmtKind::Var(_) if is_in_head_of_for(statement) => false,
-        StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger | StmtKind::Var(_) => true,
-        _ => span.end < statement.span().end,
-    };
     if f.options().semicolons.is_always() {
+        let has_semicolon = ignored_statement_has_semicolon(statement, span);
         return f.track_cursor(span, |f| {
             write!(
                 f,
@@ -907,6 +896,34 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
             ]
         )
     });
+}
+
+/// With semicolons, true if a `;` follows the copy of `statement`. `span`: see [`write_ignored_statement`].
+fn ignored_statement_has_semicolon(statement: Stmt<'_>, span: Span) -> bool {
+    match statement.kind() {
+        // `export var a` is an `ExportNamedDeclaration`.
+        StmtKind::Var(_)
+            if statement.is_exported() && span.start < statement.span_without_export().start =>
+        {
+            span.end < statement.span().end
+        }
+        // Prettier adds one in the head of a `for` too: `for (/* prettier-ignore */ const a; of b)`.
+        StmtKind::Var(_) if is_in_head_of_for(statement) => false,
+        StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger | StmtKind::Var(_) => true,
+        _ => span.end < statement.span().end,
+    }
+}
+
+/// True if `statement`, which is ignored, is printed as a copy of the source with a `;` after it or before it.
+pub(crate) fn is_copy_with_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    if ignored_node_terminator_follows_semi(f) {
+        return false;
+    }
+    let span = span_for_comments(statement.as_ast_nodes(), f);
+    match f.options().semicolons.is_always() {
+        true => ignored_statement_has_semicolon(statement, span),
+        false => print::statements::ignored_statement_needs_semicolon(statement, span.start, f),
+    }
 }
 
 /// For oxfmt the `;` at the end of a statement or class member isn't covered by a `prettier-ignore` comment. It's
@@ -954,7 +971,7 @@ fn write_ignored_statement_without_terminator<'a>(
 }
 
 /// True if `statement` ends with a `;` when semicolons are enabled.
-fn ends_with_terminator(statement: Stmt<'_>) -> bool {
+pub(crate) fn ends_with_terminator(statement: Stmt<'_>) -> bool {
     // The `;` after the declaration in the head of a loop is a separator.
     if is_in_head_of_for(statement) {
         return false;

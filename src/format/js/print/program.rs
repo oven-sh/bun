@@ -1,14 +1,19 @@
 //! The file, its `#!` line, directives, and lists of statements.
 
 use super::semicolon::OptionalSemicolon;
-use super::statements::{expression_statement_needs_semicolon, follows_type_cast_comment};
+use super::statements::{
+    expression_statement_needs_semicolon, follows_type_cast_comment, is_body, is_path_called_by_vue,
+};
 use crate::ir::element::TextWidth;
 use crate::js::ast_nodes::node_as_ast_nodes;
+use crate::js::format::{ends_with_terminator, is_copy_with_semicolon};
 use crate::js::sort_imports::ImportRun;
 use crate::js::trivia::comment_before_semicolon_keeps_its_line;
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::write;
+use smallvec::SmallVec;
 
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
@@ -162,6 +167,145 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             write!(f, empty_line());
         }
     }
+}
+
+/// A Vue event handler's statements with a `;` after each but the last: see `VueStatements` in `html/js.rs`.
+#[derive(Copy, Clone)]
+pub(crate) struct FormatSeparatedStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
+
+impl<'a> Format<'a> for FormatSeparatedStatements<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let mut statements = (self.0.iter())
+            .filter(|it| it.tag() != StmtTag::Empty)
+            .peekable();
+        let mut previous: Option<Stmt<'a>> = None;
+        while let Some(statement) = statements.next() {
+            let is_only = previous.is_none() && statements.peek().is_none();
+            // Code in HTML is never in the flavor of oxfmt, which has more rules for the line between two statements.
+            match previous.replace(statement) {
+                Some(previous) if is_next_line_empty_after(previous, f) => write!(f, empty_line()),
+                Some(_) => write!(f, hard_line_break()),
+                None => {}
+            }
+            let needs_semicolon = match (is_only, statement.kind()) {
+                // One of the empty statements around it has the `;`: `foo;;`
+                (true, StmtKind::Expr(expression)) => is_path_called_by_vue(expression),
+                (true, _) => true,
+                (false, _) => statements.peek().is_some(),
+            };
+            if !needs_semicolon {
+                write!(f, statement);
+                continue;
+            }
+            // `a() /* comment */; b()` is `a(); /* comment */`, as with semicolons.
+            let trailing = f.comments().of_node(statement.as_ast_nodes()).trailing;
+            write!(
+                f,
+                [
+                    FormatNodeWithoutTrailingComments(&statement),
+                    ";",
+                    FormatTrailingComments::Comments(trailing)
+                ]
+            );
+        }
+    }
+}
+
+/// True if [`FormatStatements`] surely prints a `;` for `statements`: a wrong yes leaves a Vue handler with none.
+pub(crate) fn surely_prints_semicolon<'a>(
+    statements: List<'a, Stmt<'a>>,
+    f: &Formatter<'a>,
+) -> bool {
+    // What a `prettier-ignore` comment is for is a copy of the source, and that can be any node.
+    let has_copies = f.comments().has_suppression_comments();
+    let mut inner = SmallVec::<[Stmt<'a>; 8]>::new();
+    for statement in statements.iter() {
+        if has_copies && f.comments().is_ignored(statement.as_ast_nodes()) {
+            if is_copy_with_semicolon(statement, f) {
+                return true;
+            }
+            continue;
+        }
+        if prints_own_semicolon(statement, &mut inner, f) {
+            return true;
+        }
+        if has_copies && has_suppression_comment_in(statement.span(), f) {
+            inner.clear();
+        }
+        while let Some(statement) = inner.pop() {
+            if prints_own_semicolon(statement, &mut inner, f) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True if a `prettier-ignore` comment is in `span`, so that a node in it can be a copy of the source.
+fn has_suppression_comment_in(span: Span, f: &Formatter<'_>) -> bool {
+    f.file().comments_by_id().any(|comment| {
+        span.start <= comment.span().start
+            && comment.span().end <= span.end
+            && f.comments().is_suppression_comment(comment)
+    })
+}
+
+/// True if `statement` is printed with a `;` that isn't in a statement inside it. Those are added to `inner`.
+fn prints_own_semicolon<'a>(
+    statement: Stmt<'a>,
+    inner: &mut SmallVec<[Stmt<'a>; 8]>,
+    f: &Formatter<'a>,
+) -> bool {
+    let has_semicolons = f.options().semicolons.is_always();
+    match statement.kind() {
+        // `for (;;)`
+        StmtKind::For { .. } => return true,
+        // `while (a);`
+        StmtKind::Empty => return is_body(statement),
+        // `;(b || c)()`: what `write_expression_statement` asks, and `write_semicolon_before_type_cast_comment`.
+        StmtKind::Expr(expression) if !has_semicolons => {
+            return expression_statement_needs_semicolon(statement, expression, f)
+                && (!follows_type_cast_comment(statement.span().start, f)
+                    || !(f.comments().of_node(statement.as_ast_nodes()).leading).is_empty());
+        }
+        StmtKind::DoWhile { body, .. } => {
+            inner.push(body);
+            return has_semicolons;
+        }
+        StmtKind::If { yes, no, .. } => {
+            inner.push(yes);
+            inner.extend(no);
+        }
+        StmtKind::ForIn { body, .. }
+        | StmtKind::ForOf { body, .. }
+        | StmtKind::While { body, .. }
+        | StmtKind::With { body, .. }
+        | StmtKind::Labeled { body, .. } => inner.push(body),
+        StmtKind::Block(statements) => inner.extend(statements.iter()),
+        StmtKind::Try {
+            block,
+            handler,
+            finalizer,
+            ..
+        } => {
+            inner.push(block);
+            inner.extend(handler);
+            inner.extend(finalizer);
+        }
+        StmtKind::Switch { cases, .. } => {
+            for case in cases.iter() {
+                inner.extend(case.body().iter());
+            }
+        }
+        StmtKind::Fn(func) if func.has_body() => {
+            if let FnBody::Block(statements) = func.body() {
+                inner.extend(statements.iter());
+            }
+        }
+        // None of these has a statement after its head, which `ends_with_terminator` would answer for.
+        _ => return has_semicolons && ends_with_terminator(statement),
+    }
+    false
 }
 
 /// `a ⏎ /* comment */; ⏎⏎ b`: see [`comment_before_semicolon_keeps_its_line`]. The comment is printed on its own line

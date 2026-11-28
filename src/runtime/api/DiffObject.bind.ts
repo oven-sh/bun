@@ -45,8 +45,8 @@ export const PatchOptions = b.dictionary(
 
 /** `patches.reduce(applyPatch, source)` passes an index here. */
 export const ApplyOptions = b.dictionary(
-  { fuzzFactor: refused, compareLine: refused, autoConvertLineEndings: b.bool.loose.default(true) },
-  { reportedAs: "options", nonObjectAsEmpty: true },
+  { fuzzFactor: refused, compareLine: refused, autoConvertLineEndings: b.bool.loose.nullable.default(true) },
+  { reportedAs: "options", nonObjectAsEmpty: true, allowArray: true },
 );
 
 export const Change = b.dictionary({ value: b.string, added: b.bool, removed: b.bool, count: b.usize });

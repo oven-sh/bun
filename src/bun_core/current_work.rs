@@ -135,8 +135,11 @@ impl GivesRecordBack {
         if self.signal_stack.get().is_some() {
             return;
         }
-        // SAFETY: all-zero is a valid `stack_t`.
-        let mut current: libc::stack_t = unsafe { core::mem::zeroed() };
+        let mut current = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: 0,
+            ss_size: 0,
+        };
         // SAFETY: `current` is a valid out-pointer.
         let is_asked = unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) } == 0;
         if !is_asked || current.ss_flags & libc::SS_DISABLE == 0 {

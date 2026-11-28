@@ -2,6 +2,7 @@
 
 use core::mem::MaybeUninit;
 use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use std::os::windows::io::AsRawHandle as _;
 
@@ -11,38 +12,40 @@ use super::kernel32::{ReadFile, WaitForSingleObject, WriteFile};
 use super::{BOOL, DWORD, HANDLE, INFINITE, NTSTATUS, OVERLAPPED, Win32Error, ntdll};
 use crate::Fd;
 
+/// `IO_STATUS_BLOCK`, whose status is read while the system may write it from an APC on this thread.
+#[repr(C)]
+struct PolledStatusBlock {
+    Status: AtomicUsize,
+    Information: usize,
+}
+bun_core::assert_ffi_layout!(PolledStatusBlock = IO_STATUS_BLOCK; Status, Information);
+
 /// Returns when the request that `start` makes on `handle` has ended. It names no event, APC routine or context, so no completion port hears of it.
 pub(crate) fn complete(
     handle: HANDLE,
     start: impl FnOnce(*mut IO_STATUS_BLOCK) -> NTSTATUS,
 ) -> (NTSTATUS, usize) {
-    let mut io = IO_STATUS_BLOCK {
-        Status: NTSTATUS::PENDING.0 as usize,
+    let mut io = PolledStatusBlock {
+        Status: AtomicUsize::new(NTSTATUS::PENDING.0 as usize),
         Information: 0,
     };
-    let io = &raw mut io;
-    let status = start(io);
-    // SAFETY: `io` is live until this function returns.
-    unsafe { wait(handle, io, status) }
+    let status = start((&raw mut io).cast());
+    let status = wait(handle, &io.Status, status);
+    (status, io.Information)
 }
 
-/// SAFETY: `io` is the live status block of the request on `handle` that answered `status`.
-unsafe fn wait(
-    handle: HANDLE,
-    io: *const IO_STATUS_BLOCK,
-    mut status: NTSTATUS,
-) -> (NTSTATUS, usize) {
+/// `io_status` is that of the request on `handle` that answered `status`.
+fn wait(handle: HANDLE, io_status: &AtomicUsize, mut status: NTSTATUS) -> NTSTATUS {
     while status == NTSTATUS::PENDING {
         // Every request on the handle resets its signal when it starts and sets it when it ends.
         let waited = WaitForSingleObject(handle, 100);
-        // SAFETY: `io` is live. The system writes it from an APC on this thread.
-        status = NTSTATUS(unsafe { (&raw const (*io).Status).read_volatile() } as u32);
+        // Relaxed: the writer is an APC on this thread.
+        status = NTSTATUS(io_status.load(Ordering::Relaxed) as u32);
         if status == NTSTATUS::PENDING && waited != WAIT_TIMEOUT {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    // SAFETY: `io` is live, and the request has ended.
-    (status, unsafe { (*io).Information })
+    status
 }
 
 /// [`complete`] for a call of kernel32. The offset in the `OVERLAPPED` is 0.
@@ -53,14 +56,12 @@ pub(crate) fn complete_overlapped(
     let mut overlapped: OVERLAPPED = bun_core::ffi::zeroed();
     // The low bit keeps the request from a completion port.
     overlapped.hEvent = event.as_raw_handle().map_addr(|handle| handle | 1);
-    let overlapped = &raw mut overlapped;
-    match super::check(start(overlapped)) {
+    match super::check(start(&raw mut overlapped)) {
         Err(Win32Error::IO_PENDING) => {}
         result => return result,
     }
     WaitForSingleObject(event.as_raw_handle(), INFINITE);
-    // SAFETY: `overlapped` is live, and the request has ended.
-    let status = NTSTATUS(unsafe { (*overlapped).Internal } as u32);
+    let status = NTSTATUS(overlapped.Internal as u32);
     transferred((status, 0)).map(|_| ())
 }
 
@@ -96,7 +97,7 @@ pub(crate) fn read(
     }
     let offset = offset.as_ref().map_or(ptr::null(), ptr::from_ref);
     transferred(complete(handle, |io| {
-        // SAFETY: `buf` is writable for `len` bytes until `complete` returns.
+        // SAFETY: `buf` is writable for `len` bytes, and `io` is live, until `complete` returns.
         unsafe {
             ntdll::NtReadFile(
                 handle,
@@ -126,7 +127,7 @@ pub(crate) fn write(handle: HANDLE, buf: &[u8], offset: Option<i64>) -> Result<u
     }
     let offset = offset.as_ref().map_or(ptr::null(), ptr::from_ref);
     transferred(complete(handle, |io| {
-        // SAFETY: `buf` is readable for `len` bytes until `complete` returns.
+        // SAFETY: `buf` is readable for `len` bytes, and `io` is live, until `complete` returns.
         unsafe {
             ntdll::NtWriteFile(
                 handle,

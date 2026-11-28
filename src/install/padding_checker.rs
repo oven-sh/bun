@@ -28,7 +28,7 @@
 //! }
 //! ```
 //!
-//! `bun_core::impl_no_uninit!(Demo)` compiles only for the second `Demo`, and both `write_array`s take `T: NoUninit`. It also rejects a union with unequal size fields, so what holds a `bin::Value` or a `resolution::Value` is still written through an `unsafe` byte view.
+//! `bun_core::impl_no_uninit!(Demo)` compiles only for the second `Demo`, and both `write_array`s take `T: NoUninit`. It also rejects a union with unequal size fields, so what holds a `resolution::Value` is still written through an `unsafe` byte view.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-version layout pins
@@ -82,7 +82,7 @@ mod layout_asserts {
     pin!(crate::ExternalStringMap, size = 16, align = 4);
     pin!(crate::integrity::Integrity, size = 65, align = 1); // u8 tag + [64]u8
     pin!(crate::repository::Repository, size = 40, align = 1); // 5 × String
-    pin!(crate::bin::Value, size = 16, align = 4); // union: [String;2] | ExternalSlice
+    pin!(crate::bin::Value, size = 16, align = 4); // [String;2], or an ExternalSlice in the first
     pin!(crate::bin::Bin, size = 20, align = 4);
     pin!(bun_semver::Version, size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
 

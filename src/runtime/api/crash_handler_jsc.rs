@@ -152,12 +152,9 @@ pub(crate) fn trap() {
     // int3 on x86_64 / brk on aarch64: both deliver SIGTRAP, matching the
     // instruction WTF's CRASH()/RELEASE_ASSERT emits.
     #[cfg(all(unix, target_arch = "x86_64"))]
-    // SAFETY: single trap instruction; no inputs/outputs.
-    unsafe {
-        core::arch::asm!("int3", options(nomem, nostack));
-    }
+    core::arch::breakpoint();
     #[cfg(all(unix, target_arch = "aarch64"))]
-    // SAFETY: single trap instruction; no inputs/outputs.
+    // SAFETY: single trap instruction; no inputs/outputs. `breakpoint()` emits `brk #0xf000`.
     unsafe {
         core::arch::asm!("brk #0", options(nomem, nostack));
     }

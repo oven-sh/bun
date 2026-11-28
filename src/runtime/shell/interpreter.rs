@@ -27,7 +27,7 @@
 
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
+use bun_jsc::{HasJsRef as _, JsCell, JsCellRefExt as _, JsRef};
 use bun_ptr::AliasableBox;
 use core::cell::Cell;
 use core::fmt;
@@ -2495,8 +2495,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js) {
         js::jsobjs_set_cached(js_value, global, jsobjs);
     }
-    // SAFETY: the payload of `this_value`.
-    let interp = unsafe { this_value.payload_ptr().as_ref() };
+    let interp = Interpreter::wrapped_by(this_value);
     this_value.set_js_ref_weak();
     interp.keep_alive.ref_(global.bun_vm().loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);

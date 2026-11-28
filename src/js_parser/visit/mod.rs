@@ -1811,10 +1811,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let generated_len = p.current_scope().generated.len();
             let outlined_len = rc.outlined_len();
             let compiled = {
+                let arena = p.arena;
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
                     &mut rc,
                     host,
+                    arena,
                     &pending,
                     stmts.as_mut_slice(),
                     name,

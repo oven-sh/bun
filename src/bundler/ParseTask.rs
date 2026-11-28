@@ -2131,6 +2131,8 @@ pub mod parse_worker {
         bump: &'static Bump,
         contents: &'static [u8],
     ) -> core::result::Result<Success<'static>, AnyError> {
+        let worker_ctx = this.ctx;
+
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
         // so hold it as a raw pointer and reborrow per use site.
@@ -2163,12 +2165,6 @@ pub mod parse_worker {
             // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
             .unwrap_or(Loader::File);
-
-        // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
-        // Read the `BackRef` field via `worker_raw` (not `this`) so no
-        // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
-        // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
-        let worker_ctx = unsafe { (*worker_raw).ctx };
 
         *step = Step::Parse;
 

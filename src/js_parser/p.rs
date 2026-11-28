@@ -1033,11 +1033,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn maybe_transpose_if_require_resolve(
         &mut self,
         arg: Expr,
-        state: Expr,
+        require_resolve_ref: Expr,
+        state: &TransposeState,
     ) -> Option<Expr> {
         self.transpose_each_branch(arg, &mut |p, branch| {
-            p.transpose_require_resolve(branch, state)
+            p.transpose_require_resolve(branch, require_resolve_ref, state)
         })
+    }
+
+    /// Whether `TransposeState::is_inlined_const` has to look at the leaves of this `import()`,
+    /// `require()` or `require.resolve()` specifier: when bundling with `const` inlining on, it is
+    /// an identifier, or a ternary with only identifiers and string literals as its leaves. Call
+    /// it before the visit of the specifier.
+    #[inline(never)]
+    pub(crate) fn specifier_is_written_as_identifier(&self, specifier: &Expr) -> bool {
+        if !self.options.bundle || !self.options.features.inlining {
+            return false;
+        }
+        let mut leaf = specifier;
+        loop {
+            match &leaf.data {
+                js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::EString(_) => return true,
+                js_ast::ExprData::EIf(branches) => {
+                    if !self.stack_check.is_safe_to_recurse()
+                        || !self.specifier_is_written_as_identifier(&branches.yes)
+                    {
+                        return false;
+                    }
+                    leaf = &branches.no;
+                }
+                _ => return false,
+            }
+        }
     }
 
     /// Record the destructured property names of an `await import()` /
@@ -1424,8 +1451,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+        let is_inlined_const = state.is_inlined_const(&arg);
+
         // The argument must be a string
-        if let Some(mut str_) = arg.data.as_e_string() {
+        if let Some(mut str_) = arg.data.as_e_string().filter(|_| !is_inlined_const) {
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
             // never be used.
@@ -1508,7 +1537,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
         }
 
-        let _ = self.check_dynamic_specifier(arg, arg.loc, "import()");
+        // The first visit reported a leaf that the source holds in a variable. The re-visit after
+        // a single-use substitution sees the same leaf, or the value that replaced the variable.
+        if !(is_inlined_const && self.is_revisit_for_substitution) {
+            // An inlined `const` has the position of its declaration. Report at the call.
+            let specifier_loc = if is_inlined_const { state.loc } else { arg.loc };
+            let _ = self.check_dynamic_specifier(arg, specifier_loc, "import()");
+        }
 
         self.new_expr(
             E::Import {
@@ -1525,15 +1560,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         arg: Expr,
         require_resolve_ref: Expr,
+        state: &TransposeState,
     ) -> Expr {
+        let is_inlined_const = state.is_inlined_const(&arg);
+
         // The argument must be a string
-        if matches!(arg.data, js_ast::ExprData::EString(_)) {
+        if matches!(arg.data, js_ast::ExprData::EString(_)) && !is_inlined_const {
             return self.transpose_require_resolve_known_string(arg, require_resolve_ref.loc);
         }
 
+        // An inlined `const` has the position of its declaration. Report at the call.
+        let specifier_loc = if is_inlined_const { state.loc } else { arg.loc };
+
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
-            let r = js_lexer::range_of_identifier(self.source, arg.loc);
+            let r = js_lexer::range_of_identifier(self.source, specifier_loc);
             self.log()
                 .add_range_debug(
                     Some(self.source),
@@ -1542,7 +1583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
         }
 
-        let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
+        let _ = self.check_dynamic_specifier(arg, specifier_loc, "require.resolve()");
 
         self.new_expr(
             E::Call {
@@ -1550,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 args: ExprNodeList::init_one(arg),
                 ..Default::default()
             },
-            arg.loc,
+            specifier_loc,
         )
     }
 
@@ -1608,8 +1649,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
+        let is_inlined_const = state.is_inlined_const(&arg);
         match arg.data {
-            js_ast::ExprData::EString(mut str_) => {
+            js_ast::ExprData::EString(mut str_) if !is_inlined_const => {
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -1730,15 +1772,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
-                let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
+                // An inlined `const` has the position of its declaration. Report at the call.
+                let specifier_loc = if is_inlined_const { state.loc } else { arg.loc };
+                let _ = self.check_dynamic_specifier(arg, specifier_loc, "require()");
                 self.record_usage_of_runtime_require();
                 self.new_expr(
                     E::Call {
-                        target: self.value_for_require(arg.loc),
+                        target: self.value_for_require(specifier_loc),
                         args: ExprNodeList::init_one(arg),
                         ..Default::default()
                     },
-                    arg.loc,
+                    specifier_loc,
                 )
             }
         }

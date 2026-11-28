@@ -1805,6 +1805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
+        let specifier_written_as_identifier = p.specifier_is_written_as_identifier(&e_.expr);
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
 
@@ -1834,6 +1835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.then_catch_chain.next_target,
                         Data::EImport(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
                     ),
+                specifier_written_as_identifier,
                 import_options: e_.options,
                 loc: e.loc,
                 import_loader: e_.import_record_loader(),
@@ -2069,6 +2071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             false
         };
 
+        let mut specifier_written_as_identifier = false;
         {
             let old_ce = p.options.ignore_dce_annotations;
             // Restored manually below.
@@ -2089,6 +2092,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.options.ignore_dce_annotations = true;
                 p.should_fold_typescript_constant_expressions = true;
+                // Only a lone argument is transposed below.
+                specifier_written_as_identifier = !is_macro_ref
+                    && e_.args.len_u32() == 1
+                    && p.specifier_is_written_as_identifier(&e_.args.slice()[0]);
             }
 
             // When a value is targeted by `--drop`, it will be removed.
@@ -2172,11 +2179,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: used_as.is_initializer()
                         && matches!(first.data, Data::EString(..)),
+                    specifier_written_as_identifier,
                     loc: expr.loc,
                     ..Default::default()
                 };
                 match &first.data {
-                    Data::EString(..) => {
+                    Data::EString(..) if !state.is_inlined_const(&first) => {
                         // require(FOO) => require(FOO)
                         *e = p.transpose_require(first, &state);
                         return;
@@ -2232,8 +2240,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
+                let state = TransposeState {
+                    specifier_written_as_identifier,
+                    loc: expr.loc,
+                    ..Default::default()
+                };
                 match &first.data {
-                    Data::EString(..) => {
+                    Data::EString(..) if !state.is_inlined_const(&first) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
                         *e = p.transpose_require_resolve_known_string(first, expr.loc);
@@ -2245,7 +2258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // FOO ? require.resolve('123') : require.resolve('456')
                         // This makes static analysis later easier
                         if let Some(transposed) =
-                            p.maybe_transpose_if_require_resolve(first, e_.target)
+                            p.maybe_transpose_if_require_resolve(first, e_.target, &state)
                         {
                             *e = transposed;
                         }

@@ -2044,6 +2044,237 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/49675
+  // A specifier that the source writes as an identifier is a run-time
+  // specifier. `minifySyntax` inlines a `const` string, and that must not turn
+  // the call into one the bundler resolves: the package is an optional peer
+  // that is not installed.
+  itBundled("minify/ConstSpecifierStaysRuntimeImport", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as hidden from "./hidden.mjs";
+        console.log("started");
+        const outcome = promise => promise.then(ns => ns.present, error => error.code);
+        for (const name of ["bare", "local", "ternary", "substituted"]) {
+          console.log(name, await outcome(hidden[name](true)));
+        }
+        console.log("ternary literal", await outcome(hidden.ternary(false)));
+        console.log("template", await outcome(hidden.template()));
+      `,
+      "/hidden.mjs": /* js */ `
+        const HIDDEN_FROM_BUNDLERS = "optional-peer-not-installed";
+        const PRESENT = "present";
+        export function bare() { return import(/* webpackIgnore: true */ HIDDEN_FROM_BUNDLERS); }
+        export function local() { const name = "optional-peer-not-installed"; return import(name); }
+        export function ternary(c) { return import(c ? HIDDEN_FROM_BUNDLERS : "./present.mjs"); }
+        // The minifier substitutes \`name\` and visits the ternary again.
+        export function substituted(c) { let name = "optional-peer-not-installed"; return c ? import(name) : null; }
+        // A template is not an identifier. The bundler still resolves it.
+        export function template() { return import(\`./\${PRESENT}.mjs\`); }
+      `,
+      "/present.mjs": `export const present = "from the bundle";`,
+    },
+    runtimeFiles: {
+      "/present.mjs": `export const present = "from the file at run time";`,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: {
+      stdout: `
+        started
+        bare ERR_MODULE_NOT_FOUND
+        local ERR_MODULE_NOT_FOUND
+        ternary ERR_MODULE_NOT_FOUND
+        substituted ERR_MODULE_NOT_FOUND
+        ternary literal from the bundle
+        template from the bundle
+      `,
+    },
+  });
+  itBundled("minify/ConstSpecifierStaysRuntimeRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        const HIDDEN_FROM_BUNDLERS = "optional-peer-not-installed";
+        const INSTALLED_LATER = "optional-peer-installed-later";
+        const forms = {
+          require: () => require(HIDDEN_FROM_BUNDLERS),
+          moduleRequire: () => module.require(HIDDEN_FROM_BUNDLERS),
+          requireResolve: () => require.resolve(HIDDEN_FROM_BUNDLERS),
+          ternary: () => require(globalThis.no ? "./present.js" : HIDDEN_FROM_BUNDLERS),
+          resolveTernary: () => require.resolve(globalThis.no ? "./present.js" : HIDDEN_FROM_BUNDLERS),
+        };
+        function outcome(load) {
+          try {
+            return load();
+          } catch (error) {
+            return error.code;
+          }
+        }
+        for (const name in forms) console.log(name, outcome(forms[name]));
+        globalThis.no = true;
+        console.log("ternary literal", outcome(forms.ternary));
+        // The peer is there when the program runs, so this require() must find it.
+        try {
+          console.log("in try", require(INSTALLED_LATER));
+        } catch (error) {
+          console.log("in try", error.message);
+        }
+      `,
+      "/present.js": `module.exports = "from the bundle";`,
+    },
+    runtimeFiles: {
+      "/present.js": `module.exports = "from the file at run time";`,
+      "/node_modules/optional-peer-installed-later/index.js": `module.exports = "found at run time";`,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: {
+      stdout: `
+        require MODULE_NOT_FOUND
+        moduleRequire MODULE_NOT_FOUND
+        requireResolve MODULE_NOT_FOUND
+        ternary MODULE_NOT_FOUND
+        resolveTernary MODULE_NOT_FOUND
+        ternary literal from the bundle
+        in try found at run time
+      `,
+    },
+  });
+  // A file that only a variable names is loaded at run time, with and without
+  // `minifySyntax`. That includes a `const` that one switch case declares and
+  // a later case reads.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`minify/ConstSpecifierOfExistingFileIsNotBundled${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const PLUGIN = "./plugin.js";
+          const FROM_DEFINE = DEFINED_PLUGIN;
+          function inSwitch(c) {
+            switch (c) {
+              case 1:
+                const NAME = "./plugin.js";
+                globalThis.seen = NAME;
+              default:
+                return require(NAME);
+            }
+          }
+          console.log((await import(PLUGIN)).default);
+          console.log(require(PLUGIN));
+          console.log(require.resolve(PLUGIN) === require.resolve("./plugin.js"));
+          console.log(inSwitch(1));
+          console.log(require(FROM_DEFINE));
+        `,
+        "/plugin.js": `module.exports = "from the bundle";`,
+      },
+      runtimeFiles: {
+        "/plugin.js": `module.exports = "from the file at run time";`,
+      },
+      define: { DEFINED_PLUGIN: '"./plugin.js"' },
+      target: "bun",
+      minifySyntax,
+      run: {
+        stdout: `
+          from the file at run time
+          from the file at run time
+          true
+          from the file at run time
+          from the file at run time
+        `,
+      },
+    });
+  }
+  // A file that the hidden module imports with a literal is not part of the
+  // build, so the package it needs does not have to be installed.
+  itBundled("minify/ConstSpecifierDoesNotPullInItsImports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        // to not bundle the provider
+        const name = "./provider.mjs";
+        export const load = () => import(name);
+        console.log("built");
+      `,
+      "/provider.mjs": `export { default } from "peer-of-the-provider-not-installed";`,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: { stdout: "built" },
+  });
+  // Specifiers that are not an identifier in the source keep their build-time
+  // value: the test of a ternary folds, a macro gets its `const` argument, and
+  // a `define` applies.
+  itBundled("minify/ConstFoldingStillSelectsSpecifier", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { pick } from "./macro.ts" with { type: "macro" };
+        const DEV = false;
+        const MODE = "production";
+        const NAME = "prod";
+        const byFlag = await import(DEV ? "./dev-not-present.mjs" : "./prod.mjs");
+        const byString = await import(MODE === "production" ? "./prod.mjs" : "./dev-not-present.mjs");
+        const nested = await import(DEV ? "./dev-not-present.mjs" : MODE !== "production" ? "./dev-not-present.mjs" : "./prod.mjs");
+        const byMacro = await import(pick(NAME));
+        const byDefine = await import(DEFINED_SPECIFIER);
+        // The minifier substitutes \`name\` and visits the ternary again. The template then folds.
+        async function bySubstitution(c) { let name = "prod"; return c ? import(\`./\${name}.mjs\`) : null; }
+        console.log(byFlag.mode, byString.mode, nested.mode, byMacro.mode, byDefine.mode);
+        console.log((await bySubstitution(true)).mode);
+        console.log(require(DEV ? "./dev-not-present.cjs" : "./prod.cjs"), require(pick(NAME)).mode);
+      `,
+      "/macro.ts": `export function pick(name: string) { return "./" + name + ".mjs"; }`,
+      "/prod.mjs": `export const mode = "from the bundle";`,
+      "/prod.cjs": `module.exports = "cjs from the bundle";`,
+    },
+    runtimeFiles: {
+      "/prod.mjs": `export const mode = "from the file at run time";`,
+      "/prod.cjs": `module.exports = "cjs from the file at run time";`,
+    },
+    define: { DEFINED_SPECIFIER: '"./prod.mjs"' },
+    target: "bun",
+    minifySyntax: true,
+    run: {
+      stdout: `
+        from the bundle from the bundle from the bundle from the bundle from the bundle
+        from the bundle
+        cjs from the bundle from the bundle
+      `,
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11732
+  // An executable still embeds a file that a template names, when a `const`
+  // or a single-use variable gives the template its value.
+  itBundled("minify/ConstInTemplateSpecifierStillEmbedsFile", {
+    compile: true,
+    files: {
+      "/entry.mjs": /* js */ `
+        const file = "icon";
+        const { default: icon } = await import(\`./\${file}.txt\`, { with: { type: "file" } });
+        async function substituted(c) { let name = "icon"; return c ? import(\`./\${name}.txt\`, { with: { type: "file" } }) : null; }
+        const again = (await substituted(true)).default;
+        console.log(icon === again, await Bun.file(icon).text());
+      `,
+      "/icon.txt": `icon from the executable`,
+    },
+    runtimeFiles: {
+      "/icon.txt": `icon from the file at run time`,
+    },
+    minifySyntax: true,
+    run: { stdout: "true icon from the executable" },
+  });
+  // A literal branch beside a variable branch is still resolved.
+  itBundled("minify/LiteralBranchBesideConstSpecifierIsResolved", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const HIDDEN_FROM_BUNDLERS = "optional-peer-not-installed";
+        export const load = c => import(c ? HIDDEN_FROM_BUNDLERS : "./typo-not-present.mjs");
+      `,
+    },
+    target: "bun",
+    minifySyntax: true,
+    bundleErrors: {
+      "/entry.mjs": [`Could not resolve: "./typo-not-present.mjs"`],
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

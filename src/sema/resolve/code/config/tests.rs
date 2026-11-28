@@ -243,49 +243,45 @@ fn extends_merges_settings_by_option() {
     let host = MemoryHost::new(&[("/lib/tsconfig.json", child), ("/lib/base.json", base)]);
     let merged = settings(&host, "/lib/a.tsx");
     assert!(merged.emits_decorator_metadata);
-    assert!(!merged.experimental_decorators);
+    assert!(merged.experimental_decorators);
     assert_eq!(merged.use_define_for_class_fields, Some(false));
     assert_eq!(render_jsx(&merged.jsx), "Classic dev h Fragment preact");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn last_extended_file_decides_experimental_decorators() {
-    let cases: [(&[Option<bool>], bool); 9] = [
-        (&[Some(true)], true),
-        (&[None], false),
-        (&[Some(true), None], false),
-        (&[Some(true), Some(false)], false),
-        (&[None, Some(true)], true),
-        (&[Some(false), Some(true)], true),
-        (&[Some(true), Some(true), None], false),
-        (&[None, Some(true), Some(false)], false),
-        (&[None, None, Some(true)], true),
-    ];
-    for (written, expected) in cases {
-        let merged = extends_chain_settings("experimentalDecorators", written);
-        assert_eq!(merged.experimental_decorators, expected, "{written:?}");
-        assert!(!merged.emits_decorator_metadata, "{written:?}");
-    }
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn any_extended_file_sets_decorator_metadata() {
-    let cases: [(&[Option<bool>], bool); 8] = [
+fn nearest_extended_file_decides_decorator_options() {
+    let cases: [(&[Option<bool>], bool); 10] = [
         (&[Some(true)], true),
         (&[None], false),
         (&[Some(true), None], true),
         (&[Some(true), Some(false)], true),
-        (&[Some(false), Some(true)], true),
-        (&[None, Some(true), None], true),
+        (&[Some(false), Some(true)], false),
+        (&[None, Some(true)], true),
+        (&[Some(true), Some(true), None], true),
+        (&[None, Some(true), Some(false)], true),
+        (&[None, Some(false), Some(true)], false),
         (&[None, None, Some(true)], true),
-        (&[Some(false), None, Some(false)], false),
     ];
+    let read = |merged: &TranspileSettings| {
+        [
+            merged.experimental_decorators,
+            merged.emits_decorator_metadata,
+        ]
+    };
     for (written, expected) in cases {
+        let merged = extends_chain_settings("experimentalDecorators", written);
+        assert_eq!(
+            read(&merged),
+            [expected, false],
+            "experimentalDecorators {written:?}"
+        );
         let merged = extends_chain_settings("emitDecoratorMetadata", written);
-        assert_eq!(merged.emits_decorator_metadata, expected, "{written:?}");
-        assert!(!merged.experimental_decorators, "{written:?}");
+        assert_eq!(
+            read(&merged),
+            [false, expected],
+            "emitDecoratorMetadata {written:?}"
+        );
     }
 }
 

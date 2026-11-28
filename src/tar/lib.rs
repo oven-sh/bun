@@ -23,4 +23,4 @@ pub mod writer;
 
 pub use decoder::{Decoder, MemoryDecoder};
 pub use error::{Error, Result};
-pub use reader::{Charset, Dialect, Entry, Event, Options, Reader};
+pub use reader::{Charset, Dialect, Entry, Event, Options};

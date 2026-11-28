@@ -4282,17 +4282,23 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
     if (hasModuleMocks) [[unlikely]]
         resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
-    if (moduleMocksRun) [[unlikely]]
+    if (moduleMocksRun) [[unlikely]] {
+        // Only the import that moduleLoaderImportModule() or importModuleFrom() resolves can wait, not what a plugin resolves meanwhile.
+        SetForScope canWait(globalObject->onLoadPlugins.importCanWaitForFetch, globalObject->onLoadPlugins.importCanWaitForFetch && isImportCall);
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
+    }
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);
         RETURN_IF_EXCEPTION(scope, {});
+        if (globalObject->onLoadPlugins.hasModuleMockBehindTurn) [[unlikely]]
+            Bun::didResolveImportWhileModuleMockIsHeldBack(globalObject, resolved);
     }
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        if (globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
+        // An import that waits for a fetch starts its load when it is resolved again.
+        if (globalObject->onLoadPlugins.moduleAheadOfImport.isNull() && globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
     }
     if (Bun::hasCompiledModules()) [[unlikely]] {
@@ -4382,11 +4388,22 @@ JSC::JSPromise* GlobalObject::importModuleWithLoader(Zig::GlobalObject* globalOb
 
     auto referrer = JSC::Identifier::fromString(vm, sourceOriginStringHolder);
     globalObject->onLoadPlugins.isResolvingImportCall = globalObject->onLoadPlugins.hasVirtualModules();
+    globalObject->onLoadPlugins.importCanWaitForFetch = globalObject->onLoadPlugins.isResolvingImportCall && loader == Bun::testFileModuleLoader(globalObject);
     globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::Identifier key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
     globalObject->onResolvePlugins.isResolvingImportCall = false;
-    if (scope.exception()) [[unlikely]]
+    globalObject->onLoadPlugins.importCanWaitForFetch = false;
+    if (scope.exception()) [[unlikely]] {
+        globalObject->onLoadPlugins.moduleAheadOfImport = String();
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
+    // The import() of a running mock factory waits for a module that another load is still fetching. See Bun::waitForFetchBeforeImportCall().
+    if (!globalObject->onLoadPlugins.moduleAheadOfImport.isNull()) [[unlikely]] {
+        JSC::JSPromise* waiting = Bun::waitForFetchBeforeImportCall(globalObject, moduleName, WTF::move(parameters), sourceOrigin);
+        Bun::didStartDynamicImport(globalObject, waiting, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return waiting;
+    }
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadKind::Import);

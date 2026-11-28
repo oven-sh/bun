@@ -98,6 +98,13 @@ test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the trans
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: []
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
+# These: two import() calls in one tick reach an async mock and then a mock that is built on it. Plain calls the second factory after the first has settled. Compiled calls it before that, here and before these tests were added.
+test/js/bun/test/mock/mock-module.test.ts: a mock doesn't wait for the pending factory of another load that imports it too > but it waits for a pending factory that comes before it in each of its loads, with the mocks of a preload
+test/js/bun/test/mock/mock-module.test.ts: a mock doesn't wait for the pending factory of another load that imports it too > but it waits for a pending factory that comes before it in each of its loads, with the mocks of the test file
+# The next one: an import() of a factory waits for a callback of onLoad() when its test file ends, and the callback answers in the next file. Plain drops the import with the file. A compiled import() goes on when the callback answers.
+test/js/bun/test/mock/mock-module.test.ts: a module behind an async onLoad() runs once for a factory and another load > an import() that waits doesn't go on after its test file
+# The next one: Bun.plugin.clearAll() while a callback of onLoad() holds a fetch and an import() of a factory waits for it. Compiled runs the files themselves, not the answer of the callback and the mock that is being loaded.
+test/js/bun/test/mock/mock-module.test.ts: a module behind an async onLoad() runs once for a factory and another load > an import() that waits goes on after Bun.plugin.clearAll()
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
 # The next one's fixture writes and deletes a name of a mocked namespace 30,000 times in one test, which has the 5 s that a test has by default. With a sanitizer, beside the other jobs of a lane, it took 6.6 s.

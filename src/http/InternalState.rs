@@ -313,7 +313,7 @@ impl<'a> InternalState<'a> {
                 // size.
                 if self.encoding == Encoding::Gzip
                     && let Some(estimated_size) = gzip_trailer_size(buffer)
-                    && estimated_size > deflater.shared_buffer.len()
+                    && estimated_size > crate::http_thread::LIBDEFLATE_SHARED_BUFFER_LEN
                 {
                     if estimated_size > max_output {
                         break 'libdeflate;
@@ -350,8 +350,12 @@ impl<'a> InternalState<'a> {
 
                 // `gunzip` decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
-                if let Ok(result) =
-                    decompress(buffer, Output::Slice(&mut deflater.shared_buffer[..]))
+                deflater.shared_buffer.clear();
+                let output = Output::Vec {
+                    vec: &mut deflater.shared_buffer,
+                    limit: crate::http_thread::LIBDEFLATE_SHARED_BUFFER_LEN,
+                };
+                if let Ok(result) = decompress(buffer, output)
                     && result.read == buffer.len()
                 {
                     if self
@@ -364,7 +368,7 @@ impl<'a> InternalState<'a> {
                     }
                     self.decoded_body
                         .list
-                        .extend_from_slice(&deflater.shared_buffer[0..result.written]);
+                        .extend_from_slice(&deflater.shared_buffer);
                     still_needs_to_decompress = false;
                 }
             }

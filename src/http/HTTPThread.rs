@@ -209,7 +209,8 @@ pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
 
 pub struct LibdeflateState {
     pub(crate) compressor: bun_deflate::Compressor,
-    pub(crate) shared_buffer: bun_core::PageBuffer<LIBDEFLATE_SHARED_BUFFER_LEN>,
+    /// `LIBDEFLATE_SHARED_BUFFER_LEN` bytes of capacity, never reallocated. Not zeroed, so that the pages that nothing is written to stay untouched.
+    pub(crate) shared_buffer: Vec<u8>,
 }
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
@@ -291,7 +292,7 @@ impl HttpThread {
         self.lazy_libdeflater
             .get_or_insert_with(|| LibdeflateState {
                 compressor: Default::default(),
-                shared_buffer: bun_core::PageBuffer::new(),
+                shared_buffer: Vec::with_capacity(LIBDEFLATE_SHARED_BUFFER_LEN),
             })
     }
 

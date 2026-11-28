@@ -452,8 +452,6 @@ public:
     /* really set it or if it's just the default value. */                                                   \
     V(public, LazyPropertyOfGlobalObject<JSC::JSFunction>, m_errorConstructorPrepareStackTraceInternalValue) \
                                                                                                              \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_nodeErrorCache)                                       \
-                                                                                                             \
     /* Used by napi_type_tag_object to associate a 128-bit type ID with JS objects. */                       \
     /* Should only use JSCell* keys and NapiTypeTag values. */                                               \
     V(private, LazyPropertyOfGlobalObject<JSC::JSWeakMap>, m_napiTypeTags)                                   \
@@ -613,8 +611,6 @@ public:
     // Store ALL V8 C++ module pointers to defer execution until after dlopen completes
     // A single .node file can register multiple V8 modules during static constructors
     WTF::Vector<node::node_module*> m_pendingV8Modules;
-
-    JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
     {

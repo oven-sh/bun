@@ -107,7 +107,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         RETURN_IF_EXCEPTION(scope, {});
         if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {
             {
-                NodeVMRunTermination termination(nodeVmGlobalObject, timeoutSeconds, breakOnSigint);
+                NodeVMRunTermination termination(nodeVmGlobalObject, NodeVMRunTermination::ErrorRealm::Main, timeoutSeconds, breakOnSigint);
                 nodeVmGlobalObject->drainOwnMicrotasks();
                 termination.finish(scope);
             }
@@ -222,7 +222,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     {
         // SIGINT interrupts the realm being evaluated (the context's, else the caller's).
-        NodeVMRunTermination termination(globalObject, timeoutSeconds, breakOnSigint);
+        NodeVMRunTermination termination(globalObject, NodeVMRunTermination::ErrorRealm::Main, timeoutSeconds, breakOnSigint);
         run();
         drainAfterEvaluate();
         // This run's own termination becomes ERR_SCRIPT_EXECUTION_* here; that error, like a regular one,

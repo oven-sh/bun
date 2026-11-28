@@ -30,6 +30,8 @@ public:
     static bool setPrototype(JSC::JSObject*, JSC::JSGlobalObject*, JSC::JSValue prototype, bool shouldThrowIfCantSet);
 
     JSC::Structure* encodeIntoObjectStructure() const { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
+    // The ErrorCodeCache of this realm: the Structure of each ERR_* error made in it.
+    JSC::JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -42,6 +44,7 @@ public:
      * those callbacks will eventually never be called anymore. But it'll work the first time!
      */
     LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_nodeErrorCache;
 };
 
 } // namespace Bun

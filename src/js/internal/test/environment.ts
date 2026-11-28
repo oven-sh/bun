@@ -224,9 +224,10 @@ function addProperty(
   properties.$set(key, value);
 }
 
-// Bun's reportError() knows nothing of this window. Node has none, so there React and others dispatch the event themselves.
+// Bun's reportError() knows nothing of this window. The global is the window's, as in vitest, or dispatches the event.
 function addReportError(win: any, globals: Pick<Environment, "properties" | "keys">) {
-  if (typeof win.reportError === "function") return;
+  if (typeof win.reportError === "function")
+    return addProperty(globals, "reportError", windowProperty(win, "reportError"));
   function reportError(error: unknown) {
     if (arguments.length === 0) throw new TypeError("reportError requires at least 1 argument, but only 0 were passed");
     const message =

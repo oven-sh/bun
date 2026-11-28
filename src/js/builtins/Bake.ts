@@ -153,26 +153,19 @@ export async function renderRoutesForProdStatic(
           pageModule,
           layouts,
         });
-        let result;
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter as AsyncIterable<RouteParams>) {
-            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            if ($isPromise(result) && $isPromisePending(result)) {
-              await result;
-            }
+            await callRouteGenerator(type, noClient, i, layouts, pageModule, params);
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
           for (const params of paramGetter as Iterable<RouteParams>) {
-            result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            if ($isPromise(result) && $isPromisePending(result)) {
-              await result;
-            }
+            await callRouteGenerator(type, noClient, i, layouts, pageModule, params);
           }
         } else {
           await Promise.all(
-            (paramGetter as { pages: RouteParams[] }).pages.map(params => {
-              callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-            }),
+            (paramGetter as { pages: RouteParams[] }).pages.map(params =>
+              callRouteGenerator(type, noClient, i, layouts, pageModule, params),
+            ),
           );
         }
       } else {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bun_core::{String as BunString, StringPointer};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{FetchHeaders, JSArrayIterator, JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_jsc::{HeadersRef, JSArrayIterator, JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_removable_features::{Feature, is_removed, removable_body};
 use bun_telemetry::processor::{self, Exporter};
 use bun_telemetry::{Instrument, InstrumentSet, RootSampler, Sampler, Value};
@@ -374,17 +374,14 @@ fn read_exporters(
 /// In the forms that `fetch()` takes.
 #[optimize(size)]
 fn read_headers(global: &JSGlobalObject, init: JSValue) -> JsResult<Vec<(String, String)>> {
-    let Some(mut headers) = FetchHeaders::create_from_js(global, init)? else {
+    let Some(headers) = HeadersRef::create_from_js(global, init)? else {
         return Ok(Vec::new());
     };
-    // SAFETY: `create_from_js` hands over a reference, which `deref` gives back.
-    let headers = unsafe { headers.as_mut() };
     let (count, len) = headers.count().unwrap_or_default();
     let mut names = vec![StringPointer::default(); count as usize];
     let mut values = names.clone();
     let mut text = vec![0u8; len as usize];
     headers.copy_to(&mut names, &mut values, &mut text);
-    headers.deref();
     let text = |p: StringPointer| lossy(&text[p.offset as usize..][..p.length as usize]);
     let pairs = names.into_iter().zip(values);
     Ok(pairs

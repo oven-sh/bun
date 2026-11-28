@@ -338,14 +338,7 @@ impl SecureContext {
         hasher.update(bytes);
         hasher.r#final(&mut folded);
         self.digest.set(folded);
-        // SAFETY: `self.ctx` is live; the call copies the 32 bytes.
-        unsafe {
-            boringssl::SSL_CTX_set_session_id_context(
-                self.ctx.as_ptr(),
-                folded.as_ptr(),
-                folded.len(),
-            );
-        }
+        self.ctx.set_session_id_context(&folded);
         Ok(())
     }
 

@@ -441,8 +441,7 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
         }),
     }
     .into_js(&cx.heap);
-    // SAFETY: the payload was just written, and nothing else can reach it yet.
-    let binding = unsafe { wrapper.payload_ptr().as_ref() };
+    let binding = wrapper.payload_guard();
     let path = &binding.node_fs.get().sync_error_buf;
     // LSAN does not scan the JS heap, and the VM that runs macros is never torn down.
     bun_core::asan::register_root_region((&raw const *path).cast(), size_of_val(path));

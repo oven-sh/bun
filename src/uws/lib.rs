@@ -1,8 +1,8 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 
-use bun_core::ZStr;
+use bun_core::{CStrRef, ZStr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Thin re-exports from uws_sys / runtime
@@ -103,22 +103,13 @@ pub struct SocketAddress {
 
 pub use bun_uws_sys::loop_::free_thread_loop;
 
-/// # Safety
-/// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
-    filename: *const c_char,
-    error_msg: *const c_char,
-) {
-    // SAFETY: caller contract guarantees valid NUL-terminated strings.
-    let filename = unsafe { bun_core::ffi::cstr(filename) };
-    // SAFETY: caller contract guarantees valid NUL-terminated strings.
-    let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
+extern "C" fn BUN__warn__extra_ca_load_failed(filename: CStrRef<'_>, error_msg: CStrRef<'_>) {
     // Node's wording: test-tls-env-bad-extra-ca.js matches on it.
     bun_core::pretty_errorln!(
         "Warning: Ignoring extra certs from `{}`, load failed: {}",
-        bstr::BStr::new(filename.to_bytes()),
-        bstr::BStr::new(error_msg.to_bytes()),
+        bstr::BStr::new(filename.to_cstr().to_bytes()),
+        bstr::BStr::new(error_msg.to_cstr().to_bytes()),
     );
     // stderr is buffered per thread: without this a Worker drops the line and the main thread holds it until exit.
     bun_core::Output::flush();
@@ -128,14 +119,12 @@ pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
 mod c {
     unsafe extern "C" {
-        // safe: no args; returns a process-static NUL-terminated cipher list.
-        pub(crate) safe fn us_get_default_ciphers() -> *const core::ffi::c_char;
+        pub(crate) safe fn us_get_default_ciphers() -> bun_core::CStrRef<'static>;
     }
 }
 
 pub fn get_default_ciphers() -> &'static ZStr {
-    // SAFETY: us_get_default_ciphers returns a static NUL-terminated string.
-    unsafe { ZStr::from_c_ptr(c::us_get_default_ciphers()) }
+    ZStr::from_cstr(c::us_get_default_ciphers().to_cstr())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -147,7 +136,6 @@ pub mod ssl_wrapper {
     use core::cell::{Cell, RefCell};
     use core::ffi::{c_char, c_int, c_long, c_void};
     use core::ptr::NonNull;
-    use core::sync::atomic::{AtomicPtr, Ordering};
     use std::collections::VecDeque;
     use std::sync::OnceLock;
 
@@ -162,12 +150,12 @@ pub mod ssl_wrapper {
             BIO, BIO_CTRL_FLUSH, BIO_METHOD, BIO_TYPE_SOURCE_SINK, BIO_clear_retry_flags,
             BIO_get_data, BIO_get_new_index, BIO_meth_new, BIO_meth_set_ctrl, BIO_meth_set_read,
             BIO_meth_set_write, BIO_new, BIO_set_data, BIO_set_init, BIO_set_retry_read,
-            ERR_clear_error, OwnedSslCtx, OwnedSslSession, SSL, SSL_CTX, SSL_ERROR_SSL,
+            ERR_clear_error, OwnedSsl, OwnedSslCtx, OwnedSslSession, SSL, SSL_CTX, SSL_ERROR_SSL,
             SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
-            SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished,
-            SSL_new, SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
+            SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished, SSL_new,
+            SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
             SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_session_id_context,
             SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit,
             ssl_renegotiate_never,
@@ -218,7 +206,7 @@ pub mod ssl_wrapper {
         incoming: RefCell<VecDeque<u8>>,
     }
 
-    extern "C" fn bio_write(bio: *mut boring_sys::BIO, data: *const c_char, len: c_int) -> c_int {
+    extern "C" fn bio_write(bio: &boring_sys::BIO, data: *const c_char, len: c_int) -> c_int {
         let Ok(count) = usize::try_from(len) else {
             return -1;
         };
@@ -235,19 +223,16 @@ pub mod ssl_wrapper {
         len
     }
 
-    extern "C" fn bio_read(bio: *mut boring_sys::BIO, out: *mut c_char, len: c_int) -> c_int {
+    extern "C" fn bio_read(bio: &boring_sys::BIO, out: *mut c_char, len: c_int) -> c_int {
+        boring_sys::BIO_clear_retry_flags(bio);
         // SAFETY: as in `bio_write`.
-        let ciphertext = unsafe {
-            boring_sys::BIO_clear_retry_flags(bio);
-            &*boring_sys::BIO_get_data(bio).cast::<Ciphertext>()
-        };
+        let ciphertext = unsafe { &*boring_sys::BIO_get_data(bio).cast::<Ciphertext>() };
         let mut incoming = ciphertext.incoming.borrow_mut();
         // BoringSSL reads again for what lies past the point where the ring wraps.
         let (front, _) = incoming.as_slices();
         let count = front.len().min(usize::try_from(len).unwrap_or(0));
         if count == 0 {
-            // SAFETY: `bio` is live.
-            unsafe { boring_sys::BIO_set_retry_read(bio) };
+            boring_sys::BIO_set_retry_read(bio);
             return -1;
         }
         // SAFETY: BoringSSL passes `len` writable bytes of its own, and `count <= len`.
@@ -260,34 +245,27 @@ pub mod ssl_wrapper {
     }
 
     /// BoringSSL fails a flight whose `BIO_flush` reports 0.
-    extern "C" fn bio_ctrl(
-        _: *mut boring_sys::BIO,
-        cmd: c_int,
-        _: c_long,
-        _: *mut c_void,
-    ) -> c_long {
+    extern "C" fn bio_ctrl(_: &boring_sys::BIO, cmd: c_int, _: c_long, _: *mut c_void) -> c_long {
         c_long::from(cmd == boring_sys::BIO_CTRL_FLUSH)
     }
 
-    fn bio_method() -> *const boring_sys::BIO_METHOD {
-        static METHOD: OnceLock<AtomicPtr<boring_sys::BIO_METHOD>> = OnceLock::new();
-        METHOD
-            .get_or_init(|| {
-                // A type of its own: see `us_ssl_is_socket` in openssl.cpp.
-                let r#type = boring_sys::BIO_get_new_index() | boring_sys::BIO_TYPE_SOURCE_SINK;
-                // SAFETY: the name is static, and a null `method` does not get past the check.
-                unsafe {
-                    let method = boring_sys::BIO_meth_new(r#type, c"SSLWrapper".as_ptr());
-                    if method.is_null() {
-                        bun_core::out_of_memory();
-                    }
-                    boring_sys::BIO_meth_set_write(method, Some(bio_write));
-                    boring_sys::BIO_meth_set_read(method, Some(bio_read));
-                    boring_sys::BIO_meth_set_ctrl(method, Some(bio_ctrl));
-                    AtomicPtr::new(method)
+    fn bio_method() -> &'static boring_sys::BIO_METHOD {
+        static METHOD: OnceLock<&boring_sys::BIO_METHOD> = OnceLock::new();
+        METHOD.get_or_init(|| {
+            // A type of its own: see `us_ssl_is_socket` in openssl.cpp.
+            let r#type = boring_sys::BIO_get_new_index() | boring_sys::BIO_TYPE_SOURCE_SINK;
+            // SAFETY: the name is static, and a null `method` does not get past the check. It is never freed.
+            unsafe {
+                let method = boring_sys::BIO_meth_new(r#type, c"SSLWrapper".as_ptr());
+                if method.is_null() {
+                    bun_core::out_of_memory();
                 }
-            })
-            .load(Ordering::Relaxed)
+                boring_sys::BIO_meth_set_write(method, Some(bio_write));
+                boring_sys::BIO_meth_set_read(method, Some(bio_read));
+                boring_sys::BIO_meth_set_ctrl(method, Some(bio_ctrl));
+                &*method
+            }
+        })
     }
 
     /// Cap on peer-initiated TLS renegotiations per
@@ -330,9 +308,11 @@ pub mod ssl_wrapper {
     }
 
     pub struct Inner {
+        /// First: it points at `callbacks` and `ciphertext`, so it drops before them.
+        owned_ssl: Cell<Option<boring_sys::OwnedSsl>>,
         callbacks: CallbackState,
-        pub ssl: Cell<Option<NonNull<boring_sys::SSL>>>,
-        pub(crate) ctx: Cell<Option<boring_sys::OwnedSslCtx>>,
+        /// `owned_ssl`, until `deinit`.
+        ssl: Cell<Option<NonNull<boring_sys::SSL>>>,
         pub flags: Flags,
         is_read_shutdown: Cell<bool>,
         pub(crate) renegotiation_count: Cell<u8>,
@@ -506,18 +486,16 @@ pub mod ssl_wrapper {
     }
 
     impl SSLWrapper {
-        /// Takes ownership of `ctx` (dropped on `Err`).
+        /// Drops `ctx`: the `SSL` holds a reference of its own.
         pub fn init_with_ctx(
             ctx: boring_sys::OwnedSslCtx,
             is_client: bool,
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
-            // SAFETY: ctx is a live SSL_CTX; SSL_new returns null on OOM.
-            let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
-                .ok_or(InitError::OutOfMemory)?;
-            // SAFETY: the method lives as long as the process; BIO_new returns null on OOM.
-            let bio = NonNull::new(unsafe { boring_sys::BIO_new(bio_method()) })
-                .unwrap_or_else(|| bun_core::out_of_memory());
+            let owned_ssl = boring_sys::SSL_new(&ctx).ok_or(InitError::OutOfMemory)?;
+            let ssl = owned_ssl.as_non_null();
+            let bio =
+                boring_sys::BIO_new(bio_method()).unwrap_or_else(|| bun_core::out_of_memory());
 
             // OpenSSL enables TLS renegotiation by default and accepts
             // renegotiation requests from the peer transparently.
@@ -539,7 +517,7 @@ pub mod ssl_wrapper {
                     // between an HTTP request and response in (unpipelined)
                     // HTTP/1.1.
                     boring_sys::SSL_set_renegotiate_mode(
-                        ssl.as_ptr(),
+                        &owned_ssl,
                         boring_sys::ssl_renegotiate_explicit,
                     );
                     boring_sys::SSL_set_connect_state(ssl.as_ptr());
@@ -554,21 +532,22 @@ pub mod ssl_wrapper {
                     // alert so that ClientHello messages cannot be used to
                     // flood a server and escape higher-level limits.)
                     boring_sys::SSL_set_renegotiate_mode(
-                        ssl.as_ptr(),
+                        &owned_ssl,
                         boring_sys::ssl_renegotiate_never,
                     );
                     boring_sys::SSL_set_accept_state(ssl.as_ptr());
                 }
             }
+            drop(ctx);
 
             let flags = Flags::default();
             flags.set_is_client(is_client);
 
             let inner = AliasableBox::new(Inner {
+                owned_ssl: Cell::new(Some(owned_ssl)),
                 callbacks: CallbackState::default(),
                 flags,
                 is_read_shutdown: Cell::new(false),
-                ctx: Cell::new(Some(ctx)),
                 ssl: Cell::new(Some(ssl)),
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
@@ -576,7 +555,7 @@ pub mod ssl_wrapper {
                 ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
-            // SAFETY: `ssl` and `bio` are live; the box outlives both, `deinit` frees `ssl` first. One BIO for both ends gives `ssl` its one reference.
+            // SAFETY: `ssl` and `bio` are live; the fields of the box outlive both. One BIO for both ends gives `ssl` its one reference.
             unsafe {
                 boring_sys::BIO_set_data(
                     bio.as_ptr(),
@@ -610,6 +589,11 @@ pub mod ssl_wrapper {
             Self::init_with_ctx(ssl_ctx, is_client)
         }
 
+        /// `None` after `deinit`.
+        pub fn ssl(&self) -> Option<NonNull<boring_sys::SSL>> {
+            self.ssl.get()
+        }
+
         /// As in `us_socket_adopt_tls`, a server's own `requestCert` / `rejectUnauthorized` replace the mode of the shared `SSL_CTX`. No-op for clients.
         pub fn set_server_verify(&self, request_cert: bool, reject_unauthorized: bool) {
             if self.flags.is_client() {
@@ -626,13 +610,9 @@ pub mod ssl_wrapper {
             } else {
                 boring_sys::SSL_VERIFY_NONE
             };
-            // SAFETY: `ssl` is this wrapper's live `SSL*`, before any handshake
-            // byte has been processed. The callback always returns 1 so
-            // BoringSSL never aborts mid-flight; JS reads `verify_error` and
-            // decides.
-            unsafe {
-                boring_sys::SSL_set_verify(ssl.as_ptr(), mode, Some(always_continue_verify));
-            }
+            // SAFETY: `ssl` is this wrapper's live `SSL*`.
+            let ssl = unsafe { ssl.as_ref() };
+            boring_sys::SSL_set_verify(ssl, mode, Some(always_continue_verify));
         }
 
         /// Client whose `rejectUnauthorized` policy is on: refuse a bad server
@@ -646,13 +626,12 @@ pub mod ssl_wrapper {
             let Some(ssl) = self.ssl.get() else { return };
             self.callbacks.inline_reject.set(true);
             // SAFETY: `ssl` is this wrapper's live `SSL*`.
-            unsafe {
-                boring_sys::SSL_set_verify(
-                    ssl.as_ptr(),
-                    boring_sys::SSL_VERIFY_PEER,
-                    Some(record_verify_failure),
-                );
-            }
+            let ssl = unsafe { ssl.as_ref() };
+            boring_sys::SSL_set_verify(
+                ssl,
+                boring_sys::SSL_VERIFY_PEER,
+                Some(record_verify_failure),
+            );
         }
 
         /// Parks sessions and key-log lines for `on_session`, `on_keylog` and `latest_session`. Call it before `start()`.
@@ -765,7 +744,7 @@ pub mod ssl_wrapper {
             self.flags.set_sent_ssl_shutdown(ret >= 0);
             if ret < 0 {
                 // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), ret) };
+                let err = boring_sys::SSL_get_error(unsafe { ssl.as_ref() }, ret);
                 boring_sys::ERR_clear_error();
 
                 if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
@@ -874,7 +853,7 @@ pub mod ssl_wrapper {
             };
             if written <= 0 {
                 // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), written) };
+                let err = boring_sys::SSL_get_error(unsafe { ssl.as_ref() }, written);
                 boring_sys::ERR_clear_error();
 
                 if err == boring_sys::SSL_ERROR_WANT_READ {
@@ -900,18 +879,10 @@ pub mod ssl_wrapper {
 
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
-            let ssl = self.ssl.take();
+            self.ssl.set(None);
             // A running pass can have BoringSSL on the stack (ALPNCallback): `handle_traffic` frees it.
             if self.traffic.get() == Traffic::Idle {
-                Self::free(ssl);
-            }
-            self.ctx.set(None);
-        }
-
-        fn free(ssl: Option<NonNull<boring_sys::SSL>>) {
-            if let Some(ssl) = ssl {
-                // SAFETY: ssl was created by SSL_new and the caller took it out of `self.ssl`; SSL_free also frees its BIO.
-                unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
+                self.owned_ssl.set(None);
             }
         }
 
@@ -990,39 +961,27 @@ pub mod ssl_wrapper {
         }
 
         /// BoringSSL verifies only in the first handshake, which only this call drives.
-        fn do_handshake(
-            &self,
-            ssl: NonNull<boring_sys::SSL>,
-            mut handler: &mut dyn Handler,
-        ) -> c_int {
+        fn do_handshake(&self, ssl: &boring_sys::SSL, mut handler: &mut dyn Handler) -> c_int {
             self.callbacks.handler.set((&raw mut handler).cast());
-            // SAFETY: ssl is a live SSL*.
-            let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
+            // SAFETY: `handle_traffic` runs one pass at a time, so this is not inside another.
+            let result = unsafe { boring_sys::SSL_do_handshake(ssl) };
             self.callbacks.handler.set(core::ptr::null_mut());
             result
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.
-        fn update_handshake_state(&self, handler: &mut dyn Handler) -> bool {
+        fn update_handshake_state(&self, ssl: &boring_sys::SSL, handler: &mut dyn Handler) -> bool {
             if self.flags.closed_notified() {
                 return false;
             }
-            let Some(ssl) = self.ssl.get() else {
-                return false;
-            };
 
-            // SAFETY: ssl is a live SSL*.
-            if unsafe { boring_sys::SSL_is_init_finished(ssl.as_ptr()) } != 0 {
+            if boring_sys::SSL_is_init_finished(ssl) != 0 {
                 // handshake already completed nothing to do here
                 debug_assert!(
                     self.flags.handshake_state() != HandshakeState::HandshakePending,
                     "the initial handshake completed outside update_handshake_state, unreported"
                 );
-                // SAFETY: ssl is a live SSL*.
-                if (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
-                    & boring_sys::SSL_RECEIVED_SHUTDOWN)
-                    != 0
-                {
+                if boring_sys::SSL_get_shutdown(ssl) & boring_sys::SSL_RECEIVED_SHUTDOWN != 0 {
                     // we received a shutdown
                     self.flags.set_received_ssl_shutdown(true);
                     // 2-step shutdown
@@ -1048,8 +1007,7 @@ pub mod ssl_wrapper {
             // Only the final verdict rejects: an alternate chain can recover a per-depth failure.
             if self.callbacks.inline_reject.get()
                 && self.callbacks.verify_failed.get()
-                // SAFETY: ssl is a live SSL*.
-                && unsafe { boring_sys::SSL_get_verify_result(ssl.as_ptr()) } != 0
+                && boring_sys::SSL_get_verify_result(ssl) != 0
             {
                 boring_sys::ERR_clear_error();
                 // Not only skipped below: a re-entered `handle_traffic` flushes the queue and never gets here.
@@ -1064,8 +1022,7 @@ pub mod ssl_wrapper {
             }
 
             if result <= 0 {
-                // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
+                let err = boring_sys::SSL_get_error(ssl, result);
                 let is_fatal =
                     err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
                 let mut reason_buf = [0u8; FATAL_ERROR_REASON_MAX];
@@ -1126,10 +1083,10 @@ pub mod ssl_wrapper {
         /// read data.
         fn handle_end_of_renegotiation(&self, handler: &mut dyn Handler) {
             if self.is_renegotiating()
-                && (self.ssl.get().is_none()
-                    // SAFETY: ssl is Some and live in this branch.
-                    || unsafe { boring_sys::SSL_is_init_finished(self.ssl.get().unwrap().as_ptr()) }
-                        != 0)
+                && self.ssl.get().is_none_or(|ssl| {
+                    // SAFETY: ssl is a live SSL*.
+                    boring_sys::SSL_is_init_finished(unsafe { ssl.as_ref() }) != 0
+                })
             {
                 // renegotiation ended successfully call on_handshake
                 self.flags
@@ -1139,30 +1096,34 @@ pub mod ssl_wrapper {
         }
 
         /// Handle reading data. Returns true if we can call handle_writing.
-        fn handle_reading(&self, handler: &mut dyn Handler, buffer: &mut IoBuffer) -> bool {
+        fn handle_reading(
+            &self,
+            ssl: &boring_sys::SSL,
+            handler: &mut dyn Handler,
+            buffer: &mut IoBuffer,
+        ) -> bool {
             let mut read: usize = 0;
 
             // read data from the input BIO
             loop {
                 log!("handleReading");
-                let Some(ssl) = self.ssl.get() else {
+                if self.ssl.get().is_none() {
                     return false;
-                };
+                }
 
                 // SAFETY: write-only view of the unfilled tail; SSL_read only stores into it.
                 let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
-                // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
+                // SAFETY: `handle_traffic` runs one pass at a time; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::SSL_read(
-                        ssl.as_ptr(),
+                        ssl,
                         available.as_mut_ptr().cast::<c_void>(),
                         c_int::try_from(available.len()).expect("int cast"),
                     )
                 };
                 log!("just read {}", just_read);
                 if just_read <= 0 {
-                    // SAFETY: ssl is still valid.
-                    let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
+                    let err = boring_sys::SSL_get_error(ssl, just_read);
 
                     if err != boring_sys::SSL_ERROR_WANT_READ
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
@@ -1184,18 +1145,14 @@ pub mod ssl_wrapper {
                             let over_limit = self.renegotiation_count.get() >= MAX_RENEGOTIATIONS;
                             self.renegotiation_count
                                 .set(self.renegotiation_count.get().saturating_add(1));
-                            // SAFETY: ssl is still valid.
-                            let renegotiated = unsafe {
-                                // BoringSSL refuses, so every refusal queues the same error.
-                                if over_limit {
-                                    boring_sys::SSL_set_renegotiate_mode(
-                                        ssl.as_ptr(),
-                                        boring_sys::ssl_renegotiate_never,
-                                    );
-                                }
-                                boring_sys::SSL_renegotiate(ssl.as_ptr())
-                            } != 0;
-                            if renegotiated {
+                            // BoringSSL refuses, so every refusal queues the same error.
+                            if over_limit {
+                                boring_sys::SSL_set_renegotiate_mode(
+                                    ssl,
+                                    boring_sys::ssl_renegotiate_never,
+                                );
+                            }
+                            if boring_sys::SSL_renegotiate(ssl) != 0 {
                                 self.flags.set_handshake_state(
                                     HandshakeState::HandshakeRenegotiationPending,
                                 );
@@ -1318,25 +1275,26 @@ pub mod ssl_wrapper {
                 self.traffic.set(Traffic::RerunRequested);
                 return;
             }
-            let ssl = self.ssl.get();
+            let Some(ssl) = self.ssl.get() else { return };
             loop {
                 self.traffic.set(Traffic::Running);
-                self.traffic_pass(handler);
+                // SAFETY: `deinit` does not free it while `traffic` is not `Idle`.
+                self.traffic_pass(unsafe { ssl.as_ref() }, handler);
                 if self.traffic.get() != Traffic::RerunRequested {
                     break;
                 }
             }
             self.traffic.set(Traffic::Idle);
             if self.ssl.get().is_none() {
-                Self::free(ssl);
+                self.owned_ssl.set(None);
             }
         }
 
         /// Not inlined: a call that re-enters `handle_traffic` would pay for the 64 KiB frame.
         #[inline(never)]
-        fn traffic_pass(&self, handler: &mut dyn Handler) {
+        fn traffic_pass(&self, ssl: &boring_sys::SSL, handler: &mut dyn Handler) {
             // always handle the handshake first
-            if self.update_handshake_state(handler) {
+            if self.update_handshake_state(ssl, handler) {
                 // send what the handshake queued first
                 self.handle_writing(handler);
 
@@ -1347,7 +1305,7 @@ pub mod ssl_wrapper {
                 // may belong to the handshake, which only update_handshake_state reports.
                 while self.traffic.get() == Traffic::Running
                     && self.has_pending_read()
-                    && self.handle_reading(handler, &mut buffer)
+                    && self.handle_reading(ssl, handler, &mut buffer)
                 {
                     // read data can trigger writing so we need to handle it
                     self.handle_writing(handler);
@@ -1390,25 +1348,17 @@ pub mod ssl_wrapper {
         }
     }
 
-    impl Drop for SSLWrapper {
-        fn drop(&mut self) {
-            Self::free(self.ssl.take());
-        }
-    }
-
     /// `us_verify_callback` equivalent — let the handshake complete regardless of
     /// verify result so JS reads `authorizationError` and `rejectUnauthorized`
     /// decides, instead of BoringSSL aborting mid-flight.
-    // Body is a constant `1` with no preconditions; the safe fn item still
-    // coerces to the `SSL_verify_cb` fn-pointer type at the `Some(..)` site.
-    extern "C" fn always_continue_verify(_: c_int, _: *mut boring_sys::X509_STORE_CTX) -> c_int {
+    extern "C" fn always_continue_verify(_: c_int, _: &boring_sys::X509_STORE_CTX) -> c_int {
         1
     }
 
     /// `always_continue_verify` for a rejecting client: also remembers that the chain had an error.
-    extern "C" fn record_verify_failure(ok: c_int, ctx: *mut boring_sys::X509_STORE_CTX) -> c_int {
+    extern "C" fn record_verify_failure(ok: c_int, ctx: &boring_sys::X509_STORE_CTX) -> c_int {
         if ok == 0 {
-            // SAFETY: BoringSSL passes the live store context of an `SSL` that `init_with_ctx` made.
+            // SAFETY: it is the store context of an `SSL` that `init_with_ctx` made.
             let state = unsafe {
                 us_ssl_wrapper_from_verify(ctx)
                     .cast::<CallbackState>()
@@ -1424,18 +1374,14 @@ pub mod ssl_wrapper {
     /// openssl.cpp's name check of the verify step, for an `SSL` that no `us_socket_t` drives: a `US_IDENTITY_*` verdict.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_server_identity(
-        state: *const CallbackState,
-        ssl: *mut boring_sys::SSL,
+        state: &CallbackState,
+        ssl: &mut boring_sys::SSL,
     ) -> c_int {
-        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on this live `ssl`.
-        let state = unsafe { &*state };
         let verdict = state.handler.with_taken(|handler| {
             // SAFETY: `do_handshake` stores the address of its argument for as long as it is inside
-            // BoringSSL and does not use it. The cell is empty while this borrow is live. `ssl` is live.
-            unsafe {
-                (handler.cast::<&mut dyn Handler>().as_mut())
-                    .map_or(ServerIdentity::Unchecked, |h| h.server_identity(&mut *ssl))
-            }
+            // BoringSSL and does not use it. The cell is empty while this borrow is live.
+            unsafe { handler.cast::<&mut dyn Handler>().as_mut() }
+                .map_or(ServerIdentity::Unchecked, |h| h.server_identity(ssl))
         });
         state
             .identity_checked
@@ -1447,17 +1393,15 @@ pub mod ssl_wrapper {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn us_ssl_wrapper_identity_checked(state: *const CallbackState) -> c_int {
-        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on a live `SSL`.
-        c_int::from(unsafe { &*state }.identity_checked.get())
+    extern "C" fn us_ssl_wrapper_identity_checked(state: &CallbackState) -> c_int {
+        c_int::from(state.identity_checked.get())
     }
 
     /// The name check after the handshake. The verify step's verdict stands when it gave one.
     pub fn check_server_identity(ssl: &mut boring_sys::SSL, host: &[u8]) -> bool {
         // SAFETY: `ssl` is live.
         if unsafe { us_ssl_identity_checked(ssl) } != 0 {
-            // SAFETY: `ssl` is live.
-            return unsafe { boring_sys::SSL_get_verify_result(ssl) } == 0;
+            return boring_sys::SSL_get_verify_result(ssl) == 0;
         }
         bun_boringssl::check_server_identity(ssl, host)
     }
@@ -1465,43 +1409,23 @@ pub mod ssl_wrapper {
     /// openssl.cpp's new-session callback, for an `SSL` that no `us_socket_t` drives.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_new_session(
-        state: *const CallbackState,
-        session: *mut boring_sys::SSL_SESSION,
+        state: &CallbackState,
+        session: &boring_sys::SSL_SESSION,
     ) {
-        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
-        let state = unsafe { &*state };
-        let Some(session) = NonNull::new(session).filter(|_| state.wants_session_and_keylog.get())
-        else {
+        if !state.wants_session_and_keylog.get() {
             return;
-        };
-        let retained = boring_sys::SSL_SESSION::opaque_ref(session.as_ptr());
+        }
         state
             .latest_session
-            .set(Some(boring_sys::OwnedSslSession::retain(retained)));
-        // SAFETY: a null `out` only measures.
-        let len = unsafe { i2d_SSL_SESSION(session.as_ptr(), core::ptr::null_mut()) };
-        let Some(len) = usize::try_from(len)
-            .ok()
-            .filter(|&n| n > 0 && n <= BUFFER_SIZE)
-        else {
-            return;
-        };
-        let mut bytes = vec![0u8; len].into_boxed_slice();
-        let mut out = bytes.as_mut_ptr();
-        // SAFETY: `out` is writable for the `len` bytes the measuring call reported.
-        unsafe { i2d_SSL_SESSION(session.as_ptr(), &raw mut out) };
-        state.sessions.borrow_mut().push_back(bytes);
+            .set(Some(boring_sys::OwnedSslSession::retain(session)));
+        if let Some(der) = session.to_der().filter(|der| der.len() <= BUFFER_SIZE) {
+            state.sessions.borrow_mut().push_back(Box::from(&*der));
+        }
     }
 
     /// openssl.cpp's keylog callback, for an `SSL` that no `us_socket_t` drives.
     #[unsafe(no_mangle)]
-    extern "C" fn us_ssl_wrapper_keylog(
-        state: *const CallbackState,
-        line: *const c_char,
-        len: usize,
-    ) {
-        // SAFETY: openssl.cpp passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
-        let state = unsafe { &*state };
+    extern "C" fn us_ssl_wrapper_keylog(state: &CallbackState, line: *const c_char, len: usize) {
         if !state.wants_session_and_keylog.get() {
             return;
         }
@@ -1528,8 +1452,7 @@ pub mod ssl_wrapper {
         /// openssl.cpp: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
         fn us_ssl_set_wrapper(ssl: *mut boring_sys::SSL, wrapper: *mut c_void);
         /// openssl.cpp: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.
-        fn us_ssl_wrapper_from_verify(ctx: *mut boring_sys::X509_STORE_CTX) -> *mut c_void;
-        fn i2d_SSL_SESSION(session: *mut boring_sys::SSL_SESSION, out: *mut *mut u8) -> c_int;
+        fn us_ssl_wrapper_from_verify(ctx: &boring_sys::X509_STORE_CTX) -> *mut c_void;
     }
 }
 
@@ -1587,7 +1510,7 @@ pub use SocketContext as socket_context;
 /// C-name alias for `SocketContext::BunSocketContextOptions` — what
 /// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
 /// Higher tiers (http, runtime/socket) reference it under the C struct name.
-pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOptions;
+pub type us_bun_socket_context_options_t<'a> = SocketContext::BunSocketContextOptions<'a>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketKind (a.k.a. DispatchKind) / CloseKind

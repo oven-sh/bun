@@ -3288,13 +3288,13 @@ impl SensitiveCString {
         Self(p.cast())
     }
 
-    pub fn as_ptr(&self) -> *const core::ffi::c_char {
-        self.0.as_ptr()
+    pub(crate) fn as_non_null(&self) -> core::ptr::NonNull<core::ffi::c_char> {
+        self.0
     }
 
     pub fn as_cstr(&self) -> &core::ffi::CStr {
         // SAFETY: `new` has terminated it, and it lives until `drop`.
-        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
+        unsafe { core::ffi::CStr::from_ptr(self.0.as_ptr()) }
     }
 
     pub fn as_bytes(&self) -> &[u8] {

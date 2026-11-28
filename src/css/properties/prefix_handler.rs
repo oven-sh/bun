@@ -131,7 +131,11 @@ impl FallbackHandler {
             };
 
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
+            // A browser that drops the value needs the earlier declaration, unless the two are equal.
+            if let Some(i) = *index
+                && (unparsed.is_kept_at_parse_time()
+                    || matches!(&dest[i], Property::Unparsed(held) if held.eql(&unparsed)))
+            {
                 dest[i] = Property::Unparsed(unparsed);
             } else {
                 *index = Some(dest.len());

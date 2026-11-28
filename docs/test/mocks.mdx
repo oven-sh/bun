@@ -533,6 +533,8 @@ test("hoisted", () => {
 });
 ```
 
+A factory that reads such a variable throws a `ReferenceError` when Bun calls it. If the mocked module is already loaded, Bun calls the factory at the `vi.mock()` or `jest.mock()` call, and that call can throw the error. For example, a test file that imports from `bun:test` imports `./mocks` first and `./notify` second, and `./mocks` mocks a module that `./notify` imports. Bun doesn't report the error in every such layout. If the call doesn't throw, the modules that already import the mocked module keep the real one, and Bun calls the factory at the next `import` or `require()` that gets the mock. To fix it, declare the variable with `vi.hoisted()`, create the value inside the factory, or use `mock.module()`, which isn't hoisted.
+
 `mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written.
 
 As in Vitest, `vi.doMock()` leaves a module that's already imported as it is. Whatever imported it keeps the real module. The next `import()` calls the factory and gets the mock. After `vi.doUnmock()`, an `import()` gets the module that was loaded before. `mock.module()` and `jest.doMock()` update the loaded module instead, so its importers get the mock too.

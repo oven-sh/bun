@@ -2716,6 +2716,7 @@ test.concurrent("a package that's installed for a peer dependency uses the versi
 
 // host@2 is only installed for app's peer dependency. Its own plugin@2 needs host@1, and host@1 depends on plugin@1,
 // which uses host@2. Installing host@1 for plugin@2 would make a cycle that can't be laid out in node_modules.
+// Dropping the override appends plugin@2 for host, and app's range moves onto it.
 test.concurrent("a package provides itself to a dependency that has a peer dependency on it", async () => {
   using server = await serveGraph({
     app: { "1.0.0": { dependencies: { plugin: "^1.0.0 || ^2.0.0" }, peerDependencies: { host: "2.0.0" } } },
@@ -2733,7 +2734,7 @@ test.concurrent("a package provides itself to a dependency that has a peer depen
 
   await write(join(dir, "package.json"), packageJson({}));
   await run(dir, "install");
-  expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "host/plugin@2.0.0", "plugin@1.0.0"]);
+  expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "plugin@2.0.0"]);
 });
 
 test.concurrent.each(["hoisted", "isolated"])(

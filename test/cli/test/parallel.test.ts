@@ -948,6 +948,34 @@ test("--parallel prints what a file printed under that file's name", async () =>
   expect(exitCode).toBe(1);
 });
 
+// Measured on Linux only: a worker's write of this size to its stderr socket arrives whole there.
+test.skipIf(!isLinux)("--parallel prints each GitHub Actions annotation as one whole line", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 8; i++) {
+    files[`f${i}.test.js`] = `import {test} from "bun:test";
+      const lines = Array.from({ length: 250 }, (_, line) => "line " + line).join("\\n");
+      for (let i = 0; i < 50; i++) test("fails " + i, () => { console.log("logged in f${i}"); throw new Error("thrown\\n\\n" + lines); });`;
+  }
+  using dir = tempDir("parallel-github-annotation", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=8"],
+    env: { ...bunEnv, GITHUB_ACTIONS: "true" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const annotations = stderr.split("\n").filter(line => line.includes("::error"));
+  const whole =
+    /^::error file=f\d\.test\.js,line=\d+,col=\d+,title=error: thrown::line 0%0A(line \d+%0A)*line 249%0A {6}at <anonymous> \(.*f\d\.test\.js:\d+:\d+\)$/;
+  expect(annotations.filter(line => !whole.test(line))).toEqual([]);
+  expect(annotations).toHaveLength(400);
+  // A worker writes an annotation that fits the 4096 bytes of its stderr buffer in one write. A longer one is several.
+  expect(Math.max(...annotations.map(line => line.length))).toBeLessThan(4096);
+  expect(exitCode).toBe(1);
+});
+
 test("--parallel never interleaves console output across files", async () => {
   // Two files, each test logs a marker then sleeps so the other worker has
   // time to also log. Buffered-per-test flush means a MARK line is always

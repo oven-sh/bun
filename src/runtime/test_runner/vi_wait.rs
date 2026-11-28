@@ -202,12 +202,16 @@ impl ViWait {
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this.as_ptr(), cx.context()) };
 
-        if let Err(err) = this.poll(global, this_value, true) {
-            match thrown_value(global, err) {
-                Ok(error) => this.settle(global, this_value, Err(error))?,
-                Err(err) => {
-                    this.finish();
-                    return Err(err);
+        {
+            // The first attempt runs inside the call, so the jobs it queues are the caller's to run.
+            let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
+            if let Err(err) = this.poll(global, this_value, true) {
+                match thrown_value(global, err) {
+                    Ok(error) => this.settle(global, this_value, Err(error))?,
+                    Err(err) => {
+                        this.finish();
+                        return Err(err);
+                    }
                 }
             }
         }

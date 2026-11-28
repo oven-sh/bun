@@ -568,6 +568,228 @@ describe("a zero-delay timer armed by a timer callback", () => {
     });
   });
 
+  // The runner runs the promise jobs of a test or hook callback itself, with the event loop count at 0, so a scope that a
+  // timer takes there is the outermost one. After a real wait (a timer, I/O) the jobs run under an event loop task and
+  // each case would pass without the hold: no case waits for the event loop before its control.
+  test("no promise job runs before a timer control returns in a promise job of a test callback", async () => {
+    using dir = tempDir("fake-timers-control-in-promise-job", {
+      "promise-job.test.ts": `
+        import { afterAll, afterEach, beforeEach, describe, expect, jest, test, vi } from "bun:test";
+        import { watch } from "node:fs";
+
+        const realSetImmediate = setImmediate;
+        const results = {};
+        // A microtask checkpoint runs both of these.
+        const queueJobs = order => {
+          Promise.resolve().then(() => order.push("promise job"));
+          process.nextTick(() => order.push("nextTick"));
+        };
+        const twoTimers = (order, schedule = setTimeout) => {
+          schedule(() => {
+            order.push("timer 1");
+            queueJobs(order);
+          }, 1);
+          schedule(() => order.push("timer 2"), 2);
+        };
+        const add = (name, drive) =>
+          test(name, async () => {
+            const order = [];
+            await drive(order);
+            // By now the jobs have run.
+            await new Promise(resolve => realSetImmediate(resolve));
+            results[name] = order;
+          });
+        afterEach(() => jest.useRealTimers());
+        afterAll(() => console.log(JSON.stringify(results)));
+
+        for (const [flavor, timers] of [["jest", jest], ["vi", vi]]) {
+          for (const control of ["advanceTimersByTime", "advanceTimersToNextTimer", "advanceTimersToNextFrame", "runOnlyPendingTimers", "runAllTimers", "runAllImmediates"]) {
+            add(flavor + "." + control, async order => {
+              timers.useFakeTimers({ toFake: ["setTimeout", "setImmediate"] });
+              twoTimers(order, control === "runAllImmediates" ? setImmediate : setTimeout);
+              await null;
+              timers[control](2);
+              order.push("returned");
+            });
+          }
+        }
+
+        add("an async timer callback", async order => {
+          vi.useFakeTimers();
+          setTimeout(async () => {
+            order.push("A fired");
+            await null;
+            order.push("A continues");
+            setTimeout(() => order.push("B fired"), 0);
+          }, 0);
+          await null;
+          vi.advanceTimersByTime(1);
+          order.push("returned");
+        });
+
+        add("in a .then()", order =>
+          Promise.resolve().then(() => {
+            jest.useFakeTimers();
+            twoTimers(order);
+            jest.advanceTimersByTime(2);
+            order.push("returned");
+          }),
+        );
+
+        add("setInterval()", async order => {
+          jest.useFakeTimers();
+          setInterval(() => {
+            order.push("round");
+            queueJobs(order);
+          }, 1);
+          await null;
+          jest.advanceTimersByTime(2);
+          order.push("returned");
+        });
+
+        add("AbortSignal.timeout()", async order => {
+          jest.useFakeTimers();
+          AbortSignal.timeout(1).addEventListener("abort", () => {
+            order.push("abort");
+            queueJobs(order);
+          });
+          setTimeout(() => order.push("timer"), 2);
+          await null;
+          jest.advanceTimersByTime(2);
+          order.push("returned");
+        });
+
+        add("a timer that throws", async order => {
+          jest.useFakeTimers();
+          setTimeout(() => {
+            order.push("timer 1");
+            queueJobs(order);
+            throw new Error("timer 1 threw");
+          }, 1);
+          setTimeout(() => order.push("timer 2"), 2);
+          await null;
+          try {
+            jest.advanceTimersByTime(2);
+          } catch (error) {
+            order.push(error.message);
+          }
+        });
+
+        add("a control called by a timer", async order => {
+          jest.useFakeTimers();
+          setTimeout(() => {
+            order.push("timer 1");
+            queueJobs(order);
+            jest.advanceTimersByTime(1);
+            order.push("timer 1 returns");
+          }, 1);
+          setTimeout(() => order.push("timer 2"), 2);
+          await null;
+          jest.advanceTimersByTime(1);
+          order.push("returned");
+        });
+
+        add("no timer is due", async order => {
+          jest.useFakeTimers();
+          await null;
+          queueJobs(order);
+          jest.advanceTimersByTime(1);
+          order.push("returned");
+        });
+
+        // No timer fires in these two. The callback makes a native call that emits an event before it returns.
+        const closeWatcher = order => {
+          order.push("callback");
+          Promise.resolve().then(() => order.push("promise job"));
+          watch(import.meta.dir).close();
+          order.push("callback returns");
+          return true;
+        };
+
+        add("runAllTicks()", async order => {
+          jest.useFakeTimers({ toFake: ["nextTick"] });
+          process.nextTick(() => closeWatcher(order));
+          await null;
+          jest.runAllTicks();
+          order.push("returned");
+        });
+
+        add("expect.poll()", async order => {
+          await null;
+          const polled = expect.poll(() => closeWatcher(order)).toBe(true);
+          order.push("returned");
+          await polled;
+        });
+
+        for (const wait of ["waitFor", "waitUntil"]) {
+          add("vi." + wait + "()", async order => {
+            vi.useFakeTimers();
+            twoTimers(order);
+            await null;
+            const waited = vi[wait](() => order.push("attempt"), { interval: 2 });
+            order.push("returned");
+            await waited;
+          });
+        }
+
+        describe("beforeEach()", () => {
+          const inHook = [];
+          beforeEach(async () => {
+            jest.useFakeTimers();
+            twoTimers(inHook);
+            await null;
+            jest.runAllTimers();
+            inHook.push("returned");
+          });
+          add("beforeEach()", order => void order.push(...inHook));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "promise-job.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const results = JSON.parse(
+      stdout
+        .trim()
+        .split("\n")
+        .findLast(line => line.startsWith("{")) ?? "{}",
+    );
+    const jobs = ["promise job", "nextTick"];
+    const twoTimers = ["timer 1", "timer 2", "returned", ...jobs];
+    const controls = [
+      "advanceTimersByTime",
+      "advanceTimersToNextTimer",
+      "advanceTimersToNextFrame",
+      "runOnlyPendingTimers",
+      "runAllTimers",
+      "runAllImmediates",
+    ];
+    expect({ results, exitCode }, stderr).toEqual({
+      results: {
+        ...Object.fromEntries(controls.map(control => [`jest.${control}`, twoTimers])),
+        ...Object.fromEntries(controls.map(control => [`vi.${control}`, twoTimers])),
+        "an async timer callback": ["A fired", "returned", "A continues"],
+        "in a .then()": twoTimers,
+        "setInterval()": ["round", "round", "returned", "promise job", "promise job", "nextTick", "nextTick"],
+        "AbortSignal.timeout()": ["abort", "timer", "returned", ...jobs],
+        "a timer that throws": ["timer 1", "timer 2", "timer 1 threw", ...jobs],
+        "a control called by a timer": ["timer 1", "timer 2", "timer 1 returns", "returned", ...jobs],
+        "no timer is due": ["returned", ...jobs],
+        "runAllTicks()": ["callback", "callback returns", "returned", "promise job"],
+        "expect.poll()": ["callback", "callback returns", "returned", "promise job"],
+        "vi.waitFor()": ["timer 1", "timer 2", "attempt", "returned", ...jobs],
+        "vi.waitUntil()": ["timer 1", "timer 2", "attempt", "returned", ...jobs],
+        "beforeEach()": twoTimers,
+      },
+      exitCode: 0,
+    });
+  });
+
   test("AbortSignal.timeout(0) fires 1ms after the callback that armed it", () => {
     bunVi.useFakeTimers();
     let signal!: AbortSignal;

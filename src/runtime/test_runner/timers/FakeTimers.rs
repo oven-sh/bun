@@ -1426,12 +1426,15 @@ fn throw_what_it_threw(global: &JSGlobalObject, ran: Result<JSValue, Stop>) -> J
     Err(global.throw_value(thrown))
 }
 
-fn rethrow(
+/// Runs a synchronous driver. Like sinon's, it starts no microtask checkpoint, whatever called it: under the
+/// count held here the scope of each timer it fires is a nested one, and the jobs they queue are the caller's to run.
+fn drive_sync(
     global: &JSGlobalObject,
     this_value: JsLocal<'_>,
-    ran: Result<JSValue, Stop>,
+    drive: impl FnOnce() -> Result<JSValue, Stop>,
 ) -> JsResult<JSValue> {
-    throw_what_it_threw(global, ran)?;
+    let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
+    throw_what_it_threw(global, drive())?;
     Ok(chainable_this(global, this_value))
 }
 
@@ -1549,7 +1552,7 @@ pub(crate) fn advance_timers_to_next_timer(
     let global = cx.global();
     error_unless_fake_timers(global)?;
     let steps = steps_argument(global, steps, "advanceTimersToNextTimer")?;
-    rethrow(global, this_value, FakeTimers::run_to_next_timer(global, steps))
+    drive_sync(global, this_value, || FakeTimers::run_to_next_timer(global, steps))
 }
 
 #[optimize(size)]
@@ -1561,7 +1564,7 @@ pub(crate) fn advance_timers_by_time(
     let global = cx.global();
     error_unless_fake_timers(global)?;
     let ms = milliseconds_argument(global, milliseconds, "advanceTimersByTime")?;
-    rethrow(global, this_value, advance(global, ms))
+    drive_sync(global, this_value, || advance(global, ms))
 }
 
 fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
@@ -1602,7 +1605,7 @@ pub(crate) fn advance_timers_to_next_frame(
     error_unless_fake_timers(global)?;
     let now_ms = timer_all().fake_timers.now().ms_unsigned();
     let to_next_frame = FakeTimers::FRAME_MS - now_ms % FakeTimers::FRAME_MS;
-    rethrow(global, this_value, advance(global, to_next_frame as f64))
+    drive_sync(global, this_value, || advance(global, to_next_frame as f64))
 }
 
 pub(crate) fn run_only_pending_timers(
@@ -1611,20 +1614,21 @@ pub(crate) fn run_only_pending_timers(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     error_unless_fake_timers(global)?;
-    rethrow(global, this_value, FakeTimers::run_only_pending(global))
+    drive_sync(global, this_value, || FakeTimers::run_only_pending(global))
 }
 
 pub(crate) fn run_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     error_unless_fake_timers(global)?;
-    rethrow(global, this_value, FakeTimers::run_all(global))
+    drive_sync(global, this_value, || FakeTimers::run_all(global))
 }
 
 pub(crate) fn run_all_ticks(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     error_unless_fake_timers(global)?;
-    let ran = FakeTimers::run_ticks(global).map(|()| JSValue::ZERO);
-    rethrow(global, this_value, ran)
+    drive_sync(global, this_value, || {
+        FakeTimers::run_ticks(global).map(|()| JSValue::ZERO)
+    })
 }
 
 #[optimize(size)]
@@ -1634,8 +1638,9 @@ pub(crate) fn run_all_immediates(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     error_unless_fake_timers(global)?;
-    let ran = FakeTimers::run_all_immediates(global).map_err(Stop::Vm);
-    rethrow(global, this_value, ran)
+    drive_sync(global, this_value, || {
+        FakeTimers::run_all_immediates(global).map_err(Stop::Vm)
+    })
 }
 
 #[optimize(size)]

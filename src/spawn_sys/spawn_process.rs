@@ -891,6 +891,25 @@ pub fn spawn_process_posix(
 
     let argv0 = options.argv0.or_else(|| argv.first());
     let argv0_cstr = argv0.expect("argv[0] is required").to_cstr();
+
+    #[cfg(target_os = "macos")]
+    if options.use_execve_on_macos {
+        // Darwin SETEXEC closes CLOEXEC sources before applying the file actions.
+        for action in &actions.actions {
+            if action.kind != crate::posix_spawn::bun_spawn::FileActionType::Dup2 {
+                continue;
+            }
+            let fd = Fd::from_native(action.fds[0]);
+            match bun_sys::clear_close_on_exec(fd) {
+                Ok(true) => cleanup.to_set_cloexec.push(fd),
+                Ok(false) => {}
+                // An earlier open/dup2 action may create this source fd.
+                Err(err) if err.get_errno() == bun_sys::E::EBADF => continue,
+                Err(err) => return Ok(Err(err)),
+            }
+        }
+    }
+
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {

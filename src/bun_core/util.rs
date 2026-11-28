@@ -4288,35 +4288,38 @@ fn spawn_sync_inherit_impl(
                     unsafe { libc::posix_spawn_file_actions_destroy(&raw mut self.0) };
                 }
             }
-            // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
-            // stdout/stderr stay inherited.
-            let actions = if stdin == StdinBehavior::Ignore {
-                let mut actions = core::ptr::null_mut();
-                if libc::posix_spawn_file_actions_init(&raw mut actions) != 0 {
-                    return Err(crate::CrateError::Unexpected);
-                }
-                let mut actions = FileActions(actions);
-                let rc = libc::posix_spawn_file_actions_addopen(
-                    &raw mut actions.0,
-                    0,
-                    c"/dev/null".as_ptr(),
-                    libc::O_RDONLY,
-                    0,
-                );
+            unsafe extern "C" {
+                fn posix_spawn_file_actions_addinherit_np(
+                    actions: *mut libc::posix_spawn_file_actions_t,
+                    fd: libc::c_int,
+                ) -> libc::c_int;
+            }
+            let mut raw_actions = core::ptr::null_mut();
+            if libc::posix_spawn_file_actions_init(&raw mut raw_actions) != 0 {
+                return Err(crate::CrateError::Unexpected);
+            }
+            let mut actions = FileActions(raw_actions);
+            for fd in 0..3 {
+                let rc = if fd == 0 && stdin == StdinBehavior::Ignore {
+                    libc::posix_spawn_file_actions_addopen(
+                        &raw mut actions.0,
+                        0,
+                        c"/dev/null".as_ptr(),
+                        libc::O_RDONLY,
+                        0,
+                    )
+                } else {
+                    posix_spawn_file_actions_addinherit_np(&raw mut actions.0, fd)
+                };
                 if rc != 0 {
                     return Err(crate::CrateError::Unexpected);
                 }
-                Some(actions)
-            } else {
-                None
-            };
+            }
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions
-                    .as_ref()
-                    .map_or(core::ptr::null(), |it| &raw const it.0),
+                &raw const actions.0,
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
@@ -4338,9 +4341,7 @@ fn spawn_sync_inherit_impl(
                 return Err(crate::CrateError::Unexpected);
             }
             if pid == 0 {
-                // Child. execvp inherits stdio + environ, which is exactly the
-                // "inherit" contract this helper promises. On failure, _exit
-                // (no destructors / atexit hooks in a forked child).
+                // Only async-signal-safe calls before exec in the forked child.
                 if stdin == StdinBehavior::Ignore {
                     // StdinBehavior::Ignore: fd 0 ← /dev/null.
                     let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
@@ -4349,6 +4350,18 @@ fn spawn_sync_inherit_impl(
                     }
                     if devnull != 0 {
                         libc::close(devnull);
+                    }
+                }
+                for fd in 0..3 {
+                    let flags = libc::fcntl(fd, libc::F_GETFD);
+                    if flags < 0 {
+                        if crate::ffi::errno() == libc::EBADF {
+                            continue;
+                        }
+                        libc::_exit(127);
+                    }
+                    if libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                        libc::_exit(127);
                     }
                 }
                 libc::execvp(ptrs[0], ptrs.as_ptr());

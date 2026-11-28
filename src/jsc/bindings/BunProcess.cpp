@@ -299,8 +299,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // https://github.com/oven-sh/bun/issues/7921
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         { "openssl", "1.1.0" },
-        // Not linked: src/http1/message parses in its place.
-        { "llhttp", "9.4.2" },
+        // Not linked: src/http1/message (HTTPParser) parses as this version does. A node:http server that listens parses with src/http1/request.
+        { "llhttp", "9.4.4" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "uwebsockets", BUN_VERSION_UWS },
         { "webkit", BUN_VERSION_WEBKIT },

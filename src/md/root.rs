@@ -142,6 +142,7 @@ impl Options {
             permissive_www_autolinks: self.permissive_www_autolinks || self.permissive_autolinks,
             permissive_email_autolinks: self.permissive_email_autolinks
                 || self.permissive_autolinks,
+            hard_soft_breaks: self.hard_soft_breaks,
             wiki_links: self.wiki_links,
             latex_math: self.latex_math,
             collapse_whitespace: self.collapse_whitespace,

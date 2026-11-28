@@ -412,7 +412,10 @@ impl Parser<'_> {
                         while sp > text_start && content[sp - 1] == b' ' {
                             sp -= 1;
                         }
-                        if emit_end - sp >= 2 {
+                        // Not in alt text: React would drop a `br` there and join the words.
+                        let is_forced =
+                            self.flags.hard_soft_breaks && self.image_nesting_level == 0;
+                        if emit_end - sp >= 2 || is_forced {
                             // Also strip any trailing tabs/spaces before the space run
                             let spaces = sp;
                             while sp > text_start
@@ -420,7 +423,8 @@ impl Parser<'_> {
                             {
                                 sp -= 1;
                             }
-                            is_hard = sp == spaces
+                            is_hard = is_forced
+                                || sp == spaces
                                 || !compat::tab_before_the_blanks_is_no_hard_break(&self.flags);
                             if is_hard {
                                 emit_end = sp;

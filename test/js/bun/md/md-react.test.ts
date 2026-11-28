@@ -373,6 +373,18 @@ This is **bold** and *italic*.
     const pChildren = children("line1\nline2\n")[0].props.children;
     expect(pChildren).toContain("\n");
   });
+
+  test("hardSoftBreaks makes each line ending a br element", () => {
+    const parts = (options?: object) =>
+      children("a\nb\nc\n", undefined, options)[0].props.children.map((child: any) => child.type ?? child);
+    expect(parts()).toEqual(["a", "\n", "b", "\n", "c"]);
+    expect(parts({ hardSoftBreaks: true })).toEqual(["a", "br", "b", "br", "c"]);
+  });
+
+  test("hardSoftBreaks leaves the line ending in the alt of an image", () => {
+    const img = children("![a\nb](u)\n", undefined, { hardSoftBreaks: true })[0].props.children[0];
+    expect(img.props).toEqual({ src: "u", alt: "a\nb" });
+  });
 });
 
 // ============================================================================
@@ -438,6 +450,11 @@ describe("Bun.markdown.react renderToString", () => {
     expect(html).toContain("<br/>");
     expect(html).toContain("line1");
     expect(html).toContain("line2");
+  });
+
+  test("hardSoftBreaks", () => {
+    expect(reactRender("a\nb\n", undefined, { hardSoftBreaks: true })).toBe("<p>a<br/>b</p>");
+    expect(reactRender("a\nb\n")).toBe("<p>a<!-- -->\n<!-- -->b</p>");
   });
 
   test("blockquote", () => {
@@ -601,6 +618,11 @@ describe("Bun.markdown.react component overrides", () => {
     expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(el.type).toBe("custom-hr");
     expect(el.props).toEqual({});
+  });
+
+  test("br override with the hardSoftBreaks option", () => {
+    const [a, br, b] = children("a\nb\n", { br: "custom-br" }, { hardSoftBreaks: true })[0].props.children;
+    expect([a, br.type, br.props, b]).toEqual(["a", "custom-br", {}, "b"]);
   });
 });
 

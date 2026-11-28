@@ -267,6 +267,11 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
+    // Node's tty.WriteStream is a net.Socket, so it has read(), which returns null when nothing was received.
+    WriteStream.prototype.read = function () {
+      return null;
+    };
+
     return Prototype;
   },
   enumerable: true,

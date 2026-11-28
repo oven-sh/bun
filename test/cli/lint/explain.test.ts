@@ -32,7 +32,8 @@ async function lintInTerminal(args: string[], env: Env = {}) {
     terminal: { cols: 200, rows: 50, data: (_, chunk) => void (output += decoder.decode(chunk, { stream: true })) },
   });
   const exitCode = await proc.exited;
-  return { output: output.replaceAll("\r\n", "\n"), exitCode };
+  // A macOS pty writes `\r\r\n` for a `\n` whose expansion the full output queue cut in two.
+  return { output: output.replace(/\r+\n/g, "\n"), exitCode };
 }
 
 interface Listed {

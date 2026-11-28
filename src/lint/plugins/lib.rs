@@ -52,6 +52,7 @@ bun_lint::rules! {
     bun_prefer_url_for_sibling_files::PreferUrlForSiblingFiles,
     bun_react_no_latest_value_ref::ReactNoLatestValueRef,
     bun_react_no_local_render_helpers::ReactNoLocalRenderHelpers,
+    bun_react_no_manual_memoization::ReactNoManualMemoization,
     bun_react_no_namespace_hooks::ReactNoNamespaceHooks,
     bun_react_prefer_updater_function::ReactPreferUpdaterFunction,
     bun_zod_prefer_lazy_schema::ZodPreferLazySchema,

@@ -839,6 +839,11 @@ impl<'f, 'i, 'a, 's> Execution<'f, 'i, 'a, 's> {
                 is_await,
             } => self.run_for_of(state, statement, (left, expr, body), is_await),
             StmtKind::ForIn { left, expr, body } => {
+                if let StmtKind::Var(declarations) = hir[left].kind
+                    && declarations.iter().any(|it| hir[it].init.is_some())
+                {
+                    return None;
+                }
                 let mut ways = Vec::new();
                 for (state, value) in self.evaluate(state, expr)? {
                     if matches!(value, Value::Unknown) {

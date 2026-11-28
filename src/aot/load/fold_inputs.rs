@@ -2,7 +2,7 @@ use bun_builtin_sources::Manifest;
 use bun_core::strings;
 use bun_js_parser::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
-    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES, is_pure_global_identifier,
+    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
 };
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::fold::{
@@ -12,6 +12,7 @@ use bun_sema::hir_from_data::DataValue;
 use bun_sema::session::Arena;
 
 use crate::builtins::Platforms;
+use crate::compile::removable::is_name_left_out_by_bun_run;
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
@@ -39,7 +40,7 @@ pub(crate) struct ProgramFacts {
 
 fn is_read_left_out_where_unused(path: &[&[u8]]) -> bool {
     match path {
-        [name] => is_pure_global_identifier(name),
+        [name] => is_name_left_out_by_bun_run(name),
         _ => GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES
             .iter()
             .chain(GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING)

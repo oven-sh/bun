@@ -15,6 +15,7 @@ use bun_sema::hir::{
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::util::FxHashSet;
 use smallvec::SmallVec;
 
 use super::graph::{FileRow, StoredSiteAnswer};
@@ -630,12 +631,21 @@ impl<'a, 's> KnownObjects<'a, 's> {
     }
 
     pub(crate) fn enums_relied_on(&self, enumeration: Sym) -> SmallVec<[Sym; 2]> {
-        let mut relied_on = SmallVec::new();
-        for declaration in self.declarations_of(enumeration) {
-            let values = self.values_of(declaration);
-            relied_on.extend_from_slice(&self.known.relied_on.borrow()[values.relied_on()]);
+        let mut relied_on: SmallVec<[Sym; 2]> = SmallVec::new();
+        let mut is_listed: FxHashSet<Sym> = FxHashSet::default();
+        let (mut next, mut asked) = (0, enumeration);
+        loop {
+            for declaration in self.declarations_of(asked) {
+                let values = self.values_of(declaration);
+                let known = self.known.relied_on.borrow();
+                let direct = known[values.relied_on()].iter().copied();
+                relied_on.extend(direct.filter(|&it| is_listed.insert(it)));
+            }
+            let Some(&other) = relied_on.get(next) else {
+                return relied_on;
+            };
+            (next, asked) = (next + 1, other);
         }
-        relied_on
     }
 
     pub(crate) fn find_value_in_place(
@@ -1071,6 +1081,22 @@ impl<'a, 's> KnownObjects<'a, 's> {
             }
         };
         while let Some((op, right)) = right_operands.pop() {
+            if op == BinOp::Add
+                && let Constant::String(text) = value
+                && text != known::empty
+                && matches!(right_operands.last(), Some((BinOp::Add, _)))
+            {
+                let addends =
+                    self.evaluate_addends(initializers, text, right, &mut right_operands)?;
+                if !fold::is_sum_computed_by_transpiler(atoms, text, &addends) {
+                    initializers.rest_on(KnownTo::BuildAlone);
+                }
+                let mut texts: SmallVec<[Atom; 8]> =
+                    smallvec::smallvec![known::empty; addends.len() + 1];
+                texts[0] = text;
+                value = fold::apply_template(atoms, &texts, &addends, MAX_FOLDED_STRING_BYTES)?;
+                continue;
+            }
             let takes_right = match op {
                 BinOp::And => Some(self.is_truthy(value)?),
                 BinOp::Or => Some(!self.is_truthy(value)?),
@@ -1090,6 +1116,35 @@ impl<'a, 's> KnownObjects<'a, 's> {
             };
         }
         Some(value)
+    }
+
+    fn evaluate_addends(
+        &self,
+        initializers: Initializers<'_>,
+        text: Atom,
+        first: ExprId,
+        rest: &mut SmallVec<[(BinOp, ExprId); 8]>,
+    ) -> Option<SmallVec<[Constant; 8]>> {
+        let atoms = &self.files.atoms;
+        let mut length = atoms.bytes(text).len();
+        let mut addends: SmallVec<[Constant; 8]> = SmallVec::new();
+        let mut right = first;
+        loop {
+            let addend = self.evaluate_constant(initializers, right)?;
+            if let Constant::String(text) = addend {
+                // Two halves of a surrogate pair are 6 bytes apart and 4 together.
+                length += atoms.bytes(text).len().saturating_sub(2);
+            }
+            if length > MAX_FOLDED_STRING_BYTES {
+                return None;
+            }
+            addends.push(addend);
+            match rest.last() {
+                Some(&(BinOp::Add, next)) => right = next,
+                _ => return Some(addends),
+            }
+            rest.pop();
+        }
     }
 
     fn evaluate_operand(
@@ -1218,12 +1273,9 @@ impl<'a, 's> KnownObjects<'a, 's> {
             false => KnownTo::BuildAlone,
         });
         if read.validity == Validity::WhileObjectIsNotHandedOn {
-            let mut parts: SmallVec<[Evaluated; 1]> = SmallVec::new();
             for part in self.declarations_of(enumeration) {
                 match self.known.evaluation(part) {
-                    Evaluation::Done(evaluated) if !evaluated.may_store_over_members => {
-                        parts.push(evaluated);
-                    }
+                    Evaluation::Done(evaluated) if !evaluated.may_store_over_members => {}
                     Evaluation::Done(_) => return None,
                     Evaluation::NotAsked | Evaluation::Waiting => {
                         initializers.asked_for.set(Some(part));
@@ -1232,13 +1284,10 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 }
             }
             initializers.rest_on(KnownTo::BuildAlone);
+            // What that enum relies on in its turn is found behind it.
             let mut relies_on = initializers.relies_on.borrow_mut();
-            let relied_on = self.known.relied_on.borrow();
-            let relied_on_there = parts.iter().flat_map(|part| &relied_on[part.relied_on()]);
-            for &relied_on in [enumeration].iter().chain(relied_on_there) {
-                if !relies_on.contains(&relied_on) {
-                    relies_on.push(relied_on);
-                }
+            if !relies_on.contains(&enumeration) {
+                relies_on.push(enumeration);
             }
         }
         Some(read.value)

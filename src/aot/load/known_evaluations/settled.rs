@@ -791,6 +791,11 @@ impl Settler<'_, '_> {
                 }
             }
             StmtKind::ForIn { left, expr, body } => {
+                if let StmtKind::Var(declarations) = hir[left].kind
+                    && declarations.iter().any(|it| hir[it].init.is_some())
+                {
+                    return None;
+                }
                 let Value::Object(id) = self.expression(expr)? else {
                     return None;
                 };

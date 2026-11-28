@@ -160,6 +160,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   {
     paths: /^src\/aot\/compile\/removable\.rs$/,
+    lines: /^is_pure_global_identifier\(name\) && name != b"window"$/,
+    reason:
+      "a name out of the parser's list of globals: the thing is the free name, which is what each caller has in front of it",
+  },
+  {
+    paths: /^src\/aot\/compile\/removable\.rs$/,
     lines: /== b"u";/,
     reason:
       '`typeof a < "u"`, as minifiers write `typeof a !== "undefined"`: the value of a string that the answer of `typeof` is compared with. A value is no name',

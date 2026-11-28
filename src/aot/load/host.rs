@@ -887,6 +887,13 @@ impl<'a> LoadHost<'a> {
         Cow::default()
     }
 
+    /// On the disk, or given to the build.
+    fn has_file_at(&self, path: &[u8]) -> bool {
+        let mut in_memory_files = self.input.options.load.in_memory_files.iter();
+        in_memory_files.any(|(file, _)| file.as_slice() == to_native(path))
+            || self.disk.is_file(path)
+    }
+
     fn file_with_query(&self, path: &[u8]) -> Option<FileWithQuery> {
         (self.modules_with_queries.find(path)).map(|it| FileWithQuery {
             file: it.file.as_slice().into(),
@@ -1101,7 +1108,9 @@ impl LoadHost<'_> {
             atoms,
             request,
             source,
-            &|specifier, text| modules.add_text(&file, specifier, text),
+            &|specifier, text| {
+                modules.add_text(&file, specifier, text, &|path| self.has_file_at(path));
+            },
         );
         source.depends_on_more_than_source |= change != TreeChange::Unchanged;
         change
@@ -1197,8 +1206,11 @@ impl CodeHost for LoadHost<'_> {
         }
         let modules = &self.modules_with_queries;
         if request.form == CodeImportForm::WrittenByHost
-            && let Some(path) =
-                modules.find_text(modules.file_behind(request.importer), request.specifier)
+            && let Some(path) = modules.find_text(
+                modules.file_behind(request.importer),
+                request.specifier,
+                &|path| self.has_file_at(path),
+            )
         {
             return HostResolution::Path(path);
         }
@@ -1448,8 +1460,10 @@ impl CodeHost for LoadHost<'_> {
             && !is_bundled(path)
             && !is_declaration_file_name(path);
         let is_module = find_worker_constructor(query).is_some() || !has_vite_suffix(query);
-        (is_program && is_file_of_program && is_module)
-            .then(|| self.modules_with_queries.add(path, query))
+        (is_program && is_file_of_program && is_module).then(|| {
+            let is_file = |path: &[u8]| self.has_file_at(path);
+            self.modules_with_queries.add(path, query, &is_file)
+        })
     }
 
     fn file_of_module<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {

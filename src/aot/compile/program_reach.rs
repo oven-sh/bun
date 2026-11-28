@@ -2397,6 +2397,7 @@ struct Walk<'a, 's> {
     names_looked_for: SharedSet<(FileId, Atom)>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     names_asked_of_stars: SharedSet<(FileId, Atom)>,
+    names_reached_by_spreads: SharedSet<(ModuleRef, Atom)>,
     bound_variables: SharedSet<Sym>,
     reached_bindings: ShardedMap<Sym, bool>,
     keeps_every_module_object: AtomicBool,
@@ -2494,6 +2495,7 @@ impl<'a, 's> Walk<'a, 's> {
             names_looked_for: SharedSet::default(),
             names_read_from_objects: SharedSet::default(),
             names_asked_of_stars: SharedSet::default(),
+            names_reached_by_spreads: SharedSet::default(),
             bound_variables: SharedSet::default(),
             reached_bindings: ShardedMap::default(),
             keeps_every_module_object: AtomicBool::new(false),
@@ -3359,7 +3361,9 @@ impl Reacher<'_, '_, '_> {
             .commonjs()
             .sources_of_spread_name(module, name)
         {
-            self.reach_named_member(source, name);
+            if walk.names_reached_by_spreads.insert((source, name)) {
+                self.reach_named_member(source, name);
+            }
         }
         !walk.input.graph.ignores_this(module, name)
     }

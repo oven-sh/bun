@@ -383,7 +383,7 @@ fn find_modules_of_eager_entries(test: &str, text: &str) -> [bool; 2] {
         build.with_loaded_projects(|_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
             Ok(["a", "b"].map(|page| {
-                let name = format!("/main%3f%25glob%3a%3a%2e%2fpages%2f{page}%2ets.js.mjs");
+                let name = format!("/main%3f%25glob%3a%3a%2e%2fpages%2f{page}%2ets%_t.js.mjs");
                 let is_named =
                     |&file: &_| files.module(file).file_name().ends_with(name.as_bytes());
                 let entry = files.compiled_files().iter().copied().find(is_named);

@@ -1,5 +1,6 @@
 use bun_ast::Loader;
 use bun_builtin_sources::Manifest;
+use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
 use bun_paths::{MAX_PATH_BYTES, Path, is_absolute};
 use bun_sema::program::{FileId, FileRole, Files, HostLoader};
@@ -125,7 +126,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
     let maps = context.maps;
     let path = match input.plugin_module {
         Some(module) if *module.namespace == *ENTRY_TEXT_NAMESPACE => return module.path.clone(),
-        Some(module) => plugin_public_path(&module.namespace, &module.path),
+        Some(module) => plugin_public_path(context.manifest, &module.namespace, &module.path),
         None => match input.kind {
             SourceKind::RuntimeModule(module) => {
                 let path = compute_path_of_runtime_module(context.manifest, module.registry_id());
@@ -235,7 +236,23 @@ fn is_data_that_only_an_attribute_asks_for(
     })
 }
 
-fn plugin_public_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
+/// A module that a plugin loads has no name of a module of Bun's own, whatever its namespace.
+fn plugin_public_path(manifest: &Manifest, namespace: &[u8], path: &[u8]) -> Vec<u8> {
+    let public_path = spell_plugin_module(namespace, path);
+    let is_name_of_runtime_module = match public_path.strip_prefix(b"internal:") {
+        Some(name) => manifest.module_by_specifier(&[b"internal/", name].concat()),
+        None => manifest.module_by_specifier(&public_path),
+    };
+    match (is_name_of_runtime_module, namespace) {
+        (Some(_), [first, rest @ ..]) => {
+            let escaped = [&b"%"[..], &hex_byte_lower(*first), rest, b":", path];
+            escaped.concat()
+        }
+        _ => public_path,
+    }
+}
+
+fn spell_plugin_module(namespace: &[u8], path: &[u8]) -> Vec<u8> {
     let mut public_path = Vec::with_capacity(namespace.len() + 1 + path.len());
     for &byte in namespace {
         match byte {
@@ -628,13 +645,13 @@ mod tests {
     #[test]
     fn plugin_module_path_has_namespace_with_its_separator_escaped() {
         assert_eq!(
-            plugin_public_path(b"v", b"virtual:config"),
+            spell_plugin_module(b"v", b"virtual:config"),
             b"v:virtual:config"
         );
-        assert_eq!(plugin_public_path(b"a", b"b:c"), b"a:b:c");
-        assert_eq!(plugin_public_path(b"a:b", b"c"), b"a%3ab:c");
-        assert_eq!(plugin_public_path(b"a%3ab", b"c"), b"a%253ab:c");
-        assert_eq!(plugin_public_path(b"a", b"b%3ac"), b"a:b%3ac");
+        assert_eq!(spell_plugin_module(b"a", b"b:c"), b"a:b:c");
+        assert_eq!(spell_plugin_module(b"a:b", b"c"), b"a%3ab:c");
+        assert_eq!(spell_plugin_module(b"a%3ab", b"c"), b"a%253ab:c");
+        assert_eq!(spell_plugin_module(b"a", b"b%3ac"), b"a:b%3ac");
     }
 
     #[test]
@@ -670,6 +687,25 @@ mod tests {
         };
         assert_eq!(path(1, BY_NAME), b"virt:x");
         assert_eq!(path(2, as_text()), b"virt:x?text");
+    }
+
+    #[test]
+    fn plugin_module_has_no_name_of_runtime_module() {
+        let manifest = Manifest::parse(
+            b"bun-builtins-manifest\t6\n\
+              module\t0\tnode/path.ts\tnode:path\n\
+              module\t1\tinternal/shared.ts\tinternal/shared\n",
+        )
+        .unwrap();
+        for (namespace, path, expected) in [
+            ("node", "path", "%6eode:path"),
+            ("node", "other", "node:other"),
+            ("internal", "shared", "%69nternal:shared"),
+            ("%6eode", "path", "%256eode:path"),
+        ] {
+            let spelled = plugin_public_path(&manifest, namespace.as_bytes(), path.as_bytes());
+            assert_eq!(spelled, expected.as_bytes());
+        }
     }
 
     #[test]

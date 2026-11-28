@@ -8956,6 +8956,12 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)
     return mock && mock->state == Zig::JSModuleMock::State::Settled ? mock->result.get() : nullptr;
 }
 
+bool isJestModuleMock(JSC::JSObject* moduleMock)
+{
+    auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
+    return mock && mock->isOfJest();
+}
+
 static bool hasUncalledAsyncFactory(Zig::JSModuleMock* mock)
 {
     if (!mock || mock->state != Zig::JSModuleMock::State::NotCalled)

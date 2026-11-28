@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 use bun_builtin_sources::Archive;
+use bun_core::decimal_options::DecimalOptions;
 
 use crate::builtins::{BuiltinName, table};
 
@@ -37,6 +38,9 @@ pub(crate) fn globals_that_nothing_declares() -> &'static [u8] {
             {
                 text.extend_from_slice(&[b"declare var ", written, b": any;\n"].concat());
             }
+        }
+        if DecimalOptions::of_process().has_decimal() {
+            text.extend_from_slice(b"declare var Decimal: any;\n");
         }
         text
     })

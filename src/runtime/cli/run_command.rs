@@ -989,6 +989,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 && !ctx.runtime_options.eval.reads_configuration,
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
+            decimal: crate::cli::run_compiled::decimal_options(),
             ..Default::default()
         });
         if ctx.runtime_options.eval.reads_configuration {
@@ -1167,6 +1168,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             runs_compiled_code,
+            decimal: graph.runtime_options.decimal,
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);

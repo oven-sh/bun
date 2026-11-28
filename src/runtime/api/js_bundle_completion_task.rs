@@ -542,6 +542,7 @@ impl JSBundleCompletionTask {
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
+                decimal: bun_core::decimal_options::DecimalOptions::of_process(),
             },
             &mut additions,
         ) {

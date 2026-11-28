@@ -651,6 +651,7 @@ pub(super) fn request_from_context<'r>(
             },
             runtime_options: RuntimeOptions {
                 jit_policy: ctx.bundler_options.compile_jit_policy,
+                decimal: bun_core::decimal_options::DecimalOptions::of_process(),
             },
             assets: &ctx.bundler_options.compile_assets,
             metafiles: [

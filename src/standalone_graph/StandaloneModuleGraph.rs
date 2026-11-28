@@ -10,6 +10,7 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
+use bun_core::decimal_options::DecimalOptions;
 use bun_core::strings;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
@@ -89,16 +90,22 @@ pub struct StandaloneModuleGraph {
 pub struct RuntimeOptions {
     /// `compile.jitPolicy`: JSC tier-up threshold scale the main VM starts with (`Bun.unsafe.setJITPolicy`); 1 = normal.
     pub jit_policy: f32,
+    pub decimal: DecimalOptions,
 }
 
 impl RuntimeOptions {
     /// value = `jit_policy` as `f32` bits. Bit 0 belonged to an older record layout and is ignored.
     const HAS_JIT_POLICY: u32 = 1 << 1;
+    /// The second byte of the flags.
+    const DECIMAL_SHIFT: u32 = 8;
 }
 
 impl Default for RuntimeOptions {
     fn default() -> Self {
-        Self { jit_policy: 1.0 }
+        Self {
+            jit_policy: 1.0,
+            decimal: DecimalOptions::default(),
+        }
     }
 }
 
@@ -1355,6 +1362,8 @@ impl StandaloneModuleGraph {
             let flags = read_u32(record_at);
             let value = read_u32(record_at + 4);
             record_at += 2 * size_of::<u32>();
+            runtime_options.decimal =
+                DecimalOptions::from_bits((flags >> RuntimeOptions::DECIMAL_SHIFT) as u8);
             if flags & RuntimeOptions::HAS_JIT_POLICY != 0 {
                 let scale = f32::from_bits(value);
                 if scale.is_finite() && scale >= 1.0 {
@@ -2168,9 +2177,11 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
     }
-    if runtime_options.jit_policy > 1.0 {
+    if runtime_options.jit_policy > 1.0 || runtime_options.decimal != DecimalOptions::default() {
+        let options = RuntimeOptions::HAS_JIT_POLICY
+            | u32::from(runtime_options.decimal.bits()) << RuntimeOptions::DECIMAL_SHIFT;
         let mut record = [0u8; 8];
-        record[0..4].copy_from_slice(&RuntimeOptions::HAS_JIT_POLICY.to_le_bytes());
+        record[0..4].copy_from_slice(&options.to_le_bytes());
         record[4..8].copy_from_slice(&runtime_options.jit_policy.to_bits().to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_RUNTIME_OPTIONS;

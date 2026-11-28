@@ -999,6 +999,7 @@ impl BuildCommand {
                     flags,
                     bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
                         jit_policy: ctx.bundler_options.compile_jit_policy,
+                        decimal: bun_core::decimal_options::DecimalOptions::of_process(),
                     },
                     &mut additions,
                 ) {

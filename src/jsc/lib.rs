@@ -488,6 +488,8 @@ pub struct InitializeOptions {
     pub locks_builtins: bool,
     /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
     pub is_compiler: bool,
+    /// What this executable, or the compiled program that runs in place, was built with.
+    pub decimal: bun_core::decimal_options::DecimalOptions,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -498,6 +500,9 @@ pub fn initialize(options: InitializeOptions) {
     if options.runs_compiled_code {
         bindgen::hold_results_to_declared_types();
     }
+    options
+        .decimal
+        .add_to_executable(options.runs_compiled_code);
     // SAFETY: nothing changes the environment during the call, which is made once at startup;
     // `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
     unsafe {
@@ -512,6 +517,7 @@ pub fn initialize(options: InitializeOptions) {
             options.runs_compiled_code,
             options.locks_builtins,
             options.is_compiler,
+            bun_core::decimal_options::DecimalOptions::of_process(),
         )
     };
 }
@@ -1487,6 +1493,7 @@ unsafe extern "C" {
         runs_compiled_code: bool,
         locks_builtins: bool,
         is_compiler: bool,
+        decimal: bun_core::decimal_options::DecimalOptions,
     );
     fn JSC__useOptionsForConfiguration(env: *const *const c_char, count: usize);
     fn JSC__useOptionsForFewLintVMs(env: *const *const c_char, count: usize);

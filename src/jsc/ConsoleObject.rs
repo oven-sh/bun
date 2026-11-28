@@ -765,6 +765,27 @@ impl<'a> TablePrinter<'a> {
         })
     }
 
+    /// The number of a row that is a `Decimal`. Its properties have their columns.
+    fn format_decimal(
+        &self,
+        cell_text: &mut Vec<u8>,
+        value: JSValue,
+        colors: bool,
+    ) -> JsResult<Option<CellRef>> {
+        let Some(text) = value.printed_decimal(self.global_object)? else {
+            return Ok(None);
+        };
+        let offset = cell_text.len();
+        cell_text.extend_from_slice(pfmt!("<r><yellow>", colors).as_bytes());
+        cell_text.extend_from_slice(&text);
+        cell_text.extend_from_slice(pfmt!("<r>", colors).as_bytes());
+        Ok(Some(CellRef {
+            offset,
+            len: cell_text.len() - offset,
+            width: strings::visible::width::exclude_ansi_colors::utf8(&text) as u32,
+        }))
+    }
+
     /// Read and format the row's cell values exactly once, size the columns
     /// (creating them on demand), and return the collected row for the
     /// render pass.
@@ -850,6 +871,12 @@ impl<'a> TablePrinter<'a> {
                         row.cells.resize(slot + 1, None);
                     }
                     row.cells[slot] = Some(cell);
+                }
+
+                if let Some(cell) = self.format_decimal(cell_text, row_value, ENABLE_ANSI_COLORS)? {
+                    self.values_col_width =
+                        Some(self.values_col_width.unwrap_or(1).max(cell.width));
+                    row.values_cell = Some(cell);
                 }
             }
         } else if self.properties.is_undefined() {
@@ -2360,7 +2387,7 @@ pub mod formatter {
                                         if !(next_value.is_number() || !next_value.is_symbol()) {
                                             break 'double_convert;
                                         }
-                                        let mut value = next_value.to_number(global)?;
+                                        let mut value = next_value.to_number_to_print(global)?;
 
                                         if !value.is_finite() {
                                             // for NaN and the string Infinity and
@@ -2441,7 +2468,7 @@ pub mod formatter {
                                     // parseFloat, because spec says to convert the
                                     // value to a string and then parse as a number,
                                     // but we are just coercing a number.
-                                    break 'brk next_value.to_number(global)?;
+                                    break 'brk next_value.to_number_to_print(global)?;
                                 };
 
                                 let abs = converted.abs();
@@ -2851,7 +2878,17 @@ pub mod formatter {
                     estimated_line_length: &mut self.formatter.estimated_line_length,
                 };
 
-                if let Some(name_str) = get_object_name(global_this, value)? {
+                if let Some(text) = value.printed_decimal(global_this)? {
+                    if C {
+                        // Not through `print`, which would count them as text.
+                        let _ = writer.ctx.write_all(pfmt!("<r><yellow>", true).as_bytes());
+                    }
+                    writer.write_all(&text);
+                    if C {
+                        let _ = writer.ctx.write_all(pfmt!("<r>", true).as_bytes());
+                    }
+                    writer.write_all(b" ");
+                } else if let Some(name_str) = get_object_name(global_this, value)? {
                     writer.print(format_args!("{name_str} "));
                 }
             }
@@ -5248,6 +5285,12 @@ pub mod formatter {
             let always_newline =
                 !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
             if self.depth > self.max_depth {
+                if let Some(text) = value.printed_decimal(self.global_this)? {
+                    let _ = writer_.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                    let _ = writer_.write_all(&text);
+                    let _ = writer_.write_all(pfmt!("<r>", C).as_bytes());
+                    return Ok(());
+                }
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
@@ -5361,6 +5404,11 @@ pub mod formatter {
                         self.map.insert(value, ());
                     }
                     result?;
+                } else if let Some(text) = value.printed_decimal(self.global_this)? {
+                    self.add_for_new_line(text.len());
+                    let _ = writer_.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                    let _ = writer_.write_all(&text);
+                    let _ = writer_.write_all(pfmt!("<r>", C).as_bytes());
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");

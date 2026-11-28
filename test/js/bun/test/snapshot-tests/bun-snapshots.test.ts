@@ -39,6 +39,14 @@ describe("toMatchSnapshot errors", () => {
       expect(1).toMatchSnapshot({ a: 1 });
     }).toThrow();
   });
+  it("should throw if property matchers that are one asymmetric matcher don't match", () => {
+    expect(() => {
+      expect({ a: 1 }).toMatchSnapshot(expect.objectContaining({ b: 1 }));
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: 1 }).toMatchInlineSnapshot(expect.any(Array), `{"a": 1}`);
+    }).toThrow("to match properties from received object");
+  });
   it("should throw if property matchers don't match", () => {
     expect(() => {
       expect({ a: 3 }).toMatchSnapshot({ a: 1 });

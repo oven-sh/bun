@@ -74,22 +74,37 @@ test.skipIf(isWindows || !isCanary)(
       ].join("\n"),
     });
     const root = String(dir);
-    const files = [
-      "aborts.js",
-      "aborts-under-a-todo.js",
-      "aborts-under-a-todo-of-one-way.js",
-      "faults-under-a-todo.js",
-      "answers-otherwise-under-a-todo.js",
-      "leaves-a-command-behind.js",
-      "says-what-it-may-do.js",
-    ].map(name => join(root, name));
-    const { stdout, exitCode } = await run(
-      [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", "--seconds=180", ...files],
-      root,
-      { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
+    const driven = (flags: string[], names: string[]) =>
+      run(
+        [
+          bunExe(),
+          join(import.meta.dir, "run-parallel.ts"),
+          `--root=${root}`,
+          "--jobs=3",
+          "--seconds=180",
+          ...flags,
+          ...names.map(name => join(root, name)),
+        ],
+        root,
+        { ...bunEnv, BUN_CRASH_REPORT_URL: undefined, BUN_ENABLE_CRASH_REPORTING: undefined },
+      );
+    // These ask the driver and not the compiler, so each is built once. In every way they are 24 builds, and with those
+    // the case took 116 to 166 s on the Intel Macs of CI, where four such files run at once.
+    const builtOnce = await driven(
+      ["--no-erased"],
+      [
+        "aborts.js",
+        "aborts-under-a-todo.js",
+        "faults-under-a-todo.js",
+        "answers-otherwise-under-a-todo.js",
+        "leaves-a-command-behind.js",
+        "says-what-it-may-do.js",
+      ],
     );
-    const verdicts = stdout
-      .split("\n")
+    // What this one asks is its build behind the first.
+    const builtInEveryWay = await driven([], ["aborts-under-a-todo-of-one-way.js"]);
+    const verdicts = [builtOnce, builtInEveryWay]
+      .flatMap(({ stdout }) => stdout.split("\n"))
       .filter(Boolean)
       .map(line => JSON.parse(line))
       .filter(({ state }) => state !== "compiling")
@@ -117,9 +132,8 @@ test.skipIf(isWindows || !isCanary)(
       { file: "leaves-a-command-behind.js", state: "fail", stage: "run", message: "it ended by SIGKILL", said: true },
       { file: "says-what-it-may-do.js", state: "pass", stage: undefined, message: undefined, said: undefined },
     ]);
-    expect(exitCode).toBe(1);
+    expect([builtOnce.exitCode, builtInEveryWay.exitCode]).toEqual([1, 1]);
   },
   // Less than the limit of a run that the driver is given above, which is less than what the programs sleep.
-  // The nine builds take 4 s on an arm64 Mac and 52 to 80 s on an Intel Mac.
   170_000,
 );

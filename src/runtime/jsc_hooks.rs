@@ -574,10 +574,21 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
 
     // Nothing writes `vm.preload` meanwhile: `reload()` defers while `is_in_preload`.
     for preload_slice in vm.preload.get() {
-        // Strip "file://".
-        let normalized: &[u8] = preload_slice
-            .strip_prefix(b"file://".as_slice())
-            .unwrap_or(preload_slice);
+        let mut decoded_path;
+        let normalized: &[u8] = if preload_slice.starts_with(b"file:") {
+            decoded_path =
+                bun_url::path_from_file_url(&bun_core::StringView::from_bytes(preload_slice))
+                    .to_owned_slice();
+            // Retain literal suffix handling, but never resolve a failed decode's suffix as a package import.
+            if !decoded_path.is_empty()
+                && let Some(suffix) = bun_core::strings::index_of_any(preload_slice, b"?#")
+            {
+                decoded_path.extend_from_slice(&preload_slice[suffix..]);
+            }
+            &decoded_path
+        } else {
+            preload_slice
+        };
 
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
         // resolves them internally, so `bun --import node:*` works like Node's.

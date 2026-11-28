@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
@@ -10,7 +10,6 @@ use bun_jsc::{
 use bun_lsquic_sys as lsquic;
 
 use super::endpoint::alloc_exposed_array_buffer;
-use super::ffi::lsquic_callback;
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
@@ -221,12 +220,12 @@ impl QuicStream {
             s.high_water_mark = DEFAULT_HIGH_WATER_MARK;
         });
         if let Some(raw) = raw {
-            this.bind_raw(raw);
+            this.bind_raw(raw, session);
         }
         Ok((this, handle))
     }
 
-    fn bind_raw(&self, s: lsquic::Stream) {
+    fn bind_raw(&self, s: lsquic::Stream, session: &QuicSession) {
         self.raw.set(Some(s));
         let id = s.id() as i64;
         self.with_state(|st| {
@@ -283,10 +282,7 @@ impl QuicStream {
             }
         }
         if uni {
-            let session = self.session.get();
-            // SAFETY: the session outlives its streams.
-            let is_server = !session.is_null() && unsafe { (*session).is_server() };
-            let local = (id & 1 == 0) != is_server;
+            let local = (id & 1 == 0) != session.is_server();
             if local {
                 self.inbound.with_mut(|i| i.ended = true);
                 self.with_state(|s| s.read_ended = 1);
@@ -638,15 +634,10 @@ impl QuicStream {
     }
 
     /// Replaces `on_stream_close` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) unsafe extern "C" fn on_close_detached(
-        ctx: *mut c_void,
-        _s: *mut lsquic::lsquic_stream,
-    ) {
-        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
+    /// SAFETY: as `on_stream_close`.
+    pub(super) unsafe extern "C" fn on_close_detached(&self, _s: &lsquic::lsquic_stream) {
         // `session` may be freed, so only touch `raw`.
-        if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
-            qs.raw.set(None);
-        }
+        self.raw.set(None);
     }
 
     pub(crate) fn get_reader<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
@@ -1019,60 +1010,44 @@ fn error_code_arg(value: JSValue) -> u64 {
     }
 }
 
+/// SAFETY: `s` is on a conn of ours. lsquic makes the result its ctx, and calls `on_stream_close` before it frees `s`.
 pub(super) unsafe extern "C" fn on_new_stream(
-    _owner: *mut c_void,
-    s: *mut lsquic::lsquic_stream,
-) -> *mut c_void {
-    // SAFETY: `s` is the stream lsquic just created. The copy a `QuicStream` keeps is cleared
-    // before lsquic frees the stream (`on_stream_close`, `on_close_detached`, `teardown`).
-    let Some(stream) = (unsafe { lsquic::Stream::from_raw(s) }) else {
+    _owner: Option<&super::QuicEndpoint>,
+    s: Option<&lsquic::lsquic_stream>,
+) -> *mut QuicStream {
+    let Some(s) = s else {
         return null_mut();
     };
-    // SAFETY: lsquic guarantees the stream's conn is live for this callback.
-    let conn = unsafe { lsquic::lsquic_stream_conn(s) };
-    if conn.is_null() {
+    // SAFETY: the copy a `QuicStream` keeps is cleared before lsquic frees the stream
+    // (`on_stream_close`, `on_close_detached`, `teardown`).
+    let stream = unsafe { lsquic::Stream::from_ref(s) };
+    let ctx = lsquic::lsquic_conn_get_ctx(lsquic::lsquic_stream_conn(s));
+    // SAFETY: the conn-ctx is null or the QuicSession (set at connect/on_new_conn).
+    let Some(session) = (unsafe { ctx.cast::<QuicSession>().as_ref() }) else {
         return null_mut();
-    }
-    // SAFETY: the conn-ctx is the QuicSession (set at connect/on_new_conn).
-    let session_ptr = unsafe { lsquic::lsquic_conn_get_ctx(conn) }.cast::<QuicSession>();
-    if session_ptr.is_null() {
-        return null_mut();
-    }
-    // SAFETY: as above.
-    let session = unsafe { &*session_ptr };
+    };
     let id = stream.id();
     let is_local = (id & 1 == 0) != session.is_server();
     if is_local {
         if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
             // SAFETY: pending streams are kept alive by their wrapper Strong.
             let pending = unsafe { &*qs };
-            pending.bind_raw(stream);
+            pending.bind_raw(stream, session);
             session.push_event(SessionEvent::StreamReady {
                 stream: pending.key,
                 remote: false,
             });
-            return qs.cast();
+            return qs;
         }
         stream.shutdown_internal();
         return null_mut();
     }
-    session.on_remote_stream(stream).cast()
+    session.on_remote_stream(stream)
 }
 
-pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic::lsquic_stream) {
-    // SAFETY: `s` is live for the duration of this lsquic callback.
-    let Some(stream) = (unsafe { lsquic::Stream::from_raw(s) }) else {
-        return;
-    };
-    if ctx.is_null() {
-        let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
-        // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
-        let buf = unsafe { stack_buf.as_bytes_mut() };
-        while stream.read(buf) > 0 {}
-        return;
-    }
-    // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
-    let qs = unsafe { &*ctx.cast::<QuicStream>() };
+pub(super) extern "C" fn on_stream_read(qs: &QuicStream, s: &lsquic::lsquic_stream) {
+    // SAFETY: the handle is not kept past this lsquic callback.
+    let stream = unsafe { lsquic::Stream::from_ref(s) };
     // Returns false if a malformed header block reset the stream.
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {
@@ -1181,52 +1156,52 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
 }
 
-lsquic_callback! {
-    pub(super) fn on_stream_write(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
-        qs.drain_outbound();
+impl QuicStream {
+    pub(super) extern "C" fn on_stream_write(&self, _s: &lsquic::lsquic_stream) {
+        self.drain_outbound();
     }
 
-    pub(super) fn on_stream_close(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
-        // The lsquic_stream is freed immediately after this callback returns.
-        qs.raw.set(None);
-        if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamClosed { stream: qs.key });
+    /// SAFETY: lsquic makes no more callbacks for the stream, which it frees after this one.
+    pub(super) unsafe extern "C" fn on_stream_close(&self, _s: &lsquic::lsquic_stream) {
+        self.raw.set(None);
+        if let Some(session) = self.session_ref() {
+            session.push_event(SessionEvent::StreamClosed { stream: self.key });
         }
     }
 
-    pub(super) fn on_stream_reset(qs: &QuicStream, how: c_int, code: u64) {
+    pub(super) extern "C" fn on_stream_reset(&self, how: c_int, code: u64) {
         if how == 0 || how == 2 {
-            qs.mark_reset(code);
-            if let Some(s) = qs.ls() {
+            self.mark_reset(code);
+            if let Some(s) = self.ls() {
                 // Node lets the application keep responding on a bidi stream.
-                let write_open = qs.stream_id() & STREAM_ID_UNI_BIT == 0
-                    && qs.with_state(|st| st.fin_sent == 0 && st.write_ended == 0);
+                let write_open = self.stream_id() & STREAM_ID_UNI_BIT == 0
+                    && self.with_state(|st| st.fin_sent == 0 && st.write_ended == 0);
                 if write_open && how == 0 {
                     s.shutdown(0);
                 } else {
                     s.close();
                 }
             }
-            if let Some(session) = qs.session_ref() {
+            if let Some(session) = self.session_ref() {
                 session.push_event(SessionEvent::StreamReset {
-                    stream: qs.key,
+                    stream: self.key,
                     code,
                 });
-                session.push_event(SessionEvent::StreamWake { stream: qs.key });
+                session.push_event(SessionEvent::StreamWake { stream: self.key });
             }
         }
         if how == 1 || how == 2 {
             // Node rejects only the STOP_SENDING caller's `closed`.
-            qs.peer_stop_sending_code.set(Some(code));
-            if let Some(session) = qs.session_ref() {
+            self.peer_stop_sending_code.set(Some(code));
+            if let Some(session) = self.session_ref() {
                 // Node's `onstream` still observes a live writer.
                 session.push_event(SessionEvent::StreamStopSending {
-                    stream: qs.key,
+                    stream: self.key,
                     code,
                 });
-                session.push_event(SessionEvent::StreamWake { stream: qs.key });
+                session.push_event(SessionEvent::StreamWake { stream: self.key });
             } else {
-                qs.apply_peer_stop_sending(code);
+                self.apply_peer_stop_sending(code);
             }
         }
     }

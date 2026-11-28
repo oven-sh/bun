@@ -206,7 +206,7 @@ impl ClientSession {
         debug_assert!(core::ptr::eq(st.session.as_ptr(), self));
         let request_body_done = st.request_body_done;
         if let Some(qs) = st.qstream_mut() {
-            *qs.ext::<Stream>() = None;
+            *qs.ext() = None;
             // The success path can reach here while the request body is still
             // being written (server responded early). FIN would be a
             // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)

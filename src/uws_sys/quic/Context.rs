@@ -3,12 +3,11 @@
 //! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
-use core::ptr::NonNull;
 
 use crate::Loop;
 use crate::quic::{OwnedPendingConnect, Socket, Stream};
 
-bun_opaque::opaque_ffi! { pub struct Context; }
+bun_opaque::opaque_handle! { pub struct Context; }
 
 unsafe extern "C" {
     fn us_create_quic_client_context(
@@ -16,7 +15,7 @@ unsafe extern "C" {
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,
-    ) -> *mut Context;
+    ) -> Option<&'static mut Context>;
 
     fn us_quic_socket_context_connect(
         ctx: *mut Context,
@@ -29,7 +28,6 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
 
-    // `Context` is an `opaque_ffi!` ZST: shims that take only it and a callback are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
         cb: extern "C" fn(&mut Socket, c_int),
@@ -69,11 +67,11 @@ pub enum ConnectResult {
 
 impl Context {
     #[inline]
-    pub fn create_client(loop_: &'static Loop) -> Option<NonNull<Context>> {
+    pub fn create_client() -> Option<&'static mut Context> {
         // The slot of `Socket::ext` and `Stream::ext`.
         const EXT: c_uint = size_of::<*mut c_void>() as c_uint;
-        // SAFETY: the context keeps `loop_`, which is `'static`.
-        NonNull::new(unsafe { us_create_quic_client_context(loop_, 0, EXT, EXT) })
+        // SAFETY: the context keeps the loop, which is `'static`. Nothing frees a client context.
+        unsafe { us_create_quic_client_context(Loop::get(), 0, EXT, EXT) }
     }
 
     pub fn connect(

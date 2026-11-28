@@ -6,12 +6,9 @@ use core::ptr::NonNull;
 
 use super::{Header, Socket};
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for `us_quic_stream_t`.
-    pub struct Stream;
-}
+bun_opaque::opaque_handle! { pub struct Stream; }
 
-// `Stream` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Stream` is
+// `Stream` is a pinned ZST, so `&mut Stream` is
 // ABI-identical to a non-null `*mut Stream` with no `noalias`/`readonly`
 // attribute. Shims taking only the handle + value types are `safe fn`; the
 // (ptr,len) writers keep raw signatures.
@@ -23,9 +20,9 @@ unsafe extern "C" {
     safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
     safe fn us_quic_stream_refused_by_goaway(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
-    safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
+    safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> Option<&Header>;
     safe fn us_quic_stream_headers_too_large(s: &mut Stream) -> c_int;
-    safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
+    safe fn us_quic_stream_ext(s: &mut Stream) -> &mut Option<NonNull<c_void>>;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
     safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
     safe fn us_quic_stream_want_read(s: &mut Stream, want: c_int);
@@ -74,21 +71,15 @@ impl Stream {
     }
 
     pub fn header(&mut self, i: c_uint) -> Option<&Header> {
-        // SAFETY: self is a valid us_quic_stream_t; returned header borrowed from stream's header block.
-        unsafe { us_quic_stream_header(self, i).as_ref() }
+        us_quic_stream_header(self, i)
     }
 
     pub fn headers_too_large(&mut self) -> bool {
         us_quic_stream_headers_too_large(self) != 0
     }
 
-    pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
-        // SAFETY: self is a valid us_quic_stream_t; ext slot is pointer-sized & pointer-aligned,
-        // and Option<NonNull<T>> has nullable-pointer layout.
-        // Aliasing: the ext slot is disjoint storage returned by C (not overlapping the
-        // zero-sized opaque `Stream` handle), and the returned &mut borrows from &mut self
-        // so no second &mut to the slot can be obtained while this one is live.
-        unsafe { &mut *us_quic_stream_ext(self).cast::<Option<NonNull<T>>>() }
+    pub fn ext(&mut self) -> &mut Option<NonNull<c_void>> {
+        us_quic_stream_ext(self)
     }
 
     pub fn write(&mut self, data: &[u8]) -> c_int {

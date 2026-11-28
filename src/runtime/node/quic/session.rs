@@ -2,7 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::ptr::{null, null_mut};
+use core::ptr::null_mut;
 use std::collections::VecDeque;
 
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
@@ -11,11 +11,10 @@ use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSValue, JsCell, JsClass as _, JsRef, JsResult, StringJsc, Strong,
 };
 
-use bun_lsquic_sys as lsquic;
+use bun_lsquic_sys::{self as lsquic, PathAddr};
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
-use super::ffi::lsquic_callback;
 use super::now_ns;
 use super::tls;
 
@@ -106,90 +105,30 @@ const IDX_STATS_SESSION_PKT_LOST: usize = 30;
 const IDX_STATS_SESSION_BYTES_RECV: usize = 31;
 const IDX_STATS_SESSION_PING_RECV: usize = 33;
 
-/// `sizeof(struct sockaddr_in)` / `sizeof(struct sockaddr_in6)` — the
-/// StoredAddr backing size and the family-dependent valid prefix.
-pub(super) const SOCKADDR_IN_LEN: usize = 16;
-pub(super) const SOCKADDR_IN6_LEN: usize = 28;
-
-/// A copied sockaddr — the bytes are an in-place `sockaddr_in[6]` so the same
-/// pointer works for both lsquic (`struct sockaddr*`) and the uSockets UDP
-/// send. Both read `sockaddr_in6`'s 2- and 4-byte fields through that pointer,
-/// so the buffer must carry sockaddr alignment, not `[u8; N]`'s align-1.
-#[repr(C, align(8))]
-#[derive(Copy, Clone)]
-pub(crate) struct StoredAddr {
-    bytes: [u8; SOCKADDR_IN6_LEN],
-    len: u8,
-}
-
-impl Default for StoredAddr {
-    fn default() -> Self {
-        Self {
-            bytes: [0; SOCKADDR_IN6_LEN],
-            len: 0,
+impl From<&crate::socket::socket_address::sockaddr> for PathAddr {
+    fn from(addr: &crate::socket::socket_address::sockaddr) -> Self {
+        match (addr.as_sin(), addr.as_sin6()) {
+            (Some(&sin), _) => sin.into(),
+            (_, Some(&sin6)) => sin6.into(),
+            _ => Self::default(),
         }
     }
 }
 
-impl StoredAddr {
-    pub(super) fn from_raw(ptr: *const u8, len: usize) -> Self {
-        let mut out = Self::default();
-        let n = len.min(out.bytes.len());
-        if !ptr.is_null() && n > 0 {
-            // SAFETY: caller guarantees `ptr[..len]` is a live sockaddr.
-            unsafe { core::ptr::copy_nonoverlapping(ptr, out.bytes.as_mut_ptr(), n) };
-            out.len = n as u8;
-        }
-        out
-    }
-    pub(super) fn from_socket_address(addr: &crate::socket::SocketAddress) -> Self {
-        Self::from_raw(
-            core::ptr::from_ref(&addr._addr).cast::<u8>(),
-            addr.socklen() as usize,
-        )
-    }
-    pub(super) fn as_ptr(&self) -> *const u8 {
-        self.bytes.as_ptr()
-    }
-    pub(super) fn is_set(&self) -> bool {
-        self.len > 0
-    }
-    pub(super) fn decode(&self) -> Option<(u16, u16, &[u8])> {
-        use crate::socket::socket_address::inet;
-        if self.len == 0 {
-            return None;
-        }
-        // Platform-aware family read: BSD-style sockaddr stores `sa_len` in
-        // byte 0 and `sa_family` (u8) in byte 1; Linux/Windows store
-        // `sa_family` as a u16 at byte 0.
-        #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "ios"))]
-        let family = self.bytes[1] as u16;
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd", target_os = "ios")))]
-        let family = u16::from_ne_bytes([self.bytes[0], self.bytes[1]]);
-        let port = u16::from_be_bytes([self.bytes[2], self.bytes[3]]);
-        if family == inet::AF_INET as u16 && self.len as usize >= SOCKADDR_IN_LEN {
-            Some((family, port, &self.bytes[4..8]))
-        } else if family == inet::AF_INET6 as u16 && self.len as usize >= SOCKADDR_IN6_LEN {
-            Some((family, port, &self.bytes[8..24]))
-        } else {
-            None
-        }
-    }
-    pub(super) fn to_js_socket_address(&self, global: &JSGlobalObject) -> JSValue {
-        use crate::socket::SocketAddress;
-        use crate::socket::socket_address::inet;
-        let Some((family, port, addr)) = self.decode() else {
-            return JSValue::UNDEFINED;
-        };
-        let socket_address = if family == inet::AF_INET as u16 {
-            SocketAddress::init_ipv4([addr[0], addr[1], addr[2], addr[3]], port)
-        } else {
-            let mut ip = [0u8; 16];
-            ip.copy_from_slice(addr);
-            SocketAddress::init_ipv6(ip, port, 0, 0)
-        };
-        socket_address.to_js(global)
-    }
+pub(super) fn to_js_socket_address(addr: &PathAddr, global: &JSGlobalObject) -> JSValue {
+    use crate::socket::SocketAddress;
+    use crate::socket::socket_address::inet;
+    let Some((family, port, addr)) = addr.decode() else {
+        return JSValue::UNDEFINED;
+    };
+    let socket_address = if family == inet::AF_INET as u16 {
+        SocketAddress::init_ipv4([addr[0], addr[1], addr[2], addr[3]], port)
+    } else {
+        let mut ip = [0u8; 16];
+        ip.copy_from_slice(addr);
+        SocketAddress::init_ipv6(ip, port, 0, 0)
+    };
+    socket_address.to_js(global)
 }
 
 /// Mirrors Node's `Session::State` (`SESSION_STATE` in session.cc). The
@@ -274,8 +213,7 @@ pub(super) struct HskSnapshot {
 
 pub(super) struct DeferredAbort {
     /// The raw lsquic stream — alive until the conn dies (entries are
-    /// cleared first) and only ever passed back to lsquic, never
-    /// dereferenced here.
+    /// cleared first) and only ever passed back to lsquic.
     ls: *mut lsquic::lsquic_stream,
     reset: Option<u64>,
     stop: Option<u64>,
@@ -351,10 +289,10 @@ pub(super) enum SessionEvent {
     PathValidation {
         validated: bool,
         preferred: bool,
-        new_local: StoredAddr,
-        new_remote: StoredAddr,
-        old_local: StoredAddr,
-        old_remote: StoredAddr,
+        new_local: PathAddr,
+        new_remote: PathAddr,
+        old_local: PathAddr,
+        old_remote: PathAddr,
     },
 }
 
@@ -370,8 +308,8 @@ pub(crate) struct QuicSession {
     endpoint: Cell<*mut QuicEndpoint>,
     endpoint_js: JsCell<Option<Strong>>,
     is_server: Cell<bool>,
-    local_addr: Cell<StoredAddr>,
-    pub(super) remote_addr: Cell<StoredAddr>,
+    local_addr: Cell<PathAddr>,
+    pub(super) remote_addr: Cell<PathAddr>,
     /// Borrowed views into JSC-owned ArrayBuffers (see endpoint.rs `state`).
     state: Cell<*mut SessionState>,
     stats: Cell<*mut u64>,
@@ -425,8 +363,8 @@ impl QuicSession {
             endpoint: Cell::new(null_mut()),
             endpoint_js: JsCell::new(None),
             is_server: Cell::new(false),
-            local_addr: Cell::new(StoredAddr::default()),
-            remote_addr: Cell::new(StoredAddr::default()),
+            local_addr: Cell::new(PathAddr::default()),
+            remote_addr: Cell::new(PathAddr::default()),
             state: Cell::new(null_mut()),
             stats: Cell::new(null_mut()),
             events: JsCell::new(Vec::new()),
@@ -534,25 +472,16 @@ impl QuicSession {
         this_value.set_js_ref_strong(global);
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
-        if let Some(conn) = conn {
-            this.cache_sockaddrs(conn);
-        }
         Ok((this, handle))
     }
 
     pub(super) fn bind_conn(&self, conn: lsquic::Conn) {
         self.conn.set(Some(conn));
-        // SAFETY: `conn` is the live conn lsquic just promoted; `self` is
-        // the session inside its wrapper (conn-ctx contract).
-        unsafe {
-            lsquic::lsquic_conn_set_ctx(conn.raw(), core::ptr::from_ref(self).cast_mut().cast())
-        };
         if let Some(ep) = self.endpoint_ref() {
             for line in ep.take_early_keylog(conn.ssl()) {
                 self.push_event(SessionEvent::Keylog(line));
             }
         }
-        self.cache_sockaddrs(conn);
         if self.close_when_bound.get() {
             // Carry the user's {type, code, reason} through rather than
             // sending a bare close.
@@ -562,23 +491,9 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn cache_sockaddrs(&self, conn: lsquic::Conn) {
-        let mut local: *const c_void = null();
-        let mut peer: *const c_void = null();
-        // SAFETY: `conn` is live; out-params point at stack slots.
-        if unsafe {
-            lsquic::lsquic_conn_get_sockaddr(
-                conn.raw(),
-                core::ptr::from_mut(&mut local),
-                core::ptr::from_mut(&mut peer),
-            )
-        } == 0
-        {
-            self.local_addr
-                .set(StoredAddr::from_raw(local.cast(), SOCKADDR_IN6_LEN));
-            self.remote_addr
-                .set(StoredAddr::from_raw(peer.cast(), SOCKADDR_IN6_LEN));
-        }
+    pub(super) fn cache_sockaddrs(&self, local: PathAddr, peer: PathAddr) {
+        self.local_addr.set(local);
+        self.remote_addr.set(peer);
     }
 
     fn state_mut(&self) -> *mut SessionState {
@@ -709,9 +624,7 @@ impl QuicSession {
         for e in entries {
             // SAFETY: entries are cleared before the conn (and thus its
             // streams) is freed, so `ls` is a live lsquic stream.
-            let Some(s) = (unsafe { lsquic::Stream::from_raw(e.ls) }) else {
-                continue;
-            };
+            let s = unsafe { lsquic::Stream::from_ref(&*e.ls) };
             if e.marker != marker {
                 // Node parity — the queued frames are dropped.
                 s.shutdown_internal();
@@ -895,7 +808,7 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn process_events(&self, global: &JSGlobalObject) {
+    pub(super) fn process_events(&self, global: &JSGlobalObject, mut defer_closes: bool) {
         self.refresh_conn_stats();
         // Every callback below can run user JS that destroys this session
         // (dropping the wrapper Strong) and can trigger GC, so hold a Strong
@@ -905,7 +818,6 @@ impl QuicSession {
         // node leaves a microtask window between a session's lifecycle events
         // and its close; the loop driver can batch a whole exchange into one
         // pass, so a Closed behind other dispatch is deferred one turn.
-        let mut dispatched_js = false;
         loop {
             let Some(event) = self.events.with_mut(|e| {
                 if e.is_empty() {
@@ -916,18 +828,14 @@ impl QuicSession {
             }) else {
                 break;
             };
-            let endpoint = self.endpoint.get();
-            // SAFETY: teardown clears `endpoint` before the endpoint can die.
-            let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
-            if (dispatched_js || defer_closes)
-                && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
+            if defer_closes && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
             {
                 self.events.with_mut(|e| e.insert(0, event));
                 self.schedule_process();
                 break;
             }
             if !matches!(event, SessionEvent::PeerClose { .. } | SessionEvent::Closed) {
-                dispatched_js = true;
+                defer_closes = true;
             }
             if self.destroyed.get() {
                 break;
@@ -1430,8 +1338,8 @@ impl QuicSession {
                 // migrated to the preferred address.
                 let (old_local_js, old_remote_js, preferred_js) = if self.is_server.get() {
                     (
-                        old_local.to_js_socket_address(global),
-                        old_remote.to_js_socket_address(global),
+                        to_js_socket_address(&old_local, global),
+                        to_js_socket_address(&old_remote, global),
                         JSValue::UNDEFINED,
                     )
                 } else {
@@ -1450,8 +1358,8 @@ impl QuicSession {
                         self.handle(),
                         &[
                             result_js,
-                            new_local.to_js_socket_address(global),
-                            new_remote.to_js_socket_address(global),
+                            to_js_socket_address(&new_local, global),
+                            to_js_socket_address(&new_remote, global),
                             old_local_js,
                             old_remote_js,
                             preferred_js,
@@ -1812,17 +1720,18 @@ impl QuicSession {
         // Each `teardown` can run user JS that destroys a later entry and
         // lets GC free it mid-loop; the taken Vec is not a GC root, so
         // root every wrapper up front.
-        let _roots: Vec<Strong> = streams
-            .iter()
-            .map(|&(_, qs)| {
+        let rooted: Vec<_> = streams
+            .into_iter()
+            .map(|(_, qs)| {
                 // SAFETY: entries are live here -- a stream is only downgraded
                 // after `remove_stream` drops it from `self.streams`.
-                Strong::create(unsafe { (*qs).handle() }, _global)
+                // The reference is kept next to the root that holds the stream from here on.
+                let qs = unsafe { &*qs };
+                (Strong::create(qs.handle(), _global), qs)
             })
             .collect();
-        for (_, qs) in streams {
-            // SAFETY: rooted by `_roots` above; teardown is idempotent.
-            unsafe { (*qs).teardown(_global) };
+        for (_, qs) in &rooted {
+            qs.teardown(_global);
         }
         self.pending_local_bidi.with_mut(VecDeque::clear);
         self.pending_local_uni.with_mut(VecDeque::clear);
@@ -1846,10 +1755,10 @@ impl QuicSession {
     }
 
     pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JSValue {
-        self.remote_addr.get().to_js_socket_address(cx.global())
+        to_js_socket_address(&self.remote_addr.get(), cx.global())
     }
     pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JSValue {
-        self.local_addr.get().to_js_socket_address(cx.global())
+        to_js_socket_address(&self.local_addr.get(), cx.global())
     }
     fn parse_close_options(
         &self,
@@ -2368,12 +2277,10 @@ impl QuicSession {
     }
 
     /// Replaces `on_conn_closed` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) unsafe extern "C" fn on_closed_detached(ctx: *mut c_void) {
-        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
+    /// SAFETY: as `on_conn_closed`.
+    pub(super) unsafe extern "C" fn on_closed_detached(&self) {
         // `endpoint` and `streams` may be freed, so only touch `conn`.
-        if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
-            session.conn.set(None);
-        }
+        self.conn.set(None);
     }
 }
 
@@ -2386,37 +2293,39 @@ impl Drop for QuicSession {
     }
 }
 
-lsquic_callback! {
-    pub(super) fn on_new_conn(
-        endpoint: &QuicEndpoint,
-        c: *mut lsquic::lsquic_conn,
-    ) -> *mut c_void = null_mut(); {
-        // SAFETY: `c` is the live conn lsquic just created. The copy a session keeps is cleared
-        // before lsquic frees the conn (`on_conn_closed`, `on_closed_detached`, `teardown`).
-        let Some(conn) = (unsafe { lsquic::Conn::from_raw(c) }) else {
-            return null_mut();
-        };
-        endpoint.on_new_conn(conn).cast()
+/// SAFETY: `c` is a full conn. lsquic makes the result its ctx, and calls `on_conn_closed` before it frees `c`.
+pub(super) unsafe extern "C" fn on_new_conn(
+    endpoint: Option<&QuicEndpoint>,
+    c: &lsquic::lsquic_conn,
+) -> *mut QuicSession {
+    let Some(endpoint) = endpoint else {
+        return null_mut();
+    };
+    // SAFETY: `c` is the full conn lsquic just created. The copy a session keeps is cleared
+    // before lsquic frees the conn (`on_conn_closed`, `on_closed_detached`, `teardown`).
+    let conn = unsafe { lsquic::Conn::from_ref(c) };
+    endpoint.on_new_conn(conn, c.sockaddrs())
+}
+
+impl QuicSession {
+    pub(super) extern "C" fn on_goaway_received(&self) {
+        self.push_event(SessionEvent::GoawayReceived);
     }
 
-    pub(super) fn on_goaway_received(session: &QuicSession) {
-        session.push_event(SessionEvent::GoawayReceived);
+    pub(super) extern "C" fn on_hsk_confirmed(&self) {
+        self.push_event(SessionEvent::HandshakeConfirmed);
     }
 
-    pub(super) fn on_hsk_confirmed(session: &QuicSession) {
-        session.push_event(SessionEvent::HandshakeConfirmed);
-    }
-
-    pub(super) fn on_hsk_done(session: &QuicSession, status: c_int) {
+    pub(super) extern "C" fn on_hsk_done(&self, status: c_int) {
         let ok = status == lsquic::LSQ_HSK_OK || status == lsquic::LSQ_HSK_RESUMED_OK;
-        let Some(conn) = session.conn().filter(|_| ok) else {
-            session.push_event(SessionEvent::HandshakeDone { ok: false });
+        let Some(conn) = self.conn().filter(|_| ok) else {
+            self.push_event(SessionEvent::HandshakeDone { ok: false });
             return;
         };
-        session.note_handshake_ok(conn);
-        if session.peer_verification_refused() {
-            session.peer_cert_rejected.set(true);
-            session.self_close.with_mut(|s| {
+        self.note_handshake_ok(conn);
+        if self.peer_verification_refused() {
+            self.peer_cert_rejected.set(true);
+            self.self_close.with_mut(|s| {
                 *s = Some((
                     false,
                     CRYPTO_ERROR_BAD_CERTIFICATE,
@@ -2456,12 +2365,13 @@ fn map_conn_status(
     }
 }
 
-lsquic_callback! {
-    pub(super) fn on_conn_closed(session: &QuicSession) {
+impl QuicSession {
+    /// SAFETY: lsquic is closing the conn, and does not use its ctx afterwards.
+    pub(super) unsafe extern "C" fn on_conn_closed(&self) {
         // The conn's streams die with it — pending deferred aborts hold raw
         // lsquic stream pointers that are about to be freed.
-        session.deferred_aborts.with_mut(Vec::clear);
-        if let Some(conn) = session.conn.get() {
+        self.deferred_aborts.with_mut(Vec::clear);
+        if let Some(conn) = self.conn.get() {
             let mut buf = [0 as c_char; CONN_STATUS_ERRBUF_LEN];
             // SAFETY: `conn` is live for the duration of this callback.
             let status =
@@ -2470,17 +2380,17 @@ lsquic_callback! {
             let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
                 .to_bytes()
                 .to_vec();
-            session
-                .final_conn_status
+            self.final_conn_status
                 .with_mut(|f| *f = Some((status, msg)));
         }
-        session.push_event(SessionEvent::Closed);
+        self.push_event(SessionEvent::Closed);
         // The lsquic_conn is freed immediately after this callback returns.
-        session.conn.set(None);
+        self.conn.set(None);
     }
 
-    pub(super) fn on_conncloseframe(
-        session: &QuicSession,
+    /// SAFETY: `reason` is null or points to `reason_len` bytes.
+    pub(super) unsafe extern "C" fn on_conncloseframe(
+        &self,
         app_error: c_int,
         code: u64,
         reason: *const c_char,
@@ -2495,140 +2405,142 @@ lsquic_callback! {
                 core::slice::from_raw_parts(reason.cast::<u8>(), reason_len as usize).to_vec()
             }
         };
-        session.push_event(SessionEvent::PeerClose {
+        self.push_event(SessionEvent::PeerClose {
             app_error: app_error == 1,
             code,
             reason,
         });
     }
-}
 
-lsquic_callback! {
-    pub(super) fn on_new_token(session: &QuicSession, t: *const u8, n: usize) {
+    /// SAFETY: `t` is null or points to `n` bytes.
+    pub(super) unsafe extern "C" fn on_new_token(&self, t: *const u8, n: usize) {
         if t.is_null() || n == 0 {
             return;
         }
         // SAFETY: lsquic guarantees `t[..n]` is valid for this callback.
         let token = unsafe { core::slice::from_raw_parts(t, n).to_vec() };
-        session.push_event(SessionEvent::NewToken(token));
+        self.push_event(SessionEvent::NewToken(token));
     }
 
-    pub(super) fn on_sess_resume(session: &QuicSession, b: *const u8, n: usize) {
+    /// SAFETY: `b` is null or points to `n` bytes.
+    pub(super) unsafe extern "C" fn on_sess_resume(&self, b: *const u8, n: usize) {
         if b.is_null() || n == 0 {
             return;
         }
         // SAFETY: lsquic guarantees `b[..n]` is valid for this callback.
         let blob = unsafe { core::slice::from_raw_parts(b, n).to_vec() };
-        session.push_event(SessionEvent::SessionResume(blob));
+        self.push_event(SessionEvent::SessionResume(blob));
     }
-}
 
-lsquic_callback! {
-    pub(super) fn on_dg_write(session: &QuicSession, buf: *mut c_void, sz: usize) -> isize = -1; {
+    /// SAFETY: `buf` is null or has room for `sz` bytes.
+    pub(super) unsafe extern "C" fn on_dg_write(&self, buf: *mut c_void, sz: usize) -> isize {
         // -1 means "nothing written"; lsquic treats any value >= 0 as a
         // datagram it should frame, so 0 emits an empty DATAGRAM frame.
         if buf.is_null() {
             return -1;
         }
-        let Some((id, len)) = session
+        let Some((id, len)) = self
             .datagram_queue
             .get()
             .front()
             .map(|(id, p)| (*id, p.len()))
         else {
-            if let Some(c) = session.conn() {
+            if let Some(c) = self.conn() {
                 c.want_datagram_write(false);
             }
             return -1;
         };
         if len > sz {
-            let max = session.with_state(|s| s.max_datagram_size) as usize;
+            let max = self.with_state(|s| s.max_datagram_size) as usize;
             if max == 0 || len > max {
-                session.datagram_queue.with_mut(VecDeque::pop_front);
-                session.push_event(SessionEvent::DatagramStatus { id, sent: false });
-                if let Some(c) = session.conn() {
-                    c.want_datagram_write(!session.datagram_queue.get().is_empty());
+                self.datagram_queue.with_mut(VecDeque::pop_front);
+                self.push_event(SessionEvent::DatagramStatus { id, sent: false });
+                if let Some(c) = self.conn() {
+                    c.want_datagram_write(!self.datagram_queue.get().is_empty());
                 }
             }
             return -1;
         }
-        let Some((id, payload)) = session.datagram_queue.with_mut(VecDeque::pop_front) else {
+        let Some((id, payload)) = self.datagram_queue.with_mut(VecDeque::pop_front) else {
             return -1;
         };
         // SAFETY: lsquic guarantees `buf[..sz]` is writable for this callback.
         unsafe {
             core::ptr::copy_nonoverlapping(payload.as_ptr(), buf.cast::<u8>(), payload.len())
         };
-        session.push_event(SessionEvent::DatagramStatus { id, sent: true });
-        if !session.datagram_queue.get().is_empty() {
-            if let Some(c) = session.conn() {
+        self.push_event(SessionEvent::DatagramStatus { id, sent: true });
+        if !self.datagram_queue.get().is_empty() {
+            if let Some(c) = self.conn() {
                 c.want_datagram_write(true);
             }
         }
         payload.len() as isize
     }
 
-    pub(super) fn on_datagram_status(session: &QuicSession, count: c_uint, acked: c_int) {
+    pub(super) extern "C" fn on_datagram_status(&self, count: c_uint, acked: c_int) {
         if count == 0 {
             return;
         }
-        session.push_event(SessionEvent::DatagramAckStatus {
+        self.push_event(SessionEvent::DatagramAckStatus {
             count,
             acked: acked != 0,
         });
     }
 
-    pub(super) fn on_early_data_failed(session: &QuicSession) {
+    pub(super) extern "C" fn on_early_data_failed(&self) {
         // Front of the queue: lsquic resets the early streams before this
         // callback, so their clean closes are already queued and would settle
         // `closed` before the rejection node delivers could land.
-        session.events.with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
-        session.schedule_process();
+        self.events
+            .with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
+        self.schedule_process();
     }
 
-    pub(super) fn on_origin(session: &QuicSession, chunk: *const u8, len: usize, fin: c_int) {
+    /// SAFETY: `chunk` is null or points to `len` bytes.
+    pub(super) unsafe extern "C" fn on_origin(&self, chunk: *const u8, len: usize, fin: c_int) {
         if !chunk.is_null() && len > 0 {
             // SAFETY: `chunk[..len]` is live for the duration of this callback.
             let bytes = unsafe { core::slice::from_raw_parts(chunk, len) };
-            session.origin_buf.with_mut(|b| {
+            self.origin_buf.with_mut(|b| {
                 let room = MAX_ORIGIN_BYTES.saturating_sub(b.len());
                 b.extend_from_slice(&bytes[..bytes.len().min(room)]);
             });
         }
         if fin != 0 {
-            let payload = session.origin_buf.with_mut(core::mem::take);
-            session.push_event(SessionEvent::Origin(payload));
+            let payload = self.origin_buf.with_mut(core::mem::take);
+            self.push_event(SessionEvent::Origin(payload));
         }
     }
 
-    pub(super) fn on_path_switch(
-        session: &QuicSession,
+    pub(super) extern "C" fn on_path_switch(
+        &self,
         validated: c_int,
         is_preferred: c_int,
-        new_local: *const lsquic::sockaddr,
-        new_peer: *const lsquic::sockaddr,
-        old_local: *const lsquic::sockaddr,
-        old_peer: *const lsquic::sockaddr,
+        new_local: &PathAddr,
+        new_peer: &PathAddr,
+        old_local: &PathAddr,
+        old_peer: &PathAddr,
     ) {
-        session.push_event(SessionEvent::PathValidation {
+        self.push_event(SessionEvent::PathValidation {
             validated: validated != 0,
             preferred: is_preferred != 0,
-            new_local: super::endpoint::stored_addr_from_sockaddr(new_local),
-            new_remote: super::endpoint::stored_addr_from_sockaddr(new_peer),
-            old_local: super::endpoint::stored_addr_from_sockaddr(old_local),
-            old_remote: super::endpoint::stored_addr_from_sockaddr(old_peer),
+            new_local: *new_local,
+            new_remote: *new_peer,
+            old_local: *old_local,
+            old_remote: *old_peer,
         });
     }
 
-    pub(super) fn on_datagram(session: &QuicSession, buf: *const c_void, sz: usize) {
+    /// SAFETY: `buf` is null or points to `sz` bytes.
+    pub(super) unsafe extern "C" fn on_datagram(&self, buf: *const c_void, sz: usize) {
         if buf.is_null() {
             return;
         }
         // SAFETY: `buf[..sz]` is valid for this callback (lsquic owns the
         // packet buffer).
         let payload = unsafe { core::slice::from_raw_parts(buf.cast::<u8>(), sz).to_vec() };
-        let early = session.conn().is_some_and(|c| c.datagram_early());
-        session.push_event(SessionEvent::Datagram { payload, early });
+        let early = self.conn().is_some_and(|c| c.datagram_early());
+        self.push_event(SessionEvent::Datagram { payload, early });
     }
 }
 

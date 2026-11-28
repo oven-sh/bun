@@ -34,9 +34,9 @@ use crate::internal_state::TransportEnd;
 #[inline]
 fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
     // Route through `client_session::session_mut` (one centralised unsafe);
-    // the ext slot is `Option<NonNull<ClientSession>>` — exactly the
+    // the ext slot holds a `ClientSession` pointer — exactly the
     // backref-upgrade that accessor encapsulates.
-    (*qs.ext::<ClientSession>()).map(|p| session_mut(p.as_ptr()))
+    qs.ext().map(|p| session_mut(p.cast().as_ptr()))
 }
 
 /// Recover the h3 `Stream` from a `quic::Stream`'s ext slot.
@@ -49,8 +49,8 @@ fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
 #[inline]
 fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     // Route through `client_session::stream_mut` (one centralised unsafe);
-    // the ext slot is `Option<NonNull<Stream>>` — same backref invariant.
-    (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
+    // the ext slot holds a `Stream` pointer — same backref invariant.
+    s.ext().map(|p| stream_mut(p.cast().as_ptr()))
 }
 
 pub(crate) fn register(qctx: &mut quic::Context) {
@@ -137,7 +137,7 @@ extern "C" fn on_conn_close(qs: &mut quic::Socket) {
 }
 
 extern "C" fn on_stream_open(s: &mut quic::Stream, is_client: c_int) {
-    *s.ext::<Stream>() = None;
+    *s.ext() = None;
     if is_client == 0 {
         return;
     }
@@ -164,7 +164,7 @@ extern "C" fn on_stream_open(s: &mut quic::Stream, is_client: c_int) {
     // `stream` is a live element of `session.pending` — `stream_mut`
     // centralises that upgrade invariant.
     stream_mut(stream).qstream = Some(NonNull::from(&mut *s));
-    *s.ext::<Stream>() = NonNull::new(stream);
+    *s.ext() = NonNull::new(stream.cast());
     bun_core::scoped_log!(h3_client, "stream_open");
     // Headers and body go out from `on_stream_writable`, not here.
     // `on_stream_open` can fire from inside `on_hsk_done`, which lsquic
@@ -259,10 +259,10 @@ extern "C" fn on_stream_data(s: &mut quic::Stream, data: *const u8, len: c_uint,
 }
 
 extern "C" fn on_stream_writable(s: &mut quic::Stream) {
-    let Some(stream_ptr) = *s.ext::<Stream>() else {
+    let Some(stream_ptr) = *s.ext() else {
         return;
     };
-    let stream_ptr = stream_ptr.as_ptr();
+    let stream_ptr = stream_ptr.cast::<Stream>().as_ptr();
     let stream = stream_mut(stream_ptr);
     if !stream.headers_sent {
         stream.headers_sent = true;
@@ -281,7 +281,7 @@ const H3_REQUEST_REJECTED: u64 = 0x10B;
 
 extern "C" fn on_stream_close(s: &mut quic::Stream) {
     let Some(stream) = stream_of(s) else { return };
-    *s.ext::<Stream>() = None;
+    *s.ext() = None;
     stream.qstream = None;
     stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED || s.refused_by_goaway();
     bun_core::scoped_log!(

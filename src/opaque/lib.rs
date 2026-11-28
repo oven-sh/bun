@@ -101,6 +101,25 @@ macro_rules! opaque_ffi {
     };
 }
 
+/// [`opaque_ffi!`] without the constructors, and pointer-aligned so that [`opaque_deref`] rejects it too.
+#[macro_export]
+macro_rules! opaque_handle {
+    ($( $(#[$m:meta])* $v:vis struct $name:ident; )+) => {$(
+        $(#[$m])*
+        #[repr(C)]
+        $v struct $name {
+            _p: ::core::cell::UnsafeCell<[usize; 0]>,
+            _m: ::core::marker::PhantomData<(*mut u8, ::core::marker::PhantomPinned)>,
+        }
+        impl $name {
+            #[inline(always)]
+            pub fn as_mut_ptr(&self) -> *mut Self {
+                self._p.get().cast::<Self>()
+            }
+        }
+    )+};
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // FFI layout assertions
 // ───────────────────────────────────────────────────────────────────────────

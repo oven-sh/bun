@@ -2714,6 +2714,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Bust the directory cache for the given path, which may end in a separator.
+    /// True when the folder was ever looked up, also when another thread busted it first.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::bust_dir_cache_in(&mut self.fs_mut().fs, path)
     }

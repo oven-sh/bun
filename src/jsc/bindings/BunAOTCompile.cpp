@@ -89,7 +89,7 @@ extern "C" size_t Bun__AOT__applyOptionWord(Wire::CompileOptions* options, BunAO
         return 0;
     }
 
-    UTF8CString utf8 = error->utf8();
+    UTF8CString utf8 = makeUTF8CString(*error);
     RELEASE_ASSERT(utf8.length());
     if (size_t copiedLength = std::min(capacity, utf8.length()))
         memcpy(message, utf8.data(), copiedLength);
@@ -155,7 +155,7 @@ extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t* descripti
     String sentence = difference->name.isNull()
         ? "its description of the run time can't be read"_str
         : makeString(difference->name, " is "_s, difference->there, " there and "_s, difference->here, " here"_s);
-    UTF8CString utf8 = sentence.utf8();
+    UTF8CString utf8 = makeUTF8CString(sentence);
     if (size_t copiedLength = std::min(capacity, utf8.length()))
         memcpy(message, utf8.data(), copiedLength);
     return utf8.length();

@@ -1129,7 +1129,7 @@ JSArray* addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
     JSMap* known = state.knownGlobals.get();
     JSArray* mentioned = state.mentionedGlobals.get();
     // Those that the file declares, or that only ESLint knows. A name that a library has as well is only among these.
-    UncheckedKeyHashSet<JSCell*> others;
+    HashSet<JSCell*> others;
     for (unsigned i = 0; i < mentioned->length(); ++i) {
         if (!state.mentionedAreOfLib[i])
             others.add(mentioned->getIndexQuickly(i).asCell());

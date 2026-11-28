@@ -634,8 +634,7 @@ impl WTFStringImplStruct {
     /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
     ///
     /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
-    /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`.
+    /// to `StringImpl::destroy`. `Release` matches WebKit's `fetch_sub(s_refCountIncrement, std::memory_order_release)`, which `setMutableFlags()` and `destroy()` acquire.
     #[inline]
     pub fn deref(&self) {
         if self.is_static() {
@@ -643,7 +642,7 @@ impl WTFStringImplStruct {
         }
         let old = self
             .m_ref_count
-            .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
+            .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Release);
         debug_assert!(old > 0); // hasAtLeastOneRef
         if old != Self::S_REF_COUNT_INCREMENT {
             return;

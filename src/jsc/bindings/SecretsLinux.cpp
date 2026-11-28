@@ -267,7 +267,7 @@ Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CStri
     GErrorPtr gerror { nullptr, framework->g_error_free };
     // Combine service and name for label
     auto label = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
-    auto labelUtf8 = label.utf8();
+    auto labelUtf8 = makeUTF8CString(label);
 
     gboolean result = framework->secret_password_store_sync(
         get_bun_schema(),

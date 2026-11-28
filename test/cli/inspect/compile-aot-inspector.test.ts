@@ -37,6 +37,20 @@ shared.options = options;
 shared.list = [account, account.parent];
 shared.keeps = new Keeps();
 shared.read = (shared.keeps as Keeps).read();
+const calls: string[] = [];
+class Meter {
+  get reading(): number {
+    calls.push("reading");
+    return 1;
+  }
+}
+function level(): boolean {
+  calls.push("level");
+  return new.target === undefined;
+}
+shared.calls = calls;
+shared.meter = new Meter();
+shared.gauge = Object.defineProperty({}, "level", { get: level, enumerable: true });
 console.log("ready", account, options);
 setInterval(() => {}, 1000);
 `,
@@ -242,6 +256,25 @@ describe("the inspector on an executable built with --aot --compile-inspector", 
     expect(shown.map((property: any) => [property.name, property.value])).toEqual([
       ["#kept", { type: "number", value: 5, description: "5" }],
     ]);
+  });
+
+  // A getter of the compiled program is no native function to the inspector, whichever form its closure has (the one
+  // that reads new.target has the full form): a preview and a property list show it as an accessor.
+  test("a preview and a property list call no getter of the compiled program", async () => {
+    for (const expression of ["meter", "gauge"]) {
+      const { result } = await session.send("Runtime.evaluate", { expression, generatePreview: true });
+      const { properties } = await session.send("Runtime.getDisplayableProperties", {
+        objectId: result.objectId,
+        generatePreview: true,
+      });
+      const called = properties.filter(
+        (property: any) =>
+          ["reading", "level"].includes(property.name) && ("value" in property || property.nativeGetter),
+      );
+      expect(called).toEqual([]);
+    }
+    const { result } = await session.send("Runtime.evaluate", { expression: "calls", returnByValue: true });
+    expect(result.value).toEqual([]);
   });
 
   test("an array of compiled objects is previewed as an array", async () => {

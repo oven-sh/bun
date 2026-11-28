@@ -150,7 +150,7 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
             // the fuzzer harness).
             static FILE* f = fdopen(REPRL_DWFD, "w");
             if (f) {
-                fprintf(f, "%s\n", output.utf8().legacyCStringPointer());
+                fprintf(f, "%s\n", makeUTF8CString(output).legacyCStringPointer());
                 fflush(f);
             }
         }

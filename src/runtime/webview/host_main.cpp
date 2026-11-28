@@ -98,7 +98,7 @@ void FrameWriter::sendReply(uint32_t viewId, Reply op, const uint8_t* payload, u
 
 void FrameWriter::sendReplyStr(uint32_t viewId, Reply op, const WTF::String& s)
 {
-    WTF::CString c = s.utf8();
+    WTF::CString c = WTF::makeUTF8CString(s);
     uint32_t slen = static_cast<uint32_t>(c.length());
     WTF::Vector<uint8_t, 256> payload;
     payload.grow(4 + slen);
@@ -382,7 +382,7 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
     // ActivationPolicyAccessory so no dock tile for the host.
     auto* rt = ObjCRuntime::tryLoad();
     if (!rt->m_loaded) {
-        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().legacyCStringPointer());
+        fprintf(stderr, "webview-host: %s\n", WTF::makeUTF8CString(rt->m_loadError).legacyCStringPointer());
         _exit(70);
     }
 

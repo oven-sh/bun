@@ -106,12 +106,15 @@ static JSValue constructDataProperties(VM& vm, JSGlobalObject* exec, JSArray* ar
 
     auto* object = asObject(value);
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->getPropertyNames(exec, propertyNames, DontEnumPropertiesMode::Exclude);
+    // Own names: the snapshot has the program's Object.prototype, whose enumerable names are not its entries.
+    object->methodTable()->getOwnPropertyNames(object, exec, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, {});
     unsigned i = 0;
 
     for (auto& propertyName : propertyNames) {
-        auto propertyValue = object->getDirect(vm, propertyName);
+        // Not getDirect(): it is empty for an index-like name such as the header "0", which is in indexed storage.
+        JSValue propertyValue = object->get(exec, propertyName);
+        RETURN_IF_EXCEPTION(scope, {});
 
         array->putDirectIndex(exec, i++, constructInternalProperty(vm, exec, propertyName, propertyValue));
         RETURN_IF_EXCEPTION(scope, {});

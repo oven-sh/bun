@@ -605,7 +605,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #endif
 
     {
-        auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
+        auto utf8_filename = tryMakeUTF8CString(filename);
         if (!utf8_filename) [[unlikely]] {
             JSC::throwTypeError(globalObject, scope, "process.dlopen requires a valid UTF-8 string for the filename"_s);
             return {};
@@ -1517,7 +1517,8 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        if (reasonStack)
+            warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));
@@ -1913,11 +1914,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = globalObject->processObject();
     if (JSValue file = callFrame->argument(1); file.isString() && asString(file)->length()) {
-        auto path = asString(file)->value(globalObject)->utf8();
+        auto path = makeUTF8CString(asString(file)->value(globalObject).data);
         RETURN_IF_EXCEPTION(scope, {});
         auto text = callFrame->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        auto bytes = makeUTF8CString(text);
         if (Bun__Node__appendToFile(byteCast<uint8_t>(path.span()).data(), path.length(), byteCast<uint8_t>(bytes.span()).data(), bytes.length()))
             return JSValue::encode(jsUndefined());
     }
@@ -1937,7 +1938,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
         }
         auto text = callFrame->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        auto bytes = makeUTF8CString(text);
         writeToStandardError(byteCast<char>(bytes.span()));
         return JSValue::encode(jsBoolean(true));
     }
@@ -2161,7 +2162,7 @@ struct ExecveCloexecRestorer {
 // String::utf8() asserts on failure, and converting a Latin-1 string of 2^30 or more characters fails.
 static bool appendUTF8(Vector<UTF8CString>& storage, const WTF::String& string)
 {
-    auto utf8 = string.tryGetUTF8();
+    auto utf8 = tryMakeUTF8CString(string);
     if (!utf8) [[unlikely]]
         return false;
     storage.append(WTF::move(*utf8));
@@ -2352,7 +2353,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         }
     }
 
-    auto execPathConversion = execPath.tryGetUTF8();
+    auto execPathConversion = tryMakeUTF8CString(execPath);
     if (!execPathConversion) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -3399,7 +3400,7 @@ static JSC::EncodedJSValue writeWithoutDescriptorOfItsOwn(JSC::JSGlobalObject* g
     else if (data.isString()) {
         auto text = data.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        auto bytes = makeUTF8CString(text);
         write(byteCast<uint8_t>(bytes.span()));
     } else
         return Bun::throwError(globalObject, scope, data.isUndefinedOrNull() ? ErrorCode::ERR_STREAM_NULL_VALUES : ErrorCode::ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer"_s);
@@ -4381,6 +4382,8 @@ extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
     if (!process->getDirect(vm, name))
         return;
     JSValue argv = JSValue::decode(Bun__Process__createArgv(globalObject));
+    if (!argv) [[unlikely]]
+        return;
     process->putDirect(vm, name, argv, 0);
     // Bun.argv is process.argv as of its first read.
     if (auto* bun = globalObject->bunObject(); bun->getDirect(vm, name))
@@ -4522,7 +4525,7 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     // A name longer than `buf` can't match an entry, and nss-systemd aborts on very long names.
     if (str.length() < sizeof(buf)) {
-        auto utf8 = str.utf8();
+        auto utf8 = makeUTF8CString(str);
         if (getpwnam_r(utf8.legacyCStringPointer(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
             return jsNumber(pp->pw_uid);
         }
@@ -4544,7 +4547,7 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     char buf[8192];
 
     if (str.length() < sizeof(buf)) {
-        auto utf8 = str.utf8();
+        auto utf8 = makeUTF8CString(str);
         if (getgrnam_r(utf8.legacyCStringPointer(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
             return jsNumber(pp->gr_gid);
         }
@@ -4726,7 +4729,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     if (user.isString()) {
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto utf8 = str.tryGetUTF8();
+        auto utf8 = tryMakeUTF8CString(str);
         if (!utf8) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
@@ -5962,7 +5965,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     // call is best-effort (it fails in console-less processes).
     BunString str = Bun::toString(wtfStr);
     Bun__Process__setTitle(globalObject, &str);
-    UTF8CString cstr = wtfStr.utf8();
+    UTF8CString cstr = makeUTF8CString(wtfStr);
     uv_set_process_title(cstr.legacyCStringPointer());
     return true;
 #endif

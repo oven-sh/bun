@@ -702,7 +702,9 @@ JSObject* locOf(JSGlobalObject* globalObject, LintHost* host, JSObject* token, L
 void lintReplaceCustomValue(VM& vm, LintHost* host, JSObject* object, PropertyName name, JSValue value)
 {
     Structure* before = object->structure();
-    auto& known = host->tokens.replacements[(before->id().bits() >> 4) % host->tokens.replacements.size()];
+    // As LintPropertyCache and LintReportState::shapeOf() take their place: the cells of Structure are 128 bytes apart, so an address shifted by 4 would reach one place in eight.
+    auto bits = reinterpret_cast<uintptr_t>(before);
+    auto& known = host->tokens.replacements[((bits >> 7) ^ (bits >> 13)) % host->tokens.replacements.size()];
     if (known.before.get() == before && known.name == name.uid()) [[likely]] {
         object->setStructure(vm, known.after.get());
         object->putDirectOffset(vm, known.offset, value);

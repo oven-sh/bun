@@ -393,6 +393,31 @@ describe("Bun.JSONL", () => {
         expect(result.error).toBeNull();
       });
 
+      test("text that ends after a backslash inside a string is incomplete", () => {
+        const incomplete = { values: [], read: 0, done: false, error: null };
+        for (const text of ['{"a":"x\\', '{"a\\', '"x\\', '["x\\', '{"a":"x\\n\\', '{"a":"日\\']) {
+          for (const input of [text, new TextEncoder().encode(text)]) {
+            const { values, read, done, error } = Bun.JSONL.parseChunk(input);
+            expect({ text, values, read, done, error }).toEqual({ text, ...incomplete });
+          }
+          expect(Bun.JSONL.parse(text)).toEqual([]);
+        }
+        const { values, read, done, error } = Bun.JSONL.parseChunk('{"a":1}\n{"b":"x\\');
+        expect({ values, read, done, error }).toEqual({ values: [{ a: 1 }], read: 7, done: false, error: null });
+      });
+
+      test("a line with escapes is incomplete wherever it is cut", () => {
+        // The line has no \u escape with four hex digits: text that ends inside one is still a SyntaxError, a gap that oven-sh/WebKit#638 is open for.
+        const line = JSON.stringify({ text: 'line1\nline2 "quoted" \\ end\t/' });
+        const bytes = new TextEncoder().encode(line + "\n");
+        for (let cut = 1; cut < line.length; cut++) {
+          const results = [Bun.JSONL.parseChunk(line.slice(0, cut)), Bun.JSONL.parseChunk(bytes, 0, cut)];
+          for (const { values, done, error } of results) {
+            expect({ cut, values, done, error }).toEqual({ cut, values: [], done: false, error: null });
+          }
+        }
+      });
+
       test("simulated chunked streaming", () => {
         const fullInput = '{"id":1}\n{"id":2}\n{"id":3}\n';
 

@@ -429,7 +429,7 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
             appendCompiledFrame(text, *image, frame);
         });
     }
-    CString utf8 = text.toString().utf8();
+    CString utf8 = makeUTF8CString(text.toString());
     std::u8string_view bytes { utf8.data(), utf8.length() };
     size_t length = bytes.size();
     if (length > capacity) {

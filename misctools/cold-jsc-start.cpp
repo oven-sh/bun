@@ -54,7 +54,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrite, (JSC::JSGlobalObject * globalObject,
 
   auto string = toWriteArg.toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, {});
-  auto utf8 = string.utf8();
+  auto utf8 = makeUTF8CString(string);
   auto length = utf8.length();
   auto written = write(fd, utf8.data(), length);
   return JSValue::encode(jsNumber(written));
@@ -150,9 +150,10 @@ int main(int argc, char **argv) {
 #endif
 
     if (evaluationException) {
-      fprintf(
-          stderr, "Exception: %s\n",
-          evaluationException->value().toWTFString(globalObject).utf8().data());
+      fprintf(stderr, "Exception: %s\n",
+              makeUTF8CString(
+                  evaluationException->value().toWTFString(globalObject))
+                  .data());
       return 1;
     } else {
       return 0;
@@ -179,9 +180,10 @@ int main(int argc, char **argv) {
 #endif
 
     if (evaluationException) {
-      fprintf(
-          stderr, "Exception: %s\n",
-          evaluationException->value().toWTFString(globalObject).utf8().data());
+      fprintf(stderr, "Exception: %s\n",
+              makeUTF8CString(
+                  evaluationException->value().toWTFString(globalObject))
+                  .data());
       return 1;
     } else {
       return 0;

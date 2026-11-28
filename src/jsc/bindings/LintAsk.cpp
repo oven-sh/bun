@@ -27,7 +27,7 @@ static std::span<const uint8_t> askForLint(JSGlobalObject* globalObject, CallFra
     if (details.isString()) {
         auto text = asString(details)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        bytes = text.data.utf8();
+        bytes = makeUTF8CString(text.data);
     }
     LintSpan answer = Bun__Lint__ask(globalObject, JSC::toUInt32(kind.asNumber()), bytes.length() ? byteCast<uint8_t>(bytes.span()).data() : nullptr, bytes.length());
     if (!answer.ptr) {

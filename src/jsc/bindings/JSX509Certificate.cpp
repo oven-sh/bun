@@ -559,7 +559,7 @@ bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, WTF::StringView ip
 
     // utf8() asserts on failure. A string too long to convert isn't an IP address, and neither is one with a NUL,
     // where the C string that checkIp() takes would end.
-    auto ipUtf8 = ip.tryGetUTF8();
+    auto ipUtf8 = tryMakeUTF8CString(ip);
     auto result = ipUtf8 && !ip.contains(u'\0') ? view().checkIp(ipUtf8->legacyCStringPointer(), 0) : ncrypto::X509View::CheckMatch::INVALID_NAME;
     return handleMatchResult(globalObject, scope, result);
 }

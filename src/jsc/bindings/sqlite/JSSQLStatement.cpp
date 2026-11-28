@@ -1319,7 +1319,7 @@ public:
                 m_text = m_ascii.span().first(characters.size());
                 return true;
             }
-        } else if (auto converted = view->tryGetUTF8()) {
+        } else if (auto converted = tryMakeUTF8CString(view.data)) {
             m_converted = WTF::move(converted.value());
             m_text = byteCast<char>(m_converted.span());
             return true;

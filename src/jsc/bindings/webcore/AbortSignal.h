@@ -129,8 +129,7 @@ public:
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
     // Read-only emptiness probe for GC marker threads (JSAbortSignal::isReachableFromOpaqueRoots).
-    // WeakListHashSet::isEmptyIgnoringNullReferences() prunes dead entries, destroying WeakPtrs whose
-    // single-threaded impls (and the nodes holding them) may only be released on the owning thread.
+    // sourceSignals() hands out a non-const set, and the non-const WeakListHashSet::computeIsEmpty() clears a set of dead entries, destroying WeakPtrs whose single-threaded impls (and the nodes holding them) may only be released on the owning thread.
     bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
 
     // Read-only interested-party probe for GC marker threads: true if anything

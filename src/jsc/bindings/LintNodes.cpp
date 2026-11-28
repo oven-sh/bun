@@ -1043,7 +1043,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIsOfKnownPackage, (JSGlobalObject*, CallFrame* ca
     auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0));
     if (!function || function->isHostOrBuiltinFunction())
         return JSValue::encode(jsBoolean(false));
-    CString url = function->jsExecutable()->sourceURL().utf8();
+    CString url = makeUTF8CString(function->jsExecutable()->sourceURL());
     return JSValue::encode(jsBoolean(Bun__Lint__isInKnownPackage(reinterpret_cast<const uint8_t*>(url.data()), url.length())));
 }
 

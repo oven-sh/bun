@@ -427,6 +427,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useWasmMemory64() = false;
             // Node.js defaults Error.stackTraceLimit to 10.
             JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
+            // GC, JIT and Wasm keep their own threads until the shared pool is measured in Bun. WebKit/WebKit@6a719e0b40 removes the choice. BUN_JSC_useSharedHelperThreadPool=1 turns the pool on.
+            JSC::Options::useSharedHelperThreadPool() = false;
+            // As in Node, where V8's --js-nonextensible-applies-to-private is off: a frozen object takes a private name. BUN_JSC_useNonExtensibleAppliesToPrivate=1 turns the rule on, but not in a compiled executable.
+            JSC::Options::useNonExtensibleAppliesToPrivate() = false;
 #if OS(WINDOWS)
             // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
             // the allocation slow path once the heap has ramped; on Windows that
@@ -615,6 +619,7 @@ void updateOnEachMicrotaskTick(JSC::VM&);
 
 static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
 
+// Runs after every microtask while it is installed. JSC calls it once per request, and a request ends as its call begins: one is made before it is installed, and here when it stays.
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
@@ -622,18 +627,26 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
     bool drainsNextTickQueue = std::exchange(newNextTickQueueWaitsForMicrotaskToEnd, false);
     if (!Bun::waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
         globalObject->resetOnEachMicrotaskTick();
+    else
+        vm.requestMicrotaskTickCallback();
     if (!drainsNextTickQueue)
         return;
     if (auto queue = globalObject->m_nextTickQueue.get())
         queue->drain(vm, globalObject);
 }
 
+static void installMicrotaskTickCallback(JSC::VM& vm)
+{
+    vm.requestMicrotaskTickCallback();
+    vm.setMicrotaskTickCallback(&checkIfNextTickWasCalledDuringMicrotask);
+}
+
 void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
 {
     if (newNextTickQueueWaitsForMicrotaskToEnd || waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+        installMicrotaskTickCallback(vm);
     else
-        vm.setOnEachMicrotaskTick(nullptr);
+        vm.setMicrotaskTickCallback(nullptr);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -673,13 +686,13 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
-    this->vm().setOnEachMicrotaskTick(nullptr);
+    this->vm().setMicrotaskTickCallback(nullptr);
 }
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
     newNextTickQueueWaitsForMicrotaskToEnd = true;
-    vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    installMicrotaskTickCallback(*vm);
 }
 
 extern "C" size_t Bun__reported_memory_size;

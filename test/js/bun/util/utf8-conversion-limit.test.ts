@@ -34,6 +34,9 @@ const fixture = `
 
   const cert = new crypto.X509Certificate(${JSON.stringify(tls.cert)});
   const db = new Database(":memory:");
+  // close() looks at the reason before it looks at the state of the socket.
+  const server = Bun.serve({ port: 0, fetch: () => new Response("") });
+  const ws = new WebSocket("ws://127.0.0.1:" + server.port);
 
   const cases = {
     "X509Certificate#checkHost": text => cert.checkHost(text),
@@ -54,6 +57,7 @@ const fixture = `
     "decodeURIComponentSIMD": text => decodeURIComponentSIMD(text),
     // The value of a cookie is converted only when the header has a "%" in it.
     "new Bun.CookieMap": text => new Bun.CookieMap("a=%41" + text),
+    "WebSocket#close reason": text => ws.close(1000, text),
     ...(${isWindows} ? {} : {
       "process.initgroups user": text => process.initgroups(text, 0),
       // The message includes the whole name, so only print the code.
@@ -88,6 +92,9 @@ const fixture = `
 
   // Debug builds need 14 seconds to hash 1 GiB.
   if (!${isDebug}) console.log("console.countReset: returned " + console.countReset("q".repeat(2 ** 30)));
+
+  ws.close();
+  server.stop(true);
 `;
 
 // The length is what is under test, so the child holds a string of 1 GiB, and a
@@ -126,6 +133,7 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Statement#get parameter: RangeError: Out of memory",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
+        "WebSocket#close reason: SyntaxError: The close reason must not be greater than 123 UTF-8 bytes. Received 2147483648 bytes.",
         ...(isWindows
           ? []
           : ["process.initgroups user: RangeError: Out of memory", "process.setuid: returned ERR_UNKNOWN_CREDENTIAL"]),

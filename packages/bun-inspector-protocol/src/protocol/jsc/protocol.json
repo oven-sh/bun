@@ -3514,7 +3514,7 @@
       "domain": "ScriptProfiler",
       "description": "Profiler domain exposes JavaScript evaluation timing and profiling.",
       "debuggableTypes": ["itml", "javascript", "web-page", "wasm-debugger"],
-      "targetTypes": ["itml", "javascript", "page", "worker", "wasm-debugger"],
+      "targetTypes": ["frame", "itml", "javascript", "page", "worker", "wasm-debugger"],
       "types": [
         {
           "id": "EventType",

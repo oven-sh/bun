@@ -61,7 +61,7 @@ static ALWAYS_INLINE void noteCallerForDebugger(VM& vm, CallFrame* callFrame)
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    auto fileNameUTF8 = makeUTF8CString(sourceOrigin.string());
     const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {

@@ -63,7 +63,7 @@ inline JSC::JSUint8Array* sqliteBytes(JSC::JSGlobalObject* globalObject, const v
 // Throws `RangeError: Out of memory` for a string too long to convert, where utf8() aborts.
 inline WTF::UTF8CString tryUTF8(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& string)
 {
-    auto utf8 = string.tryGetUTF8();
+    auto utf8 = tryMakeUTF8CString(string);
     if (!utf8) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};

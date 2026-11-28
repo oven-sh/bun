@@ -270,12 +270,12 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader
         auto actual = dumpRecordInfo(resultValue);
         auto expected = dumpRecordInfo(moduleRecord);
         if (actual != expected) {
-            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  --- module key ---\n", moduleKey.utf8(), "\n  --- code ---\n\n", sourceCode.toUTF8(), "\n");
+            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  --- module key ---\n", makeUTF8CString(moduleKey.string()), "\n  --- code ---\n\n", sourceCode.toUTF8(), "\n");
             dataLog("  ------", "\n");
             dataLog("  BunAnalyzeTranspiledModule:", "\n");
 
-            auto expectedUTF8 = expected.utf8();
-            auto actualUTF8 = actual.utf8();
+            auto expectedUTF8 = makeUTF8CString(expected);
+            auto actualUTF8 = makeUTF8CString(actual);
             auto expectedBytes = byteCast<char>(expectedUTF8.span());
             auto actualBytes = byteCast<char>(actualUTF8.span());
             zig__renderDiff(expectedBytes.data(), expectedBytes.size(), actualBytes.data(), actualBytes.size());

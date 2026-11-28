@@ -178,7 +178,7 @@ Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CStri
 
     // Create target name as "service/name"
     String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
-    auto targetNameUtf8 = targetName.utf8();
+    auto targetNameUtf8 = makeUTF8CString(targetName);
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
     auto nameNameWide = cstringToWideChar(name);
 
@@ -213,7 +213,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, cons
     }
 
     String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
-    auto targetNameUtf8 = targetName.utf8();
+    auto targetNameUtf8 = makeUTF8CString(targetName);
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
     std::unique_ptr<CREDENTIALW, decltype(framework->CredFree)> cred { nullptr, framework->CredFree };
@@ -248,7 +248,7 @@ bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& 
     }
 
     String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
-    auto targetNameUtf8 = targetName.utf8();
+    auto targetNameUtf8 = makeUTF8CString(targetName);
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
     if (!framework->CredDeleteW(targetNameWide.data(), CRED_TYPE_GENERIC, 0)) {

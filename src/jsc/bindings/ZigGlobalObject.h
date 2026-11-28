@@ -100,7 +100,7 @@ namespace Zig {
 
 class JSCStackTrace;
 
-using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
+using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
@@ -632,7 +632,7 @@ public:
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider
     // The key is a pointer to the source code
-    WTF::UncheckedKeyHashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
     size_t reloadCount = 0;
 
     void reload();

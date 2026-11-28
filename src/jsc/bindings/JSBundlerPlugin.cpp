@@ -416,7 +416,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         return {};
     }
     void* dlopen_handle = napi_external->value();
-    UTF8CString utf8 = on_before_parse_symbol.utf8();
+    UTF8CString utf8 = makeUTF8CString(on_before_parse_symbol);
 
 #if OS(WINDOWS)
     void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.legacyCStringPointer());

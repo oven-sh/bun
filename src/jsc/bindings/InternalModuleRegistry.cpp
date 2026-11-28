@@ -178,7 +178,7 @@ static String internalModuleSource(uint32_t id)
     if (!contents) {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().legacyCStringPointer(), file.utf8().legacyCStringPointer());
+            makeUTF8CString(moduleName).legacyCStringPointer(), makeUTF8CString(file).legacyCStringPointer());
         CRASH();
     }
     return WTF::String::fromUTF8(contents.value());
@@ -603,7 +603,7 @@ namespace Bun {
 // bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
 // external string table it would embed beside it -- either for internal module number `index` (null past the last
 // one), or for `source` written in builtin syntax under `name`.
-static bool collectCapturedVariables(JSC::VM& vm, const SourceCode& source, const String& moduleName, UncheckedKeyHashSet<RefPtr<UniquedStringImpl>>& captured)
+static bool collectCapturedVariables(JSC::VM& vm, const SourceCode& source, const String& moduleName, HashSet<RefPtr<UniquedStringImpl>>& captured)
 {
     UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
     ParserError error;
@@ -634,8 +634,8 @@ static String checkLazyFunctionTable(JSC::VM& vm, uint32_t id, unsigned& lazyFun
     if (!lazyFunctionCount)
         return {};
 
-    UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> capturedWhenParsed;
-    UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> capturedWhenPrefilled;
+    HashSet<RefPtr<UniquedStringImpl>> capturedWhenParsed;
+    HashSet<RefPtr<UniquedStringImpl>> capturedWhenPrefilled;
     if (!collectCapturedVariables(vm, parsed, moduleName, capturedWhenParsed) || !collectCapturedVariables(vm, prefilled, moduleName, capturedWhenPrefilled))
         return makeString(moduleName, ": does not parse"_s);
     for (auto& name : capturedWhenParsed) {

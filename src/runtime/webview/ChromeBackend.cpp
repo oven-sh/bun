@@ -293,14 +293,14 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
     // isNull), which the spawner passes as "" into --user-data-dir= and
     // Chrome falls back to the default profile → ProcessSingleton abort.
-    WTF::UTF8CString dir = userDataDir.utf8();
-    WTF::UTF8CString pathC = path.utf8();
+    WTF::UTF8CString dir = WTF::makeUTF8CString(userDataDir);
+    WTF::UTF8CString pathC = WTF::makeUTF8CString(path);
     // Two-level pack: CString owns the bytes, ptrVec holds data() pointers.
     // Both live until Bun__Chrome__ensure returns (spawn copies argv).
     WTF::Vector<WTF::UTF8CString, 8> argvC;
     WTF::Vector<const char*, 8> argvPtrs;
     for (auto& s : extraArgv) {
-        argvC.append(s.utf8());
+        argvC.append(WTF::makeUTF8CString(s));
         argvPtrs.append(argvC.last().legacyCStringPointer());
     }
     int32_t rc = Bun__Chrome__ensure(zig,
@@ -818,7 +818,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
-        auto ss = view->m_sessionId.utf8();
+        auto ss = WTF::makeUTF8CString(view->m_sessionId);
         std::span<const char> sidSpan = byteCast<char>(ss.span());
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
@@ -828,7 +828,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     case Method::PageEnable: {
         // Chain into Runtime.enable (for consoleAPICalled later) then
         // Page.navigate to the stashed url.
-        auto ss = view->m_sessionId.utf8();
+        auto ss = WTF::makeUTF8CString(view->m_sessionId);
         std::span<const char> sidSpan = byteCast<char>(ss.span());
 
         // Runtime.enable — fire-and-forget, untracked. We don't need to
@@ -1077,7 +1077,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         double cy = *py;
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
-        auto ss = view->m_sessionId.utf8();
+        auto ss = WTF::makeUTF8CString(view->m_sessionId);
         std::span<const char> sid = byteCast<char>(ss.span());
 
         auto btn = cdpButton(view->m_selButton);

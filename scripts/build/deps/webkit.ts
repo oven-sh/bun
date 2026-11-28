@@ -6,7 +6,7 @@
  * After changing it, run `bun run pin-webkit`: webkit.sha256 pins the sha256
  * of this version's tarballs, and a build refuses one that is not in there.
  */
-export const WEBKIT_VERSION = "32300d4d274b67f5cd3b3f109da0f0589aff742f";
+export const WEBKIT_VERSION = "autobuild-preview-pr-1099-9507c48a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -466,6 +466,7 @@ const rows: Row[] = [
   ["ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY", 0],
   ["ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY", 0],
   ["ENABLE_WEBXR", 0],
+  ["ENABLE_WEBXR_ANCHORS", 0],
   ["ENABLE_WEBXR_HIT_TEST", 0],
   ["ENABLE_WEBXR_LAYERS", 0],
   ["ENABLE_WEBXR_PLANE_DETECTION", 0],
@@ -487,6 +488,7 @@ const rows: Row[] = [
   ["HAVE_LOCALTIME_R", probe(1)],
   ["HAVE_MALLOC_TRIM", probe(c => on(c.linux && c.abi === "gnu"))],
   ["HAVE_MAP_ALIGNED", probe(c => on(c.freebsd))],
+  ["HAVE_MKOSTEMPS", probe(1)],
   ["HAVE_MMAP", probe(1)],
   ["HAVE_PTHREAD_MAIN_NP", probe(c => on(c.freebsd))],
   ["HAVE_PTHREAD_NP_H", probe(c => on(c.freebsd))],

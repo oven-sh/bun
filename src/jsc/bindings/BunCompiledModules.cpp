@@ -335,7 +335,7 @@ struct AnswerOfPlugins {
 
 struct AnswersOfPlugins {
     Vector<Vector<AnswerOfPlugins>, 2> gotByEngine;
-    UncheckedKeyHashMap<String, Vector<AnswerOfPlugins, 1>> keptForLoader;
+    HashMap<String, Vector<AnswerOfPlugins, 1>> keptForLoader;
     bool engineAsks { false };
     bool pluginsAreSilent { false };
 };
@@ -2685,7 +2685,7 @@ extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes start, void* c
     if (startOfPath.isNull() && start.len)
         return;
     JSC::AOT::forEachFilePathWithPrefix(startOfPath, [&](const String& path) {
-        CString bytes = path.utf8();
+        CString bytes = makeUTF8CString(path);
         return each(context, BunAOTBytes { byteCast<uint8_t>(bytes.span().data()), bytes.length() }) ? IterationStatus::Continue : IterationStatus::Done;
     });
 }
@@ -2694,7 +2694,7 @@ extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes start, void* c
 extern "C" void Bun__AOT__forEachCountedFile(JSC::VM* vm, void* context, void (*each)(void* context, BunAOTBytes description, const uint64_t* counts, size_t count))
 {
     JSC::AOT::forEachCountedFile(*vm, [&](const String& description, std::span<const uint64_t> counts) {
-        CString bytes = description.utf8();
+        CString bytes = makeUTF8CString(description);
         each(context, BunAOTBytes { byteCast<uint8_t>(bytes.span().data()), bytes.length() }, counts.data(), counts.size());
     });
 }
@@ -2703,7 +2703,7 @@ extern "C" void Bun__AOT__forEachCountedFile(JSC::VM* vm, void* context, void (*
 extern "C" void Bun__AOT__forEachFirstLoad(JSC::VM* vm, void* context, void (*each)(void* context, BunAOTBytes path, bool wasSynchronous))
 {
     JSC::AOT::forEachFirstLoad(*vm, [&](const String& path, bool wasSynchronous) {
-        CString bytes = path.utf8();
+        CString bytes = makeUTF8CString(path);
         each(context, BunAOTBytes { byteCast<uint8_t>(bytes.span().data()), bytes.length() }, wasSynchronous);
     });
 }

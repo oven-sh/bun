@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// test() records where the match is. RegExp.lastMatch and the other legacy static properties run
-// the match again for the captures, and that second run needs more stack than the first. When it
-// fails, the read throws a RangeError. It used to end the process: "Segmentation fault at address 0x4".
+// test() records where the match is. RegExp.lastParen, RegExp.$1 and a write to RegExp.input run the
+// match again for the captures, and that second run needs more stack than the first. When it fails,
+// they throw a RangeError. It used to end the process: "Segmentation fault at address 0x4".
+// RegExp.lastMatch, leftContext and rightContext are cut from the input at the recorded range, so they
+// do not run the match again and do not throw.
 // The program runs in a child, because the size of the RegExp stack is read when the process starts.
 test("a legacy static property of RegExp throws when its second match runs out of stack", async () => {
   const program = `
@@ -12,8 +14,8 @@ test("a legacy static property of RegExp throws when its second match runs out o
     console.log("matched: " + regExp.test(string));
     for (const name of ["lastMatch", "lastParen", "$1", "leftContext", "rightContext"]) {
       try {
-        RegExp[name];
-        console.log(name + ": no error");
+        const value = RegExp[name];
+        console.log(name + ": " + (value === string ? "the input" : JSON.stringify(value)));
       } catch (error) {
         console.log(name + ": " + error.constructor.name + ": " + error.message);
       }
@@ -40,11 +42,11 @@ test("a legacy static property of RegExp throws when its second match runs out o
   expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
     stdout: [
       "matched: true",
-      "lastMatch: RangeError: Out of memory",
+      "lastMatch: the input",
       "lastParen: RangeError: Out of memory",
       "$1: RangeError: Out of memory",
-      "leftContext: RangeError: Out of memory",
-      "rightContext: RangeError: Out of memory",
+      'leftContext: ""',
+      'rightContext: ""',
       "input = x: RangeError: Out of memory",
       "input is kept: true",
       "next match: true",

@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
+
+const sourcesOf = (map: { sources: string[] }) => map.sources.map(source => basename(source)).sort();
+// `sourcemap` is the position in `outputs` of the output's `.sourcemap`.
+const describeOutputs = (outputs: Bun.BuildArtifact[]) =>
+  Promise.all(
+    outputs.map(async output => ({
+      kind: output.kind,
+      sources: output.kind === "sourcemap" ? sourcesOf(await output.json()) : undefined,
+      sourcemap: output.sourcemap && outputs.indexOf(output.sourcemap),
+    })),
+  );
 
 describe("Bun.build compile with sourcemap", () => {
   const helperFiles = {
@@ -112,6 +123,7 @@ main();`,
     // The sourcemap output should appear in build result outputs
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
     expect(sourcemapOutputs.length).toBe(1);
+    expect(executableOutput.sourcemap).toBe(sourcemapOutputs[0]);
 
     // The .map file should exist next to the executable
     const mapPath = sourcemapOutputs[0].path;
@@ -179,6 +191,11 @@ export function greet() {
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
     expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(2);
 
+    // The executable's `.sourcemap` is the map of the entry chunk, not the map of the lazy chunk.
+    expect(sourcemapOutputs).toContain(executableOutput.sourcemap);
+    expect(sourcesOf(await executableOutput.sourcemap!.json())).toEqual(["entry.js"]);
+    expect(sourcemapOutputs.filter(map => map.sourcemap !== null)).toEqual([]);
+
     // Each sourcemap should be a valid .map file on disk
     const mapPaths = new Set<string>();
     for (const sm of sourcemapOutputs) {
@@ -208,6 +225,59 @@ export function greet() {
 
     expect(stdout).toContain("hello from lazy module");
     expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/37184
+  test("compile with an HTML entry point before the JS entry point: the executable's sourcemap is its own map", async () => {
+    using dir = tempDir("build-compile-sourcemap-html-entry", {
+      "index.html": `<!doctype html><html><body><script type="module" src="./page.js"></script></body></html>`,
+      "page.js": `console.log("page");`,
+      "app.js": `console.log("app");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.html"), join(String(dir), "app.js")],
+      compile: { outfile: join(String(dir), "app") },
+      sourcemap: "external",
+    });
+
+    expect(result.success).toBe(true);
+
+    // The map of the page's chunk comes before the map of the executable.
+    expect(await describeOutputs(result.outputs)).toEqual([
+      { kind: "entry-point", sources: undefined, sourcemap: 2 },
+      { kind: "sourcemap", sources: ["page.js"], sourcemap: null },
+      { kind: "sourcemap", sources: ["app.js"], sourcemap: null },
+    ]);
+  });
+
+  test("compile with splitting: the executable's sourcemap is null when its own map is not written", async () => {
+    using dir = tempDir("build-compile-sourcemap-unwritable", {
+      "entry.js": `
+const mod = await import("./lazy.js");
+mod.greet();
+`,
+      "lazy.js": `
+export function greet() {
+  console.log("hello from lazy module");
+}
+`,
+      // A directory at the path of the executable's map: that one write fails.
+      "entry.map": {},
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      compile: { outfile: join(String(dir), "entry") },
+      splitting: true,
+      sourcemap: "external",
+    });
+
+    expect(result.success).toBe(true);
+    expect(await describeOutputs(result.outputs)).toEqual([
+      { kind: "entry-point", sources: undefined, sourcemap: null },
+      { kind: "sourcemap", sources: ["lazy.js"], sourcemap: null },
+    ]);
   });
 
   test("compile with --outfile subdir/myapp writes .map next to executable", async () => {

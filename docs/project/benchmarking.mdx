@@ -10,7 +10,19 @@ Bun is designed for speed. We profile and benchmark hot paths extensively. The s
 To measure time precisely, Bun offers two runtime APIs:
 
 1. The Web-standard [`performance.now()`](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now) function
-2. `Bun.nanoseconds()`, which is like `performance.now()` except it returns the time since the application started in nanoseconds. Use `performance.timeOrigin` to convert this to a Unix timestamp.
+2. `Bun.nanoseconds()`, which is like `performance.now()` except it returns the time since the application started in nanoseconds. Use `performance.timeOrigin` to convert this to a Unix timestamp:
+
+```ts
+// Unix timestamp in milliseconds (sub-millisecond float)
+const unixMs = performance.timeOrigin + Bun.nanoseconds() / 1e6;
+
+// Lossless Unix timestamp in nanoseconds (BigInt avoids IEEE-754 precision loss past Number.MAX_SAFE_INTEGER)
+const origin = performance.timeOrigin;
+const unixNs =
+  BigInt(Math.trunc(origin)) * 1_000_000n +
+  BigInt(Math.round((origin % 1) * 1_000_000)) +
+  BigInt(Bun.nanoseconds());
+```
 
 ## Benchmarking tools
 
@@ -250,15 +262,19 @@ BUN_OPTIONS="--cpu-prof-md" bun script.js
 ```sh terminal icon="terminal"
 bun --cpu-prof --cpu-prof-name my-profile.cpuprofile script.js
 bun --cpu-prof --cpu-prof-dir ./profiles script.js
+bun --cpu-prof --cpu-prof-interval 250 script.js
 bun test --cpu-prof --cpu-prof-dir ./profiles # with --parallel, one profile for each worker
 ```
 
-| Flag                         | Description                                                 |
-| ---------------------------- | ----------------------------------------------------------- |
-| `--cpu-prof`                 | Generate a `.cpuprofile` JSON file (Chrome DevTools format) |
-| `--cpu-prof-md`              | Generate a markdown CPU profile (grep/LLM-friendly)         |
-| `--cpu-prof-name <filename>` | Set output filename                                         |
-| `--cpu-prof-dir <dir>`       | Set output directory                                        |
+| Flag                         | Description                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| `--cpu-prof`                 | Generate a `.cpuprofile` JSON file (Chrome DevTools format)                   |
+| `--cpu-prof-md`              | Generate a markdown CPU profile (grep/LLM-friendly)                           |
+| `--cpu-prof-name <filename>` | Set output filename (bare stem with `--cpu-prof --cpu-prof-md` writes both) |
+| `--cpu-prof-dir <dir>`       | Set output directory                                                          |
+| `--cpu-prof-interval <µs>`   | Sampling interval in microseconds (default: `1000`)                           |
+
+<Note>Passing a bare stem such as `--cpu-prof-name my-profile` with both `--cpu-prof` and `--cpu-prof-md` writes `my-profile.cpuprofile` and `my-profile.md` in one pass. `bun test --cpu-prof` (including per-worker `--parallel` profiles) requires Bun `>=1.4.6`.</Note>
 
 ## Heap profiling
 

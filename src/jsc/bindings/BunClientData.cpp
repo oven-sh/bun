@@ -211,6 +211,8 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
 
         if (init.hasOutputConstraints)
             heapData.outputConstraintSpaces().append(space);
+        if (init.reconcileWeakReferencesAtGCEnd)
+            heapData.weakReconciliationSpaces().append({ space, init.reconcileWeakReferencesAtGCEnd });
     }
 
     clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space).release();
@@ -270,9 +272,16 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
 }
 
-void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope collectionScope)
 {
     Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
+
+    for (auto& [space, reconcileCell] : m_heapData->weakReconciliationSpaces()) {
+        space->forEachMarkedCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) {
+            RELEASE_ASSERT(kind == JSC::HeapCell::Kind::JSCell);
+            reconcileCell(cell, vm, collectionScope);
+        });
+    }
 }
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)

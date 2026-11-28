@@ -5609,6 +5609,9 @@ impl VirtualMachine {
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
         self.module_loader.macro_load_states.clear();
 
+        // So is what the file assigned to `Module._extensions`. A preload assigns again in the new realm.
+        crate::node_module_module::reset_require_extensions(self);
+
         let old_global = self.global.get();
         // `old_global` valid for VM lifetime (safe ZST-handle deref).
         let new_global: *mut JSGlobalObject =

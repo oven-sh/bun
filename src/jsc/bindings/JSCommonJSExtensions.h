@@ -48,3 +48,6 @@ private:
 };
 
 } // namespace Bun
+
+// Whether Module._extensions of the running test file answers require(specifier), so that a source cached for an earlier file does not.
+extern "C" bool NodeModuleModule__requireExtensionsSelect(void* bunVM, const WTF::StringImpl* specifier);

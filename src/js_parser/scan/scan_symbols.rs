@@ -56,10 +56,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(member) = scope.get_member_with_hash(name, hash) {
                     declare_loc = member.loc;
                     // Unbound globals live in the module scope.
+                    // No nested slot shares a top-level name.
                     scope_use = self.track_scope_uses
                         && (scope.parent.is_some()
-                            || self.symbols[member.ref_.inner_index() as usize].kind
-                                != js_ast::symbol::Kind::Unbound);
+                            || (!self.reuse_nested_slots
+                                && self.symbols[member.ref_.inner_index() as usize].kind
+                                    != js_ast::symbol::Kind::Unbound));
                     break 'brk member.ref_;
                 }
 

@@ -212,6 +212,33 @@ impl ScopeUseSpan {
             last: u32::MAX,
         }
     }
+
+    /// Sorts `spans` and joins one symbol's overlapping spans, so `any_in` needs one search.
+    pub fn merge(spans: &mut Vec<ScopeUseSpan>) {
+        spans.sort_unstable();
+        let mut kept = 0;
+        for i in 0..spans.len() {
+            let span = spans[i];
+            match spans[..kept].last_mut() {
+                Some(last) if last.symbol == span.symbol && span.first <= last.last => {
+                    last.last = last.last.max(span.last);
+                }
+                _ => {
+                    spans[kept] = span;
+                    kept += 1;
+                }
+            }
+        }
+        spans.truncate(kept);
+    }
+
+    /// Whether `spans` (from `merge`) has a span of `symbol` that meets scopes `first..=last`.
+    pub fn any_in(spans: &[ScopeUseSpan], symbol: u32, first: u32, last: u32) -> bool {
+        let i = spans.partition_point(|s| (s.symbol, s.last) < (symbol, first));
+        spans
+            .get(i)
+            .is_some_and(|s| s.symbol == symbol && s.first <= last)
+    }
 }
 
 /// Where the file references each symbol, for the bundler's number renamer:
@@ -225,7 +252,7 @@ pub struct ScopeUseList {
     pub tracked: bool,
     /// In visit order, adjacent repeats dropped.
     pub points: AstVec<ScopeUse>,
-    /// Sorted, no repeats. Class field initializers (may be printed inside
+    /// From `ScopeUseSpan::merge`. Class field initializers (may be printed inside
     /// the constructor: the span is the class body), the parser's generated
     /// temporaries and helpers (may be printed deeper than recorded) and
     /// `module`/`exports` (printed for one another): the span is the file.
@@ -239,6 +266,51 @@ impl Default for ScopeUseList {
             points: AstAlloc::vec(),
             spans: AstAlloc::vec(),
         }
+    }
+}
+
+/// `ScopeUseList::points` by symbol. A scope with everything inside it is the pre-order span `[first, last]`.
+#[derive(Default)]
+pub struct ScopeUsePoints {
+    /// `scopes[offsets[i]..offsets[i + 1]]`: the scopes that reference symbol `i`, ascending.
+    offsets: Vec<u32>,
+    scopes: Vec<u32>,
+}
+
+impl ScopeUsePoints {
+    /// The symbols of `points` are below `symbol_count`.
+    pub fn build(points: &[ScopeUse], symbol_count: usize) -> ScopeUsePoints {
+        // Counting sort: `offsets[i]` is the end of bucket `i`, then its start once the bucket is filled from its end.
+        let mut offsets = vec![0u32; symbol_count + 1];
+        for point in points {
+            offsets[point.symbol as usize] += 1;
+        }
+        for i in 1..offsets.len() {
+            offsets[i] += offsets[i - 1];
+        }
+        let mut scopes = vec![0u32; points.len()];
+        for point in points.iter().rev() {
+            let slot = &mut offsets[point.symbol as usize];
+            *slot -= 1;
+            scopes[*slot as usize] = point.scope;
+        }
+        for symbol in 0..symbol_count {
+            scopes[offsets[symbol] as usize..offsets[symbol + 1] as usize].sort_unstable();
+        }
+        ScopeUsePoints { offsets, scopes }
+    }
+
+    /// The scopes that reference `symbol`, ascending.
+    pub fn scopes_of(&self, symbol: u32) -> &[u32] {
+        &self.scopes
+            [self.offsets[symbol as usize] as usize..self.offsets[symbol as usize + 1] as usize]
+    }
+
+    /// Whether a scope in `first..=last` references `symbol`.
+    pub fn any_in(&self, symbol: u32, first: u32, last: u32) -> bool {
+        let scopes = self.scopes_of(symbol);
+        let i = scopes.partition_point(|&at| at < first);
+        scopes.get(i).is_some_and(|&at| at <= last)
     }
 }
 

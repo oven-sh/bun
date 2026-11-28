@@ -76,6 +76,7 @@ pub struct Symbol {
     /// The parser fills this in for symbols inside nested scopes. There are three
     /// slot namespaces: regular symbols, label symbols, and private symbols.
     ///
+    /// Unlike in esbuild, a symbol can share a slot with an enclosing scope's symbol that its scope does not reference.
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 

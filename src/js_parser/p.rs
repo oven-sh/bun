@@ -177,6 +177,8 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_len: usize,
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
+    span_uses_len: usize,
+    slot_notes: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -550,8 +552,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// with them, also in JavaScript, where an unused import otherwise stays for its side effects.
     /// Few: the data functions of a page and what they use.
     pub(crate) used_by_deleted_exports: Vec<u32>,
-    /// Fill `scope_uses` (bundling with the number renamer).
+    /// Fill `scope_uses`: bundling with the number renamer, or `reuse_nested_slots`.
     pub(crate) track_scope_uses: bool,
+    /// Minifying identifiers, not for the runtime module loader: `renamer::assign_nested_scope_slots` reads the scope uses.
+    pub(crate) reuse_nested_slots: bool,
+    /// For the `switch` statements being visited: each `let`, `const` or function of a case, with its use count at the end of the case.
+    pub(crate) switch_case_locals: Vec<(u32, u32)>,
+    /// Filled with `reuse_nested_slots`.
+    pub(crate) slot_notes: renamer::SlotNotes,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
     pub(crate) visit_scope_count: u32,
     /// Class body scopes whose field initializer is being visited. Lowering
@@ -1785,10 +1793,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // s() lives in the impl block above (deduped).
 
-    fn take_scope_uses(&mut self) -> js_ast::ast_result::ScopeUseList {
-        use js_ast::ast_result::{ScopeUseList, ScopeUseSpan};
+    /// What becomes `ScopeUseList::spans`. Ends the module scope's `visit_span`.
+    fn finish_scope_use_spans(&mut self) -> Vec<js_ast::ast_result::ScopeUseSpan> {
+        use js_ast::ast_result::ScopeUseSpan;
         if !self.track_scope_uses {
-            return ScopeUseList::default();
+            return Vec::new();
         }
         // Pushed first in the visit pass and never popped.
         self.module_scope_mut().visit_span[1] = self.visit_scope_count.saturating_sub(1);
@@ -1821,16 +1830,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         generated(self.symbols.as_slice(), self.module_scope(), &mut spans);
-        spans.sort_unstable();
-        spans.dedup();
+        ScopeUseSpan::merge(&mut spans);
+        spans
+    }
 
+    /// `spans`: from `finish_scope_use_spans`.
+    fn take_scope_uses(
+        &mut self,
+        spans: &[js_ast::ast_result::ScopeUseSpan],
+    ) -> js_ast::ast_result::ScopeUseList {
+        use js_ast::ast_result::ScopeUseList;
+        // With `reuse_nested_slots` the parser was the reader.
+        if !self.track_scope_uses || self.reuse_nested_slots {
+            return ScopeUseList::default();
+        }
         let list = ScopeUseList {
             tracked: true,
             points: bun_alloc::AstAlloc::vec_from_slice(&self.scope_uses),
-            spans: bun_alloc::AstAlloc::vec_from_slice(&spans),
+            spans: bun_alloc::AstAlloc::vec_from_slice(spans),
         };
         self.scope_uses = Vec::new();
         list
+    }
+
+    /// With `reuse_nested_slots`: writes a mark for `renamer::SlotNotes` at the scope being visited.
+    pub(crate) fn slot_mark(&mut self, mark: u32, symbol: u32) {
+        let scope = self.current_scope.visit_span[0];
+        debug_assert!(scope < 1 << renamer::slot_mark::SHIFT);
+        self.scope_uses.push(js_ast::ast_result::ScopeUse {
+            scope: scope | mark,
+            symbol,
+        });
+    }
+
+    pub(crate) fn slot_mark_declarations(&mut self, stmt: &Stmt) {
+        // Names of the module scope take no nested slot.
+        if self.current_scope != self.module_scope {
+            renamer::lexical_declarations(stmt, |symbol| {
+                self.slot_mark(renamer::slot_mark::DECLARED, symbol);
+            });
+        }
     }
 
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
@@ -1993,6 +2032,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The parse pass (TypeScript decorator metadata resolves type
             // names then): no scope numbering yet.
             self.span_uses.push((None, symbol));
+            if self.reuse_nested_slots {
+                // The metadata is printed behind the class, where a name of the class is free.
+                self.slot_notes.unique(symbol);
+            }
         } else if scope.kind == js_ast::scope::Kind::ClassBody {
             // A field initializer is visited in the class body scope but may
             // be printed inside the constructor.
@@ -2087,6 +2130,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if scope_use {
                 self.record_scope_use(ref_);
             }
+        } else if scope_use && self.reuse_nested_slots {
+            // Dead code that is still printed must not read another binding.
+            self.record_scope_use(ref_);
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -8256,6 +8302,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_len: self.scopes_in_order.len(),
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
+            span_uses_len: self.span_uses.len(),
+            slot_notes: self.slot_notes.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8313,6 +8361,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
         }
+        // Both hold indices of symbols, which the real parse creates again.
+        self.span_uses.truncate(snapshot.span_uses_len);
+        self.slot_notes.truncate(snapshot.slot_notes);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }
@@ -9259,14 +9310,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the symbol renaming pass that will happen later in the linker. It's done
         // now in the parser because we want it to be done in parallel per file and
         // we're already executing code in parallel here
+        let scope_use_spans = self.finish_scope_use_spans();
         let nested_scope_slot_counts = if self.options.features.minify_identifiers {
             // `StoreRef` handle does not borrow `self`, so the `&mut self.symbols`
             // below does not conflict with the scope read.
             let module_scope = self.module_scope_ref();
+            let liveness = self.reuse_nested_slots.then(|| {
+                renamer::ScopeLiveness::new(
+                    &mut self.scope_uses,
+                    &scope_use_spans,
+                    &self.slot_notes,
+                    module_scope.get(),
+                    self.symbols.as_slice(),
+                )
+            });
             renamer::assign_nested_scope_slots(
                 arena,
                 module_scope.get(),
                 self.symbols.as_mut_slice(),
+                liveness.as_ref(),
             )
         } else {
             js_ast::SlotCounts::default()
@@ -9275,7 +9337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ts_enums = self.compute_ts_enums_map(arena)?;
 
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
-        let scope_uses = self.take_scope_uses();
+        let scope_uses = self.take_scope_uses(&scope_use_spans);
 
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
@@ -9558,7 +9620,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         lexer.track_comments = opts.features.minify_identifiers;
-        let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
+        // The output of the runtime module loader is cached: its names must not change.
+        let reuse_nested_slots = opts.features.minify_identifiers
+            && (opts.bundle || !opts.features.commonjs_at_runtime)
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NESTED_SLOT_REUSE::get()
+                .unwrap_or(false);
+        let track_scope_uses =
+            reuse_nested_slots || (opts.bundle && !opts.features.minify_identifiers);
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9742,6 +9810,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),
             track_scope_uses,
+            reuse_nested_slots,
+            switch_case_locals: Vec::new(),
+            slot_notes: renamer::SlotNotes::default(),
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),
             scope_uses: Vec::new(),

@@ -1251,14 +1251,10 @@ pub struct ScopeUses<'a> {
     index: core::cell::OnceCell<ScopeUseIndex>,
 }
 
-/// Scopes are numbered in pre-order (`Scope::visit_span`), so a scope
-/// together with everything inside it is the span `[first, last]`.
 #[derive(Default)]
 struct ScopeUseIndex {
-    /// `scope_indices[offsets[i]..offsets[i + 1]]`: the scopes that reference
-    /// this file's symbol `i`, ascending.
-    offsets: Vec<u32>,
-    scope_indices: Vec<u32>,
+    /// By this file's symbols.
+    points: js_ast::ast_result::ScopeUsePoints,
     /// Printed symbols the linker added uses of: no scope on record, so they
     /// may be printed anywhere in the file.
     everywhere: HashMap<Ref, ()>,
@@ -1291,16 +1287,7 @@ impl<'a> ScopeUses<'a> {
     /// A function body or catch block also sees its parameter scope, which it
     /// cannot redeclare.
     pub fn sees(&self, symbol: Ref, scope: &js_ast::Scope) -> bool {
-        let scope = match (scope.kind, scope.parent.as_deref()) {
-            (js_ast::scope::Kind::FunctionBody, Some(parent)) => parent,
-            (js_ast::scope::Kind::Block, Some(parent))
-                if parent.kind == js_ast::scope::Kind::CatchBinding =>
-            {
-                parent
-            }
-            _ => scope,
-        };
-        let Some(span) = scope.visit_span() else {
+        let Some(span) = scope.capture_span() else {
             return true;
         };
         if !self.list.tracked {
@@ -1325,21 +1312,13 @@ impl<'a> ScopeUses<'a> {
 
     /// For a symbol of this file, by inner index.
     fn sees_own(&self, index: &ScopeUseIndex, symbol: u32, (first, last): (u32, u32)) -> bool {
-        let (lo, hi) = (
-            index.offsets[symbol as usize],
-            index.offsets[symbol as usize + 1],
-        );
-        let scopes = &index.scope_indices[lo as usize..hi as usize];
-        let i = scopes.partition_point(|&at| at < first);
-        if scopes.get(i).is_some_and(|&at| at <= last) {
-            return true;
-        }
-        let spans = self.list.spans.as_slice();
-        let i = spans.partition_point(|s| s.symbol < symbol);
-        spans[i..]
-            .iter()
-            .take_while(|s| s.symbol == symbol)
-            .any(|s| s.first <= last && first <= s.last)
+        index.points.any_in(symbol, first, last)
+            || js_ast::ast_result::ScopeUseSpan::any_in(
+                self.list.spans.as_slice(),
+                symbol,
+                first,
+                last,
+            )
     }
 }
 
@@ -1378,29 +1357,10 @@ impl ScopeUseIndex {
         }
         index.aliases.sort_unstable();
 
-        // Bucket the points by symbol (counting sort), then order each
-        // symbol's scopes.
-        let points = file.list.points.as_slice();
-        // `offsets[i]` = end of bucket `i`; filling each bucket from its end
-        // turns it into the start.
-        let mut offsets = vec![0u32; file_symbols.len() + 1];
-        for point in points {
-            offsets[point.symbol as usize] += 1;
-        }
-        for i in 1..offsets.len() {
-            offsets[i] += offsets[i - 1];
-        }
-        let mut scope_indices = vec![0u32; points.len()];
-        for point in points.iter().rev() {
-            let slot = &mut offsets[point.symbol as usize];
-            *slot -= 1;
-            scope_indices[*slot as usize] = point.scope;
-        }
-        for symbol in 0..file_symbols.len() {
-            scope_indices[offsets[symbol] as usize..offsets[symbol + 1] as usize].sort_unstable();
-        }
-        index.offsets = offsets;
-        index.scope_indices = scope_indices;
+        index.points = js_ast::ast_result::ScopeUsePoints::build(
+            file.list.points.as_slice(),
+            file_symbols.len(),
+        );
         index
     }
 }

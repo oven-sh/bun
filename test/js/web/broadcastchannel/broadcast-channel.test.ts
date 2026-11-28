@@ -33,18 +33,33 @@ test("broadcast channel properties", () => {
   c1.close();
 });
 
-test("broadcast channel worker wait", done => {
-  var worker = new Worker(new URL("broadcast-channel-worker-simple.ts", import.meta.url).href);
-  worker.ref();
-  Bun.sleepSync(500);
-  var bc = new BroadcastChannel("sleep");
-  bc.onmessage = e => {
-    expect(e.data).toBe("done!");
-    bc.close();
-    worker.unref();
-    done();
+test("broadcast channel worker wait", async () => {
+  const worker = new Worker(new URL("broadcast-channel-worker-simple.ts", import.meta.url).href);
+  const bc = new BroadcastChannel("sleep");
+  const got: unknown[] = [];
+  const done = Promise.withResolvers<void>();
+  worker.onerror = e => done.reject(e.error ?? e.message);
+  worker.addEventListener("close", e =>
+    done.reject(new Error(`worker closed (${e.code}) while its channel was open, after ${JSON.stringify(got)}`)),
+  );
+  // The worker posts "ready" when its channel exists, and only if that channel keeps it alive: otherwise it closes.
+  // A BroadcastChannel does not queue messages for a channel that does not exist yet, so "rise and shine!" is
+  // posted after "ready".
+  worker.onmessage = e => {
+    got.push(e.data);
+    bc.postMessage("rise and shine!");
   };
-  bc.postMessage("rise and shine!");
+  bc.onmessage = e => {
+    got.push(e.data);
+    done.resolve();
+  };
+  try {
+    await done.promise;
+  } finally {
+    bc.close();
+    worker.terminate();
+  }
+  expect(got).toEqual(["ready", "done!"]);
 });
 
 test("messages are delivered in port creation order", done => {

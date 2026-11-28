@@ -468,7 +468,7 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
             Some(written) => executables.push((name.clone(), written.to_vec())),
             None => bin.for_each_property(|key, _, value| {
                 if let Some(written) = value.as_utf8_string_literal() {
-                    executables.push((bun_paths::basename(key).to_vec(), written.to_vec()));
+                    executables.push((strip_scope(key).to_vec(), written.to_vec()));
                 }
             }),
         }
@@ -482,9 +482,12 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
     }
 }
 
+/// The executable is named after it, so a separator of any platform and a colon end the scope: the name is no path.
 fn strip_scope(package_name: &[u8]) -> &[u8] {
-    let after_last_slash = package_name.rsplit(|&byte| byte == b'/').next();
-    after_last_slash.unwrap_or(package_name)
+    match bun_core::strings::last_index_of_any(package_name, b"/\\:") {
+        Some(separator) => &package_name[separator + 1..],
+        None => package_name,
+    }
 }
 
 fn find_index_file(directory: &[u8]) -> Option<Box<[u8]>> {

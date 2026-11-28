@@ -2,6 +2,8 @@
 pub enum Error {
     #[error("Corrupted module graph: entry point ID is greater than module list count")]
     CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount,
+    #[error("Corrupted module graph: an offset, a length or a type is out of range")]
+    CorruptedModuleGraph,
     #[error("TargetNotFound")]
     TargetNotFound,
     #[error("NetworkError")]
@@ -42,6 +44,9 @@ impl Error {
         match self {
             Self::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount => {
                 "Corrupted module graph: entry point ID is greater than module list count"
+            }
+            Self::CorruptedModuleGraph => {
+                "Corrupted module graph: an offset, a length or a type is out of range"
             }
             Self::TargetNotFound => "TargetNotFound",
             Self::NetworkError => "NetworkError",

@@ -6854,8 +6854,11 @@ pub fn move_file_z_with_handle(
         renamed => renamed,
     };
     match attempt() {
-        // Windows also reports a directory as `EPERM`.
-        Err(e) if e.get_errno() == E::EISDIR || (cfg!(windows) && e.get_errno() == E::EPERM) => {
+        // Windows and macOS also report a directory as `EPERM`.
+        Err(e)
+            if e.get_errno() == E::EISDIR
+                || (cfg!(any(windows, target_os = "macos")) && e.get_errno() == E::EPERM) =>
+        {
             let _ = rmdirat(to_dir, destination);
             attempt()
         }
@@ -8400,14 +8403,37 @@ pub(crate) fn copy_file_z_slow_with_handle(
 ) -> Maybe<()> {
     #[cfg(unix)]
     let st = fstat(in_handle)?;
-    // Unlink dest first — fixes ETXTBUSY on Linux.
-    let _ = unlinkat(to_dir, destination);
-    let dst = Tmpfile::open(
-        to_dir,
-        destination,
-        O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
-        0o644,
-    )?;
+    // Never readable to more users than the file that it is a copy of.
+    #[cfg(unix)]
+    let mode = (st.st_mode & 0o777) as Mode;
+    #[cfg(not(unix))]
+    let mode = 0o644;
+    // In a folder where only this user or the system can make links, as `/dev` and `/proc/self/fd` are, a link is meant to be followed.
+    #[cfg(unix)]
+    let may_follow = fstat(to_dir).is_ok_and(|it| {
+        // SAFETY: it takes no arguments and cannot fail.
+        let is_trusted = it.st_uid == 0 || it.st_uid == unsafe { libc::geteuid() };
+        is_trusted && it.st_mode & 0o022 == 0
+    }) && !bun_core::strings::contains_char(destination.as_bytes(), b'/');
+    #[cfg(not(unix))]
+    let may_follow = true;
+    let mut attempts_left = 8;
+    let dst = loop {
+        // Unlink dest first — fixes ETXTBUSY on Linux.
+        // Whoever else can write to the folder may put something there before it is opened.
+        let flags = match unlinkat(to_dir, destination) {
+            Ok(()) => O::EXCL,
+            Err(e) if e.get_errno() == E::ENOENT => O::EXCL,
+            Err(_) if may_follow => O::TRUNC,
+            // What another user has put there, a file as well as a link, stays theirs.
+            Err(e) => return Err(e),
+        };
+        let flags = O::WRONLY | O::CREAT | O::CLOEXEC | flags;
+        match Tmpfile::open(to_dir, destination, flags, mode) {
+            Err(e) if e.get_errno() == E::EEXIST && attempts_left > 0 => attempts_left -= 1,
+            opened => break opened?,
+        }
+    };
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.

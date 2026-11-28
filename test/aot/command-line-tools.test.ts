@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
@@ -57,4 +58,27 @@ test.concurrent.each(tools)(
     expect(await run(String(dir), [executable, ...args])).toEqual(plain);
   },
   240_000,
+);
+
+test.concurrent.each([
+  ["the name", { name: "a\\..\\..\\outside", main: "main.js" }],
+  ["a name with a colon", { name: "C:outside", main: "main.js" }],
+  ["a key of bin", { name: "safe", bin: { "x/..\\outside": "./main.js" } }],
+  ["a key of bin with a colon", { name: "safe", bin: { "x/C:outside": "./main.js" } }],
+])(
+  "the executable of a package is named after the last part of its name, whatever the separators: %s",
+  async (_, manifest) => {
+    using dir = tempDir("aot-name-with-separators", {
+      "app/package.json": JSON.stringify(manifest),
+      "app/main.js": "",
+    });
+    const built = await run(join(String(dir), "app"), [bunExe(), "compile"]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const executable = "outside" + (isWindows ? ".exe" : "");
+    expect(readdirSync(join(String(dir), "app")).sort()).toEqual(["main.js", executable, "package.json"]);
+    expect(readdirSync(String(dir))).toEqual(["app"]);
+  },
 );

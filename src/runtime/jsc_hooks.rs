@@ -4142,7 +4142,9 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
 /// file instead of leaking a copy per call (#29585). Returns `None` when the
-/// input is empty, absent from the graph, or a filesystem step fails.
+/// input is empty or absent from the graph. Where a filesystem step fails it
+/// is the path in the executable, which nothing can open: the file that the
+/// disk has at `input_path` is not the one that is meant.
 pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option<bun_paths::Path> {
     if input_path.is_empty() {
         return None;
@@ -4152,8 +4154,11 @@ pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option
         return Some(bun_paths::Path::from(&path));
     }
     let file = bun_standalone_graph::Graph::get_ref()?.find_library(input_path)?;
-    let file_contents: &[u8] = file.contents.as_bytes();
+    let extracted = extract_embedded_file(file.contents.as_bytes(), extname);
+    Some(extracted.unwrap_or_else(|| bun_paths::Path::from(file.name)))
+}
 
+fn extract_embedded_file(file_contents: &[u8], extname: &[u8]) -> Option<bun_paths::Path> {
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
     // users on a shared `/tmp` from colliding.
     let content_hash = bun_wyhash::hash(file_contents);
@@ -4244,6 +4249,9 @@ fn make_or_find_private_folder(path: &[u8], _uid: u32) -> bool {
 fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::O;
 
+    // Every load in this process finds the same copies.
+    static PROCESS_SUFFIX: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let addon = graph.find_library(addon_path)?;
     let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
@@ -4258,16 +4266,23 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
 
     let uid = extract_owner_uid();
     let name = format!(".bun-{uid}-{hash:x}");
+    let tmpdir = Fs::RealFS::tmpdir_path();
     let persistent_folder =
-        bun_paths::Path::from_parts(&[Fs::RealFS::tmpdir_path(), name.as_bytes()]).to_vec();
+        bun_paths::Path::resolve(&[bun_core::top_level_dir(), tmpdir, name.as_bytes()]).to_vec();
     let per_process_folder = [
         &persistent_folder[..],
-        format!("-{:x}", bun_core::fast_random()).as_bytes(),
+        format!("-{:x}", *PROCESS_SUFFIX.get_or_init(bun_core::fast_random)).as_bytes(),
     ]
     .concat();
-    let folder = [persistent_folder, per_process_folder]
-        .into_iter()
-        .find(|folder| make_or_find_private_folder(folder, uid))?;
+    // As in `resolve_embedded_file`: a relative one is in the working directory, where a folder of ours can have any author.
+    let may_reuse = bun_paths::is_absolute(tmpdir);
+    let folder = [
+        may_reuse.then_some(persistent_folder),
+        Some(per_process_folder),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|folder| make_or_find_private_folder(folder, uid))?;
     let written_path = |path: &[u8]| {
         let mut written = bun_paths::Path::from(&folder);
         match cfg!(windows) {

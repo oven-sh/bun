@@ -894,6 +894,163 @@ pub fn normalize_source_path(name: &[u8]) -> Option<Box<[u8]>> {
     Some(absolute_key(name)?.as_bytes().into())
 }
 
+/// Whether nobody but this user and the system can have laid the file `path` where it is, can replace it, or can lay a library that it loads beside it. Every folder and link on the way counts.
+#[cfg(unix)]
+fn only_this_user_can_write(path: &[u8]) -> bool {
+    // SAFETY: it takes no arguments and cannot fail.
+    let user = unsafe { libc::geteuid() };
+    // The group of administrators, who can become root.
+    let administrators = if cfg!(target_os = "macos") { 80 } else { 0 };
+    // Where each user has a group of the same number, umask 002 is usual.
+    let is_group_of_user_alone =
+        |it: &bun_sys::Stat| cfg!(target_os = "linux") && it.st_gid == user && user != 0;
+    let is_safe = |it: &bun_sys::Stat, may_be_sticky: bool| {
+        let mode = it.st_mode as u32;
+        let is_sticky = may_be_sticky && mode & 0o1000 != 0;
+        let is_administrators = it.st_gid == 0 || it.st_gid == administrators;
+        let others = match is_administrators || is_group_of_user_alone(it) {
+            true => 0o002,
+            false => 0o022,
+        };
+        (it.st_uid == user || it.st_uid == 0) && (is_sticky || mode & others == 0)
+    };
+    let mut at: Vec<u8> = Vec::new();
+    let mut pending: Vec<Box<[u8]>> = Vec::new();
+    let push_components = |pending: &mut Vec<Box<[u8]>>, path: &[u8]| {
+        let first = pending.len();
+        let components = strings::split(path, b"/");
+        pending.extend(
+            components
+                .filter(|it| !matches!(*it, b"" | b"."))
+                .map(Box::from),
+        );
+        pending[first..].reverse();
+    };
+    push_components(&mut pending, path);
+    let Ok(root) = bun_sys::lstat(bun_core::zstr!("/")) else {
+        return false;
+    };
+    if !is_safe(&root, true) {
+        return false;
+    }
+    let mut links = 0;
+    while let Some(component) = pending.pop() {
+        let parent = at.len();
+        if *component == *b".." {
+            at.truncate(strings::last_index_of_char(&at, b'/').unwrap_or(0) as usize);
+            continue;
+        }
+        at.push(b'/');
+        at.extend_from_slice(&component);
+        let name = bun_core::ZBox::from_bytes(&at);
+        let Ok(stat) = bun_sys::lstat(&name) else {
+            return false;
+        };
+        if !bun_sys::S::ISLNK(stat.st_mode as u32) {
+            let is_folder = bun_sys::S::ISDIR(stat.st_mode as u32);
+            // In a sticky folder others can make files, but not replace this one. Nothing is loaded out of one.
+            let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
+            if !is_safe(&stat, is_folder)
+                || (cfg!(target_os = "macos") || stat.st_mode as u32 & 0o020 != 0)
+                    && has_access_control_list(&name)
+                || !is_folder && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
+            {
+                return false;
+            }
+            continue;
+        }
+        links += 1;
+        let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
+        // What the library loads is looked for beside the name that it was loaded by.
+        let is_last = pending.is_empty();
+        if links > 40
+            || (stat.st_uid != user && stat.st_uid != 0)
+            || is_last && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
+        {
+            return false;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let Ok(length) = bun_sys::readlink(&name, &mut buffer[..]) else {
+            return false;
+        };
+        let target = &buffer[..length];
+        at.truncate(if target.starts_with(b"/") { 0 } else { parent });
+        push_components(&mut pending, target);
+    }
+    true
+}
+
+#[cfg(windows)]
+use bun_sys::windows::private_folder::only_this_user_can_write;
+
+/// Whether a list gives other users rights that the mode does not tell. On Linux the bits of the group are then the most that anyone in the list has.
+#[cfg(target_os = "linux")]
+fn has_access_control_list(path: &bun_core::ZBox) -> bool {
+    // SAFETY: both strings are NUL-terminated; a size of 0 asks for the length alone.
+    unsafe {
+        libc::lgetxattr(
+            path.as_ptr(),
+            c"system.posix_acl_access".as_ptr(),
+            core::ptr::null_mut(),
+            0,
+        ) >= 0
+    }
+}
+
+/// A list that only denies, as every home folder has one, and one that lets others read give nobody a right to write.
+#[cfg(target_os = "macos")]
+fn has_access_control_list(path: &bun_core::ZBox) -> bool {
+    use core::ffi::{c_char, c_int, c_void};
+    unsafe extern "C" {
+        fn acl_get_link_np(path: *const c_char, kind: c_int) -> *mut c_void;
+        fn acl_get_entry(acl: *mut c_void, which: c_int, entry: *mut *mut c_void) -> c_int;
+        fn acl_get_tag_type(entry: *mut c_void, tag: *mut c_int) -> c_int;
+        fn acl_get_permset(entry: *mut c_void, rights: *mut *mut c_void) -> c_int;
+        fn acl_get_perm_np(rights: *mut c_void, right: u32) -> c_int;
+        fn acl_free(acl: *mut c_void) -> c_int;
+    }
+    const ACL_TYPE_EXTENDED: c_int = 0x100;
+    const ACL_EXTENDED_DENY: c_int = 2;
+    const ACL_FIRST_ENTRY: c_int = 0;
+    const ACL_NEXT_ENTRY: c_int = -1;
+    // To write or add, to delete, to append, to delete what is in it, to change the list and the owner.
+    const WRITE: u32 = 1 << 2 | 1 << 4 | 1 << 5 | 1 << 6 | 1 << 12 | 1 << 13;
+    // SAFETY: `path` is NUL-terminated, the list is freed below, and its entries are only used before that.
+    unsafe {
+        let list = acl_get_link_np(path.as_ptr(), ACL_TYPE_EXTENDED);
+        if list.is_null() {
+            return false;
+        }
+        let mut entry = core::ptr::null_mut();
+        let mut which = ACL_FIRST_ENTRY;
+        let mut may_write = false;
+        while acl_get_entry(list, which, &mut entry) == 0 {
+            let (mut tag, mut rights) = (0, core::ptr::null_mut());
+            may_write |= acl_get_tag_type(entry, &mut tag) != 0
+                || tag != ACL_EXTENDED_DENY
+                    && (acl_get_permset(entry, &mut rights) != 0
+                        || acl_get_perm_np(rights, WRITE) != 0);
+            which = ACL_NEXT_ENTRY;
+        }
+        acl_free(list);
+        may_write
+    }
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn has_access_control_list(_path: &bun_core::ZBox) -> bool {
+    false
+}
+
+/// Which of the two is meant by a source path at which the disk has a file and the executable too.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DiskWins {
+    /// For data: the file may have been written since the build, and the program may write it.
+    Always,
+    /// For a library: the folder of the build is any folder elsewhere, and what another user can lay there is not trusted.
+    IfOnlyThisUserCanWrite,
+}
+
 pub fn has_written_files() -> bool {
     HAS_WRITTEN_FILES.load(core::sync::atomic::Ordering::Acquire)
 }
@@ -2315,12 +2472,26 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
+        self.find_at_source_path_beside(name, DiskWins::Always)
+    }
+
+    pub(crate) fn find_at_source_path_beside(
+        &self,
+        name: &[u8],
+        disk_wins: DiskWins,
+    ) -> Option<&File> {
         let program = self.compiled_program.as_ref()?;
         if !bun_paths::is_absolute(name) {
             // It may lead into the executable.
             let key: &[u8] = &absolute_key(name)?;
             if is_bun_standalone_file_path(key) {
-                return self.find_ref(key);
+                return match disk_wins {
+                    DiskWins::Always => self.find_ref(key),
+                    DiskWins::IfOnlyThisUserCanWrite => {
+                        let is_written = find_written_code(key).is_some();
+                        self.find_embedded_file(key).filter(|_| !is_written)
+                    }
+                };
             }
         }
         if !program.preserves_source_paths && program.root_on_build_machine().is_none() {
@@ -2347,15 +2518,33 @@ impl StandaloneModuleGraph {
             return None;
         }
         // As for a directory, the disk wins: the file may have been written since the build, and the program may write it.
-        if bun_sys::exists(key.as_bytes()) {
-            return None;
-        }
         let file = &self.files.values()[file_index];
+        if bun_sys::exists(key.as_bytes()) {
+            let is_embedded_meant = disk_wins == DiskWins::IfOnlyThisUserCanWrite
+                && !program.preserves_source_paths
+                && !Self::only_this_user_can_write(name, key.as_bytes());
+            return is_embedded_meant.then_some(file);
+        }
         let has_source = |it: &[u8]| self.has_source_on_disk(it, key.as_bytes());
         let is_gone = self.has_file_vanished(file.name)
             || self.is_file_for_file_system_alone(file)
                 && under_own_root.as_deref().is_some_and(has_source);
         (!is_gone && !is_removed_by_program(file.name)).then_some(file)
+    }
+
+    /// `key` is `name` without `..`, which the system resolves through the links in front of it.
+    fn only_this_user_can_write(name: &[u8], key: &[u8]) -> bool {
+        if cfg!(windows) {
+            return only_this_user_can_write(key);
+        }
+        if bun_paths::is_absolute(name) {
+            return only_this_user_can_write(name);
+        }
+        let mut working_directory = path_buffer_pool::get();
+        bun_sys::getcwd(&mut working_directory).is_ok_and(|length| {
+            let path = [&working_directory[..length], b"/", name].concat();
+            only_this_user_can_write(&path)
+        })
     }
 
     /// Whether the program runs beside its sources, as far as `key` tells: the disk has the source of a compiled file from the nearest folder around `key` that holds one. Then a file that nobody named is gone if the disk says so. `key_in_graph` is `key` in the executable. Neither the folder nor a data file tells: a container often has the folder of the build with only the executable in it, and one file may be laid at its old place to stand for the embedded one.
@@ -3422,6 +3611,106 @@ pub(crate) mod tests {
         let offsets: Offsets = unsafe { read_unaligned(bytes[offsets_at..].as_ptr().cast()) };
         let (base, length) = (bytes.as_mut_ptr(), bytes.len());
         StandaloneModuleGraph::from_bytes(base, length, offsets, None).unwrap()
+    }
+
+    #[test]
+    fn damaged_graph_is_refused_and_never_read_out_of_bounds() {
+        let module_prefix = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let output_files = [
+            entry_point_file(b"main.js", Some(0)),
+            asset(b"odd.txt", b"7 bytes"),
+            asset(b"even.txt", b"8 bytes!"),
+        ];
+        let entry_points = [entry_point(1, b"/$bunfs/root/main.js")];
+        let request = GraphRequest {
+            target: &CompileTarget::default(),
+            output_files: &output_files,
+            module_prefix,
+            output_format: Format::Esm,
+            exec_argv: b"--smol",
+            flags: Flags::default(),
+            runtime_options: RuntimeOptions { jit_policy: 2.0 },
+            compiled_program: Some(program(&IMAGE, ALIGNMENT, &entry_points, false)),
+        };
+        // Exactly as long as it is, so that a tool sees a read behind it.
+        let bytes = graph_bytes(&request).unwrap().bytes.into_boxed_slice();
+        let bytes: &'static mut [u8] = Box::leak(bytes);
+        let length = bytes.len();
+        let base = bytes.as_mut_ptr();
+        let offsets_at = length - b"\n---- Bun! ----\n".len() - size_of::<Offsets>();
+        // SAFETY: as in `read_graph`.
+        let read_offsets = || unsafe { read_unaligned(base.add(offsets_at).cast::<Offsets>()) };
+        // Returns whether the graph was taken, after a look at everything that it refers to.
+        let take = |length: usize, offsets: Offsets| {
+            let read = StandaloneModuleGraph::from_bytes(base, length, offsets, None);
+            let Ok(graph) = read else {
+                return false;
+            };
+            let mut sum = 0u64;
+            let mut add = |bytes: &[u8]| sum += bytes.iter().map(|&it| u64::from(it)).sum::<u64>();
+            for file in graph.files.values() {
+                for bytes in [file.name, file.contents.as_bytes(), file.module_info] {
+                    add(bytes);
+                }
+                add(file.bytecode_origin_path);
+                file.utf8_contents();
+                file.load_sourcemap();
+            }
+            add(graph.compile_exec_argv);
+            core::hint::black_box(sum);
+            core::mem::forget(graph);
+            true
+        };
+        let offsets = read_offsets();
+        assert!(take(length, offsets));
+
+        // The table of the files, the records behind it, and the offsets that lead to all of them.
+        let table_at = offsets.modules_ptr.offset as usize;
+        for at in table_at..offsets_at + size_of::<Offsets>() {
+            // SAFETY: `at` is in bounds, and nothing looks at an earlier graph again.
+            let (written, write) =
+                unsafe { (base.add(at).read(), |byte: u8| base.add(at).write(byte)) };
+            for other in [0, 1, 0x7f, 0x80, 0xff, written.wrapping_add(1)] {
+                write(other);
+                take(length, read_offsets());
+            }
+            write(written);
+        }
+        for cut in 0..length - table_at {
+            take(length - cut, offsets);
+        }
+
+        let refuses = |offset_in_record: usize, value: u8| {
+            let at = base.wrapping_add(table_at + offset_in_record);
+            // SAFETY: as above.
+            let written = unsafe { at.replace(value) };
+            let is_refused = !take(length, offsets);
+            // SAFETY: as above.
+            unsafe { at.write(written) };
+            is_refused
+        };
+        use crate::StandaloneModuleGraph::CompiledModuleGraphFile as Record;
+        use core::mem::offset_of;
+        assert!(refuses(offset_of!(Record, name) + 3, 0x7f));
+        assert!(refuses(offset_of!(Record, contents) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, sourcemap) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, module_info) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, bytecode) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, encoding), 3));
+        assert!(refuses(offset_of!(Record, loader), 200));
+        assert!(refuses(offset_of!(Record, module_format), 3));
+        assert!(refuses(offset_of!(Record, side), 2));
+        // Two-byte units, of which 7 bytes are no whole number.
+        let encoding_of_second = size_of::<Record>() + offset_of!(Record, encoding);
+        assert!(refuses(encoding_of_second, 2));
+        assert!(!take(
+            length,
+            Offsets {
+                byte_count: length + 1,
+                ..offsets
+            }
+        ));
+        assert!(take(length, offsets));
     }
 
     fn directory_key(graph: &StandaloneModuleGraph, name: &[u8]) -> Option<Vec<u8>> {

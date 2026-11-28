@@ -1,6 +1,5 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
-use core::ffi::c_void;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
@@ -833,67 +832,8 @@ impl Runner {
             js_args.args[last] = javascript_object;
         }
 
-        // The `extern "C" fn()` trampoline (no userdata) reaches the call args +
-        // result through a threadlocal `*mut c_void` pointing at a stack `CallData`
-        // — `CallArgs` is a tuple of borrowed refs that cannot live in a `thread_local!`.
-        thread_local! {
-            static CALL_STATE: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
-        }
-
-        struct CallData<'c> {
-            vm: &'c VirtualMachine,
-            log: &'c mut Log,
-            bump: &'c bun_alloc::Arena,
-            caller: Expr,
-            js_args: &'c [JSValue],
-            source: &'c Source<'c>,
-            id: i32,
-            result: Result<Expr, MacroError>,
-        }
-
-        extern "C" fn call() {
-            CALL_STATE.with(|s| {
-                // SAFETY: set immediately before Bun__startMacro below; cleared after.
-                let state = unsafe { &mut *s.get().cast::<CallData<'_>>() };
-                state.result = Run::run_async(
-                    state.vm,
-                    state.log,
-                    state.bump,
-                    state.caller,
-                    state.js_args,
-                    state.source,
-                    state.id,
-                );
-            });
-        }
-
-        let mut data = CallData {
-            vm,
-            log,
-            bump,
-            caller,
-            js_args: &js_args.args,
-            source,
-            id,
-            result: Err(MacroError::MacroFailed),
-        };
-
-        jsc::mark_binding();
-        CALL_STATE.with(|s| s.set((&raw mut data).cast::<c_void>()));
-        // SAFETY: `call` only reads CALL_STATE which we just set. The raw
-        // `vm.global: *JSGlobalObject` field is read via raw-ptr field access
-        // (NOT the `&`-returning `.global()` accessor) so the `*mut` provenance
-        // is preserved across FFI.
-        unsafe {
-            Bun__startMacro(call as *const c_void, vm.global.get().cast::<c_void>());
-        }
-        CALL_STATE.with(|s| s.set(core::ptr::null_mut()));
-        data.result
+        Run::run_async(vm, log, bump, caller, &js_args.args, source, id)
     }
-}
-
-unsafe extern "C" {
-    fn Bun__startMacro(function: *const c_void, global: *mut c_void);
 }
 
 /// Lives here, not on `bun_ast::Expr`, because it parses JSON via `bun_parsers`

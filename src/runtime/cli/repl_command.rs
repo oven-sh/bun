@@ -202,13 +202,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
         // Set up require(), module, __filename, __dirname relative to cwd
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
-        // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
         // C++ is `[[ZIG_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
         // would assert under `BUN_JSC_validateExceptionChecks=1`).
-        unsafe {
-            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd.as_ptr(), cwd.len())?;
-        }
+        bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd)?;
 
         // Set timezone if specified
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.

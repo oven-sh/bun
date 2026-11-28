@@ -7427,7 +7427,7 @@ pub mod net {
         }
         pub fn from_ref(any: &sockaddr_storage) -> &Self {
             // SAFETY: `Address` is `#[repr(transparent)]` over `sockaddr_storage`. Safe code only gets one
-            // with every byte initialized, except from `PacketBuffer::get_peer` on Windows, where only
+            // with every byte initialized, except from `Packet::peer` on Windows, where only
             // the address is: that one must not be copied or passed to `as_bytes`.
             unsafe { &*core::ptr::from_ref(any).cast::<Self>() }
         }

@@ -22,7 +22,8 @@ test("a build asks each file that CommonJS files spread once", async () => {
     files[`level${level}.cjs`] =
       `module.exports = { ...require("./left${level}.cjs"), ...require("./right${level}.cjs") };\n`;
     for (const side of ["left", "right"])
-      files[`${side}${level}.cjs`] = `module.exports = { ...require("./level${level + 1}.cjs"), ${side}${level}: 1 };\n`;
+      files[`${side}${level}.cjs`] =
+        `module.exports = { ...require("./level${level + 1}.cjs"), ${side}${level}: 1 };\n`;
   }
   using dir = tempDir("aot-spreads-of-spreads", files);
   const built = await run(

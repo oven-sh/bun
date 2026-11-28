@@ -504,6 +504,9 @@ pub struct TestOptions {
     /// Otherwise the value is a git ref (commit, branch, tag) to diff
     /// against.
     pub changed: Option<Box<[u8]>>,
+    /// `bun test --find-related-tests <path>...`. When non-empty, only test
+    /// files whose module graph reaches one of these source files are run.
+    pub related_files: Vec<Box<[u8]>>,
     /// `bun test --shard=M/N`. When set, test files are sorted by path
     /// and only every Nth file (starting from M-1) is run. index is
     /// 1-based; both are validated at parse time so `1 <= index <= count`.
@@ -654,6 +657,7 @@ impl Default for TestOptions {
             parallel_delay_ms: None,
             test_worker: false,
             changed: None,
+            related_files: Vec::new(),
             shard: None,
             timings_files: Vec::new(),
             update_timings: false,

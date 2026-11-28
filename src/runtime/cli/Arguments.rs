@@ -970,6 +970,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
+        "--find-related-tests/--findRelatedTests <STR>...  Only run test files related to the given source files."
+    ),
+    parse_param!(
         "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another. \"modules\": keep the global object and load each file's modules afresh (faster; files can see each other's changes to globals)."
     ),
     parse_param!(
@@ -1196,6 +1199,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // Only the paths standing in for `node` get node's aliases.
             short_aliases: match cmd {
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+                _ => &[],
+            },
+            variadic_options: match cmd {
+                CommandTag::TestCommand => &[b"find-related-tests"],
                 _ => &[],
             },
             unknown_long_flags: Some(&mut unknown_long_flags),
@@ -2323,6 +2330,22 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());
+    }
+    for path in args.options(b"--find-related-tests") {
+        if !ctx
+            .test_options
+            .related_files
+            .iter()
+            .any(|existing| &**existing == *path)
+        {
+            ctx.test_options.related_files.push((*path).into());
+        }
+    }
+    if ctx.test_options.changed.is_some() && !ctx.test_options.related_files.is_empty() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --changed and --find-related-tests cannot be used together"
+        );
+        Global::exit(1);
     }
     if let Some(shard) = args.option(b"--shard") {
         let Some(sep) = strings::index_of_char(shard, b'/') else {

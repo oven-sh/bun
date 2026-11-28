@@ -390,6 +390,8 @@ pub struct ParseOptions<'a> {
     /// An alias written as `--name=value` also matches the two tokens `--name value`. An empty
     /// replacement removes the flag from the arguments.
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// Repeatable options that consume bare values up to the next option or end-of-options marker.
+    pub variadic_options: &'static [&'static [u8]],
     /// A `--flag` or `--flag=value` that no param names is a positional, with its dashes, in its
     /// place among the others. For a command that hands flags on: `bun check --strict`. Otherwise
     /// such a flag is skipped.
@@ -527,6 +529,7 @@ pub fn parse<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            variadic_options: opt.variadic_options,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
             ignored_long_flags: opt.ignored_long_flags,
@@ -551,6 +554,7 @@ pub fn parse_with_table<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            variadic_options: opt.variadic_options,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
             ignored_long_flags: opt.ignored_long_flags,
@@ -1010,5 +1014,123 @@ mod tests {
             is_from_bun_options: false,
         };
         assert_eq!(unknown, [expected]);
+    }
+    const RELATED_PARAMS: &[Param<Help>] = &[
+        parse_param!("--find-related-tests/--findRelatedTests <STR>...  Related sources"),
+        parse_param!("--watch  Watch files"),
+        parse_param!("--timeout <NUM>  Timeout"),
+        parse_param!("--define <K=V>...  Define"),
+        parse_param!("<POS> ...  Positional"),
+    ];
+    static RELATED_TABLE: &ConvertedTable = comptime_table!(RELATED_PARAMS, cold);
+
+    fn parse_related(args: &'static [&'static [u8]]) -> ComptimeClap<Help> {
+        let mut iter = args::SliceIterator { remain: args };
+        ComptimeClap::<Help>::parse_with_table(
+            RELATED_TABLE,
+            &mut iter,
+            ParseOptions {
+                variadic_options: &[b"find-related-tests"],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn variadic_option_consumes_sources_until_the_next_option() {
+        let clap = parse_related(&[
+            b"test",
+            b"./tests",
+            b"--find-related-tests",
+            b"src/a.ts",
+            b"src/b.ts",
+            b"--watch",
+            b"--timeout",
+            b"1000",
+            b"after.test.ts",
+        ]);
+        assert_eq!(
+            clap.options(b"--find-related-tests"),
+            &[b"src/a.ts" as &[u8], b"src/b.ts"]
+        );
+        assert_eq!(
+            clap.positionals(),
+            &[b"test" as &[u8], b"./tests", b"after.test.ts"]
+        );
+        assert!(clap.flag(b"--watch"));
+        assert_eq!(clap.option(b"--timeout"), Some(b"1000" as &[u8]));
+    }
+
+    #[test]
+    fn variadic_option_accepts_repetition_aliases_and_equals() {
+        let clap = parse_related(&[
+            b"--find-related-tests=src/a.ts",
+            b"src/b.ts",
+            b"--findRelatedTests",
+            b"src/c.ts",
+            b"--find-related-tests",
+            b"src/d.ts",
+            b"src/e.ts",
+        ]);
+        assert_eq!(
+            clap.options(b"--find-related-tests"),
+            &[
+                b"src/a.ts" as &[u8],
+                b"src/b.ts",
+                b"src/c.ts",
+                b"src/d.ts",
+                b"src/e.ts",
+            ]
+        );
+        assert!(clap.positionals().is_empty());
+    }
+
+    #[test]
+    fn variadic_option_respects_the_end_of_options_marker() {
+        let clap = parse_related(&[
+            b"test",
+            b"--find-related-tests",
+            b"src/a.ts",
+            b"src/b.ts",
+            b"--",
+            b"--find-related-tests",
+            b"./literal.test.ts",
+        ]);
+        assert_eq!(
+            clap.options(b"--find-related-tests"),
+            &[b"src/a.ts" as &[u8], b"src/b.ts"]
+        );
+        assert_eq!(
+            clap.positionals(),
+            &[
+                b"test" as &[u8],
+                b"--find-related-tests",
+                b"./literal.test.ts"
+            ]
+        );
+    }
+
+    #[test]
+    fn variadic_option_does_not_change_other_repeatable_options() {
+        let clap = parse_related(&[
+            b"test",
+            b"--define",
+            b"A=B",
+            b"a.test.ts",
+            b"--find-related-tests",
+            b"src/a.ts",
+            b"--define=C=D",
+            b"b.test.ts",
+        ]);
+        assert_eq!(clap.options(b"--define"), &[b"A=B" as &[u8], b"C=D"]);
+        assert_eq!(
+            clap.options(b"--find-related-tests"),
+            &[b"src/a.ts" as &[u8]]
+        );
+        assert_eq!(
+            clap.positionals(),
+            &[b"test" as &[u8], b"a.test.ts", b"b.test.ts"]
+        );
     }
 }

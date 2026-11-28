@@ -588,6 +588,18 @@ impl<Id> ComptimeClap<Id> {
                 debug_assert!(multis.len() != 0);
                 if multis.len() != 0 {
                     multis[param.id].push(arg.value.unwrap_or(b""));
+                    if opt
+                        .variadic_options
+                        .iter()
+                        .any(|name| param.names.matches_long(name))
+                    {
+                        while let Some(value) = stream.iter.remain().first() {
+                            if value.starts_with(b"-") {
+                                break;
+                            }
+                            multis[param.id].push(stream.iter.next().unwrap());
+                        }
+                    }
                 }
             } else {
                 debug_assert!(flags.len() != 0);

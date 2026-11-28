@@ -112,35 +112,56 @@ export function runOnEndCallbacks(
 ): Promise<void> | void {
   const callbacks = this.$onEndCallbacks;
   if (!callbacks) return;
-  const promises: PromiseLike<unknown>[] = [];
 
-  for (const callback of callbacks) {
+  // Both loops read `callbacks.length` each time: an onEnd that a callback registers runs too, as in esbuild.
+  for (let i = 0; i < callbacks.length; i++) {
+    const callback = callbacks[i];
+    let result;
+    let hasError = false;
+    let firstError: unknown;
     try {
-      const result = callback(buildResult);
-
-      if (result && $isPromise(result)) {
-        $arrayPush(promises, result);
-      }
+      result = callback(buildResult);
+      if (!result || !$isPromise(result) || $peekPromiseStatus(result) === 1) continue;
     } catch (e) {
-      $arrayPush(promises, Promise.$reject(e));
+      hasError = true;
+      firstError = e;
     }
-  }
 
-  if (promises.length > 0) {
-    // we return the promise here because the native bundler detects whether the
-    // promise was handled by checking if this function did not return undefined
-    return Promise.all(promises).then(
-      () => {
-        if (buildRejection !== undefined) {
-          $rejectPromise(promise, buildRejection);
-        } else {
-          $resolvePromise(promise, buildResult);
+    // Native code settles `promise` only if runOnEndCallbacks returns undefined.
+    return (async (
+      callbacks: $Node.BundlerPlugin.OnEndCallback[],
+      i: number,
+      result: unknown,
+      promise: Promise<object>,
+      buildResult: object,
+      buildRejection: unknown,
+      hasError: boolean,
+      firstError: unknown,
+    ) => {
+      for (;;) {
+        try {
+          if (result && $isPromise(result) && $peekPromiseStatus(result) !== 1) await result;
+          if (++i >= callbacks.length) break;
+          const callback = callbacks[i];
+          result = callback(buildResult);
+        } catch (e) {
+          // A callback that fails does not stop the later ones. The first error rejects the build.
+          result = undefined;
+          if (!hasError) {
+            hasError = true;
+            firstError = e;
+          }
         }
-      },
-      e => {
-        $rejectPromise(promise, e);
-      },
-    );
+      }
+
+      if (hasError) {
+        $rejectPromise(promise, firstError);
+      } else if (buildRejection !== undefined) {
+        $rejectPromise(promise, buildRejection);
+      } else {
+        $resolvePromise(promise, buildResult);
+      }
+    })(callbacks, i, result, promise, buildResult, buildRejection, hasError, firstError);
   }
 }
 

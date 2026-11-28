@@ -749,6 +749,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = plugin->globalObject();
 
+    JSValue onEndCallbacks = plugin->getDirect(vm, WebCore::builtinNames(vm).onEndCallbacksPrivateName());
+    if (!onEndCallbacks || onEndCallbacks.isUndefined())
+        return JSValue::encode(jsUndefined());
+
     // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
     auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
         WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);

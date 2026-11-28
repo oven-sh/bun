@@ -325,6 +325,10 @@ const result = await Bun.build({
 
 The callback can return a `Promise`. The promise returned by `Bun.build()` does not resolve until all `onEnd()` callbacks have completed.
 
+`Bun.build()` runs the `onEnd()` callbacks one at a time, in the order the plugins register them. If a callback returns a `Promise`, the next callback starts after that promise settles, so a later plugin can read what an earlier plugin wrote. A callback that throws does not stop the later callbacks. After the last callback, `Bun.build()` rejects with the first error. This is different from `onStart()` callbacks, which all start at once.
+
+Only `Bun.build()` calls `onEnd()` callbacks. Plugins in the `[serve.static]` section of `bunfig.toml` can register them, but `Bun.serve()` does not call them.
+
 ```ts title="index.ts" icon="/icons/typescript.svg"
 const result = await Bun.build({
   entrypoints: ["./app.ts"],

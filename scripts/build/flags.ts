@@ -1070,6 +1070,14 @@ export const linkerFlags: Flag[] = [
     desc: "LTO: inline at a cold call site only what is cheaper than the call (lld)",
   },
   {
+    // rustc merges functions that have the same body, by default. That is an option of its pipeline, not something
+    // the bitcode carries, and here the linker generates the crates' code, with LLVM's default: off. The pass never
+    // gives two functions one address: a function whose address matters becomes a jump to the copy that stays.
+    flag: "-Wl,-mllvm,-enable-merge-functions",
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c),
+    desc: "LTO: merge functions that have the same body, as rustc does (lld)",
+  },
+  {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
@@ -1100,6 +1108,11 @@ export const linkerFlags: Flag[] = [
     flag: "/mllvm:-inline-cold-callsite-threshold=0",
     when: c => c.windows && linkRunsLto(c),
     desc: "LTO: inline at a cold call site only what is cheaper than the call (lld-link)",
+  },
+  {
+    flag: "/mllvm:-enable-merge-functions",
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO: merge functions that have the same body, as rustc does (lld-link)",
   },
 
   // ─── PGO (link-side) ───

@@ -78,6 +78,10 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
         }
         None => (Vec::new(), None),
     };
+    dev.graphs
+        .client
+        .css_module_importers
+        .clear_retaining_capacity();
     // Drops the bundle, then the arena it borrows.
     dev.current_bundle = None;
     dev.log.clear_and_free();

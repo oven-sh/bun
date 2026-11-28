@@ -4,8 +4,9 @@ use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
+use bun_alloc::Arena;
 use bun_ast::{B, Binding, E, Expr, ExprData, G, S, Stmt, StmtData};
-use bun_ast::{ImportRecord, Source};
+use bun_ast::{ImportRecord, Loc, Log, Source};
 use bun_js_parser::js_lexer;
 
 use crate::bun_css::BundlerStyleSheet;
@@ -13,6 +14,103 @@ use crate::bun_css::css_modules::{ComposesGraph, ComposesVisitor, ExportedName};
 use crate::{Index, IndexInt, LinkerContext};
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
+
+/// A CSS module's exports as JavaScript: each local name mapped to its generated name, after those it composes.
+/// `None` for a stylesheet without local names. Its own function so the dev server can give an importer the same
+/// object as a bundle does.
+pub(crate) fn css_module_exports(
+    this: &LinkerContext,
+    source_index: IndexInt,
+    loc: Loc,
+    log: &mut Log,
+    arena: &Arena,
+) -> Result<Option<E::Object>, AllocError> {
+    let all_sources = this.parse_graph().input_files.items_source();
+    let all_css_asts = &this.parse_graph().css_asts;
+    let Some(css_ast) = all_css_asts[source_index as usize].as_deref() else {
+        return Ok(None);
+    };
+    if css_ast.local_scope.count() == 0 {
+        return Ok(None);
+    }
+    let mut exports = E::Object::default();
+
+    let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
+
+    struct Graph<'a, 'bump> {
+        all_import_records: &'a [bun_ast::import_record::List<'a>],
+        all_css_asts: &'a CssAsts<'bump>,
+        all_sources: &'a [Source<'a>],
+    }
+
+    impl<'bump> ComposesGraph<'bump> for Graph<'_, 'bump> {
+        fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet<'bump>> {
+            self.all_css_asts[idx as usize].as_deref()
+        }
+
+        fn source(&self, idx: IndexInt) -> &Source<'_> {
+            &self.all_sources[idx as usize]
+        }
+
+        fn import_record(&self, idx: IndexInt, import_record_idx: u32) -> &ImportRecord<'_> {
+            &self.all_import_records[idx as usize][import_record_idx as usize]
+        }
+    }
+
+    let graph = Graph {
+        all_import_records: this.graph.ast.items_import_records(),
+        all_css_asts,
+        all_sources,
+    };
+    let mut visitor = ComposesVisitor::new(&graph);
+
+    for entry in css_ast.local_scope.values() {
+        let ref_ = entry.ref_;
+        debug_assert!(ref_.inner_index() < symbols.len() as u32);
+
+        let name_expr = |name: &ExportedName<'_>| match *name {
+            ExportedName::Local(ref_) => Expr::init(
+                E::NameOfSymbol {
+                    ref_,
+                    ..Default::default()
+                },
+                loc,
+            ),
+            ExportedName::Global(name) => Expr::init(E::String::init(name), loc),
+        };
+        let names = visitor.exported_names(css_ast, ref_, source_index, &mut *log);
+        let value = if let [name] = names {
+            name_expr(name)
+        } else {
+            // Move the parts into the linker arena
+            // (freed when the linker arena drops).
+            let parts_slice = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(
+                names.iter().enumerate().map(|(i, name)| {
+                    let tail: &[u8] = if i + 1 == names.len() { b"" } else { b" " };
+                    E::TemplatePart {
+                        value: name_expr(name),
+                        tail_loc: loc,
+                        tail: E::TemplateContents::Cooked(E::String::init(tail)),
+                    }
+                }),
+            ));
+            Expr::init(
+                E::Template {
+                    tag: None,
+                    parts: parts_slice,
+                    head: E::TemplateContents::Cooked(E::String::init(b"")),
+                },
+                loc,
+            )
+        };
+
+        // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
+        let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
+        exports.put(arena, key, value)?;
+    }
+
+    Ok(Some(exports))
+}
 
 pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
@@ -52,96 +150,13 @@ pub(crate) fn generate_code_for_lazy_export(
     // If this JavaScript file is a stub from a CSS file, populate the exports of
     // this JavaScript stub with the local names from that CSS file. This is done
     // now instead of earlier because we need the whole bundle to be present.
-    if let Some(css_ast) = maybe_css_ast {
+    if maybe_css_ast.is_some() {
         let stmt: Stmt = stmts[0];
         if !matches!(stmt.data, StmtData::SLazyExport(_)) {
             panic!("Internal error: expected top-level lazy export statement");
         }
-        'out: {
-            if css_ast.local_scope.count() == 0 {
-                break 'out;
-            }
-            let mut exports = E::Object::default();
-
-            let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
-
-            struct Graph<'a, 'bump> {
-                all_import_records: &'a [bun_ast::import_record::List<'a>],
-                all_css_asts: &'a CssAsts<'bump>,
-                all_sources: &'a [Source<'a>],
-            }
-
-            impl<'bump> ComposesGraph<'bump> for Graph<'_, 'bump> {
-                fn stylesheet(&self, idx: IndexInt) -> Option<&BundlerStyleSheet<'bump>> {
-                    self.all_css_asts[idx as usize].as_deref()
-                }
-
-                fn source(&self, idx: IndexInt) -> &Source<'_> {
-                    &self.all_sources[idx as usize]
-                }
-
-                fn import_record(
-                    &self,
-                    idx: IndexInt,
-                    import_record_idx: u32,
-                ) -> &ImportRecord<'_> {
-                    &self.all_import_records[idx as usize][import_record_idx as usize]
-                }
-            }
-
-            let graph = Graph {
-                all_import_records: this.graph.ast.items_import_records(),
-                all_css_asts,
-                all_sources,
-            };
-            let mut visitor = ComposesVisitor::new(&graph);
-            let arena = this.arena();
-
-            for entry in css_ast.local_scope.values() {
-                let ref_ = entry.ref_;
-                debug_assert!(ref_.inner_index() < symbols.len() as u32);
-
-                let name_expr = |name: &ExportedName<'_>| match *name {
-                    ExportedName::Local(ref_) => Expr::init(
-                        E::NameOfSymbol {
-                            ref_,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ),
-                    ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
-                };
-                let names = visitor.exported_names(css_ast, ref_, source_index, log);
-                let value = if let [name] = names {
-                    name_expr(name)
-                } else {
-                    // Move the parts into the linker arena
-                    // (freed when the linker arena drops).
-                    let parts_slice = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(
-                        names.iter().enumerate().map(|(i, name)| {
-                            let tail: &[u8] = if i + 1 == names.len() { b"" } else { b" " };
-                            E::TemplatePart {
-                                value: name_expr(name),
-                                tail_loc: stmt.loc,
-                                tail: E::TemplateContents::Cooked(E::String::init(tail)),
-                            }
-                        }),
-                    ));
-                    Expr::init(
-                        E::Template {
-                            tag: None,
-                            parts: parts_slice,
-                            head: E::TemplateContents::Cooked(E::String::init(b"")),
-                        },
-                        stmt.loc,
-                    )
-                };
-
-                // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
-                exports.put(arena, key, value)?;
-            }
-
+        if let Some(exports) = css_module_exports(this, source_index, stmt.loc, log, this.arena())?
+        {
             if let StmtData::SLazyExport(mut slot) = stmts[0].data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
                 *slot = Expr::init(exports, stmt.loc).data;

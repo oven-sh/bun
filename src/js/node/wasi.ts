@@ -461,6 +461,28 @@ var wrap =
       throw e;
     }
   };
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/include/wasi_serdes.h#L105-L126
+const SIZE_U32 = 4;
+const SIZE_U64 = 8;
+const SIZE_IOVEC = 8;
+const SIZE_PRESTAT = 8;
+const SIZE_DIRENT = 24;
+const SIZE_FDSTAT = 24;
+const SIZE_EVENT = 32;
+const SIZE_SUBSCRIPTION = 48;
+const SIZE_FILESTAT = 64;
+// A wasm i32 arrives as a signed number. Like node, EINVAL for anything else: https://github.com/nodejs/node/blob/1d5f8e6cba0cd5a7f939165a0bd0ca6c09e13ad1/src/node_wasi.cc#L300-L304
+var isU32 = (value: unknown): value is number =>
+  typeof value === "number" && (value === (value | 0) || value === value >>> 0);
+var toU32 = (value: unknown) => {
+  if (!isU32(value)) {
+    throw new WASIError(WASI_EINVAL);
+  }
+  return value >>> 0;
+};
+// As in uvwasi, but an empty range at the end of memory is in bounds, as it is for memory.fill: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/wasi_serdes.c#L254-L256
+var boundsErrno = (size: number, ptr: unknown, len: number) =>
+  !isU32(ptr) ? WASI_EINVAL : len <= size - (ptr >>> 0) ? WASI_ESUCCESS : WASI_EOVERFLOW;
 var stat = (wasi: WASI, fd: number) => {
   const entry = wasi.FD_MAP.get(fd);
   if (!entry) {
@@ -654,58 +676,66 @@ class WASI {
         path: v,
       });
     }
-    const getiovs = (iovs: number, iovsLen: number) => {
-      this.refreshMemory();
-
+    // The buffer that this.view is a view of.
+    let viewBuffer: ArrayBuffer;
+    const MEMORY_SIZE = () => {
+      const { buffer } = this.memory;
+      if (buffer !== viewBuffer || !this.view) {
+        this.refreshMemory();
+        viewBuffer = buffer;
+      }
+      return buffer.byteLength;
+    };
+    // What node checks before a hostcall does anything: https://github.com/nodejs/node/blob/v26.3.0/src/node_wasi.cc#L22-L27
+    const CHECK_BOUNDS = (size: number, ptr: number, len: number) => {
+      const errno = boundsErrno(size, ptr, len);
+      if (errno !== WASI_ESUCCESS) {
+        throw new WASIError(errno);
+      }
+      return ptr >>> 0;
+    };
+    const getiovs = (size: number, iovs: number, iovsLen: number) => {
+      iovsLen = toU32(iovsLen);
+      iovs = CHECK_BOUNDS(size, iovs, iovsLen * SIZE_IOVEC);
       const { view, memory } = this;
       const { buffer } = memory;
-      const { byteLength } = buffer;
 
       if (iovsLen === 1) {
-        const ptr = iovs;
-        const buf = view.getUint32(ptr, true);
-        let bufLen = view.getUint32(ptr + 4, true);
-
-        if (bufLen > byteLength - buf) {
-          console.log({
-            buf,
-            bufLen,
-            total_memory: byteLength,
-          });
-          bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
-        }
-        try {
-          return [new Uint8Array(buffer, buf, bufLen)];
-        } catch (err) {
-          console.warn("WASI.getiovs -- invalid buffer", err);
-          throw new WASIError(WASI_EINVAL);
-        }
+        const buf = view.getUint32(iovs, true);
+        const bufLen = view.getUint32(iovs + 4, true);
+        CHECK_BOUNDS(size, buf, bufLen);
+        return [new Uint8Array(buffer, buf, bufLen)];
       }
 
       // Avoid referencing Array because materializing the Array constructor can show up in profiling
       const buffers: Uint8Array[] = [];
       buffers.length = iovsLen;
 
-      for (let i = 0, ptr = iovs; i < iovsLen; i++, ptr += 8) {
+      for (let i = 0, ptr = iovs; i < iovsLen; i++, ptr += SIZE_IOVEC) {
         const buf = view.getUint32(ptr, true);
-        let bufLen = view.getUint32(ptr + 4, true);
-
-        if (bufLen > byteLength - buf) {
-          console.log({
-            buf,
-            bufLen,
-            total_memory: byteLength,
-          });
-          bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
-        }
-        try {
-          buffers[i] = new Uint8Array(buffer, buf, bufLen);
-        } catch (err) {
-          console.warn("WASI.getiovs -- invalid buffer", err);
-          throw new WASIError(WASI_EINVAL);
-        }
+        const bufLen = view.getUint32(ptr + 4, true);
+        CHECK_BOUNDS(size, buf, bufLen);
+        buffers[i] = new Uint8Array(buffer, buf, bufLen);
       }
       return buffers;
+    };
+    const writeStringTable = (strings: string[], tablePtr: number, bufPtr: number) => {
+      let bufSize = 0;
+      for (const string of strings) {
+        bufSize += Buffer.byteLength(string);
+      }
+      const size = MEMORY_SIZE();
+      const errno = boundsErrno(size, bufPtr, bufSize) || boundsErrno(size, tablePtr, strings.length * SIZE_U32);
+      if (errno) return errno;
+      bufPtr >>>= 0;
+      tablePtr >>>= 0;
+      const bytes = Buffer.from(this.memory.buffer);
+      for (const string of strings) {
+        this.view.setUint32(tablePtr, bufPtr, true);
+        tablePtr += SIZE_U32;
+        bufPtr += bytes.write(string, bufPtr);
+      }
+      return WASI_ESUCCESS;
     };
     const CHECK_FD = (fd: number, rights: bigint) => {
       const stats = stat(this, fd);
@@ -787,36 +817,31 @@ class WASI {
     };
     this.wasiImport = {
       args_get: (argv: number, argvBuf: number) => {
-        this.refreshMemory();
-        let coffset = argv;
-        let offset = argvBuf;
-        args.forEach(a => {
-          this.view.setUint32(coffset, offset, true);
-          coffset += 4;
-          offset += Buffer.from(this.memory.buffer).write(`${a}\0`, offset);
-        });
-        return WASI_ESUCCESS;
+        const strings = args.map(a => `${a}\0`);
+        return writeStringTable(strings, argv, argvBuf);
       },
       args_sizes_get: (argc: number, argvBufSize: number) => {
-        this.refreshMemory();
+        const memorySize = MEMORY_SIZE();
+        const errno = boundsErrno(memorySize, argc, SIZE_U32) || boundsErrno(memorySize, argvBufSize, SIZE_U32);
+        if (errno) return errno;
+        argc >>>= 0;
+        argvBufSize >>>= 0;
         this.view.setUint32(argc, args.length, true);
         const size = args.reduce((acc, a) => acc + Buffer.byteLength(a) + 1, 0);
         this.view.setUint32(argvBufSize, size, true);
         return WASI_ESUCCESS;
       },
       environ_get: (environ: number, environBuf: number) => {
-        this.refreshMemory();
-        let coffset = environ;
-        let offset = environBuf;
-        Object.entries(this.env).forEach(([key, value]) => {
-          this.view.setUint32(coffset, offset, true);
-          coffset += 4;
-          offset += Buffer.from(this.memory.buffer).write(`${key}=${value}\0`, offset);
-        });
-        return WASI_ESUCCESS;
+        const strings = Object.entries(this.env).map(([key, value]) => `${key}=${value}\0`);
+        return writeStringTable(strings, environ, environBuf);
       },
       environ_sizes_get: (environCount: number, environBufSize: number) => {
-        this.refreshMemory();
+        const memorySize = MEMORY_SIZE();
+        const errno =
+          boundsErrno(memorySize, environCount, SIZE_U32) || boundsErrno(memorySize, environBufSize, SIZE_U32);
+        if (errno) return errno;
+        environCount >>>= 0;
+        environBufSize >>>= 0;
         const envProcessed = Object.entries(this.env).map(([key, value]) => `${key}=${value}\0`);
         const size = envProcessed.reduce((acc, e) => acc + Buffer.byteLength(e), 0);
         this.view.setUint32(environCount, envProcessed.length, true);
@@ -824,6 +849,9 @@ class WASI {
         return WASI_ESUCCESS;
       },
       clock_res_get: (clockId: number, resolution: number) => {
+        const errno = boundsErrno(MEMORY_SIZE(), resolution, SIZE_U64);
+        if (errno) return errno;
+        resolution >>>= 0;
         let res;
         switch (clockId) {
           case WASI_CLOCK_MONOTONIC:
@@ -844,7 +872,9 @@ class WASI {
         return WASI_ESUCCESS;
       },
       clock_time_get: (clockId: number, _precision: bigint, time: number) => {
-        this.refreshMemory();
+        const errno = boundsErrno(MEMORY_SIZE(), time, SIZE_U64);
+        if (errno) return errno;
+        time >>>= 0;
         const n = now(clockId);
         if (n === null) {
           return WASI_EINVAL;
@@ -872,8 +902,8 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_fdstat_get: wrap((fd: number, bufPtr: number) => {
+        bufPtr = CHECK_BOUNDS(MEMORY_SIZE(), bufPtr, SIZE_FDSTAT);
         const stats = CHECK_FD(fd, BigInt(0));
-        this.refreshMemory();
         if (stats.filetype == null) {
           throw Error("stats.filetype must be set");
         }
@@ -908,8 +938,10 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_filestat_get: wrap((fd: number, bufPtr: number) => {
+        bufPtr = CHECK_BOUNDS(MEMORY_SIZE(), bufPtr, SIZE_FILESTAT);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_FILESTAT_GET);
         const rstats = this.fstatSync(stats.real);
+        // fstatSync is a binding of the host, and it may have grown the memory.
         this.refreshMemory();
         this.view.setBigUint64(bufPtr, BigInt(rstats.dev), true);
         bufPtr += 8;
@@ -964,22 +996,26 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_prestat_get: wrap((fd: number, bufPtr: number) => {
+        bufPtr = CHECK_BOUNDS(MEMORY_SIZE(), bufPtr, SIZE_PRESTAT);
         const stats = CHECK_FD(fd, BigInt(0));
-        this.refreshMemory();
         this.view.setUint8(bufPtr, WASI_PREOPENTYPE_DIR);
         this.view.setUint32(bufPtr + 4, Buffer.byteLength(stats.fakePath ?? stats.path ?? ""), true);
         return WASI_ESUCCESS;
       }),
       fd_prestat_dir_name: wrap((fd: number, pathPtr: number, pathLen: number) => {
+        pathLen = toU32(pathLen);
+        pathPtr = CHECK_BOUNDS(MEMORY_SIZE(), pathPtr, pathLen);
         const stats = CHECK_FD(fd, BigInt(0));
-        this.refreshMemory();
         Buffer.from(this.memory.buffer).write(stats.fakePath ?? stats.path ?? "", pathPtr, pathLen, "utf8");
         return WASI_ESUCCESS;
       }),
       fd_pwrite: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nwritten: number) => {
+        const size = MEMORY_SIZE();
+        nwritten = CHECK_BOUNDS(size, nwritten, SIZE_U32);
+        const buffers = getiovs(size, iovs, iovsLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE | WASI_RIGHT_FD_SEEK);
         let written = 0;
-        getiovs(iovs, iovsLen).forEach(iov => {
+        buffers.forEach(iov => {
           let w = 0;
           while (w < iov.byteLength) {
             w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, Number(offset) + written + w);
@@ -990,11 +1026,14 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_write: wrap((fd: number, iovs: number, iovsLen: number, nwritten: number) => {
+        const size = MEMORY_SIZE();
+        nwritten = CHECK_BOUNDS(size, nwritten, SIZE_U32);
+        const buffers = getiovs(size, iovs, iovsLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE);
         const IS_STDOUT = fd == WASI_STDOUT_FILENO;
         const IS_STDERR = fd == WASI_STDERR_FILENO;
         let written = 0;
-        getiovs(iovs, iovsLen).forEach(iov => {
+        buffers.forEach(iov => {
           if (iov.byteLength == 0) return;
           if (IS_STDOUT && this.sendStdout != null) {
             this.sendStdout(iov);
@@ -1022,9 +1061,12 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_pread: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nread: number) => {
+        const size = MEMORY_SIZE();
+        nread = CHECK_BOUNDS(size, nread, SIZE_U32);
+        const buffers = getiovs(size, iovs, iovsLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK);
         let read = 0;
-        outer: for (const iov of getiovs(iovs, iovsLen)) {
+        outer: for (const iov of buffers) {
           let r = 0;
           while (r < iov.byteLength) {
             const length = iov.byteLength - r;
@@ -1040,10 +1082,13 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_read: wrap((fd: number, iovs: number, iovsLen: number, nread: number) => {
+        const size = MEMORY_SIZE();
+        nread = CHECK_BOUNDS(size, nread, SIZE_U32);
+        const buffers = getiovs(size, iovs, iovsLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ);
         const IS_STDIN = fd == WASI_STDIN_FILENO;
         let read = 0;
-        outer: for (const iov of getiovs(iovs, iovsLen)) {
+        outer: for (const iov of buffers) {
           let r = 0;
           while (r < iov.byteLength) {
             let length = iov.byteLength - r;
@@ -1097,32 +1142,31 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_readdir: wrap((fd: number, bufPtr: number, bufLen: number, cookie: bigint, bufusedPtr: number) => {
+        const size = MEMORY_SIZE();
+        bufLen = toU32(bufLen);
+        bufPtr = CHECK_BOUNDS(size, bufPtr, bufLen);
+        bufusedPtr = CHECK_BOUNDS(size, bufusedPtr, SIZE_U32);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READDIR);
-        this.refreshMemory();
         const entries = fs.readdirSync(stats.path, { withFileTypes: true });
+        const bytes = Buffer.from(this.memory.buffer);
         const startPtr = bufPtr;
+        const endPtr = bufPtr + bufLen;
         for (let i = Number(cookie); i < entries.length; i += 1) {
-          const entry = entries[i];
-          let nameLength = Buffer.byteLength(entry.name);
-          if (bufPtr - startPtr > bufLen) {
+          // A header that does not fit fills the buffer and a name is cut: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L1511-L1530
+          if (endPtr - bufPtr < SIZE_DIRENT) {
+            bufPtr = endPtr;
             break;
           }
+          const entry = entries[i];
+          const name = Buffer.from(entry.name);
+          // Node leaves d_ino 0, and wasi-libc then calls path_filestat_get for each entry: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L1480-L1482
+          const rstats = fs.lstatSync(path.resolve(stats.path, entry.name));
           this.view.setBigUint64(bufPtr, BigInt(i + 1), true);
           bufPtr += 8;
-          if (bufPtr - startPtr > bufLen) {
-            break;
-          }
-          const rstats = fs.lstatSync(path.resolve(stats.path, entry.name));
           this.view.setBigUint64(bufPtr, BigInt(rstats.ino), true);
           bufPtr += 8;
-          if (bufPtr - startPtr > bufLen) {
-            break;
-          }
-          this.view.setUint32(bufPtr, nameLength, true);
+          this.view.setUint32(bufPtr, name.length, true);
           bufPtr += 4;
-          if (bufPtr - startPtr > bufLen) {
-            break;
-          }
           let filetype;
           switch (true) {
             case rstats.isBlockDevice():
@@ -1153,15 +1197,9 @@ class WASI {
           this.view.setUint8(bufPtr, filetype);
           bufPtr += 1;
           bufPtr += 3;
-          if (bufPtr + nameLength >= startPtr + bufLen) {
-            break;
-          }
-          let memory_buffer: Buffer = Buffer.from(this.memory.buffer);
-          memory_buffer.write(entry.name, bufPtr);
-          bufPtr += nameLength;
+          bufPtr += name.copy(bytes, bufPtr, 0, endPtr - bufPtr);
         }
-        const bufused = bufPtr - startPtr;
-        this.view.setUint32(bufusedPtr, Math.min(bufused, bufLen), true);
+        this.view.setUint32(bufusedPtr, bufPtr - startPtr, true);
         return WASI_ESUCCESS;
       }),
       fd_renumber: wrap((from: number, to: number) => {
@@ -1173,8 +1211,8 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_seek: wrap((fd: number, offset: bigint, whence: number, newOffsetPtr: number) => {
+        newOffsetPtr = CHECK_BOUNDS(MEMORY_SIZE(), newOffsetPtr, SIZE_U64);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_SEEK);
-        this.refreshMemory();
         switch (whence) {
           case WASI_WHENCE_CUR:
             stats.offset = (stats.offset ? stats.offset : BigInt(0)) + BigInt(offset);
@@ -1194,8 +1232,8 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_tell: wrap((fd: number, offsetPtr: number) => {
+        offsetPtr = CHECK_BOUNDS(MEMORY_SIZE(), offsetPtr, SIZE_U64);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_TELL);
-        this.refreshMemory();
         if (!stats.offset) {
           stats.offset = BigInt(0);
         }
@@ -1208,21 +1246,25 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       path_create_directory: wrap((fd: number, pathPtr: number, pathLen: number) => {
+        pathLen = toU32(pathLen);
+        pathPtr = CHECK_BOUNDS(MEMORY_SIZE(), pathPtr, pathLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_CREATE_DIRECTORY);
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        this.refreshMemory();
         const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.mkdirSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
       path_filestat_get: wrap((fd: number, flags: number, pathPtr: number, pathLen: number, bufPtr: number) => {
+        const size = MEMORY_SIZE();
+        pathLen = toU32(pathLen);
+        pathPtr = CHECK_BOUNDS(size, pathPtr, pathLen);
+        bufPtr = CHECK_BOUNDS(size, bufPtr, SIZE_FILESTAT);
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_FILESTAT_GET);
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        this.refreshMemory();
         const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         const resolved = RESOLVE_PATH(stats, p);
         let rstats: $Node.Stats;
@@ -1258,11 +1300,12 @@ class WASI {
           stMtim: bigint,
           fstflags: number,
         ) => {
+          pathLen = toU32(pathLen);
+          pathPtr = CHECK_BOUNDS(MEMORY_SIZE(), pathPtr, pathLen);
           const stats = CHECK_FD(fd, WASI_RIGHT_PATH_FILESTAT_SET_TIMES);
           if (!stats.path) {
             return WASI_EINVAL;
           }
-          this.refreshMemory();
           const rstats = this.fstatSync(stats.real);
           let atim: Date | number = rstats.atime;
           let mtim: Date | number = rstats.mtime;
@@ -1300,12 +1343,16 @@ class WASI {
           newPath: number,
           newPathLen: number,
         ) => {
+          const size = MEMORY_SIZE();
+          oldPathLen = toU32(oldPathLen);
+          oldPath = CHECK_BOUNDS(size, oldPath, oldPathLen);
+          newPathLen = toU32(newPathLen);
+          newPath = CHECK_BOUNDS(size, newPath, newPathLen);
           const ostats = CHECK_FD(oldFd, WASI_RIGHT_PATH_LINK_SOURCE);
           const nstats = CHECK_FD(newFd, WASI_RIGHT_PATH_LINK_TARGET);
           if (!ostats.path || !nstats.path) {
             return WASI_EINVAL;
           }
-          this.refreshMemory();
           const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
           const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
           fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
@@ -1325,6 +1372,10 @@ class WASI {
           fdPtr: number,
         ) => {
           try {
+            const size = MEMORY_SIZE();
+            pathLen = toU32(pathLen);
+            pathPtr = CHECK_BOUNDS(size, pathPtr, pathLen);
+            fdPtr = CHECK_BOUNDS(size, fdPtr, SIZE_U32);
             const stats = CHECK_FD(dirfd, WASI_RIGHT_PATH_OPEN);
             fsRightsBase = BigInt.asUintN(64, BigInt(fsRightsBase));
             fsRightsInheriting = BigInt.asUintN(64, BigInt(fsRightsInheriting));
@@ -1383,7 +1434,6 @@ class WASI {
             if (write && (noflags & (nodeFsConstants.O_APPEND | nodeFsConstants.O_TRUNC)) === 0) {
               neededInheriting |= WASI_RIGHT_FD_SEEK;
             }
-            this.refreshMemory();
             const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
             if (p == "dev/tty") {
               this.view.setUint32(fdPtr, WASI_STDIN_FILENO, true);
@@ -1482,11 +1532,16 @@ class WASI {
       ),
       path_readlink: wrap(
         (fd: number, pathPtr: number, pathLen: number, buf: number, bufLen: number, bufused: number) => {
+          const size = MEMORY_SIZE();
+          pathLen = toU32(pathLen);
+          pathPtr = CHECK_BOUNDS(size, pathPtr, pathLen);
+          bufLen = toU32(bufLen);
+          buf = CHECK_BOUNDS(size, buf, bufLen);
+          bufused = CHECK_BOUNDS(size, bufused, SIZE_U32);
           const stats = CHECK_FD(fd, WASI_RIGHT_PATH_READLINK);
           if (!stats.path) {
             return WASI_EINVAL;
           }
-          this.refreshMemory();
           const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
           const full = RESOLVE_PATH(stats, p);
           const r = fs.readlinkSync(full);
@@ -1496,23 +1551,28 @@ class WASI {
         },
       ),
       path_remove_directory: wrap((fd: number, pathPtr: number, pathLen: number) => {
+        pathLen = toU32(pathLen);
+        pathPtr = CHECK_BOUNDS(MEMORY_SIZE(), pathPtr, pathLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_REMOVE_DIRECTORY);
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        this.refreshMemory();
         const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.rmdirSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
       path_rename: wrap(
         (oldFd: number, oldPath: number, oldPathLen: number, newFd: number, newPath: number, newPathLen: number) => {
+          const size = MEMORY_SIZE();
+          oldPathLen = toU32(oldPathLen);
+          oldPath = CHECK_BOUNDS(size, oldPath, oldPathLen);
+          newPathLen = toU32(newPathLen);
+          newPath = CHECK_BOUNDS(size, newPath, newPathLen);
           const ostats = CHECK_FD(oldFd, WASI_RIGHT_PATH_RENAME_SOURCE);
           const nstats = CHECK_FD(newFd, WASI_RIGHT_PATH_RENAME_TARGET);
           if (!ostats.path || !nstats.path) {
             return WASI_EINVAL;
           }
-          this.refreshMemory();
           const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
           const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
           fs.renameSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
@@ -1520,35 +1580,49 @@ class WASI {
         },
       ),
       path_symlink: wrap((oldPath: number, oldPathLen: number, fd: number, newPath: number, newPathLen: number) => {
+        const size = MEMORY_SIZE();
+        oldPathLen = toU32(oldPathLen);
+        oldPath = CHECK_BOUNDS(size, oldPath, oldPathLen);
+        newPathLen = toU32(newPathLen);
+        newPath = CHECK_BOUNDS(size, newPath, newPathLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_SYMLINK);
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        this.refreshMemory();
         const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
         const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
         fs.symlinkSync(op, RESOLVE_PATH(stats, np));
         return WASI_ESUCCESS;
       }),
       path_unlink_file: wrap((fd: number, pathPtr: number, pathLen: number) => {
+        pathLen = toU32(pathLen);
+        pathPtr = CHECK_BOUNDS(MEMORY_SIZE(), pathPtr, pathLen);
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_UNLINK_FILE);
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        this.refreshMemory();
         const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.unlinkSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
       poll_oneoff: (sin: number, sout: number, nsubscriptions: number, neventsPtr: number) => {
+        if (!isU32(nsubscriptions)) return WASI_EINVAL;
+        nsubscriptions >>>= 0;
+        const size = MEMORY_SIZE();
+        const errno =
+          boundsErrno(size, sin, nsubscriptions * SIZE_SUBSCRIPTION) ||
+          boundsErrno(size, sout, nsubscriptions * SIZE_EVENT) ||
+          boundsErrno(size, neventsPtr, SIZE_U32);
+        if (errno) return errno;
+        sin >>>= 0;
+        sout >>>= 0;
+        neventsPtr >>>= 0;
         const startNs = BigInt(bindings.hrtime());
         let nevents = 0;
         let waitTimeNs = BigInt(0);
         let fd = -1;
         let fd_type = "read";
         let fd_timeout_ms: number | bigint = 0;
-        this.refreshMemory();
-        let last_sin = sin;
         for (let i = 0; i < nsubscriptions; i += 1) {
           const userdata = this.view.getBigUint64(sin, true);
           sin += 8;
@@ -1614,15 +1688,6 @@ class WASI {
             default:
               return WASI_EINVAL;
           }
-          if (sin - last_sin != 48) {
-            console.warn("*** BUG in wasi-js in poll_oneoff ", {
-              i,
-              sin,
-              last_sin,
-              diff: sin - last_sin,
-            });
-          }
-          last_sin = sin;
         }
         this.view.setUint32(neventsPtr, nevents, true);
         if (nevents == 2 && fd >= 0) {
@@ -1662,7 +1727,11 @@ class WASI {
         return WASI_ESUCCESS;
       },
       random_get: (bufPtr: number, bufLen: number) => {
-        this.refreshMemory();
+        if (!isU32(bufLen)) return WASI_EINVAL;
+        bufLen >>>= 0;
+        const errno = boundsErrno(MEMORY_SIZE(), bufPtr, bufLen);
+        if (errno) return errno;
+        bufPtr >>>= 0;
         // getRandomValues takes one integer-typed view and ignores any further
         // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
         // memory rather than the requested window.
@@ -1737,8 +1806,9 @@ class WASI {
     return fd;
   }
   refreshMemory() {
-    if (!this.view || this.view.buffer.byteLength === 0) {
-      this.view = new DataView(this.memory.buffer);
+    const buffer = this.memory.buffer;
+    if (!this.view || this.view.buffer !== buffer) {
+      this.view = new DataView(buffer);
     }
   }
   setMemory(memory: WebAssembly.Memory) {

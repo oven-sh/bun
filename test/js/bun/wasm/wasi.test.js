@@ -252,3 +252,265 @@ it("fd_pread counts each byte once and reads the next iov from where the last on
     second: memory.toString("latin1", secondBuf, secondBuf + 4),
   }).toEqual({ nread: 8, first: "2345", second: "6789" });
 });
+
+const WASI_EBADF = 8;
+const WASI_EOVERFLOW = 61;
+const END = 65536; // one page of guest memory
+const STDOUT = 1;
+const DIR = 3; // the preopened directory
+// Where the calls below point: one iovec and the 4 bytes it names, and scratch space for what the host writes.
+const IOVEC = 2048;
+const DATA = 2080;
+const OUT = 4096;
+const OUT2 = 4160;
+const BUF = 8192;
+const ZERO = BigInt(0);
+
+it("a hostcall sees the memory the guest has now: after it grows, and after another one is set", () => {
+  const stdout = [];
+  const wasi = new WASI({ args: ["argv0"], sendStdout: bytes => stdout.push(`${Buffer.from(bytes)}`) });
+  // One hostcall for each way the host reaches guest memory, with every pointer in the second page: what they
+  // answered, and what is in that page afterwards.
+  const inSecondPage = memory => {
+    stdout.length = 0;
+    if (memory.buffer.byteLength > END) {
+      const page = Buffer.from(memory.buffer, END);
+      page.fill(0);
+      page.writeUInt32LE(END + DATA, IOVEC);
+      page.writeUInt32LE(4, IOVEC + 4);
+      page.write("data", DATA);
+    }
+    const answers = [
+      wasi.wasiImport.clock_time_get(1, ZERO, END + OUT),
+      wasi.wasiImport.args_get(END + OUT2, END + BUF),
+      wasi.wasiImport.random_get(END + BUF + 64, 64),
+      wasi.wasiImport.fd_write(STDOUT, END + IOVEC, 1, END + OUT + 8),
+    ];
+    if (memory.buffer.byteLength === END) return { answers, stdout: [...stdout] };
+    const page = Buffer.from(memory.buffer, END);
+    return {
+      answers,
+      stdout: [...stdout],
+      time: page.readBigUInt64LE(OUT) > ZERO,
+      nwritten: page.readUInt32LE(OUT + 8),
+      argv: [page.readUInt32LE(OUT2), page.toString("latin1", BUF, BUF + "argv0\0".length)],
+      random: page.subarray(BUF + 64, BUF + 128).some(byte => byte !== 0),
+    };
+  };
+  const outOfBounds = { answers: [WASI_EOVERFLOW, WASI_EOVERFLOW, WASI_EOVERFLOW, WASI_EOVERFLOW], stdout: [] };
+  const inBounds = {
+    answers: [0, 0, 0, 0],
+    stdout: ["data"],
+    time: true,
+    nwritten: 4,
+    argv: [END + BUF, "argv0\0"],
+    random: true,
+  };
+
+  // No hostcall has built the view yet, and a guest may start with this one: Node's test/wasi/wasm/clock_getres.wasm does.
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  expect(wasi.wasiImport.clock_res_get(1, 0)).toBe(0);
+
+  // A grow detaches the buffer of a plain memory, gives a shared memory a new one, and resizes a resizable one.
+  const grown = {};
+  for (const kind of ["plain", "shared", "resizable"]) {
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: kind === "shared" });
+    if (kind === "resizable") memory.toResizableBuffer();
+    wasi.setMemory(memory);
+    const buffer = memory.buffer;
+    const before = inSecondPage(memory);
+    memory.grow(1);
+    grown[kind] = { before, after: inSecondPage(memory), oldBufferLength: buffer.byteLength };
+  }
+  expect(grown).toEqual({
+    plain: { before: outOfBounds, after: inBounds, oldBufferLength: 0 },
+    shared: { before: outOfBounds, after: inBounds, oldBufferLength: END },
+    resizable: { before: outOfBounds, after: inBounds, oldBufferLength: 2 * END },
+  });
+
+  const other = new WebAssembly.Memory({ initial: 2 });
+  wasi.setMemory(other);
+  expect(inSecondPage(other)).toEqual(inBounds);
+
+  // A host that drops the view gets a new one.
+  wasi.view = undefined;
+  expect(inSecondPage(other)).toEqual(inBounds);
+});
+
+it("a hostcall follows a memory that the fstatSync of the host's fs grows while it runs", () => {
+  using dir = tempDir("wasi-binding-grows", { "file.txt": "0123456789" });
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 3 });
+  const { bindings } = new WASI({});
+  let grow = false;
+  const fstatSync = (...args) => {
+    if (grow) memory.grow(1);
+    grow = false;
+    return bindings.fs.fstatSync(...args);
+  };
+  const wasi = new WASI({
+    preopens: { "/sandbox": String(dir) },
+    bindings: { ...bindings, fs: { ...bindings.fs, fstatSync } },
+  });
+  wasi.setMemory(memory);
+  Buffer.from(memory.buffer).write("file.txt", BUF);
+
+  // The two hostcalls that reach guest memory after they call fstatSync.
+  const answers = [];
+  for (const hostcall of [
+    () => wasi.wasiImport.fd_filestat_get(DIR, OUT),
+    () => wasi.wasiImport.path_filestat_set_times(DIR, 0, BUF, "file.txt".length, ZERO, ZERO, 0),
+  ]) {
+    grow = true;
+    answers.push([hostcall(), grow]);
+  }
+  const WASI_FILETYPE_DIRECTORY = 3;
+  expect({
+    answers,
+    pages: memory.buffer.byteLength / END,
+    filetype: new DataView(memory.buffer).getUint8(OUT + 16),
+  }).toEqual({
+    answers: [
+      [0, false],
+      [0, false],
+    ],
+    pages: 3,
+    filetype: WASI_FILETYPE_DIRECTORY,
+  });
+});
+
+it("a pointer or a count of 2 GiB or more names the same memory, as a negative number or not", () => {
+  using dir = tempDir("wasi-above-2gib", {});
+  const pages = 32768 + 1;
+  const wasi = new WASI({ args: ["a"], preopens: { "/sandbox": String(dir) } });
+  const memory = new WebAssembly.Memory({ initial: pages });
+  wasi.setMemory(memory);
+  const view = new DataView(memory.buffer);
+  const high = 2 ** 31 + 1024; // in the last page
+  const end = pages * 65536;
+  const argsSizesGet = (argc, argvBufSize) => {
+    view.setBigUint64(high, ZERO);
+    return [
+      wasi.wasiImport.args_sizes_get(argc, argvBufSize),
+      view.getUint32(high, true),
+      view.getUint32(high + 4, true),
+    ];
+  };
+
+  expect({
+    // What a wasm guest passes: an i32 arrives as a signed number.
+    negative: argsSizesGet(high | 0, (high + 4) | 0),
+    // What a caller in JavaScript may pass.
+    unsigned: argsSizesGet(high, high + 4),
+    pastTheEnd: argsSizesGet(high | 0, (end - 3) | 0),
+    // A buffer of 2 GiB for the name of the preopened directory: the count is 2 ** 31.
+    count: [
+      wasi.wasiImport.fd_prestat_dir_name(DIR, 1024, (2 ** 31) | 0),
+      Buffer.from(memory.buffer, 1024, "/sandbox".length).toString(),
+    ],
+    // A path of 2 GiB. The host does not read it for a descriptor that is not open, nor for a buffer that is out of bounds.
+    path: [
+      wasi.wasiImport.path_unlink_file(99, 0, (2 ** 31) | 0),
+      wasi.wasiImport.path_filestat_get(DIR, 0, 0, (2 ** 31) | 0, end - 63),
+    ],
+  }).toEqual({
+    negative: [0, 1, "a\0".length],
+    unsigned: [0, 1, "a\0".length],
+    pastTheEnd: [WASI_EOVERFLOW, 0, 0],
+    count: [0, "/sandbox"],
+    path: [WASI_EBADF, WASI_EOVERFLOW],
+  });
+});
+
+it("fd_readdir fills a buffer that is too short for an entry and never writes past it", () => {
+  using dir = tempDir("wasi-fd-readdir-short", { "abcdefgh": "" });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const bytes = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  // The one entry: d_next 1, d_ino, d_namlen 8, d_type regular file, three bytes of padding, the name.
+  // d_ino is the inode of the host file. Node writes 0 there.
+  const dirent = Buffer.alloc(24 + 8, 0xaa);
+  dirent.writeBigUInt64LE(BigInt(1), 0);
+  dirent.writeBigUInt64LE(BigInt(fs.statSync(path.join(String(dir), "abcdefgh")).ino), 8);
+  dirent.writeUInt32LE(8, 16);
+  dirent.writeUInt8(4, 20);
+  dirent.write("abcdefgh", 24);
+
+  const results = {};
+  const expected = {};
+  for (const bufLen of [1, 23, 24, 25, 31, 32, 33]) {
+    // Once with the buffer in the middle of memory, and once with its end at the end of memory.
+    for (const bufPtr of [BUF, END - bufLen]) {
+      const window = [bufPtr, Math.min(bufPtr + 40, END)];
+      bytes.fill(0xaa, ...window);
+      const errno = wasi.wasiImport.fd_readdir(DIR, bufPtr, bufLen, ZERO, OUT);
+      results[`${bufLen} bytes at ${bufPtr}`] = [errno, view.getUint32(OUT, true), bytes.toString("hex", ...window)];
+      // An entry whose 24-byte header does not fit is not written and the buffer counts as full. A name is cut.
+      const used = Math.min(bufLen, dirent.length);
+      const written = Buffer.alloc(window[1] - window[0], 0xaa);
+      if (bufLen >= 24) dirent.copy(written, 0, 0, used);
+      expected[`${bufLen} bytes at ${bufPtr}`] = [0, used, written.toString("hex")];
+    }
+  }
+  expect(results).toEqual(expected);
+});
+
+it("fd_readdir lists every entry through a buffer that holds two entries at a time", () => {
+  const names = Array.from({ length: 50 }, (_, i) => `entry-${String(i).padStart(2, "0")}.wasi-readdir`);
+  using dir = tempDir("wasi-fd-readdir-loop", Object.fromEntries(names.map(name => [name, ""])));
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const bytes = Buffer.from(wasi.memory.buffer);
+  const bufLen = 128;
+
+  // What readdir() of wasi-libc does: take the entries that are whole, ask again from the cookie of the last one,
+  // and stop when the host leaves the buffer short. Two entries of 24 + 21 bytes fit, the name of the third does not.
+  const listed = [];
+  const answers = new Set();
+  let cookie = ZERO;
+  for (let call = 0; call < names.length; call++) {
+    answers.add(wasi.wasiImport.fd_readdir(DIR, BUF, bufLen, cookie, OUT));
+    const used = bytes.readUInt32LE(OUT);
+    for (let at = BUF; at + 24 <= BUF + used;) {
+      const nameLength = bytes.readUInt32LE(at + 16);
+      if (at + 24 + nameLength > BUF + used) break;
+      listed.push(bytes.toString("utf8", at + 24, at + 24 + nameLength));
+      cookie = bytes.readBigUInt64LE(at);
+      at += 24 + nameLength;
+    }
+    if (used < bufLen) break;
+  }
+  expect({ answers: [...answers], listed: listed.sort() }).toEqual({ answers: [0], listed: names });
+});
+
+it("args_get and environ_get write a table of pointers and the strings it points at", () => {
+  const wasi = new WASI({ args: ["argv0", "é", ""], env: { K: "v", EMPTY: "" } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const bytes = Buffer.from(wasi.memory.buffer);
+  const argv = Buffer.from("argv0\0é\0\0");
+  const environ = Buffer.from("K=v\0EMPTY=\0");
+  const words = (at, count) => Array.from({ length: count }, (_, i) => bytes.readUInt32LE(at + 4 * i));
+
+  bytes.fill(0xaa, OUT, BUF + 64);
+  const answers = [
+    wasi.wasiImport.args_sizes_get(OUT, OUT + 4),
+    wasi.wasiImport.environ_sizes_get(OUT + 8, OUT + 12),
+    wasi.wasiImport.args_get(OUT2, BUF),
+    wasi.wasiImport.environ_get(OUT2 + 16, BUF + argv.length),
+  ];
+  expect({
+    answers,
+    sizes: words(OUT, 4),
+    // One word after each table and one byte after the strings: the host does not write there.
+    argvTable: words(OUT2, 4),
+    environTable: words(OUT2 + 16, 3),
+    strings: bytes.toString("hex", BUF, BUF + argv.length + environ.length + 1),
+  }).toEqual({
+    answers: [0, 0, 0, 0],
+    sizes: [3, argv.length, 2, environ.length],
+    argvTable: [BUF, BUF + argv.indexOf("é"), BUF + argv.length - 1, 0xaaaaaaaa],
+    environTable: [BUF + argv.length, BUF + argv.length + environ.indexOf("EMPTY"), 0xaaaaaaaa],
+    strings: Buffer.concat([argv, environ, Buffer.from([0xaa])]).toString("hex"),
+  });
+});

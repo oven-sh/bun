@@ -1,0 +1,1087 @@
+// Dumps every type that bun-types contributes to a program, with the shape the
+// TypeScript checker resolves it to, for several `lib` configurations.
+//
+// Usage:
+//   bun scripts/inventory.ts [--out <dir>] [--preset <name>]... [--check] [--keep]
+//
+// Each preset writes one file, <out>/<preset>.txt. A symbol is listed when at
+// least one of its declarations is in bun-types: the globals, the exports of the
+// modules bun-types declares (`bun`, `bun:test`, `*.html`, ...) and of the node
+// modules and namespaces it augments (`node:tls`, `NodeJS`). The members of a
+// listed symbol are printed in full, wherever they come from. Interface merging,
+// `UseLibDomIfAvailable`, and every other conditional alias are resolved, so the
+// file shows what a user sees, not what the .d.ts source says. The files are
+// plain text sorted by name, so `git diff` on them is the review surface for a
+// change to packages/bun-types.
+//
+// The package also ships entry points that index.d.ts does not load, for
+// `/// <reference types="bun-types/test-globals" />` and
+// `/// <reference types="bun-types/vitest-globals" />`. Each has a preset of its
+// own. Its file lists only what the entry point adds to a program.
+//
+// With --check the tool writes nothing. It exits 1 and prints a diff when a
+// preset's output differs from the file in <out>.
+//
+// The default output directory is test/integration/bun-types/inventory.
+//
+// Not covered: ts7.1/, which only TypeScript 7.1 can parse. This script runs the
+// compiler API of the repository's own `typescript` dependency.
+import { $ } from "bun";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import ts from "typescript";
+
+const PACKAGE_ROOT = resolve(import.meta.dir, "..");
+const REPO_ROOT = resolve(PACKAGE_ROOT, "../..");
+const DEFAULT_OUT = join(REPO_ROOT, "test/integration/bun-types/inventory");
+
+const DOM_LIBS = ["lib.dom.d.ts", "lib.dom.iterable.d.ts", "lib.dom.asynciterable.d.ts"];
+
+interface Preset {
+  /**
+   * The names are the file names TypeScript ships in its lib/ directory. `[]`
+   * means no lib at all: @types/node then pulls in es2020 through its own
+   * `/// <reference lib>` directives.
+   */
+  lib: string[];
+  /**
+   * A file of the package that index.d.ts does not load. The program references
+   * it the way a project does, and the output lists only the symbols that it
+   * declares. vitest-globals.d.ts loads vitest.d.ts, so it covers both.
+   */
+  entryPoint?: string;
+}
+
+/** The `lib` matrix for `types: ["bun"]`, then one preset per extra entry point. */
+const PRESETS: Record<string, Preset> = {
+  "esnext": { lib: ["lib.esnext.d.ts"] },
+  "esnext-dom": { lib: ["lib.esnext.d.ts", ...DOM_LIBS] },
+  "es2022": { lib: ["lib.es2022.d.ts"] },
+  "es2022-dom": { lib: ["lib.es2022.d.ts", ...DOM_LIBS] },
+  "no-lib": { lib: [] },
+  "test-globals": { lib: ["lib.esnext.d.ts"], entryPoint: "bun-types/test-globals" },
+  "vitest-globals": { lib: ["lib.esnext.d.ts"], entryPoint: "bun-types/vitest-globals" },
+};
+
+function parseArgs(argv: string[]) {
+  const out = { out: DEFAULT_OUT, presets: [] as string[], check: false, keep: false };
+  const valueOf = (flag: string, value: string | undefined) => {
+    // `--out --check` is a forgotten value. A directory with such a name is `./--check`.
+    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} needs a value`);
+    return value;
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--out") out.out = resolve(valueOf(arg, argv[++i]));
+    else if (arg === "--preset") out.presets.push(valueOf(arg, argv[++i]));
+    else if (arg === "--check") out.check = true;
+    else if (arg === "--keep") out.keep = true;
+    else throw new Error(`unknown argument: ${arg}`);
+  }
+  if (out.presets.length === 0) out.presets = Object.keys(PRESETS);
+  for (const preset of out.presets) {
+    if (!Object.hasOwn(PRESETS, preset))
+      throw new Error(`unknown preset ${preset}. Known: ${Object.keys(PRESETS).join(", ")}`);
+  }
+  return out;
+}
+
+/** TypeScript reports file names with forward slashes on every platform. */
+const toPosix = (path: string) => path.replaceAll("\\", "/");
+
+/**
+ * TypeScript resolves files under node_modules to their real path with the
+ * native realpath. On Windows only the native one expands 8.3 short names
+ * (`C:\Users\RUNNER~1`, which is what `os.tmpdir()` can return), so every path
+ * this script compares against a TypeScript file name goes through it too.
+ */
+const realPathOf = (path: string) => toPosix(realpathSync.native(path));
+
+function readVersion(packageJson: string): string | undefined {
+  return existsSync(packageJson) ? JSON.parse(readFileSync(packageJson, "utf8")).version : undefined;
+}
+
+/**
+ * The versions of @types/node and undici-types that this repository's lockfile
+ * installed for packages/bun-types. The scratch project pins both, so the
+ * output only changes when bun-types or that lockfile changes.
+ */
+function pinnedDependencies(): string[] {
+  // Resolved like an import from the package: a hoisted install puts @types/node in the
+  // node_modules of the repository root, an isolated one in packages/bun-types/node_modules.
+  let nodeTypesPackageJson: string;
+  try {
+    nodeTypesPackageJson = createRequire(join(PACKAGE_ROOT, "package.json")).resolve("@types/node/package.json");
+  } catch {
+    throw new Error(`@types/node is not installed for ${PACKAGE_ROOT}. Run \`bun install\` in the repository first.`);
+  }
+  const pins = [`@types/node@${readVersion(nodeTypesPackageJson)}`];
+  // bun-types depends on `undici-types@*`. In a user's install that is the copy that @types/node
+  // brings, whatever the lockfile of this repository gives the workspace package. So resolve it
+  // from @types/node.
+  const requireFromNodeTypes = createRequire(realpathSync.native(nodeTypesPackageJson));
+  let undiciPackageJson: string | undefined;
+  try {
+    undiciPackageJson = requireFromNodeTypes.resolve("undici-types/package.json");
+  } catch {
+    // This @types/node does not depend on undici-types, so there is nothing to pin.
+  }
+  const undiciVersion = undiciPackageJson && readVersion(undiciPackageJson);
+  if (undiciVersion) pins.push(`undici-types@${undiciVersion}`);
+  return pins;
+}
+
+/**
+ * Builds and packs bun-types into a scratch project under `tempDir`, the same
+ * way test/integration/bun-types/bun-types.test.ts does, so module resolution
+ * matches what a user gets from `bun add -d @types/bun`.
+ */
+async function createProject(tempDir: string): Promise<{ projectDir: string; versions: Record<string, string> }> {
+  const buildDir = join(tempDir, "bun-types");
+  const projectDir = join(tempDir, "project");
+  await mkdir(projectDir);
+  await cp(PACKAGE_ROOT, buildDir, { recursive: true, filter: source => basename(source) !== "node_modules" });
+
+  const version = (process.env.BUN_VERSION || Bun.version).replace(/^.*v/, "");
+  const tarball = `bun-types-${version}.tgz`;
+  await $`cd ${PACKAGE_ROOT} && BUN_VERSION=${version} bun run build ${buildDir}`.quiet();
+  await $`cd ${buildDir} && bun pm pack --destination ${projectDir}`.quiet();
+  await Bun.write(join(projectDir, "package.json"), JSON.stringify({ name: "inventory", private: true }));
+  await $`cd ${projectDir} && bun add bun-types@${tarball} ${pinnedDependencies()} && rm ${tarball}`.quiet();
+
+  const atTypesBun = join(projectDir, "node_modules", "@types", "bun");
+  await mkdir(atTypesBun, { recursive: true });
+  await Bun.write(join(atTypesBun, "index.d.ts"), '/// <reference types="bun-types" />\n');
+  await Bun.write(join(atTypesBun, "package.json"), JSON.stringify({ name: "@types/bun", version }));
+
+  const versions: Record<string, string> = { typescript: ts.version };
+  for (const name of ["@types/node", "undici-types"]) {
+    const found = readVersion(join(projectDir, "node_modules", name, "package.json"));
+    if (found) versions[name] = found;
+  }
+  return { projectDir, versions };
+}
+
+function createProgram(projectDir: string, { lib, entryPoint }: Preset) {
+  const entry = toPosix(join(projectDir, "entry.ts"));
+  const entrySource = (entryPoint ? `/// <reference types=${JSON.stringify(entryPoint)} />\n` : "") + "export {};\n";
+  const options: ts.CompilerOptions = {
+    lib,
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.Preserve,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    moduleDetection: ts.ModuleDetectionKind.Force,
+    jsx: ts.JsxEmit.ReactJSX,
+    types: ["bun"],
+    strict: true,
+    // `x?: T` and `x?: T | undefined` are one type without this flag. bun-types writes
+    // `| undefined` on purpose, for the projects that set it.
+    exactOptionalPropertyTypes: true,
+    noEmit: true,
+    skipLibCheck: true,
+  };
+  const host = ts.createCompilerHost(options, true);
+  const readFile = host.readFile;
+  host.readFile = file => (toPosix(file) === entry ? entrySource : readFile(file));
+  const fileExists = host.fileExists;
+  host.fileExists = file => toPosix(file) === entry || fileExists(file);
+  host.getCurrentDirectory = () => projectDir;
+  const program = ts.createProgram({ rootNames: [entry], options, host });
+  return { program, entry: program.getSourceFile(entry)! };
+}
+
+const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
+/**
+ * @param baseFiles For an entry-point preset, the files of the program without
+ * the entry point. Only symbols declared outside of them are listed.
+ */
+function inventory(
+  program: ts.Program,
+  entry: ts.SourceFile,
+  projectDir: string,
+  baseFiles?: ReadonlySet<string>,
+): string[] {
+  const checker = program.getTypeChecker();
+  const packageDir = realPathOf(join(projectDir, "node_modules", "bun-types"));
+  const tsLibDir = realPathOf(dirname(ts.getDefaultLibFilePath(program.getCompilerOptions())));
+
+  const realPaths = new Map<string, string>();
+  function realPath(fileName: string): string {
+    let real = realPaths.get(fileName);
+    if (real === undefined) {
+      try {
+        real = realPathOf(fileName);
+      } catch {
+        // A module path inside `import("...")` type text has no extension.
+        real = toPosix(fileName);
+      }
+      realPaths.set(fileName, real);
+    }
+    return real;
+  }
+
+  function displayFile(fileName: string): string {
+    const real = realPath(fileName);
+    if (real.startsWith(packageDir + "/")) return "bun-types/" + real.slice(packageDir.length + 1);
+    if (real.startsWith(tsLibDir + "/")) return real.slice(tsLibDir.length + 1);
+    // `<package>/<file>` for both layouts bun can install: hoisted
+    // (node_modules/<package>) and isolated (node_modules/.bun/<package>@<version>/node_modules/<package>).
+    const dependency = real.lastIndexOf("/node_modules/");
+    if (dependency >= 0) return real.slice(dependency + "/node_modules/".length);
+    return toPosix(relative(projectDir, fileName));
+  }
+
+  const isPackageFile = (sourceFile: ts.SourceFile) =>
+    realPath(sourceFile.fileName).startsWith(packageDir + "/") && !baseFiles?.has(sourceFile.fileName);
+
+  /**
+   * True when bun-types declares or augments the symbol. Declarations that merge
+   * into a symbol from another package (lib.dom, @types/node) live on the merged
+   * symbol, so always test that one.
+   */
+  const isFromPackage = (sym: ts.Symbol) =>
+    (checker.getMergedSymbol(sym).declarations ?? []).some(decl => isPackageFile(decl.getSourceFile()));
+
+  const typeFormat =
+    ts.TypeFormatFlags.NoTruncation |
+    ts.TypeFormatFlags.UseFullyQualifiedType |
+    ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope |
+    ts.TypeFormatFlags.WriteArrayAsGenericType;
+
+  // Paths inside `import("...")` type references would leak the temp directory,
+  // and TypeScript names a well-known symbol property `__@iterator@123` with an
+  // id that changes between programs.
+  const pathPattern = new RegExp(
+    toPosix(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/node_modules/[^\"']+",
+    "g",
+  );
+  const clean = (text: string) =>
+    text
+      .replace(pathPattern, match => displayFile(match))
+      .replace(/__@(\w+)@\d+/g, "[Symbol.$1]")
+      // One space for every run of whitespace, except inside a string literal type: `"a  b"` is not `"a b"`.
+      .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\s+/g, match =>
+        /^\s/.test(match) ? " " : match,
+      );
+
+  const rawTypeText = (type: ts.Type) => clean(checker.typeToString(type, undefined, typeFormat));
+
+  const sourcePrinter = ts.createPrinter({ removeComments: true });
+  /** A type as the source writes it, on one line and with no comment. */
+  const writtenText = (node: ts.Node) =>
+    clean(sourcePrinter.printNode(ts.EmitHint.Unspecified, node, node.getSourceFile()));
+
+  // Every class, interface, enum, alias and `typeof` target that a listed declaration names.
+  const named = new Set<ts.Symbol>();
+
+  /** Records a symbol that a listed declaration names. A member of an enum names the enum. */
+  function note(symbol: ts.Symbol) {
+    const target = resolveSymbol(symbol);
+    const declaration = target.valueDeclaration;
+    const owner =
+      declaration && ts.isEnumMember(declaration) ? checker.getSymbolAtLocation(declaration.parent.name) : undefined;
+    named.add(owner ? checker.getMergedSymbol(owner) : target);
+  }
+
+  /**
+   * Records what the text of a declaration of bun-types names. The printer records the names it
+   * prints itself, but it leaves mapped types, `typeof` and `infer` conditionals to TypeScript. A
+   * type that only those name would not reach the last section without this.
+   */
+  function noteNamesIn(declaration: ts.Node) {
+    const types =
+      ts.SymbolFlags.Class |
+      ts.SymbolFlags.Interface |
+      ts.SymbolFlags.TypeAlias |
+      ts.SymbolFlags.Enum |
+      ts.SymbolFlags.EnumMember |
+      ts.SymbolFlags.Function;
+    const visit = (node: ts.Node) => {
+      const name = ts.isTypeReferenceNode(node)
+        ? node.typeName
+        : ts.isExpressionWithTypeArguments(node)
+          ? node.expression
+          : ts.isTypeQueryNode(node)
+            ? node.exprName
+            : ts.isImportTypeNode(node)
+              ? node.qualifier
+              : undefined;
+      const last =
+        name && (ts.isQualifiedName(name) ? name.right : ts.isPropertyAccessExpression(name) ? name.name : name);
+      const symbol = last && checker.getSymbolAtLocation(last);
+      if (symbol) {
+        const target = resolveSymbol(symbol);
+        // `typeof x` of a declared variable, not of a parameter.
+        const isVariable = !!target.valueDeclaration && ts.isVariableDeclaration(target.valueDeclaration);
+        if (target.flags & types || isVariable) note(target);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(declaration);
+  }
+
+  /**
+   * `Bun.Serve.Options`, `import("bun:test").Matchers`, `NodeJS.Dict`, `Blob`: the name of a
+   * type with the module that exports it. TypeScript prints the export of a module as the
+   * bare name, so `Matchers` of "bun:test" and `Matchers` of "vitest" would read the same.
+   */
+  function qualifiedName(symbol: ts.Symbol): string {
+    note(symbol);
+    // `global.NodeJS.Dict` is what a declaration inside `declare global { }` is called.
+    const full = checker.getFullyQualifiedName(symbol).replace(/^global\./, "");
+    const quoted = /^"((?:[^"\\]|\\.)*)"(?:\.(.*))?$/.exec(full);
+    if (!quoted) return full;
+    const [, module, rest] = quoted;
+    // The global `Bun` is the namespace of the module "bun".
+    if (module === "bun") return rest ? `Bun.${rest}` : "Bun";
+    return clean(`import("${module}")`) + (rest ? `.${rest}` : "");
+  }
+
+  /**
+   * With exactOptionalPropertyTypes the type of `x?: T` is `T` plus a marker type for
+   * "not set", which TypeScript also prints as `undefined`. Only a written `undefined` is printed.
+   */
+  const undefinedType = checker.getUndefinedType();
+  const isNotSetMarker = (type: ts.Type) => !!(type.flags & ts.TypeFlags.Undefined) && type !== undefinedType;
+
+  /**
+   * The members of a union that are printed. A union built from an aliased union plus extra
+   * members (`FormDataEntryValue | null`) keeps the alias in `origin`, so that the name survives.
+   */
+  const unionParts = (type: ts.UnionType) => {
+    const origin = (type as ts.Type & { origin?: ts.Type }).origin;
+    return (origin?.isUnion() ? origin.types : type.types).filter(t => !isNotSetMarker(t));
+  };
+
+  /**
+   * The order in which a call tries its overloads, which is not the order of
+   * `getSignaturesOfType`: the signatures of one declaration stay in source order, a LATER
+   * declaration of the same symbol (another block of a merged interface, another
+   * `declare function`) goes first, and a signature with a literal parameter type goes before
+   * them all. This is reorderCandidates() of TypeScript's checker. With lib.dom loaded it is
+   * what makes a signature of bun-types win over the one of lib.dom.
+   */
+  function inCallOrder(signatures: readonly ts.Signature[]): ts.Signature[] {
+    const result: ts.Signature[] = [];
+    let lastParent: ts.Node | undefined;
+    let lastSymbol: ts.Symbol | undefined;
+    let cutoffIndex = 0;
+    let index = 0;
+    let specializedIndex = -1;
+    for (const signature of signatures) {
+      const declaration = signature.getDeclaration() as (ts.SignatureDeclaration & { symbol?: ts.Symbol }) | undefined;
+      const symbol = declaration?.symbol && checker.getMergedSymbol(declaration.symbol);
+      const parent = declaration?.parent;
+      if (!lastSymbol || symbol === lastSymbol) {
+        if (lastParent && parent === lastParent) {
+          index++;
+        } else {
+          lastParent = parent;
+          index = cutoffIndex;
+        }
+      } else {
+        index = cutoffIndex = result.length;
+        lastParent = parent;
+      }
+      lastSymbol = symbol;
+      const hasLiteralParameter = declaration?.parameters.some(
+        parameter => parameter.type !== undefined && ts.isLiteralTypeNode(parameter.type),
+      );
+      if (hasLiteralParameter) {
+        specializedIndex++;
+        cutoffIndex++;
+        result.splice(specializedIndex, 0, signature);
+      } else {
+        result.splice(index, 0, signature);
+      }
+    }
+    return result;
+  }
+
+  const signaturesOf = (type: ts.Type, kind: ts.SignatureKind) => inCallOrder(checker.getSignaturesOfType(type, kind));
+
+  /** The type arguments that TypeScript prints after the name of a class or an interface. */
+  function referenceTypeArguments(type: ts.Type): readonly ts.Type[] | undefined {
+    if (!(type.flags & ts.TypeFlags.Object) || !((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference)) {
+      return undefined;
+    }
+    const reference = type as ts.TypeReference;
+    // The full list is the outer type parameters, then the declared ones, then
+    // the implicit `this` type. Only the declared ones are printed.
+    const outer = reference.target.outerTypeParameters?.length ?? 0;
+    const declared = reference.target.typeParameters?.length ?? 0;
+    return checker.getTypeArguments(reference).slice(outer, declared);
+  }
+
+  /**
+   * A member of a union, an intersection, or a tuple, in parentheses where
+   * TypeScript would put them: function types, conditional types, and (`wrap`) an
+   * intersection inside a union or a union inside an intersection.
+   */
+  function memberText(member: ts.Type, wrap: boolean): string {
+    const text = typeText(member);
+    // An aliased member prints as its name, `Bun.X` or `Bun.X<T>`.
+    if (member.aliasSymbol) return text;
+    const isFunction = /^(abstract )?(new )?[(<]/.test(text) && text.includes("=> ");
+    const isConditional = !!(member.flags & ts.TypeFlags.Conditional);
+    return wrap || isFunction || isConditional ? `(${text})` : text;
+  }
+
+  const modifierFlags = (sym: ts.Symbol) => {
+    const decl = sym.valueDeclaration ?? sym.declarations?.[0];
+    return decl && ts.canHaveModifiers(decl) ? ts.getCombinedModifierFlags(decl) : ts.ModifierFlags.None;
+  };
+
+  const visibility = (flags: ts.ModifierFlags) =>
+    flags & ts.ModifierFlags.Private ? "private" : flags & ts.ModifierFlags.Protected ? "protected" : "";
+
+  /** `private`, `protected` and `abstract`, as they are written before a member. */
+  const accessibility = (flags: ts.ModifierFlags) =>
+    [visibility(flags), flags & ts.ModifierFlags.Abstract ? "abstract" : ""].filter(Boolean).join(" ");
+
+  /** `readonly x`, or `get x()` with no `set x()`. */
+  const isReadonly = (sym: ts.Symbol) =>
+    !!(modifierFlags(sym) & ts.ModifierFlags.Readonly) ||
+    (!!(sym.flags & ts.SymbolFlags.GetAccessor) && !(sym.flags & ts.SymbolFlags.SetAccessor));
+
+  /** The type that `set x(value: T)` takes, when it is not the type that `get x()` returns. */
+  function setterType(prop: ts.Symbol): ts.Type | undefined {
+    if (!(prop.flags & ts.SymbolFlags.SetAccessor)) return undefined;
+    const parameter = prop.declarations?.find(ts.isSetAccessorDeclaration)?.parameters[0];
+    const type = parameter?.type && checker.getTypeFromTypeNode(parameter.type);
+    return type && type !== checker.getTypeOfSymbol(prop) ? type : undefined;
+  }
+
+  /**
+   * `name(a: A): B`, one entry per overload, when the member is declared as a
+   * method. A property with a function type prints as `name: (a: A) => B`. The
+   * two differ: TypeScript compares method parameters bivariantly.
+   */
+  function methodTexts(prop: ts.Symbol, name: string): string[] | undefined {
+    if (!(prop.flags & ts.SymbolFlags.Method)) return undefined;
+    const type = checker.getNonNullableType(checker.getTypeOfSymbol(prop));
+    const signatures = signaturesOf(type, ts.SignatureKind.Call);
+    if (signatures.length === 0) return undefined;
+    const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
+    const access = accessibility(modifierFlags(prop));
+    return signatures.map(
+      sig => `${access && access + " "}${name}${optional}${signatureText(sig, ts.SignatureKind.Call, ": ")}`,
+    );
+  }
+
+  /**
+   * The name of a member. A key that is a symbol prints as it is declared, `[Symbol.iterator]`
+   * or `[EventEmitter.captureRejectionSymbol]`: TypeScript's own name for it is `__@iterator@123`.
+   */
+  function memberName(prop: ts.Symbol): string {
+    if (prop.name.startsWith("__@")) {
+      const declaration = (prop.valueDeclaration ?? prop.declarations?.[0]) as ts.NamedDeclaration | undefined;
+      if (declaration?.name && ts.isComputedPropertyName(declaration.name)) return clean(declaration.name.getText());
+    }
+    return clean(prop.name);
+  }
+
+  /** `{ a: A; b?: B }`, `(a: A) => B` or `new (a: A) => B`: an object type that is written inline and has no name. */
+  function isTypeLiteral(type: ts.Type): boolean {
+    if (!(type.flags & ts.TypeFlags.Object) || !type.symbol) return false;
+    const { objectFlags } = type as ts.ObjectType;
+    return (
+      !!(objectFlags & ts.ObjectFlags.Anonymous) &&
+      !(objectFlags & ts.ObjectFlags.Mapped) &&
+      !!(type.symbol.flags & ts.SymbolFlags.TypeLiteral)
+    );
+  }
+
+  function typeLiteralText(type: ts.Type): string {
+    const calls = signaturesOf(type, ts.SignatureKind.Call);
+    const constructs = signaturesOf(type, ts.SignatureKind.Construct);
+    const indexes = checker.getIndexInfosOfType(type);
+    const props = checker.getPropertiesOfType(type);
+    if (indexes.length === 0 && props.length === 0) {
+      if (constructs.length === 0) {
+        if (calls.length === 1) return signatureText(calls[0]!, ts.SignatureKind.Call, " => ");
+        if (calls.length > 1) {
+          return `{ ${calls.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")).join("; ")} }`;
+        }
+      } else if (calls.length === 0 && constructs.length === 1) {
+        return signatureText(constructs[0]!, ts.SignatureKind.Construct, " => ");
+      }
+    }
+    // Members stay in declaration order, which is the order TypeScript keeps them in.
+    const members = [
+      ...calls.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")),
+      ...constructs.map(sig => signatureText(sig, ts.SignatureKind.Construct, ": ")),
+      ...indexes.map(info => {
+        const key = info.declaration?.parameters[0]?.name.getText() ?? "x";
+        return `${info.isReadonly ? "readonly " : ""}[${key}: ${typeText(info.keyType)}]: ${typeText(info.type)}`;
+      }),
+      ...props.flatMap(prop => {
+        const name = memberName(prop);
+        const key = /^[A-Za-z_$][\w$]*$/.test(name) || name.startsWith("[") ? name : JSON.stringify(name);
+        const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
+        const type = typeText(checker.getTypeOfSymbol(prop));
+        const setter = setterType(prop);
+        if (setter) return [`get ${key}(): ${type}`, `set ${key}(value: ${typeText(setter)})`];
+        return methodTexts(prop, key) ?? `${isReadonly(prop) ? "readonly " : ""}${key}${optional}: ${type}`;
+      }),
+    ];
+    return members.length === 0 ? "{}" : `{ ${members.join("; ")}; }`;
+  }
+
+  function tupleText(type: ts.TupleTypeReference): string {
+    const { elementFlags, labeledElementDeclarations, readonly } = type.target;
+    const elements = checker
+      .getTypeArguments(type)
+      .slice(0, elementFlags.length)
+      .map((element, i) => {
+        const flags = elementFlags[i]!;
+        const name = labeledElementDeclarations?.[i]?.name.getText();
+        const label = name === undefined ? "" : `${name}: `;
+        if (flags & ts.ElementFlags.Variadic) return `...${label}${typeText(element)}`;
+        if (flags & ts.ElementFlags.Rest) return `...${label}Array<${typeText(element)}>`;
+        if (flags & ts.ElementFlags.Optional) {
+          if (name !== undefined) return `${name}?: ${typeText(element)}`;
+          // With exactOptionalPropertyTypes the element is `T | <not set>` and only `T` is printed,
+          // so only `T` decides the parentheses: `[X?]`, `[(A | B)?]`, `[boolean?]`.
+          const parts = element.isUnion() && !element.aliasSymbol ? unionParts(element) : [element];
+          const shown = parts.length === 1 ? parts[0]! : element;
+          const isBoolean = parts.length === 2 && parts.every(t => t.flags & ts.TypeFlags.BooleanLiteral);
+          return `${memberText(shown, !isBoolean && (shown.isUnion() || shown.isIntersection()))}?`;
+        }
+        return label + typeText(element);
+      });
+    return `${readonly ? "readonly " : ""}[${elements.join(", ")}]`;
+  }
+
+  // Type literals whose members are being printed. A literal that contains itself prints as `...` there.
+  const printing = new Set<ts.Type>();
+
+  /**
+   * TypeScript orders union members by internal type id, which shifts whenever a
+   * declaration moves. Sort them so that a refactor with no type change is a
+   * no-op in the output. Everything a union can hide in is printed here for
+   * that reason, not by `typeToString`: type arguments, tuples, the members of
+   * type literals, and signatures.
+   *
+   * @param expandAlias The type alias whose right-hand side this is. Every other
+   * aliased type prints as the name of its alias.
+   */
+  function typeText(type: ts.Type, expandAlias?: ts.Symbol): string {
+    const expand = !type.aliasSymbol || type.aliasSymbol === expandAlias;
+    // The alias itself, where it is not the one being defined.
+    if (type.aliasSymbol && !expand) return namedTypeText(type.aliasSymbol, type.aliasTypeArguments, type);
+    const ownText = () =>
+      type.aliasSymbol
+        ? clean(checker.typeToString(type, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias))
+        : rawTypeText(type);
+    // `x?: never` is the "not set" marker and nothing else. TypeScript prints that as `undefined`.
+    if (isNotSetMarker(type)) return "never";
+    // An enum is a union of its members. It has a name.
+    if (type.flags & ts.TypeFlags.EnumLike && type.symbol && !type.aliasSymbol) return qualifiedName(type.symbol);
+    if (type.isUnion()) {
+      const origin = (type as ts.Type & { origin?: ts.Type }).origin;
+      // `X & (A | B)` is held as `(X & A) | (X & B)`. Print what was written.
+      if (origin?.isIntersection()) return origin.types.map(t => memberText(t, t.isUnion())).join(" & ");
+      // A `keyof X` origin: TypeScript prints it as `keyof X`, keep that.
+      if (origin && !origin.isUnion()) return ownText();
+      const parts = unionParts(type);
+      const isBooleanLiteral = (t: ts.Type, name: string) =>
+        !!(t.flags & ts.TypeFlags.BooleanLiteral) && (t as ts.Type & { intrinsicName?: string }).intrinsicName === name;
+      const hasTrue = parts.some(t => isBooleanLiteral(t, "true"));
+      const hasFalse = parts.some(t => isBooleanLiteral(t, "false"));
+      const texts = parts
+        .filter(t => !(hasTrue && hasFalse && t.flags & ts.TypeFlags.BooleanLiteral))
+        .map(t => memberText(t, t.isIntersection()));
+      if (hasTrue && hasFalse) texts.push("boolean");
+      return texts.sort().join(" | ");
+    }
+    if (type.isIntersection()) {
+      // TypeScript keeps intersection members in source order, so only recurse.
+      return type.types.map(t => memberText(t, t.isUnion())).join(" & ");
+    }
+    if (checker.isTupleType(type)) return tupleText(type as ts.TupleTypeReference);
+    if (isTypeLiteral(type)) {
+      if (printing.has(type)) return "...";
+      // Every instantiation of a generic literal is another type, so identity alone does not end
+      // a literal whose members instantiate it again. TypeScript's own printer has a limit.
+      if (printing.size >= 16) return ownText();
+      printing.add(type);
+      try {
+        return typeLiteralText(type);
+      } finally {
+        printing.delete(type);
+      }
+    }
+    // `A extends B ? C : D` as it is declared. The branches of an instantiated one, and a
+    // `B` that declares `infer` parameters, are left to TypeScript.
+    if (type.flags & ts.TypeFlags.Conditional) {
+      const conditional = type as ts.ConditionalType & { mapper?: unknown };
+      const { node, inferTypeParameters } = conditional.root;
+      if (!conditional.mapper && !inferTypeParameters) {
+        const check = conditional.checkType;
+        const extended = conditional.extendsType;
+        const checkText = memberText(check, check.isUnion() || check.isIntersection());
+        const extendsText = memberText(extended, false);
+        const whenTrue = typeText(checker.getTypeFromTypeNode(node.trueType));
+        const whenFalse = typeText(checker.getTypeFromTypeNode(node.falseType));
+        return `${checkText} extends ${extendsText} ? ${whenTrue} : ${whenFalse}`;
+      }
+    }
+    // A class or an interface, with its type arguments.
+    if (type.flags & ts.TypeFlags.Object && type.symbol) {
+      const { objectFlags } = type as ts.ObjectType;
+      const declared =
+        objectFlags & ts.ObjectFlags.Reference ? (type as ts.TypeReference).target : (type as ts.ObjectType);
+      if (declared.objectFlags & ts.ObjectFlags.ClassOrInterface) {
+        return namedTypeText(type.symbol, referenceTypeArguments(type), type);
+      }
+    }
+    // The type of a method or of a function declaration: one signature per overload.
+    const callSignatures = signaturesOf(type, ts.SignatureKind.Call);
+    if (
+      callSignatures.length > 0 &&
+      !type.aliasSymbol &&
+      type.symbol &&
+      type.symbol.flags & (ts.SymbolFlags.Method | ts.SymbolFlags.Function) &&
+      checker.getPropertiesOfType(type).length === 0 &&
+      signaturesOf(type, ts.SignatureKind.Construct).length === 0
+    ) {
+      if (callSignatures.length === 1) return signatureText(callSignatures[0]!, ts.SignatureKind.Call, " => ");
+      return `{ ${callSignatures.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")).join("; ")} }`;
+    }
+    return ownText();
+  }
+
+  /**
+   * `Name<Arg, Arg>`. The arguments go through typeText, so that a union inside them is
+   * sorted too. TypeScript leaves out the trailing arguments of `Iterable`, `IterableIterator`
+   * and their async forms that equal the defaults, and so does this.
+   */
+  function namedTypeText(symbol: ts.Symbol, typeArguments: readonly ts.Type[] | undefined, type: ts.Type): string {
+    const name = qualifiedName(symbol);
+    if (!typeArguments || typeArguments.length === 0) return name;
+    let count = typeArguments.length;
+    const raw = rawTypeText(type);
+    const open = raw.indexOf("<");
+    if (open > 0 && /^[\w$.]+$/.test(raw.slice(0, open))) {
+      const rawName = raw.slice(0, open);
+      const rawArguments = typeArguments.map(rawTypeText);
+      for (let shorter = count - 1; shorter > 0; shorter--) {
+        if (raw === `${rawName}<${rawArguments.slice(0, shorter).join(", ")}>`) count = shorter;
+      }
+    }
+    return `${name}<${typeArguments
+      .slice(0, count)
+      .map(t => typeText(t))
+      .join(", ")}>`;
+  }
+
+  function typeParamsText(params: readonly ts.TypeParameter[] | undefined): string {
+    if (!params || params.length === 0) return "";
+    return `<${params
+      .map(tp => {
+        const declaration = tp.symbol?.declarations?.find(ts.isTypeParameterDeclaration);
+        // `const T`, `in T`, `out T`.
+        const written = (declaration?.modifiers ?? []).map(modifier => ts.tokenToString(modifier.kind) + " ").join("");
+        let text = written + rawTypeText(tp);
+        // A type parameter of an inherited signature is a copy. Its constraint and its default have
+        // the type arguments of the base applied: `then<TResult1 = T>` of `Promise<T>` is
+        // `then<TResult1 = ShellOutput>` on a class that extends `Promise<ShellOutput>`.
+        const copy = tp as ts.TypeParameter & { target?: ts.TypeParameter; constraint?: ts.Type };
+        // The constraint as it is declared. `tp.getConstraint()` is the base constraint: it turns
+        // `K extends keyof T` into `K extends number | string | symbol`. For a copy it also leaves
+        // the declared one, with the type arguments applied, in `constraint`.
+        let constraint: ts.Type | undefined;
+        if (!declaration) constraint = tp.getConstraint();
+        else if (declaration.constraint) {
+          if (copy.target) {
+            tp.getConstraint();
+            constraint = copy.constraint;
+          }
+          constraint ??= checker.getTypeFromTypeNode(declaration.constraint);
+        }
+        if (constraint) {
+          // `keyof X` of an interface that has no member yet is `never`, and a user who augments X
+          // changes it. Print what is written.
+          const source = declaration?.constraint && writtenText(declaration.constraint);
+          const collapsed = constraint.flags & ts.TypeFlags.Never && source !== undefined && source !== "never";
+          text += ` extends ${collapsed ? source : typeText(constraint)}`;
+        }
+        const fallback =
+          !declaration || copy.target
+            ? tp.getDefault()
+            : declaration.default && checker.getTypeFromTypeNode(declaration.default);
+        if (fallback) text += ` = ${typeText(fallback)}`;
+        return text;
+      })
+      .join(", ")}>`;
+  }
+
+  /** `x is T`, `asserts x is T`, `asserts x`, with `this` for x in a method that narrows its object. */
+  function predicateText(predicate: ts.TypePredicate): string {
+    const { kind } = predicate;
+    const asserts = kind === ts.TypePredicateKind.AssertsThis || kind === ts.TypePredicateKind.AssertsIdentifier;
+    const subject =
+      kind === ts.TypePredicateKind.This || kind === ts.TypePredicateKind.AssertsThis
+        ? "this"
+        : predicate.parameterName;
+    return `${asserts ? "asserts " : ""}${subject}${predicate.type ? ` is ${typeText(predicate.type)}` : ""}`;
+  }
+
+  function signatureText(sig: ts.Signature, kind: ts.SignatureKind, arrow: string): string {
+    const params = sig.parameters.map(param => {
+      const decl = param.valueDeclaration as ts.ParameterDeclaration | undefined;
+      const rest = decl && decl.dotDotDotToken ? "..." : "";
+      const optional = decl && (decl.questionToken || decl.initializer) ? "?" : "";
+      return `${rest}${param.name}${optional}: ${typeText(checker.getTypeOfSymbol(param))}`;
+    });
+    if (sig.thisParameter) {
+      params.unshift(`this: ${typeText(checker.getTypeOfSymbol(sig.thisParameter))}`);
+    }
+    const predicate = checker.getTypePredicateOfSignature(sig);
+    const returns = predicate ? predicateText(predicate) : typeText(checker.getReturnTypeOfSignature(sig));
+    const head = `${typeParamsText(sig.typeParameters)}(${params.join(", ")})`;
+    if (kind !== ts.SignatureKind.Construct) return `${head}${arrow}${returns}`;
+    // `abstract new () => X`, and every constructor of an abstract class. TypeScript keeps this in
+    // a flag of the signature: a class with no constructor has no declaration to read it from.
+    const { flags } = sig as ts.Signature & { flags: number };
+    const abstractFlag = (ts as unknown as { SignatureFlags: { Abstract: number } }).SignatureFlags.Abstract;
+    return `${flags & abstractFlag ? "abstract " : ""}new ${head}${arrow}${returns}`;
+  }
+
+  const lines: string[] = [];
+  const seen = new Map<ts.Symbol, string>();
+
+  function modifiers(sym: ts.Symbol): string {
+    const out: string[] = [];
+    if (sym.flags & ts.SymbolFlags.Optional) out.push("?");
+    const access = accessibility(modifierFlags(sym));
+    if (access) out.push(access);
+    if (isReadonly(sym)) out.push("readonly");
+    if (modifierFlags(sym) & ts.ModifierFlags.Static) out.push("static");
+    const setter = setterType(sym);
+    if (setter) out.push(`set: ${typeText(setter)}`);
+    return out.length ? ` [${out.join(" ")}]` : "";
+  }
+
+  function emitTypeMembers(type: ts.Type, indent: string) {
+    // A member that refers back to this type literal (`vi.useFakeTimers(): typeof vi`) prints it as `...`.
+    const guard = isTypeLiteral(type) && !printing.has(type);
+    if (guard) printing.add(type);
+    try {
+      emitMembers(type, indent);
+    } finally {
+      if (guard) printing.delete(type);
+    }
+  }
+
+  function emitMembers(type: ts.Type, indent: string) {
+    for (const sig of signaturesOf(type, ts.SignatureKind.Call)) {
+      lines.push(`${indent}call ${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
+    }
+    for (const sig of signaturesOf(type, ts.SignatureKind.Construct)) {
+      const declaration = sig.getDeclaration() as ts.SignatureDeclaration | undefined;
+      const access =
+        declaration && ts.canHaveModifiers(declaration) ? visibility(ts.getCombinedModifierFlags(declaration)) : "";
+      lines.push(`${indent}construct ${access && access + " "}${signatureText(sig, ts.SignatureKind.Construct, ": ")}`);
+    }
+    for (const info of checker.getIndexInfosOfType(type)) {
+      lines.push(
+        `${indent}index [${typeText(info.keyType)}]: ${typeText(info.type)}${info.isReadonly ? " [readonly]" : ""}`,
+      );
+    }
+    const props = [...checker.getPropertiesOfType(type)].sort(byName);
+    for (const prop of props) {
+      const name = memberName(prop);
+      const methods = methodTexts(prop, name);
+      if (methods) for (const method of methods) lines.push(indent + method);
+      else lines.push(`${indent}${name}${modifiers(prop)}: ${typeText(checker.getTypeOfSymbol(prop))}`);
+    }
+  }
+
+  function declaredIn(sym: ts.Symbol): string {
+    const files = new Set((sym.declarations ?? []).map(d => displayFile(d.getSourceFile().fileName)));
+    return [...files].sort().join(", ");
+  }
+
+  /** Follows an alias (`export import Bun = BunModule`, `export = contents`) to the merged symbol it names. */
+  const resolveSymbol = (sym: ts.Symbol) =>
+    checker.getMergedSymbol(sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
+
+  /**
+   * `export * from "x"` as bun-types writes it in a module or a namespace. The exports of "x"
+   * are declarations of another package, so the list of exports below does not have them.
+   */
+  function starExportsOf(container: ts.Symbol): string[] {
+    const specifiers = new Set<string>();
+    for (const declaration of container.declarations ?? []) {
+      if (!isPackageFile(declaration.getSourceFile())) continue;
+      const body = ts.isModuleDeclaration(declaration) ? declaration.body : declaration;
+      if (!body || !(ts.isModuleBlock(body) || ts.isSourceFile(body))) continue;
+      for (const statement of body.statements) {
+        if (ts.isExportDeclaration(statement) && !statement.exportClause && statement.moduleSpecifier) {
+          specifiers.add(`${statement.isTypeOnly ? "type " : ""}* from ${statement.moduleSpecifier.getText()}`);
+        }
+      }
+    }
+    return [...specifiers].sort().map(specifier => `export ${specifier}`);
+  }
+
+  /** The exports of a module or namespace that bun-types declares, augments, or re-exports. */
+  const packageExportsOf = (container: ts.Symbol) =>
+    checker
+      .getExportsOfModule(container)
+      .map(member => checker.getMergedSymbol(member))
+      .filter(member => member.name !== "prototype" && !member.name.startsWith("export="))
+      .filter(isFromPackage)
+      .sort(byName);
+
+  /**
+   * @param reference What a later entry for the same symbol points at: `Bun.Spawn` for the
+   * export `Spawn` of "bun". Two modules can export the same name.
+   */
+  function emitSymbol(sym: ts.Symbol, path: string, indent: string, reference = path) {
+    const target = resolveSymbol(sym);
+    // `export type { X }` of a class, an enum or a namespace: the name is the type and not the
+    // value. X has its own entry. For an interface or a type alias the keyword changes nothing.
+    const typeOnly = (sym.declarations ?? []).some(
+      d => ts.isExportSpecifier(d) && (d.isTypeOnly || d.parent.parent.isTypeOnly),
+    );
+    if (typeOnly && target.flags & ts.SymbolFlags.Value) {
+      lines.push(`${indent}${path} [type only] -> ${qualifiedName(target)}`);
+      return;
+    }
+    const earlier = seen.get(target);
+    if (earlier !== undefined) {
+      lines.push(`${indent}${path} -> ${earlier}`);
+      return;
+    }
+    seen.set(target, reference);
+    const where = declaredIn(target);
+    const inner = indent + "  ";
+    for (const declaration of target.declarations ?? []) {
+      // A namespace lists its members itself.
+      if (ts.isModuleDeclaration(declaration) || ts.isSourceFile(declaration)) continue;
+      if (isPackageFile(declaration.getSourceFile())) noteNamesIn(declaration);
+    }
+
+    if (target.flags & ts.SymbolFlags.Class) {
+      const declared = checker.getDeclaredTypeOfSymbol(target) as ts.InterfaceType;
+      const abstract = modifierFlags(target) & ts.ModifierFlags.Abstract ? "abstract " : "";
+      // The members below include the inherited ones. The base itself also counts: a class is
+      // only assignable to the base whose private members it has. The `extends` of an interface
+      // that merges with the class is not one: it only adds members.
+      const base = (target.declarations ?? [])
+        .filter(ts.isClassDeclaration)
+        .flatMap(d => d.heritageClauses ?? [])
+        .find(clause => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+      const heritage = base ? ` extends ${typeText(checker.getTypeFromTypeNode(base))}` : "";
+      lines.push(`${indent}${abstract}class ${path}${typeParamsText(declared.typeParameters)}${heritage} (${where})`);
+      emitTypeMembers(declared, inner);
+      lines.push(`${inner}[static]`);
+      emitTypeMembers(checker.getTypeOfSymbol(target), inner + "  ");
+    } else {
+      if (target.flags & ts.SymbolFlags.Interface) {
+        const declared = checker.getDeclaredTypeOfSymbol(target) as ts.InterfaceType;
+        lines.push(`${indent}interface ${path}${typeParamsText(declared.typeParameters)} (${where})`);
+        emitTypeMembers(declared, inner);
+      } else if (target.flags & ts.SymbolFlags.TypeAlias) {
+        const declared = checker.getDeclaredTypeOfSymbol(target);
+        const decl = target.declarations?.find(ts.isTypeAliasDeclaration);
+        const params = decl?.typeParameters?.map(
+          p => checker.getDeclaredTypeOfSymbol(checker.getSymbolAtLocation(p.name)!) as ts.TypeParameter,
+        );
+        // A conditional with no type parameter to wait for is already resolved: `unknown` for
+        // `typeof globalThis extends { React: infer R } ? ... : unknown` where there is no React.
+        // Print what is written as well. A change to the branch that no preset takes then shows.
+        const written =
+          decl && ts.isConditionalTypeNode(decl.type) && !(declared.flags & ts.TypeFlags.Conditional)
+            ? ` [written: ${writtenText(decl.type)}]`
+            : "";
+        lines.push(
+          `${indent}type ${path}${typeParamsText(params)} (${where}) = ${typeText(declared, target)}${written}`,
+        );
+      } else if (target.flags & ts.SymbolFlags.Enum) {
+        const constant = target.flags & ts.SymbolFlags.ConstEnum ? "const " : "";
+        lines.push(`${indent}${constant}enum ${path} (${where})`);
+        for (const member of checker.getExportsOfModule(target)) {
+          // The value, not the literal type: that one prints as the member's own name.
+          const declaration = member.valueDeclaration;
+          const value = declaration && ts.isEnumMember(declaration) ? checker.getConstantValue(declaration) : undefined;
+          const text = value === undefined ? typeText(checker.getDeclaredTypeOfSymbol(member)) : JSON.stringify(value);
+          lines.push(`${inner}${member.name} = ${text}`);
+        }
+      }
+      if (target.flags & (ts.SymbolFlags.Variable | ts.SymbolFlags.Function | ts.SymbolFlags.Property)) {
+        const declaration = target.valueDeclaration;
+        const binding = declaration && ts.isVariableDeclaration(declaration) ? ts.getCombinedNodeFlags(declaration) : 0;
+        const kind =
+          target.flags & ts.SymbolFlags.Function
+            ? "function"
+            : binding & ts.NodeFlags.Const
+              ? "const"
+              : binding & ts.NodeFlags.Let
+                ? "let"
+                : "var";
+        const type = checker.getTypeOfSymbol(target);
+        const expand =
+          type.flags & ts.TypeFlags.Object &&
+          type.symbol &&
+          !(type.symbol.flags & ts.SymbolFlags.Class) &&
+          (type.symbol.flags & ts.SymbolFlags.TypeLiteral || target.flags & ts.SymbolFlags.Function);
+        if (expand) {
+          lines.push(`${indent}${kind} ${path} (${where})`);
+          emitTypeMembers(type, inner);
+        } else {
+          lines.push(`${indent}${kind} ${path} (${where}): ${typeText(type)}`);
+        }
+      }
+    }
+
+    if (target.flags & (ts.SymbolFlags.Namespace | ts.SymbolFlags.Module) && !(target.flags & ts.SymbolFlags.Enum)) {
+      if (!(target.flags & ts.SymbolFlags.Class)) {
+        lines.push(`${indent}namespace ${path} (${where})`);
+      }
+      for (const line of starExportsOf(target)) lines.push(inner + line);
+      for (const member of packageExportsOf(target)) {
+        emitSymbol(member, `${path}.${member.name}`, inner, `${reference}.${member.name}`);
+      }
+    }
+  }
+
+  // Modules: the ones bun-types declares (`declare module "bun"`, `declare module
+  // "bun:test"`, the `declare module "*.html"` wildcards) and the ones it augments
+  // from a module file (`declare module "node:tls"` in overrides.d.ts). An
+  // augmentation merges into a copy of the target module's symbol, so
+  // getMergedSymbol is what carries the bun-types declarations.
+  // getAmbientModules() has no module that is a file. A `declare module "x"` of bun-types
+  // that augments one names it.
+  // The specifier is the name: a module with `export =` resolves to what it exports.
+  const moduleNames = new Map<ts.Symbol, string>();
+  for (const mod of checker.getAmbientModules()) moduleNames.set(checker.getMergedSymbol(mod), mod.name);
+  for (const file of program.getSourceFiles().filter(isPackageFile)) {
+    for (const declaration of file.statements.filter(ts.isModuleDeclaration)) {
+      if (!ts.isStringLiteral(declaration.name)) continue;
+      const target = checker.getSymbolAtLocation(declaration.name);
+      if (target && !moduleNames.has(checker.getMergedSymbol(target))) {
+        moduleNames.set(checker.getMergedSymbol(target), JSON.stringify(declaration.name.text));
+      }
+    }
+  }
+  const modules = [...moduleNames]
+    .map(([symbol, name]) => ({ symbol, name: clean(name) }))
+    .filter(mod => isFromPackage(mod.symbol))
+    .sort(byName);
+  for (const { symbol: mod, name } of modules) {
+    lines.push(`# module ${name}`);
+    seen.set(mod, `module ${name}`);
+    const exportEquals = mod.exports?.get(ts.InternalSymbolName.ExportEquals as ts.__String);
+    if (exportEquals) {
+      const assigned = resolveSymbol(exportEquals);
+      lines.push(`export = ${typeText(checker.getTypeOfSymbol(assigned))}`);
+      // `typeof f` says nothing about f. A function or a class that is assigned gets an entry.
+      if (assigned.flags & (ts.SymbolFlags.Function | ts.SymbolFlags.Class)) note(assigned);
+    }
+    for (const line of starExportsOf(mod)) lines.push(line);
+    // The global `Bun` is the namespace of the module "bun".
+    const prefix = name === '"bun"' ? "Bun" : `import(${name})`;
+    for (const member of packageExportsOf(mod)) emitSymbol(member, member.name, "", `${prefix}.${member.name}`);
+    lines.push("");
+  }
+
+  // Globals: every symbol in scope at the entry file that bun-types declares or augments.
+  const globals = checker
+    .getSymbolsInScope(
+      entry,
+      ts.SymbolFlags.Value | ts.SymbolFlags.Type | ts.SymbolFlags.Namespace | ts.SymbolFlags.Alias,
+    )
+    .map(sym => checker.getMergedSymbol(sym))
+    .filter(sym => !sym.name.startsWith('"'))
+    .filter(sym => !sym.declarations?.some(d => d.getSourceFile() === entry))
+    .filter(isFromPackage)
+    .sort(byName);
+
+  lines.push("# globals");
+  for (const sym of globals) emitSymbol(sym, sym.name, "");
+
+  // A declaration of bun-types that a listed type names and that is no export and no
+  // global: an interface that a module keeps to itself. Listing one can name more.
+  const unlisted = () => [...named].filter(sym => !seen.has(sym) && isFromPackage(sym));
+  const blocks: { name: string; lines: string[] }[] = [];
+  for (let rest = unlisted(); rest.length > 0; rest = unlisted()) {
+    for (const sym of rest) {
+      const start = lines.length;
+      emitSymbol(sym, qualifiedName(sym), "");
+      const block = lines.splice(start);
+      if (block.length > 0) blocks.push({ name: block[0]!, lines: block });
+    }
+  }
+  if (blocks.length > 0) lines.push("", "# not exported, named by the types above");
+  // By name, not in the order in which the walk above met them.
+  for (const block of blocks.sort(byName)) lines.push(...block.lines);
+
+  return lines;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  // The canonical form, so the paths built from it match TypeScript's file names (see realPathOf).
+  const tempDir = realpathSync.native(await mkdtemp(join(tmpdir(), "bun-types-inventory-")));
+  try {
+    const { projectDir, versions } = await createProject(tempDir);
+    let failed = false;
+    for (const preset of args.presets) {
+      const { lib, entryPoint } = PRESETS[preset]!;
+      const { program, entry } = createProgram(projectDir, { lib, entryPoint });
+      const baseFiles = entryPoint
+        ? new Set(
+            createProgram(projectDir, { lib })
+              .program.getSourceFiles()
+              .map(file => file.fileName),
+          )
+        : undefined;
+      const lines = inventory(program, entry, projectDir, baseFiles);
+      const header = [
+        `# bun-types inventory: preset ${preset}`,
+        `# lib: ${lib.join(", ") || "(none)"}`,
+        ...(entryPoint ? [`# only the declarations that /// <reference types="${entryPoint}" /> adds`] : []),
+        ...Object.entries(versions).map(([name, version]) => `# ${name}: ${version}`),
+        "",
+      ];
+      const text = header.concat(lines).join("\n") + "\n";
+      const outFile = join(args.out, `${preset}.txt`);
+      if (args.check) {
+        const expected = existsSync(outFile) ? readFileSync(outFile, "utf8").replaceAll("\r\n", "\n") : undefined;
+        if (expected === text) {
+          console.log(`${preset}: ok`);
+        } else if (expected === undefined) {
+          failed = true;
+          console.log(`${preset}: ${outFile} does not exist`);
+        } else {
+          failed = true;
+          const actualFile = join(tempDir, `${preset}.actual.txt`);
+          await Bun.write(actualFile, text);
+          console.log(`${preset}: differs from ${outFile}`);
+          console.log(await $`git diff --no-index --no-color -- ${outFile} ${actualFile}`.nothrow().text());
+        }
+      } else {
+        await mkdir(args.out, { recursive: true });
+        await Bun.write(outFile, text);
+        console.log(`${preset}: wrote ${lines.length} lines to ${outFile}`);
+      }
+    }
+    if (failed) {
+      console.log("Regenerate with `bun packages/bun-types/scripts/inventory.ts` when the change is intended.");
+      process.exitCode = 1;
+    }
+  } finally {
+    if (args.keep) console.log(`kept ${tempDir}`);
+    else await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+await main();

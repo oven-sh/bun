@@ -3,11 +3,12 @@
 // Whoever gathers the names behind the stars of wide.mjs has to pass `round` by below every one of those files and find it on the last road. A walk that forgets what it has seen
 // whenever such a file leaves the path goes over every simple path: twice the work for each layer, 4 seconds at 16 layers, and no end at 32.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
-import { testOneByOne as test } from "./supported";
+import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
@@ -30,6 +31,14 @@ function writeLayers(stars: string[]) {
   return files;
 }
 
+/** What a test run printed: the lines that its test wrote, and how many tests it says passed and failed. */
+const printedByTestRun = (stdout: string, stderr: string): { said: string[]; counts: string[] } => ({
+  said: stdout.split("\n").filter(line => line.startsWith("SAID")),
+  counts: (stdout + stderr).match(/^ \d+ (pass|fail)$/gm) ?? [],
+});
+
+// These two tests measure nothing. With a sanitizer they run beside one another, as the cases of other files do (./supported).
+// The three tests below them judge by processor time, so none of those runs beside another test.
 test("in a test run under a mock", async () => {
   using dir = tempDir("layers-of-files-that-take-a-name-back", {
     ...writeLayers(["./mid.mjs", "./shapes.mjs"]),
@@ -41,12 +50,9 @@ test("who has the name", async () => {
 });`,
   });
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "./a.test.js"], String(dir), bunEnv);
-  expect({
-    said: stdout.split("\n").filter(line => line.startsWith("SAID")),
-    stderr: exitCode ? stderr : "",
-    exitCode,
-  }).toEqual({
+  expect({ ...printedByTestRun(stdout, stderr), stderr: exitCode ? stderr : "", exitCode }).toEqual({
     said: ["SAID deep only"],
+    counts: [" 1 pass", " 0 fail"],
     stderr: "",
     exitCode: 0,
   });
@@ -65,38 +71,50 @@ test("in an executable, where two CommonJS files stand behind the stars", async 
   );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const { stdout, stderr, exitCode } = await run([join(String(dir), "made")], String(dir), bunEnv);
-  expect({ said: stdout.trim(), stderr: exitCode ? stderr : "", exitCode }).toEqual({
-    said: "SAID deep only",
-    stderr: "",
-    exitCode: 0,
-  });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "SAID deep only\n", stderr: "", exitCode: 0 });
 });
 
 // The three tests below hold two sizes of one program against each other, by the time the processor spent and not by the clock: a time limit does not see a square.
 // Each name that was passed by while hidden is looked for on its own. A search that does, at some file, work that grows with all the names there makes the whole grow with the square:
 // four times the names then cost many times the work, where they should cost about twice (the run has a cost of its own that does not grow).
-function spend(files: Record<string, string>, said: string) {
+type Program = (count: number) => { files: Record<string, string>; said: string };
+
+/** Runs the test file of a program. Says what the run printed beside what it has to print, and the microseconds that the processor spent in the run. */
+async function spend({ files, said }: ReturnType<Program>) {
   using dir = tempDir("names-that-one-file-takes-back", {
     "package.json": `{ "name": "made-up", "type": "module" }`,
     ...files,
   });
-  const ran = Bun.spawnSync({
+  await using ran = Bun.spawn({
     cmd: [bunExe(), "test", "--aot", "./a.test.js"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const lines = ran.stdout
-    .toString()
-    .split("\n")
-    .filter(line => line.startsWith("SAID"));
-  expect({ said: lines, stderr: ran.exitCode ? ran.stderr.toString() : "", exitCode: ran.exitCode }).toEqual({
-    said: [said],
-    stderr: "",
-    exitCode: 0,
-  });
-  return Number(ran.resourceUsage.cpuTime.user);
+  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  return {
+    printed: { ...printedByTestRun(stdout, stderr), stderr: exitCode ? stderr : "", exitCode },
+    expected: { said: [said], counts: [" 1 pass", " 0 fail"], stderr: "", exitCode: 0 },
+    microseconds: Number(ran.resourceUsage()!.cpuTime.user),
+  };
+}
+
+/** Holds the processor time of the large program to `bound` times that of the small one. Both runs have ended before either is judged. */
+async function costsAtMost(bound: number, what: string, program: Program, large: number, small: number) {
+  const first = spend(program(large));
+  // With a sanitizer a run takes ten times as long, so there the two sizes run beside one another and a test takes as long as its large program.
+  // The processor time of each run is counted by itself. The small run has the large one beside it all of its time, so the ratio reads about a twentieth lower there.
+  if (!isASAN) await first;
+  const runs = await Promise.all([first, spend(program(small))]);
+  for (const { printed, expected, microseconds } of runs) {
+    expect(printed).toEqual(expected);
+    // A reading of nothing would pass as the large program, whatever the bound is.
+    expect(microseconds).toBeGreaterThan(0);
+  }
+  const [many, few] = runs.map(ran => ran.microseconds);
+  reads(what, many / few, bound, "times the processor time");
+  expect(many / few, `${many} microseconds against ${few}`).toBeLessThan(bound);
 }
 const namesOf = (letter: string, count: number) => Array.from({ length: count }, (_, index) => `${letter}${index}`);
 const stars = (...paths: string[]) => paths.map(path => `export * from "${path}";`).join("\n");
@@ -104,7 +122,7 @@ const fills = (letter: string, count: number) =>
   `for (let index = 0; index < ${count}; index++) exports["${letter}" + index] = index;`;
 
 // One file takes many names back and leads straight to the file that has them; a second road comes to that file over sixteen files.
-test("four times the names that one file takes back do not cost ten times the work", () => {
+test.serial("four times the names that one file takes back do not cost ten times the work", async () => {
   const program = (count: number) => {
     const links = 16;
     const files: Record<string, string> = {
@@ -123,9 +141,9 @@ test("who has the names", async () => {
     };
     for (let link = 1; link <= links; link++)
       files[`c${link}.mjs`] = stars(link < links ? `./c${link + 1}.mjs` : "./deep.cjs");
-    return spend(files, `SAID 7 ${count - 1} ${count + 1}`);
+    return { files, said: `SAID 7 ${count - 1} ${count + 1}` };
   };
-  expect(program(16000) / program(4000)).toBeLessThan(5);
+  await costsAtMost(5, "four times the names that one file takes back", program, 16000, 4000);
 });
 
 // Every search passes a second file on its way. What stands there has as many names as are searched for.
@@ -141,38 +159,36 @@ const besideAFileWithAsManyNames = (count: number, files: Record<string, string>
   ...files,
 });
 
-test("nor beside a mock whose factory takes the original", () => {
-  const program = (count: number) =>
-    spend(
-      besideAFileWithAsManyNames(count, {
-        "a.test.js": `import { test, vi } from "bun:test";
+test.serial("nor beside a mock whose factory takes the original", async () => {
+  const program = (count: number) => ({
+    files: besideAFileWithAsManyNames(count, {
+      "a.test.js": `import { test, vi } from "bun:test";
 test("who has the names", async () => {
   vi.doMock("./part.mjs", async original => { await original(); return { extra: 1 }; });
   const all = await import("./wide.mjs");
   console.log("SAID", all.n0, all.n${count - 1}, all.b0, "b0" in all, Object.keys(all).length);
 });`,
-      }),
-      `SAID 0 ${count - 1} undefined true ${count * 2}`,
-    );
-  expect(program(3200) / program(800)).toBeLessThan(3);
+    }),
+    said: `SAID 0 ${count - 1} undefined true ${count * 2}`,
+  });
+  await costsAtMost(3, "four times the names beside a mock whose factory takes the original", program, 3200, 800);
 });
 
-test("nor beside a file that is seen as a mock that has ended", () => {
-  const program = (count: number) =>
-    spend(
-      besideAFileWithAsManyNames(count, {
-        "bunfig.toml": `[test]\npreload = ["./preload.js"]`,
-        "preload.js": `import { vi } from "bun:test";
+test.serial("nor beside a file that is seen as a mock that has ended", async () => {
+  const program = (count: number) => ({
+    files: besideAFileWithAsManyNames(count, {
+      "bunfig.toml": `[test]\npreload = ["./preload.js"]`,
+      "preload.js": `import { vi } from "bun:test";
 vi.doMock("./part.mjs", () => Object.fromEntries(Array.from({ length: ${count} }, (_, index) => ["m" + index, index])));
 await import("./holder.mjs");
 vi.doUnmock("./part.mjs");`,
-        "a.test.js": `import { test } from "bun:test";
+      "a.test.js": `import { test } from "bun:test";
 test("who has the names", async () => {
   const all = await import("./wide.mjs");
   console.log("SAID", all.n0, all.n${count - 1}, all.m${count - 1}, Object.keys(all).length);
 });`,
-      }),
-      `SAID 0 ${count - 1} ${count - 1} ${count * 2}`,
-    );
-  expect(program(12800) / program(3200)).toBeLessThan(2.2);
+    }),
+    said: `SAID 0 ${count - 1} ${count - 1} ${count * 2}`,
+  });
+  await costsAtMost(2.2, "four times the names beside a mock that has ended", program, 12800, 3200);
 });

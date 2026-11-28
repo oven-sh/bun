@@ -438,6 +438,43 @@ C.propTypes = {
   });
 });
 
+// The cases of oven-sh/bun#48377. The oracle project `no-control-regex/place` has the rest of oxlint 1.91's cases.
+test.concurrent(
+  "no-control-regex with an oxlint config reports a control character that is written as itself",
+  async () => {
+    using dir = tempDir("bun-lint-rules", {
+      ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-control-regex": "error" } }`,
+      "raw.ts": "export const raw = /a\bb/;\n",
+      "escaped.ts": "export const escaped = /a\\x08b/;\n",
+      "string.ts": "export const a = new RegExp('a\bb');\nexport const b = /(a)(b)\x02/;\n",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "unix", "raw.ts", "escaped.ts", "string.ts"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      lines: stdout
+        .split("\n")
+        .filter(it => it.includes("no-control-regex"))
+        .sort(),
+      stderr,
+    }).toEqual({
+      lines: [
+        "escaped.ts:1:26: Unexpected control character [Error/eslint(no-control-regex)]",
+        "raw.ts:1:22: Unexpected control character [Error/eslint(no-control-regex)]",
+        "string.ts:1:31: Unexpected control character [Error/eslint(no-control-regex)]",
+        "string.ts:2:25: Unexpected control character [Error/eslint(no-control-regex)]",
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(1);
+  },
+);
+
 // Most of the paths tried while resolving an import don't exist: `./b.tsx`, `./b.d.ts`, `./b/package.json`.
 test("looking up a missing file doesn't get slower as the directory gets larger", async () => {
   const count = 6_000;

@@ -554,6 +554,22 @@ pub fn is_computed_by_transpiler(atoms: &Interner<'_>, op: BinOp, operands: [Con
     }
 }
 
+/// Whether each addition of `text + addends[0] + addends[1] + ..` is one that the transpiler computes.
+pub fn is_sum_computed_by_transpiler(
+    atoms: &Interner<'_>,
+    text: Atom,
+    addends: &[Constant],
+) -> bool {
+    debug_assert!(text != known::empty, "'' + text is computed for every text");
+    let over_limit_count = Cell::new(0);
+    let evaluator = Evaluator::new(atoms, usize::MAX, &over_limit_count);
+    let is_ascii = |operand: Constant| match Value::from(operand) {
+        Value::Known(operand) => evaluator.is_ascii(operand),
+        Value::Unknown => false,
+    };
+    is_ascii(Constant::String(text)) && addends.iter().all(|&addend| is_ascii(addend))
+}
+
 pub fn apply_binary(
     atoms: &Interner<'_>,
     op: BinOp,

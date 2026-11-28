@@ -1081,6 +1081,22 @@ impl<'a, 's> KnownObjects<'a, 's> {
             }
         };
         while let Some((op, right)) = right_operands.pop() {
+            if op == BinOp::Add
+                && let Constant::String(text) = value
+                && text != known::empty
+                && matches!(right_operands.last(), Some((BinOp::Add, _)))
+            {
+                let addends =
+                    self.evaluate_addends(initializers, text, right, &mut right_operands)?;
+                if !fold::is_sum_computed_by_transpiler(atoms, text, &addends) {
+                    initializers.rest_on(KnownTo::BuildAlone);
+                }
+                let mut texts: SmallVec<[Atom; 8]> =
+                    smallvec::smallvec![known::empty; addends.len() + 1];
+                texts[0] = text;
+                value = fold::apply_template(atoms, &texts, &addends, MAX_FOLDED_STRING_BYTES)?;
+                continue;
+            }
             let takes_right = match op {
                 BinOp::And => Some(self.is_truthy(value)?),
                 BinOp::Or => Some(!self.is_truthy(value)?),
@@ -1100,6 +1116,35 @@ impl<'a, 's> KnownObjects<'a, 's> {
             };
         }
         Some(value)
+    }
+
+    fn evaluate_addends(
+        &self,
+        initializers: Initializers<'_>,
+        text: Atom,
+        first: ExprId,
+        rest: &mut SmallVec<[(BinOp, ExprId); 8]>,
+    ) -> Option<SmallVec<[Constant; 8]>> {
+        let atoms = &self.files.atoms;
+        let mut length = atoms.bytes(text).len();
+        let mut addends: SmallVec<[Constant; 8]> = SmallVec::new();
+        let mut right = first;
+        loop {
+            let addend = self.evaluate_constant(initializers, right)?;
+            if let Constant::String(text) = addend {
+                // Two halves of a surrogate pair are 6 bytes apart and 4 together.
+                length += atoms.bytes(text).len().saturating_sub(2);
+            }
+            if length > MAX_FOLDED_STRING_BYTES {
+                return None;
+            }
+            addends.push(addend);
+            match rest.last() {
+                Some(&(BinOp::Add, next)) => right = next,
+                _ => return Some(addends),
+            }
+            rest.pop();
+        }
     }
 
     fn evaluate_operand(

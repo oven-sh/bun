@@ -1,8 +1,10 @@
 use bun_sema::bind::Decl;
+use bun_sema::fold::Constant;
 use bun_sema::hir::EnumId;
 use bun_sema::program::Sym;
 
 use super::{KnownMemberValues, KnownObjects, Validity};
+use crate::load::fold_inputs::MAX_FOLDED_STRING_BYTES;
 use crate::modules::testing::{file_named, member_named, with_graph, with_test_run_graph};
 use crate::modules::{BindInput, ModuleGraph};
 
@@ -158,4 +160,50 @@ fn enums_behind_an_enum_are_listed_once_each() {
         assert_eq!(relied_on.as_slice(), expected);
         assert!(members.enums_relied_on(enum_in("last.ts")).is_empty());
     });
+}
+
+#[test]
+fn chain_of_additions_is_one_text() {
+    let sum = |count: usize| ["B.X"; 2].join(" + ") + &" + B.X".repeat(count - 2);
+    let full = format!("B.H + B.H + B.X + B.X + {}", sum(2));
+    let longer = format!("{full} + B.X");
+    let half = "h".repeat((MAX_FOLDED_STRING_BYTES - 4) / 2);
+    let text = |text: &str| Some(Some(text.to_owned()));
+    let cases = [
+        ("B.X + B.X", text("xx")),
+        ("B.X + B.N + B.X", text("x1x")),
+        ("B.N + B.N + B.X + B.N + B.X", text("2x1x")),
+        ("B.E + B.A", text("é")),
+        ("B.E + B.A + B.X + B.X", None),
+        ("B.E + B.N + B.A", None),
+        ("B.X + B.A + B.X", None),
+        ("B.X + B.X + B.A", None),
+        ("B.A + B.X + B.X", None),
+        ("B.X + B.N + B.X - B.N", Some(None)),
+        (&sum(5_000), text(&"x".repeat(5_000))),
+        (&full, text(&format!("{half}{half}xxxx"))),
+        (&longer, None),
+    ];
+    for (initializer, expected) in cases {
+        let test_file = "import { First } from './first.ts'; console.log(First.A);";
+        let first = format!(
+            "export enum B {{ A = 'é', N = 1, E = '', X = 'x', H = '{half}' }} export enum First {{ A = {initializer} }}"
+        );
+        let files = [("a.test.ts", test_file), ("first.ts", first.as_str())];
+        with_graph(&files, |graph, input| {
+            let values = KnownMemberValues::default();
+            let members = KnownObjects::new(input.files, graph, &values);
+            let reader = file_named(input, "a.test.ts");
+            let read = members.find_read(reader, member_named(input, reader, "A"));
+            let atoms = &input.files.atoms;
+            let found = read.map(|read| match read.value {
+                Constant::String(text) => {
+                    Some(String::from_utf8(atoms.bytes(text).to_vec()).unwrap())
+                }
+                _ => None,
+            });
+            assert_eq!(found, expected, "{initializer}");
+            assert!(atoms.lookup("x".repeat(2_500).as_bytes()).is_none());
+        });
+    }
 }

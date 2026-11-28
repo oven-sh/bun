@@ -5255,6 +5255,19 @@ impl Any {
         }
     }
 
+    /// `take_string` for `text()` and `json()`, which decode like a byte body.
+    fn take_string_without_bom(&mut self) -> BunString {
+        let string = self.take_string();
+        // A Latin-1 string cannot hold U+FEFF.
+        if string.is_8bit() {
+            return string;
+        }
+        if let [0xFEFF, rest @ ..] = string.utf16() {
+            return BunString::clone_utf16(rest);
+        }
+        string
+    }
+
     fn to_internal_blob_if_possible(&mut self) {
         let Any::Blob(blob) = self else {
             return;
@@ -5363,7 +5376,9 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 str
             }
-            Any::WTFStringImpl(_) => self.take_string().to_js_by_parse_json(cx.global()),
+            Any::WTFStringImpl(_) => self
+                .take_string_without_bom()
+                .to_js_by_parse_json(cx.global()),
         }
     }
 
@@ -5424,7 +5439,7 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
+            Any::WTFStringImpl(_) => self.take_string_without_bom().into_js(cx.global()),
         }
     }
 

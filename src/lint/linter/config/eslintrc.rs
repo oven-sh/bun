@@ -1908,6 +1908,8 @@ pub struct Eslint8 {
     is_espree: bool,
     /// [`Eslint8::edition`] without comments.
     edition: Result<u32, Vec<u8>>,
+    /// [`Eslint8::identity`]
+    identity: u64,
 }
 
 /// `typeof value`
@@ -1920,7 +1922,20 @@ fn type_of(value: &Json) -> &'static [u8] {
     }
 }
 
+/// The keys of `parserOptions` that [`edition_of`] reads, and their values, for [`Eslint8::hash_identity`].
+fn write_edition_inputs(options: &Json, out: &mut Vec<u8>) {
+    for key in [&b"ecmaVersion"[..], b"sourceType", b"allowReserved"] {
+        if let Some(value) = options.get(key) {
+            out.extend_from_slice(key);
+            out.push(0);
+            value.stringify(out);
+            out.push(0);
+        }
+    }
+}
+
 /// espree 9's `normalizeOptions`: the `ecmaVersion` passed to acorn, which is 3 or 5 to 15. `Err` holds what it throws.
+/// [`write_edition_inputs`] lists the keys it reads.
 fn edition_of(options: &Json) -> Result<u32, Vec<u8>> {
     let version = match options.get(b"ecmaVersion") {
         None => 5.0,
@@ -2031,6 +2046,41 @@ impl Eslint8 {
             [] => self.edition.clone(),
             in_file => edition_of(&self.resolve_parser_options(in_file)),
         }
+    }
+
+    /// A hash of what [`Eslint8::edition`] reads, for a cache key.
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    /// Leaves out an environment without parser options and a key that [`edition_of`] doesn't read.
+    fn hash_identity(&self) -> u64 {
+        let mut bytes = Vec::new();
+        let mut write = |name: &[u8], is_on: Option<bool>, options: &Json| {
+            let mut inputs = Vec::new();
+            write_edition_inputs(options, &mut inputs);
+            if inputs.is_empty() {
+                return;
+            }
+            bytes.extend_from_slice(name);
+            bytes.push(0);
+            bytes.push(is_on.map_or(2, u8::from));
+            bytes.append(&mut inputs);
+        };
+        for (name, is_on) in &self.env {
+            if let Some(options) = self.environment_parser_options(name) {
+                write(name, Some(*is_on), &options);
+            }
+        }
+        // A comment can name a plugin environment that `env` doesn't.
+        for (name, environment) in self.environments.as_object().unwrap_or_default() {
+            if let Some(options) = environment.get(b"parserOptions") {
+                write(name, None, options);
+            }
+        }
+        write(b"", None, &self.parser_options);
+        bytes.push(u8::from(self.is_espree));
+        bun_wyhash::hash(&bytes)
     }
 
     /// True if the installed typescript-eslint is older than 8, so the built-in rules emulate that version.
@@ -2161,9 +2211,11 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
         parser_options: (language_options.get(b"parserOptions").cloned()).unwrap_or(Json::Null),
         is_espree: parser.is_none_or(|it| it == b"espree"),
         edition: Ok(5),
+        identity: 0,
     };
     let options = eslint_8.resolve_parser_options(&[]);
     eslint_8.edition = edition_of(&options);
+    eslint_8.identity = eslint_8.hash_identity();
     // `resolveGlobals`. The built-in environments' variables are added where `$env` is read.
     let mut globals = Json::Null;
     for environment in eslint_8.enabled(&[]) {

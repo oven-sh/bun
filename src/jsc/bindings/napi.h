@@ -24,6 +24,7 @@
 #include <wtf/Lock.h>
 #include <wtf/SetForScope.h>
 
+#include <algorithm>
 #include <optional>
 #include <unordered_set>
 #include <variant>

@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-build-asks-each-file-that-commonjs-files-spread-once.test.ts": {
+    "default": 2000,
+    "asan": 8000
+  },
   "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts": {
     "default": 60000,
     "asan": 240000

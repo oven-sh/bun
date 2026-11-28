@@ -163,6 +163,8 @@ allows src/aot/lower/module/loads.rs the steps up of a path that the build has m
     return below.strip_prefix(b"/..");
 finds src/aot/lower/module/loads.rs strip_prefix
     return specifier.strip_prefix(b"node:");
+allows src/aot/compile/removable.rs a free name out of the parser's list of globals
+    is_pure_global_identifier(name) && name != b"window"
 allows src/aot/compile/removable.rs the value of a string that the answer of typeof is compared with
     return self.atoms.bytes(text) == b"u";
 finds src/aot/compile/removable.rs ==

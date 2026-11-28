@@ -163,6 +163,9 @@ function companyThatMentionsMoreNamesThanThereAreColumns() {
   return `[\n${functions.join(",\n")},\n]`;
 }
 
+// Below this area kindOf() of a feature says "small".
+const limitOfSmall = /area < (\d+)/;
+
 function withChange(dress: Dress, name: string, change: (text: string) => string, features = featuresAlone) {
   const files = generate(features, dress);
   const path = `${name}.${extensions[dress]}`;
@@ -190,7 +193,7 @@ const sources = {
     withChange(dress, "main", text => text + recordsOfTheirOwn(dress), featuresInside),
   // The number keeps its two digits, so every function keeps its position.
   "another limit": (dress: Dress) =>
-    withChange(dress, "feature2", text => text.replace(/area < (\d+)/, (_, limit) => `area < ${Number(limit) + 1}`)),
+    withChange(dress, "feature2", text => text.replace(limitOfSmall, (_, limit) => `area < ${Number(limit) + 1}`)),
 };
 
 // The file of a program holds no options.
@@ -226,7 +229,12 @@ function compiled(dress: Dress, name: keyof typeof sources) {
     // Nothing here runs a program.
     await build(String(folder), [withProgramOutput(file), buildFlags.withoutExecutable]);
     const { lines, stderr, exitCode } = await runOn("bytes", file);
-    expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    // What `bytes` prints begins with a unit: unitsIn() would leave out whatever stands in front of the first.
+    expect({ begins: lines[0]?.split(" ")[0], stderr, exitCode }).toEqual({
+      begins: "unit",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
     return { title, file, units: unitsIn(lines) };
   };
   if (!whenCompiled.has(title)) whenCompiled.set(title, compile());
@@ -300,7 +308,6 @@ function blocksFirst(lines: string[]) {
 async function operationsOf(program: Program, keys: string[]) {
   const names = keys.map(key => program.units.get(key)!.name);
   const { lines, stderr, exitCode } = await runOn("walk", program.file, ...names);
-  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const texts = new Map<string, string[]>();
   let text: string[] = [];
   for (const line of lines) {
@@ -308,8 +315,13 @@ async function operationsOf(program: Program, keys: string[]) {
     if (name) texts.set(name, (text = []));
     text.push(line);
   }
-  return (key: string) =>
-    texts.get(program.units.get(key)!.name) ?? [`testaot walk has printed nothing of it in ${program.title}`];
+  // `walk` prints the code of every unit that it is given, and stops at one that fails: a control must not take a unit that is missing for one that differs.
+  expect({ notPrinted: names.filter(name => !texts.has(name)), stderr, exitCode }).toEqual({
+    notPrinted: [],
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+  return (key: string) => texts.get(program.units.get(key)!.name)!;
 }
 
 async function explained(programs: Pair, withOtherBytes: string[], judge: Judge) {
@@ -345,108 +357,129 @@ async function compare(programs: Pair, files: string[], judge: Judge = "operatio
 
 async function expectSameCode(programs: Pair, files: string[], judge?: Judge) {
   const { shared, differences } = await compare(programs, files, judge);
-  expect(shared).not.toEqual([]);
+  // Each of the files has units that both programs have: one of which nothing is compared would pass unseen beside the others.
+  expect(files.filter(file => !shared.some(key => fileOf(key) === file))).toEqual([]);
   expect(differences).toEqual([]);
 }
 
 const declared = without("testaot") ? test.skip : test;
+const dresses = Object.keys(extensions) as Dress[];
 
-for (const dress of Object.keys(extensions) as Dress[]) {
+function filesOf(dress: Dress) {
   const fileNamed = (name: string) => `${name}.${extensions[dress]}`;
   const features = Array.from({ length: featuresAlone }, (_, index) => fileNamed(`feature${index}`));
-  const feature = features.at(-1)!;
-  const everyFileButMain = [...features, ...["flags", "router", "text"].map(fileNamed)];
+  return {
+    features,
+    feature: features.at(-1)!,
+    everyFileButMain: [...features, ...["flags", "router", "text"].map(fileNamed)],
+  };
+}
 
-  describe.concurrent(`a function compiles to the same code however large the program is: ${dress}`, () => {
-    declared(
-      "alone and inside a program a hundred times as large",
-      async () => expectSameCode(await both(dress, "alone", "inside"), [feature], "operations of a larger program"),
-      timeLimit,
+// By how many units the second program is the larger. What is put beside the features has to be compiled too: a program that had lost it
+// would be the first one once more, and the same by right.
+const unitsMore = ([first, second]: Pair) => second.units.size - first.units.size;
+
+/** One test in each dress. */
+const inEachDress = (title: string, body: (dress: Dress) => Promise<void>) =>
+  declared.each(dresses)(`%s: ${title}`, body, timeLimit);
+
+// A test asks for its programs when it starts, and `bun test` has only so many tests under way at a time. So the tests that are the first to ask for a
+// large program stand in front, the largest program first and both dresses of a test together: the builds that take longest start with the file.
+describe.concurrent("a function compiles to the same code however large the program is", () => {
+  inEachDress("the same padding changes no byte where the sets of layouts are long", async dress => {
+    const programs = await both(dress, "inside", "inside, padded");
+    expect(unitsMore(programs)).toBeGreaterThanOrEqual(paddingFunctions);
+    await expectSameCode(programs, [filesOf(dress).feature], "bytes");
+  });
+
+  inEachDress("a thousand layouts that fit nothing change no operation", async dress => {
+    const programs = await both(dress, "inside", "inside, other layouts");
+    expect(unitsMore(programs)).toBeGreaterThanOrEqual(otherLayouts);
+    await expectSameCode(programs, [filesOf(dress).feature]);
+  });
+
+  inEachDress("padding that gives the plan nothing to number changes no byte", async dress => {
+    const programs = await both(dress, "alone", "padded");
+    expect(unitsMore(programs)).toBeGreaterThanOrEqual(paddingFunctions);
+    await expectSameCode(programs, filesOf(dress).everyFileButMain, "bytes");
+  });
+
+  inEachDress("alone and inside a program a hundred times as large", async dress => {
+    const programs = await both(dress, "alone", "inside");
+    expect(unitsMore(programs)).toBeGreaterThanOrEqual(featuresInside - featuresAlone);
+    await expectSameCode(programs, [filesOf(dress).feature], "operations of a larger program");
+  });
+
+  inEachDress("among all the others and on a thread that has seen nothing else", async dress => {
+    const { feature } = filesOf(dress);
+    const inside = await compiled(dress, "inside");
+    const units = [...inside.units].flatMap(([key, unit]) => (fileOf(key) === feature ? [unit.name] : []));
+    expect(units).not.toEqual([]);
+    const { lines, stderr, exitCode } = await runOn("same-bytes-alone", inside.file, ...units);
+    // A folded unit has no code of its own to compare. Nor has an entry of the method table under a name that no call goes through the table for:
+    // the plan lists it from the calls as they are written, `testaot bytes` compiles what the plan lists, and a build compiles what some code mentions.
+    const notTheSame = lines.filter(
+      line => !/^f\d+:\S+ (same: |has the code of f\d+:\S+$|has no code in the whole program$)/.test(line),
     );
+    expect({ notTheSame, stderr, exitCode }).toEqual({ notTheSame: [], stderr: expect.any(String), exitCode: 0 });
+    // One line for each unit: a run that ends early says nothing of the units behind.
+    expect(lines.map(line => line.split(" ")[0]).sort()).toEqual(units.toSorted());
+    expect(lines.some(line => / same: /.test(line))).toBe(true);
+  });
 
-    declared(
-      "among all the others and on a thread that has seen nothing else",
-      async () => {
-        const inside = await compiled(dress, "inside");
-        const units = [...inside.units].flatMap(([key, unit]) => (fileOf(key) === feature ? [unit.name] : []));
-        expect(units).not.toEqual([]);
-        const { lines, stderr, exitCode } = await runOn("same-bytes-alone", inside.file, ...units);
-        // A folded unit has no code of its own to compare. Nor has an entry of the method table under a name that no call goes through the table for:
-        // the plan lists it from the calls as they are written, `testaot bytes` compiles what the plan lists, and a build compiles what some code mentions.
-        const notTheSame = lines.filter(
-          line => !/^f\d+:\S+ (same: |has the code of f\d+:\S+$|has no code in the whole program$)/.test(line),
-        );
-        expect({ notTheSame, stderr, exitCode }).toEqual({ notTheSame: [], stderr: expect.any(String), exitCode: 0 });
-        expect(lines.some(line => / same: /.test(line))).toBe(true);
-      },
-      timeLimit,
-    );
+  inEachDress(
+    "another caller of the shared helpers changes no operation of the features that call them",
+    async dress => {
+      const programs = await both(dress, "alone", "another caller");
+      // The function that the other caller hands the router.
+      expect(unitsMore(programs)).toBeGreaterThanOrEqual(1);
+      await expectSameCode(programs, filesOf(dress).features);
+    },
+  );
 
-    declared(
-      "another caller of the shared helpers changes no operation of the features that call them",
-      async () => expectSameCode(await both(dress, "alone", "another caller"), features),
-      timeLimit,
-    );
-
-    // HOW MANY names the whole program mentions decides which of them have a column (chooseKeysWithColumnForNamePlan): no access is compiled by it.
+  // HOW MANY names the whole program mentions decides which of them have a column (chooseKeysWithColumnForNamePlan): no access is compiled by it.
+  // The reader is JavaScript as it stands, so the test runs in the erased dress alone.
+  for (const dress of dresses) {
     (dress === "erased" ? declared : test.skip)(
-      "a file that a reader never names mentions more names than there are columns, and the reader stays as it is",
-      async () =>
-        expectSameCode(
-          await both(
-            dress,
-            "a reader of names that stand late",
-            "a reader of names that stand late beside more names than there are columns",
-          ),
-          ["reader.js"],
-        ),
-      timeLimit,
-    );
-
-    declared(
-      "padding that gives the plan nothing to number changes no byte",
+      `${dress}: a file that a reader never names mentions more names than there are columns, and the reader stays as it is`,
       async () => {
-        const programs = await both(dress, "alone", "padded");
-        expect(programs[1].units.size - programs[0].units.size).toBeGreaterThanOrEqual(paddingFunctions);
-        await expectSameCode(programs, everyFileButMain, "bytes");
+        const programs = await both(
+          dress,
+          "a reader of names that stand late",
+          "a reader of names that stand late beside more names than there are columns",
+        );
+        // A function for each thousand of the names.
+        expect(unitsMore(programs)).toBeGreaterThanOrEqual(namesOfCompany / readsInOneFunction);
+        await expectSameCode(programs, ["reader.js"]);
       },
       timeLimit,
     );
+  }
 
-    declared(
-      "the same padding changes no byte where the sets of layouts are long",
-      async () => expectSameCode(await both(dress, "inside", "inside, padded"), [feature], "bytes"),
-      timeLimit,
-    );
-
-    declared(
-      "a thousand layouts that fit nothing change no operation",
-      async () => expectSameCode(await both(dress, "inside", "inside, other layouts"), [feature]),
-      timeLimit,
-    );
-
-    declared(
-      "the comparison reports a changed constant",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another limit"), [feature])).differences).not.toEqual([]),
-      timeLimit,
-    );
-
-    declared(
-      "the comparison reports another type that a shared helper is handed",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another type"), features)).differences).not.toEqual([]),
-      timeLimit,
-    );
-
-    declared(
-      "the comparison reports a helper that is no longer copied in line",
-      async () =>
-        expect((await compare(await both(dress, "alone", "another helper"), features)).differences.join("\n")).toMatch(
-          // The copy of isInteger() begins with the stub that runs the test of its pattern.
-          /calls, alone, \w+: Call Stub RegExpTest\.Literal/,
-        ),
-      timeLimit,
+  inEachDress("the comparison reports a changed constant", async dress => {
+    const { feature } = filesOf(dress);
+    const { differences } = await compare(await both(dress, "alone", "another limit"), [feature]);
+    const limit = Number(limitOfSmall.exec(sources.alone(dress)[feature])?.[1]);
+    // The constant as the walk reads it: the limit in the one program, one more in the other.
+    expect(differences.join("\n")).toMatch(
+      new RegExp(
+        String.raw`\n +walk, alone, \w+: .*\binteger=${limit}\b.*\n +walk, another limit, \w+: .*\binteger=${limit + 1}\b`,
+      ),
     );
   });
-}
+
+  inEachDress("the comparison reports another type that a shared helper is handed", async dress => {
+    const { features } = filesOf(dress);
+    const { differences } = await compare(await both(dress, "alone", "another type"), features);
+    // In each feature: all of them call the helper. A difference begins with the key of its unit, which names the file.
+    expect(new Set(differences.map(fileOf))).toEqual(new Set(features));
+  });
+
+  inEachDress("the comparison reports a helper that is no longer copied in line", async dress => {
+    const { features } = filesOf(dress);
+    const { differences } = await compare(await both(dress, "alone", "another helper"), features);
+    // The copy of isInteger() begins with the stub that runs the test of its pattern. Each feature has a function that held the copy.
+    const copy = /\n +calls, alone, \w+: Call Stub RegExpTest\.Literal\n/;
+    expect(new Set(differences.filter(difference => copy.test(difference)).map(fileOf))).toEqual(new Set(features));
+  });
+});

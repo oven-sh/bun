@@ -28,8 +28,14 @@ describe("presign expiresIn coercion", () => {
     expect(presignExpires(null)).toBe("86400");
   });
 
-  test("expiresIn: 0 still throws (field-specific validation)", () => {
-    expect(() => presignExpires(0)).toThrow("expiresIn must be greather than 0");
+  test.each([0, -1])("expiresIn: %p still throws (field-specific validation)", input => {
+    expect(() => presignExpires(input)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "expiresIn must be greater than 0",
+      }),
+    );
   });
 });
 

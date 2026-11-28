@@ -422,7 +422,7 @@ pub(crate) fn get_presign_url_from(
             if let Some(expires_) = options.get_optional::<i32>(global, "expiresIn")? {
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "expiresIn must be greather than 0"
+                        "expiresIn must be greater than 0"
                     )));
                 }
                 expires = expires_ as usize;

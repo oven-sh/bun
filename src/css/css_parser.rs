@@ -844,9 +844,8 @@ impl<'bump> CustomAtRuleParser<'bump> for BundlerAtRuleParser<'bump> {
 // The leaf-module payload types (KeyframesName, PageSelector, ContainerName,
 // ContainerCondition) are re-exported from `rules/` via `gated_shims` above.
 
-pub enum AtRulePrelude<'bump, T> {
+pub(crate) enum AtRulePrelude<'bump, T> {
     FontFace,
-    FontFeatureValues,
     FontPaletteValues(DashedIdent<'bump>),
     CounterStyle(CustomIdent<'bump>),
     Import {
@@ -925,7 +924,7 @@ pub enum TopLevelState {
     Body = 5,
 }
 
-pub struct TopLevelRuleParser<'a, 'bump, AtRuleParserT: CustomAtRuleParser<'bump>> {
+pub(crate) struct TopLevelRuleParser<'a, 'bump, AtRuleParserT: CustomAtRuleParser<'bump>> {
     pub(crate) arena: &'bump Bump,
     pub(crate) options: &'a ParserOptions<'a>,
     pub(crate) state: TopLevelState,
@@ -1017,7 +1016,7 @@ impl ComposesCtx<'_> for NoComposesCtx {
     fn record_composes(&mut self, _: ast::Ref, _: &Composes) {}
 }
 
-pub struct NestedRuleParser<'a, 'bump, T: CustomAtRuleParser<'bump>> {
+pub(crate) struct NestedRuleParser<'a, 'bump, T: CustomAtRuleParser<'bump>> {
     pub(crate) arena: &'bump Bump,
     pub(crate) options: &'a ParserOptions<'a>,
     pub(crate) at_rule_parser: &'a mut T,
@@ -1889,7 +1888,6 @@ mod rule_parsers {
                         }));
                     Ok(())
                 }
-                AtRulePrelude::FontFeatureValues => unreachable!(),
                 AtRulePrelude::Unknown { name, tokens } => {
                     this.rules.v.push(CssRule::Unknown(UnknownAtRule {
                         name,

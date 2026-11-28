@@ -286,8 +286,6 @@ pub fn new_function_with_data(
 /// DOMJIT-backed property on a JS object).
 #[derive(Clone, Copy)]
 pub struct DomCall {
-    pub class_name: &'static str,
-    pub function_name: &'static str,
     /// `<class>__<fn>__put`, defined in `ZigGeneratedCode.cpp`.
     pub put: unsafe extern "C" fn(*mut JSGlobalObject, JSValue),
 }

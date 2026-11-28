@@ -1631,12 +1631,11 @@ impl Default for HighlighterOptions {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ColorCode {
+pub(crate) enum ColorCode {
     Magenta,
     Blue,
     Orange,
     Red,
-    Pink,
 }
 
 impl ColorCode {
@@ -1646,8 +1645,6 @@ impl ColorCode {
             ColorCode::Blue => "\x1b[34m",
             ColorCode::Orange => "\x1b[33m",
             ColorCode::Red => "\x1b[31m",
-            // light pink
-            ColorCode::Pink => "\x1b[38;5;206m",
         }
     }
 }
@@ -2450,36 +2447,22 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // EnumTagListFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// ConstParamTy is nightly, so use a runtime value instead.
-pub const SEP_DASH: bool = false;
-
-pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
+pub struct EnumTagListFormatter<E: strum::VariantNames> {
     _marker: core::marker::PhantomData<E>,
 }
 
-impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<E, LIST> {
+impl<E: strum::VariantNames> Display for EnumTagListFormatter<E> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // PERF: could be precomputed as a single &'static str.
         let names = E::VARIANTS;
-        for (i, name) in names.iter().enumerate() {
-            if LIST {
-                if i > 0 {
-                    if i + 1 == names.len() {
-                        f.write_str(", or ")?;
-                    } else {
-                        f.write_str(", ")?;
-                    }
-                }
-                write!(f, "\"{}\"", name)?;
-            } else {
-                write!(f, "\n-  {}", name)?;
-            }
+        for name in names.iter() {
+            write!(f, "\n-  {}", name)?;
         }
         Ok(())
     }
 }
 
-pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListFormatter<E, LIST> {
+pub fn enum_tag_list<E: strum::VariantNames>() -> EnumTagListFormatter<E> {
     EnumTagListFormatter {
         _marker: core::marker::PhantomData,
     }

@@ -2121,7 +2121,6 @@ pub enum ImportPathFormat {
     AbsoluteUrl,
     // omit file extension
     AbsolutePath,
-    PackagePath,
 }
 
 pub mod bundle_options_defaults {

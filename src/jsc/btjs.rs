@@ -189,9 +189,6 @@ fn print_source_at_address(
     tty_config: tty::Config,
     fp: usize,
 ) -> Result<(), Error> {
-    if !cfg!(debug_assertions) {
-        unreachable!();
-    }
     let module = match get_module_for_address(debug_info, address) {
         Ok(m) => m,
         Err(Error::MissingDebugInfo) => {
@@ -266,9 +263,6 @@ fn print_unknown_source(
     address: usize,
     tty_config: tty::Config,
 ) -> Result<(), Error> {
-    if !cfg!(debug_assertions) {
-        unreachable!();
-    }
     let module_name = get_module_name_for_address(debug_info, address);
     print_line_info(
         out_stream,
@@ -294,10 +288,6 @@ fn print_line_info(
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
     do_llint: bool,
 ) -> Result<(), Error> {
-    if !cfg!(debug_assertions) {
-        unreachable!();
-    }
-
     // nosuspend { ... } — no Rust equivalent needed (no async)
     tty_config.set_color(out_stream, Color::Bold)?;
 
@@ -359,10 +349,6 @@ fn print_line_from_file_any_os(
     out_stream: &mut Vec<u8>,
     source_location: &SourceLocation,
 ) -> Result<(), Error> {
-    if !cfg!(debug_assertions) {
-        unreachable!();
-    }
-
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
     // `bun_sys::File::open_at`/`read`

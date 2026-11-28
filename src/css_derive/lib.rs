@@ -11,7 +11,7 @@
 //! shadow the blanket `impl DeepClone for Vec<T>` and fail E0061).
 //!
 //! Consequence: every leaf type reached by a derive **must** carry a real
-//! `DeepClone` (or `CssEql`/`CssHash`/`IsCompatible`) trait impl — an
+//! `DeepClone` (or `CssEql`/`CssHash`) trait impl — an
 //! inherent `pub fn deep_clone` alone is no longer sufficient. The blanket
 //! impls in `bun_css::generics` cover Option, Vec, Box, slices, primitives,
 //! `SmallList`, `Vec`, …; everything else derives or hand-implements the
@@ -32,16 +32,6 @@ use syn::{
     Attribute, Data, DeriveInput, Fields, GenericParam, Lifetime, LifetimeParam, Meta,
     parse_macro_input, parse_quote,
 };
-
-// ════════════════════════════════════════════════════════════════════════════
-// CANONICAL: the existing `bun_css_derive` proc-macros — **NO new code required**.
-// ════════════════════════════════════════════════════════════════════════════
-//
-// The five derives below already exist (entry points: `DeepClone`, `CssEql`,
-// `IsCompatible`, `Parse`, `ToCss`) and already emit exactly the per-variant
-// dispatch the hand-expansions at the listed sites spell out by hand.
-// Nothing is added here; this comment is the contract surface the
-// `css-value-enum-to_css-deep_clone-hand-dispatch` migration relies on.
 
 #[proc_macro_derive(DeepClone)]
 pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
@@ -65,7 +55,7 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // Enums: the derive feeds the variant index into the hash as a `u32` (CSS
 // hashing is in-process dedup only — self-consistency is the contract).
 
-#[proc_macro_derive(CssEql, attributes(css))]
+#[proc_macro_derive(CssEql)]
 pub fn derive_css_eql(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_css_eql(&input)
@@ -73,35 +63,12 @@ pub fn derive_css_eql(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(CssHash, attributes(css))]
+#[proc_macro_derive(CssHash)]
 pub fn derive_css_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_css_hash(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
-}
-
-/// `#[css(skip)]` on a field (or variant) excludes it from the derived
-/// `eql` / `hash` / `is_compatible` body. Used for struct fields (e.g.
-/// `loc`, `vendor_prefix: VendorPrefix`) that are not part of value
-/// identity / browser-compat.
-fn has_css_skip(attrs: &[Attribute]) -> bool {
-    for attr in attrs {
-        if !attr.path().is_ident("css") {
-            continue;
-        }
-        let mut skip = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip") {
-                skip = true;
-            }
-            Ok(())
-        });
-        if skip {
-            return true;
-        }
-    }
-    false
 }
 
 /// Clone the input generics and append `where T: $trait_path` for every type
@@ -153,7 +120,6 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     .unnamed
                     .iter()
                     .enumerate()
-                    .filter(|(_, f)| !has_css_skip(&f.attrs))
                     .map(|(i, _)| syn::Index::from(i))
                     .collect();
                 if idx.is_empty() {
@@ -163,12 +129,7 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 }
             }
             Fields::Named(fs) => {
-                let names: Vec<_> = fs
-                    .named
-                    .iter()
-                    .filter(|f| !has_css_skip(&f.attrs))
-                    .map(|f| f.ident.clone().unwrap())
-                    .collect();
+                let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
                 if names.is_empty() {
                     quote! { true }
                 } else {
@@ -187,19 +148,10 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
                         let n = fs.unnamed.len();
                         let la: Vec<_> = (0..n).map(|i| format_ident!("__l{}", i)).collect();
                         let ra: Vec<_> = (0..n).map(|i| format_ident!("__r{}", i)).collect();
-                        let kept: Vec<_> = fs
-                            .unnamed
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, f)| !has_css_skip(&f.attrs))
-                            .map(|(i, _)| i)
-                            .collect();
-                        let cmp = if kept.is_empty() {
+                        let cmp = if la.is_empty() {
                             quote! { true }
                         } else {
-                            let lk = kept.iter().map(|&i| &la[i]);
-                            let rk = kept.iter().map(|&i| &ra[i]);
-                            quote! { #( ::bun_css::generics::CssEql::eql(#lk, #rk) )&&* }
+                            quote! { #( ::bun_css::generics::CssEql::eql(#la, #ra) )&&* }
                         };
                         quote! {
                             (Self::#vname( #(#la),* ), Self::#vname( #(#ra),* )) => #cmp,
@@ -212,19 +164,10 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
                             fnames.iter().map(|n| format_ident!("__l_{}", n)).collect();
                         let ra: Vec<_> =
                             fnames.iter().map(|n| format_ident!("__r_{}", n)).collect();
-                        let kept: Vec<_> = fs
-                            .named
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, f)| !has_css_skip(&f.attrs))
-                            .map(|(i, _)| i)
-                            .collect();
-                        let cmp = if kept.is_empty() {
+                        let cmp = if la.is_empty() {
                             quote! { true }
                         } else {
-                            let lk = kept.iter().map(|&i| &la[i]);
-                            let rk = kept.iter().map(|&i| &ra[i]);
-                            quote! { #( ::bun_css::generics::CssEql::eql(#lk, #rk) )&&* }
+                            quote! { #( ::bun_css::generics::CssEql::eql(#la, #ra) )&&* }
                         };
                         quote! {
                             (Self::#vname { #(#fnames: #la),* },
@@ -275,17 +218,11 @@ fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     .unnamed
                     .iter()
                     .enumerate()
-                    .filter(|(_, f)| !has_css_skip(&f.attrs))
                     .map(|(i, _)| syn::Index::from(i));
                 quote! { #( ::bun_css::generics::CssHash::hash(&self.#idx, __hasher); )* }
             }
             Fields::Named(fs) => {
-                let names: Vec<_> = fs
-                    .named
-                    .iter()
-                    .filter(|f| !has_css_skip(&f.attrs))
-                    .map(|f| f.ident.clone().unwrap())
-                    .collect();
+                let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
                 quote! { #( ::bun_css::generics::CssHash::hash(&self.#names, __hasher); )* }
             }
         },
@@ -302,33 +239,20 @@ fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
                         let binds: Vec<_> = (0..fs.unnamed.len())
                             .map(|j| format_ident!("__f{}", j))
                             .collect();
-                        let kept: Vec<_> = fs
-                            .unnamed
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, f)| !has_css_skip(&f.attrs))
-                            .map(|(j, _)| binds[j].clone())
-                            .collect();
                         quote! {
                             Self::#vname( #(#binds),* ) => {
                                 #tag
-                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
+                                #( ::bun_css::generics::CssHash::hash(#binds, __hasher); )*
                             }
                         }
                     }
                     Fields::Named(fs) => {
                         let fnames: Vec<_> =
                             fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
-                        let kept: Vec<_> = fs
-                            .named
-                            .iter()
-                            .filter(|f| !has_css_skip(&f.attrs))
-                            .map(|f| f.ident.clone().unwrap())
-                            .collect();
                         quote! {
                             Self::#vname { #(#fnames),* } => {
                                 #tag
-                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
+                                #( ::bun_css::generics::CssHash::hash(#fnames, __hasher); )*
                             }
                         }
                     }
@@ -351,142 +275,6 @@ fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
             #[allow(unused_variables)]
             fn hash(&self, __hasher: &mut ::bun_css::generics::Wyhash) {
                 let _ = __hasher;
-                #body
-            }
-        }
-    })
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// `IsCompatible`
-// ════════════════════════════════════════════════════════════════════════════
-//
-// The trait blanket impls in `bun_css::generics` cover refs/containers; this
-// derive handles the *compound* shapes that need per-type `is_compatible`
-// methods:
-//
-//   * structs → AND of every (non-`#[css(skip)]`) field's `.is_compatible(b)`
-//     (the hand-written pattern in e.g. `BorderImageRepeat`, `Rect<T>`,
-//     `Size2D<T>`).
-//   * enums   → unit variants are always compatible; payload variants delegate
-//     to the payload's `.is_compatible(b)` (the hand-written pattern in e.g.
-//     `FontWeight`, `BorderSideWidth`, `FontFamily`).
-//
-// As with `CssEql`/`CssHash`, the body uses **UFCS** dispatch
-// (`::bun_css::generics::IsCompatible::is_compatible(&field, b)`) so the call
-// resolves only through the trait — every payload type must carry an
-// `IsCompatible` impl (blanket or derived); inherent methods are ignored.
-
-#[proc_macro_derive(IsCompatible, attributes(css))]
-pub fn derive_is_compatible(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    expand_is_compatible(&input)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-fn expand_is_compatible(input: &DeriveInput) -> syn::Result<TokenStream2> {
-    let name = &input.ident;
-    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::IsCompatible));
-    let (impl_g, ty_g, where_g) = generics.split_for_impl();
-
-    let body = match &input.data {
-        Data::Struct(s) => match &s.fields {
-            Fields::Unit => quote! { true },
-            Fields::Unnamed(fs) => {
-                let idx: Vec<_> = fs
-                    .unnamed
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, f)| !has_css_skip(&f.attrs))
-                    .map(|(i, _)| syn::Index::from(i))
-                    .collect();
-                if idx.is_empty() {
-                    quote! { true }
-                } else {
-                    quote! { #( ::bun_css::generics::IsCompatible::is_compatible(&self.#idx, __browsers) )&&* }
-                }
-            }
-            Fields::Named(fs) => {
-                let names: Vec<_> = fs
-                    .named
-                    .iter()
-                    .filter(|f| !has_css_skip(&f.attrs))
-                    .map(|f| f.ident.clone().unwrap())
-                    .collect();
-                if names.is_empty() {
-                    quote! { true }
-                } else {
-                    quote! { #( ::bun_css::generics::IsCompatible::is_compatible(&self.#names, __browsers) )&&* }
-                }
-            }
-        },
-        Data::Enum(e) => {
-            let arms = e.variants.iter().map(|v| {
-                let vname = &v.ident;
-                // `#[css(skip)]` on a variant → always compatible (used for
-                // keyword-only variants that map to no `Feature`).
-                if has_css_skip(&v.attrs) {
-                    return quote! { Self::#vname { .. } => true, };
-                }
-                match &v.fields {
-                    Fields::Unit => quote! { Self::#vname => true, },
-                    Fields::Unnamed(fs) => {
-                        let binds: Vec<_> = (0..fs.unnamed.len())
-                            .map(|j| format_ident!("__f{}", j))
-                            .collect();
-                        let kept: Vec<_> = fs
-                            .unnamed
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, f)| !has_css_skip(&f.attrs))
-                            .map(|(j, _)| binds[j].clone())
-                            .collect();
-                        let body = if kept.is_empty() {
-                            quote! { true }
-                        } else {
-                            quote! { #( ::bun_css::generics::IsCompatible::is_compatible(#kept, __browsers) )&&* }
-                        };
-                        quote! { Self::#vname( #(#binds),* ) => #body, }
-                    }
-                    Fields::Named(fs) => {
-                        let fnames: Vec<_> =
-                            fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
-                        let kept: Vec<_> = fs
-                            .named
-                            .iter()
-                            .filter(|f| !has_css_skip(&f.attrs))
-                            .map(|f| f.ident.clone().unwrap())
-                            .collect();
-                        let body = if kept.is_empty() {
-                            quote! { true }
-                        } else {
-                            quote! { #( ::bun_css::generics::IsCompatible::is_compatible(#kept, __browsers) )&&* }
-                        };
-                        quote! { Self::#vname { #(#fnames),* } => #body, }
-                    }
-                }
-            });
-            quote! {
-                match self {
-                    #(#arms)*
-                }
-            }
-        }
-        Data::Union(_) => {
-            return Err(syn::Error::new_spanned(
-                name,
-                "#[derive(IsCompatible)] is not supported on `union`s",
-            ));
-        }
-    };
-
-    Ok(quote! {
-        #[automatically_derived]
-        impl #impl_g ::bun_css::generics::IsCompatible for #name #ty_g #where_g {
-            #[inline]
-            #[allow(unused_variables)]
-            fn is_compatible(&self, __browsers: &::bun_css::targets::Browsers) -> bool {
                 #body
             }
         }
@@ -591,8 +379,7 @@ fn pascal_to_kebab(ident: &str) -> String {
     out
 }
 
-/// Extract an explicit CSS keyword from `#[css(name = "…")]`, `#[css("…")]`,
-/// or (for compatibility with already-ported leaves) `#[strum(serialize = "…")]`.
+/// Extract an explicit CSS keyword from `#[css(name = "…")]` or `#[css("…")]`.
 fn css_keyword_attr(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("css") {
@@ -606,19 +393,6 @@ fn css_keyword_attr(attrs: &[Attribute]) -> Option<String> {
             let mut found = None;
             let _ = attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") || meta.path.is_ident("keyword") {
-                    let lit: syn::LitStr = meta.value()?.parse()?;
-                    found = Some(lit.value());
-                }
-                Ok(())
-            });
-            if found.is_some() {
-                return found;
-            }
-        }
-        if attr.path().is_ident("strum") {
-            let mut found = None;
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("serialize") {
                     let lit: syn::LitStr = meta.value()?.parse()?;
                     found = Some(lit.value());
                 }

@@ -980,11 +980,6 @@ impl<'a> Transpiler<'a> {
             (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
         }
 
-        // var pool = try arena.create(ThreadPool);
-        // try pool.init(ThreadPool.InitConfig{
-        //     .arena = arena,
-        // });
-
         // `log` stays raw — `from_api` stores it in `BundleOptions.log: *mut`
         // and the same pointer is aliased into `Resolver::init1` / `Linker`
         // / the struct field below. No `&'a

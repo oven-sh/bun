@@ -1415,7 +1415,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        self.lexer.expect_less_than::<false>()?;
+        self.lexer.expect_less_than()?;
 
         loop {
             self.skip_type_script_type(Level::Lowest)?;

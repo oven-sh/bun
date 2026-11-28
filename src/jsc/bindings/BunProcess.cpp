@@ -186,10 +186,6 @@ NEVER_INLINE void putDirectNamed(JSC::VM& vm, JSC::JSObject* object, ASCIILitera
 
 using namespace JSC;
 
-#if !defined(BUN_WEBKIT_VERSION)
-#define BUN_WEBKIT_VERSION "unknown"
-#endif
-
 using JSGlobalObject = JSC::JSGlobalObject;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;

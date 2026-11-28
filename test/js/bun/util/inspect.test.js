@@ -1206,7 +1206,8 @@ describe("a quoted string prints the same in 8-bit and 16-bit storage", () => {
   const short = { 8: "\\b", 9: "\\t", 10: "\\n", 12: "\\f", 13: "\\r", 34: '\\"', 92: "\\\\" };
   const escapeOf = code =>
     short[code] ?? (code < 0x20 ? "\\u" + code.toString(16).toUpperCase().padStart(4, "0") : String.fromCharCode(code));
-  // The whole string. A character above U+00FF prints as it is, half a surrogate pair as `\udXXX`.
+  // The whole string. A character above U+00FF prints as it is, half a surrogate pair as a `\u` escape in
+  // lower case.
   const quoted = s =>
     '"' +
     s.replace(/[\x00-\x1f"\\]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, character => {

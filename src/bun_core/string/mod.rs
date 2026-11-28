@@ -2459,7 +2459,8 @@ pub mod printer {
 
     /// `text` as a quoted string in UTF-8. A unit up to U+00FF is written as the Latin-1 arm of
     /// [`write_pre_quoted_string`] writes that byte in JSON mode, so a string prints the same in either
-    /// storage. Above it, as `JSON.stringify` does: a character as it is, an unpaired surrogate as `\udXXX`.
+    /// storage. Above it, as `JSON.stringify` does: a character as it is, an unpaired surrogate as a `\u`
+    /// escape in lower case.
     #[inline(never)]
     pub fn write_json_string_utf16(
         text: &[u16],

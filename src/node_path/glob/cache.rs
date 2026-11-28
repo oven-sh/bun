@@ -5,17 +5,18 @@ use std::rc::Rc;
 use bun_collections::hashbrown::HashTable;
 use bun_core::strings::CodeUnits;
 
-use super::{Error, Minimatch, Options};
+use super::{Abort, Error, Minimatch, Options};
 
 const MAX_ENTRIES: usize = 1024;
-const MAX_BYTES: usize = 16 << 20;
+const MAX_BYTES: usize = 64 << 20;
 
 struct Entry {
     hash: u64,
     pattern_bytes: Box<[u8]>,
     is_16bit: bool,
     options: Options,
-    matcher: Minimatch,
+    /// `None` if compiling exceeds the budget.
+    matcher: Option<Minimatch>,
     memory_cost: usize,
 }
 
@@ -51,7 +52,8 @@ impl Cache {
             Some(last_used) if last_used.is_for(pattern, options) => last_used,
             _ => self.lookup_or_compile(pattern, options, should_continue)?,
         };
-        Ok(entry.matcher.matches(path, should_continue)?)
+        let matcher = entry.matcher.as_ref().ok_or(Abort::BudgetExceeded)?;
+        Ok(matcher.matches(path, should_continue)?)
     }
 
     #[inline(never)]
@@ -66,13 +68,18 @@ impl Cache {
         if let Some(entry) = self.table.find(hash, |it| it.is_for(pattern, options)) {
             return Ok(self.last_used.insert(Rc::clone(entry)));
         }
-        let matcher = Minimatch::compile(pattern, options, should_continue)?;
+        let matcher = match Minimatch::compile(pattern, options, should_continue) {
+            Err(Error::Aborted(Abort::BudgetExceeded)) => None,
+            compiled => Some(compiled?),
+        };
         let entry = Rc::new(Entry {
             hash,
             pattern_bytes: pattern_bytes.into(),
             is_16bit: pattern.is_16bit(),
             options,
-            memory_cost: size_of::<Entry>() + pattern_bytes.len() + matcher.memory_cost(),
+            memory_cost: size_of::<Entry>()
+                + pattern_bytes.len()
+                + matcher.as_ref().map_or(0, Minimatch::memory_cost),
             matcher,
         });
         if entry.memory_cost <= MAX_BYTES {

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bun_core::w;
 
+use super::braces::Numbers;
 use super::budget::{Abort, Budget, cost};
 use super::slash_split;
 use crate::{Platform, byte_at};
@@ -32,12 +33,13 @@ pub(super) struct GlobParts<'t> {
     pub(super) globs: Vec<Vec<PartId>>,
 }
 
-/// <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1334-L1340>
+/// `None` if the numbers have to be listed: <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1334-L1340>
 pub(super) fn preprocess<'t>(
     glob_set: impl Iterator<Item = &'t [u16]>,
     platform: Platform,
+    numbers: Numbers,
     budget: &mut Budget<'_>,
-) -> Result<GlobParts<'t>, Abort> {
+) -> Result<Option<GlobParts<'t>>, Abort> {
     let (mut texts, mut globs) = (RESERVED_PARTS.to_vec(), Vec::new());
     let mut ids: BTreeMap<_, PartId> = RESERVED_PARTS.into_iter().zip(0..).collect();
     let mut seen = BTreeSet::new();
@@ -59,10 +61,9 @@ pub(super) fn preprocess<'t>(
     }
     let mut glob_parts = GlobParts { texts, globs };
     glob_parts.first_phase_pre_process(budget)?;
-    if glob_parts.globs.len() > 1 {
-        glob_parts.second_phase_pre_process(budget)?;
-    }
-    Ok(glob_parts)
+    let is_done =
+        glob_parts.globs.len() <= 1 || glob_parts.second_phase_pre_process(numbers, budget)?;
+    Ok(is_done.then_some(glob_parts))
 }
 
 impl GlobParts<'_> {
@@ -117,7 +118,11 @@ impl GlobParts<'_> {
     }
 
     /// Merges each glob into the first later one that it matches: <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1553-L1565>
-    fn second_phase_pre_process(&mut self, budget: &mut Budget<'_>) -> Result<(), Abort> {
+    fn second_phase_pre_process(
+        &mut self,
+        numbers: Numbers,
+        budget: &mut Budget<'_>,
+    ) -> Result<bool, Abort> {
         let mut index = MergeIndex::new(&self.globs, budget)?;
         let mut merged = Vec::new();
         for at in 0..self.globs.len() {
@@ -127,6 +132,10 @@ impl GlobParts<'_> {
             let end = duplicate.map_or(self.globs.len(), |&(_, other)| other);
             // Globs of the same shape only match if they are duplicates.
             let mut untried = index.count_by_len[key.len] - index.count_by_shape[key.shape];
+            // A merged glob does not always match the same paths as the two, and equal numbers decide which ones merge.
+            if untried != 0 && numbers == Numbers::AsDigitClasses {
+                return Ok(false);
+            }
             let mut other = at + 1;
             while untried != 0 && other < end {
                 budget.spend(cost::STEP)?;
@@ -150,7 +159,7 @@ impl GlobParts<'_> {
             self.globs[at] = Vec::new();
         }
         self.globs.retain(|parts| !parts.is_empty());
-        Ok(())
+        Ok(true)
     }
 
     /// <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1566-L1601>

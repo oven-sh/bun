@@ -1,4 +1,5 @@
-// A refusal by kind names the class of an object that has no constructor, and looks at nothing that it holds.
+// A refusal by kind prints nothing of what an object without a constructor holds.
+// The output is stored: plain Bun has the same function, so it would agree with a fault.
 const shapes = [
   Object.setPrototypeOf(new Map([[1, 2]]), null),
   Object.setPrototypeOf(new Map(), Object.create(null)),
@@ -18,3 +19,15 @@ for (const shape of shapes) {
     console.log(`${error.code} ${error.message}`);
   }
 }
+/* Output:
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object: null prototype] {}
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received [Object: null prototype]
+ERR_INVALID_ARG_TYPE The "callback" argument must be of type function. Received an instance of Map
+*/

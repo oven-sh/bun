@@ -3921,10 +3921,19 @@ static ALWAYS_INLINE bool nextCellIsOnFreeList(JSC::GCClient::IsoSubspace& space
     return *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalStart()) < *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalEnd());
 }
 
+static constexpr unsigned maxShortStringLength = 4096;
+
+// `string` is no rope.
+static ALWAYS_INLINE bool mayHoldLongText(JSC::JSString* string)
+{
+    auto* text = string->tryGetValueImpl();
+    return text->length() > maxShortStringLength || text->isSubString();
+}
+
 // A few characters (V8's SlicedString::kMinLength) do not keep a long string alive.
 static ALWAYS_INLINE bool isSubstringCopied(JSC::JSString* string, uint32_t length)
 {
-    return length < 13 && string->tryGetValueImpl()->length() > 4096;
+    return length < 13 && mayHoldLongText(string);
 }
 
 static NEVER_INLINE JSC::JSString* substringOfResolvedSlow(JSC::VM& vm, JSC::JSString* string, uint32_t offset, uint32_t length)
@@ -3968,6 +3977,12 @@ extern "C" void JSC__JSString__substringsOfResolved(JSC::JSString* string, JSC::
     JSC::VM& vm = JSC::getVM(globalObject);
     for (size_t i = 0; i < count; ++i)
         substrings[i] = JSC::JSValue::encode(substringOfResolved(vm, string, ranges[2 * i], ranges[2 * i + 1], false));
+}
+
+// `owner` is no rope.
+extern "C" __attribute__((__always_inline__)) bool JSC__JSString__mayHoldLongTextFor(JSC::JSString* owner, uint32_t length)
+{
+    return mayHoldLongText(owner) && length <= maxShortStringLength;
 }
 
 // At most `capacity` of them. A rope is not resolved: nothing is allocated in the heap and nothing is thrown.

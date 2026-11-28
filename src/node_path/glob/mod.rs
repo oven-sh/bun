@@ -22,6 +22,7 @@ use crate::{
     win32,
 };
 use ast::MmPattern;
+use braces::Numbers;
 pub use budget::Abort;
 use budget::{ALLOCATION_OVERHEAD, Budget, cost, try_with_capacity};
 pub use cache::Cache;
@@ -245,6 +246,17 @@ enum OutlinedMatcher {
     StarDotStar,
     DotStar,
     RegExp(Box<RegExp>),
+}
+
+/// The `nocase` under which `glob`, which has digit classes, matches what the globs that it stands for match.
+fn nocase_with_digit_classes(glob: &[u16], nocase: bool) -> Option<bool> {
+    let is_wildcard = |unit: &u16| matches!(unit.to_u8_saturating(), b'*' | b'?');
+    let lowercases_like_regexp = |&unit: &u16| unit < 0x80 && unit | 0x20 != u16::from(b'k');
+    if !nocase || !glob.iter().any(is_wildcard) {
+        return Some(false);
+    }
+    // `*1.k` is a `PartMatcher::Suffix`, and `*[1-2].k` is not.
+    (!is_wildcard(&glob[0]) || glob.iter().all(lowercases_like_regexp)).then_some(true)
 }
 
 impl PartMatcher {
@@ -485,6 +497,7 @@ impl SetEntry {
 struct Minimatch {
     platform: Platform,
     empty: bool,
+    numbers: Numbers,
     matchers: Box<[PartMatcher]>,
     set: Box<[SetEntry]>,
 }
@@ -493,22 +506,51 @@ impl Minimatch {
     /// <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1281-L1368>
     fn compile(
         pattern: CodeUnits<'_>,
-        Options { platform, nocase }: Options,
+        options: Options,
         should_continue: &mut dyn FnMut() -> bool,
     ) -> Result<Self, Error> {
         if pattern.len() > MAX_PATTERN_LENGTH {
             return Err(Error::PatternTooLong);
         }
         let budget = &mut Budget::to_compile(should_continue);
-        let empty = pattern.is_empty();
         let mut pattern: Vec<u16> = match pattern {
             CodeUnits::U8(latin1) => latin1.iter().map(|&unit| unit.into()).collect(),
             CodeUnits::U16(utf16) => utf16.to_vec(),
         };
         strings::replace_char_in_place(&mut pattern, BACKSLASH, SLASH);
-        let glob_set = braces::brace_expand(pattern, budget)?;
-        let GlobParts { texts, globs } = preprocess::preprocess(glob_set.iter(), platform, budget)?;
+        let opens_group = |unit: &u16| matches!(unit.to_u8_saturating(), b'[' | b'(');
+        if !pattern.iter().any(opens_group)
+            && let Some(it) = Self::try_compile(&pattern, options, Numbers::AsDigitClasses, budget)?
+        {
+            return Ok(it);
+        }
+        budget.settle_memory(0, 0)?;
+        let compiled = Self::try_compile(&pattern, options, Numbers::Listed, budget)?;
+        Ok(compiled.expect("the numbers are listed"))
+    }
+
+    /// `None` if the numbers have to be listed.
+    fn try_compile(
+        pattern: &[u16],
+        Options { platform, nocase }: Options,
+        mut numbers: Numbers,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<Self>, Error> {
+        let Some(glob_set) = braces::brace_expand(pattern, numbers, budget)? else {
+            return Ok(None);
+        };
+        if !glob_set.has_bracket() {
+            numbers = Numbers::Listed;
+        }
+        let Some(GlobParts { texts, globs }) =
+            preprocess::preprocess(glob_set.iter(), platform, numbers, budget)?
+        else {
+            return Ok(None);
+        };
         let text = |part: PartId| texts[part as usize];
+        let has_digit_class = |part: PartId| {
+            numbers == Numbers::AsDigitClasses && scan::index_of(text(part), b'[').is_some()
+        };
 
         let mut matchers = Vec::new();
         let mut matcher_of_part = vec![None; texts.len()];
@@ -516,11 +558,17 @@ impl Minimatch {
         for glob in &globs {
             budget.spend(cost::build(glob.len()))?;
             budget.charge_memory(size_of::<SetEntry>() + MAX_BYTES_PER_PART * glob.len())?;
-            let no_magic_root_len = if platform == Platform::Win32 && nocase {
-                no_magic_root_len(glob, text)
-            } else {
-                0
-            };
+            let mut no_magic_root_len = 0;
+            if platform == Platform::Win32 && nocase {
+                no_magic_root_len = self::no_magic_root_len(glob, text);
+                let is_in_doubt = match glob[..] {
+                    [preprocess::EMPTY, preprocess::EMPTY, _, share, ..] => has_digit_class(share),
+                    _ => no_magic_root_len != 0 && has_digit_class(glob[0]),
+                };
+                if is_in_doubt {
+                    return Ok(None);
+                }
+            }
             let mut pattern = Vec::with_capacity(glob.len());
             for (index, &part) in glob.iter().enumerate() {
                 let compiled = &mut matcher_of_part[part as usize];
@@ -536,6 +584,13 @@ impl Minimatch {
                 } else {
                     budget.spend(cost::build(text(part).len()))?;
                     let checkpoint = budget.bytes_in_use();
+                    let nocase = if !has_digit_class(part) {
+                        nocase
+                    } else if let Some(nocase) = nocase_with_digit_classes(text(part), nocase) {
+                        nocase
+                    } else {
+                        return Ok(None);
+                    };
                     let matcher = PartMatcher::parse(text(part), nocase, budget)?;
                     budget.settle_memory(checkpoint, matcher.memory_cost())?;
                     *compiled.insert(push_matcher(&mut matchers, matcher))
@@ -558,12 +613,13 @@ impl Minimatch {
             }
             set.push(SetEntry::new(pattern, drive, &matchers));
         }
-        Ok(Minimatch {
+        Ok(Some(Minimatch {
             platform,
-            empty,
+            empty: pattern.is_empty(),
+            numbers,
             matchers: matchers.into(),
             set: set.into(),
-        })
+        }))
     }
 
     fn memory_cost(&self) -> usize {
@@ -636,7 +692,7 @@ impl Minimatch {
         };
         let mut part_set = None;
         for (index, entry) in self.set.iter().enumerate().skip(first) {
-            let drive = if index == 0 {
+            let drive = if index == 0 && self.numbers == Numbers::Listed {
                 drive_before
             } else {
                 drive_after

@@ -829,7 +829,6 @@ const callsOfInspect = b.nativeCalls({
   through: ["utilInspectFunction"],
   calls: [],
   otherMentions: [
-    { file: inBindings("ErrorCode.cpp") },
     { file: inBindings("UtilInspect.cpp") },
     { file: inBindings("ZigGlobalObject.cpp"), times: 2 },
     { file: inBindings("ZigGlobalObject.h") },

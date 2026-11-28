@@ -2,6 +2,7 @@
 #include "BunClientData.h"
 #include "ErrorCode.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/StringObject.h>
 
 #if OS(WINDOWS)
 #define PATH_FUNCTION(name) Bun__Bindgen__NodePath__##name##Win32
@@ -11,7 +12,7 @@
 
 // src/runtime/node/node_path.bind.ts
 extern "C" SYSV_ABI JSC::EncodedJSValue PATH_FUNCTION(dirname)(JSC::JSGlobalObject*, JSC::JSString*);
-extern "C" SYSV_ABI JSC::EncodedJSValue PATH_FUNCTION(tryJoin)(JSC::JSGlobalObject*, const JSC::EncodedJSValue*, size_t);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__Bindgen__NodePath__joinWithOriginalNormalize(JSC::JSGlobalObject*, const JSC::EncodedJSValue*, size_t);
 
 namespace Bun {
 
@@ -19,6 +20,10 @@ JSC::JSValue pathDirname(JSC::JSGlobalObject* globalObject, JSC::JSValue path)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (path.inherits<JSC::StringObject>()) [[unlikely]] {
+        path = path.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     if (!path.isString()) [[unlikely]] {
         ERR::INVALID_ARG_TYPE(scope, globalObject, "path"_s, "string"_s, path);
         return {};
@@ -28,14 +33,9 @@ JSC::JSValue pathDirname(JSC::JSGlobalObject* globalObject, JSC::JSValue path)
 
 JSC::JSValue pathJoin(JSC::JSGlobalObject* globalObject, JSC::JSString* first, JSC::JSString* second)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     const JSC::EncodedJSValue paths[] = { JSC::JSValue::encode(first), JSC::JSValue::encode(second) };
-    JSC::JSValue joined = JSC::JSValue::decode(PATH_FUNCTION(tryJoin)(globalObject, paths, std::size(paths)));
-    RETURN_IF_EXCEPTION(scope, {});
-    if (joined.isUndefined()) [[unlikely]]
-        return JSC::jsSingleCharacterString(vm, u'.');
-    return joined;
+    RELEASE_AND_RETURN(scope, JSC::JSValue::decode(Bun__Bindgen__NodePath__joinWithOriginalNormalize(globalObject, paths, std::size(paths))));
 }
 
 static ALWAYS_INLINE PathModuleObject& moduleObject(JSC::JSGlobalObject* globalObject, PathPlatform platform)

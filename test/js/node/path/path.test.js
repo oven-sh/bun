@@ -279,7 +279,7 @@ describe.each(["posix", "win32"])("path.%s calls the functions that a script has
     };
     expect(read({ dir: "d", base: "b" })).toEqual([`d${p.sep}b`, "dir,base,root"]);
     expect(read({ root: "r", name: "n", ext: "e" })).toEqual(["rn.e", "dir,root,base,name,ext,root"]);
-    expect(read({ base: 7 })).toEqual([7, "dir,root,base"]);
+    expect(read({ base: 7 })).toEqual(["7", "dir,root,base"]);
     expect(read({ dir: 5, name: 6, ext: 7 })).toEqual([`5${p.sep}6.7`, "dir,base,name,ext,root"]);
   });
 });

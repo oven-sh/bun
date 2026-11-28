@@ -130,12 +130,22 @@ export const resolveWithCwdWin32 = resolveWithCwd();
 /** What `path.posix` makes of `process.cwd()` on Windows, and `path.win32` elsewhere. */
 export const toForeignCwd = b.fn({ args: { cwd: string }, returns: string, ...allocates });
 
+/** What stands in for `process.cwd()` if that would throw because the directory where the process started is removed. */
+export const removedInitialCwd = b.fn({ args: {}, returns: string.optional, ...readsCachedCwd });
+
 /** The variable `=C:` in the environment of the process. */
 export const driveCwd = b.fn({
   args: { letter: b.u8 },
   returns: string.optional,
   ...allocates,
   reads: ["ExternalState"],
+});
+
+/** `path.join` for a path that goes to the file system. */
+export const joinWithOriginalNormalize = b.fn({
+  ...stringArgs({ path: b.rest(string) }),
+  returns: string,
+  ...allocates,
 });
 
 /** `path.resolve` for a path that goes to the file system, which ignores a replaced `process.cwd`. */

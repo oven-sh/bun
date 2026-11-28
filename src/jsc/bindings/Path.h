@@ -43,7 +43,7 @@ struct PathModule {
     }
 };
 
-// `path.dirname(path)`, with its errors.
+// `path.dirname(path)`, with its errors. A `String` object is converted.
 JSC::JSValue pathDirname(JSC::JSGlobalObject*, JSC::JSValue path);
 
 // `path.join(first, second)`, with its errors.

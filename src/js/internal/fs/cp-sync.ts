@@ -16,7 +16,8 @@ const {
   unlinkSync,
   utimesSync,
 } = require("node:fs");
-const { dirname, isAbsolute, join, parse, sep } = require("node:path");
+const { dirname, isAbsolute, parse, sep } = require("node:path");
+const join = $bindgen("node_path.bind.ts", "joinWithOriginalNormalize");
 const resolve = $bindgen("node_path.bind.ts", "resolveWithRealCwd");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;

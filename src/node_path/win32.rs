@@ -28,10 +28,6 @@ pub(crate) fn has_drive<U: CodeUnit>(path: &[U]) -> bool {
     byte_at(path, 1) == COLON && path[0].to_u8_saturating().is_ascii_alphabetic()
 }
 
-pub fn is_on_drive<U: CodeUnit>(path: &[U], letter: u8) -> bool {
-    has_drive(path) && byte_at(path, 0).eq_ignore_ascii_case(&letter)
-}
-
 #[inline(always)]
 fn drive_len<U: CodeUnit>(path: &[U]) -> usize {
     if has_drive(path) { DRIVE_LEN } else { 0 }

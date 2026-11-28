@@ -52,14 +52,38 @@ function formatExt(ext: any) {
   return ext ? `${ext[0] === "." ? "" : "."}${ext}` : "";
 }
 
+const ObjectPrototype = $getPrototypeOf({})!;
+
+/** `object[name]`, unless it comes from `Object.prototype`. A proxy answers for itself. */
+function memberOf(object: any, name: string) {
+  for (let holder = object; holder !== null && holder !== ObjectPrototype; holder = $getPrototypeOf(holder)) {
+    if ($isProxyObject(holder) || $Object.$getOwnPropertyDescriptor(holder, name)) return object[name];
+  }
+}
+
 function _format(sep: string, pathObject: any) {
   // validateObject(), without loading internal/validators.
   if (pathObject === null || $isArray(pathObject) || typeof pathObject !== "object") {
     throw $ERR_INVALID_ARG_TYPE("pathObject", "object", pathObject);
   }
+  if (
+    "dir" in ObjectPrototype ||
+    "root" in ObjectPrototype ||
+    "base" in ObjectPrototype ||
+    "name" in ObjectPrototype ||
+    "ext" in ObjectPrototype
+  ) {
+    pathObject = {
+      dir: memberOf(pathObject, "dir"),
+      root: memberOf(pathObject, "root"),
+      base: memberOf(pathObject, "base"),
+      name: memberOf(pathObject, "name"),
+      ext: memberOf(pathObject, "ext"),
+    };
+  }
   const dir = pathObject.dir || pathObject.root;
   const base = pathObject.base || `${pathObject.name || ""}${formatExt(pathObject.ext)}`;
-  if (!dir) return base;
+  if (!dir) return `${base}`;
   return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
 }
 

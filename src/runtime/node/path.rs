@@ -172,6 +172,23 @@ fn to_js_string<'a>(heap: &JsHeap<'a>, args: &[impl Arg<'a>], output: Output<'_>
     }
 }
 
+/// For `resolve` and `relative`, whose results do not keep alive in Node what an argument was cut from.
+#[inline(always)]
+fn to_detached_js_string<'a>(
+    heap: &JsHeap<'a>,
+    args: &[impl Arg<'a>],
+    output: Output<'_>,
+) -> StrResult<'a> {
+    let (index, range) = match output {
+        Output::Arg(index) => (index, None),
+        Output::ArgSlice(index, range) => (index, Some(range)),
+        output => return to_js_string(heap, args, output),
+    };
+    let arg = args[index].as_str().expect("it has been loaded");
+    let text = arg.characters(heap)?;
+    text.detached_substring(heap, range.unwrap_or_else(|| 0..text.units().len()))
+}
+
 /// The receiver conversion of `String.prototype` methods, for what a replaced function returned.
 #[inline(always)]
 fn coerce_to_string<'a>(cx: &mut JsScope<'a>, value: JsLocal<'a>) -> StrResult<'a> {
@@ -354,14 +371,14 @@ fn try_relative<'a, const WIN32: bool>(
     if let Some(output) =
         fast_path::relative::<WIN32>(from_text.units(), to_text.units(), &mut buffers)
     {
-        return to_js_string(heap, &[from, to], output).map(Some);
+        return to_detached_js_string(heap, &[from, to], output).map(Some);
     }
     out_of_line(|| {
         let (args, mut scratch) = ([from, to], Scratch::new());
         let (from, to) = (from.characters(heap)?, to.characters(heap)?);
         platform_call!(WIN32, relative(from.units(), to.units(), &mut scratch))
             .map_err(|error| to_js_error(heap, error))?
-            .map(|output| to_js_string(heap, &args, output))
+            .map(|output| to_detached_js_string(heap, &args, output))
             .transpose()
     })
 }
@@ -378,7 +395,7 @@ fn relative_of_resolved<'a, const WIN32: bool>(
     } else {
         posix::relative_of_resolved(from.units(), to.units())
     };
-    to_js_string(heap, &args, output)
+    to_detached_js_string(heap, &args, output)
 }
 
 #[inline(always)]
@@ -440,8 +457,31 @@ fn cached_cwd<'h, 'a, const WIN32: bool>(
     if WIN32 != HOST_IS_WIN32 || means_cwd(heap, paths)? {
         return Ok(None);
     }
-    let cwd = path_ffi::cached_cwd(heap).map(|cwd| cwd.characters(heap));
-    Ok(cwd.transpose()?)
+    let cwd = path_ffi::cached_cwd(heap).and_then(JsLocal::as_string);
+    Ok(cwd.map(|cwd| cwd.characters(heap)).transpose()?)
+}
+
+/// Node caches `process.cwd()` before it runs an ES module or `-e`, so removing that directory is not noticed.
+#[inline(always)]
+pub(crate) fn removed_initial_cwd<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Option<JsStr<'a>>> {
+    if path_ffi::cached_cwd(heap).is_some() {
+        return Ok(None);
+    }
+    out_of_line(|| {
+        let is_removed = bun_core::is_in_initial_working_directory()
+            && bun_core::getcwd(&mut path_buffer_pool::get()).is_err();
+        is_removed
+            .then(|| heap.create_utf8_string(utf8::real_cwd()))
+            .transpose()
+    })
+}
+
+#[inline(always)]
+fn process_cwd<'a>(cx: &mut JsScope<'a>) -> ValueResult<'a> {
+    match removed_initial_cwd(&cx.heap)? {
+        Some(cwd) => Ok(cwd.as_value()),
+        None => path_ffi::call_cwd(cx),
+    }
 }
 
 /// `resolve`, as far as it gets without running JavaScript.
@@ -458,7 +498,7 @@ fn resolve_step<'a, const WIN32: bool>(
     if let Some(step) = fast_path::resolve::<WIN32, _>(cwd, Args { heap, paths }, &mut buffer)? {
         return Ok(step.try_map(
             #[inline(always)]
-            |output| to_js_string(heap, paths, output),
+            |output| to_detached_js_string(heap, paths, output),
         )?);
     }
     out_of_line(|| {
@@ -471,7 +511,7 @@ fn resolve_step<'a, const WIN32: bool>(
         }
         Ok(step?.try_map(
             #[inline(always)]
-            |output| to_js_string(heap, paths, output),
+            |output| to_detached_js_string(heap, paths, output),
         )?)
     })
 }
@@ -522,7 +562,7 @@ fn resolve<'a, const WIN32: bool>(cx: &mut JsScope<'a>, paths: &[JsLocal<'a>]) -
 
 #[inline(always)]
 fn posix_cwd<'a>(cx: &mut JsScope<'a>) -> ValueResult<'a> {
-    let cwd = path_ffi::call_cwd(cx)?;
+    let cwd = process_cwd(cx)?;
     if !HOST_IS_WIN32 {
         return Ok(cwd);
     }
@@ -553,7 +593,7 @@ fn resolve_win32_with_process_cwd<'a>(
     cx: &mut JsScope<'a>,
     paths: &[JsLocal<'a>],
 ) -> ValueResult<'a> {
-    let cwd = path_ffi::call_cwd(cx)?;
+    let cwd = process_cwd(cx)?;
     if HOST_IS_WIN32 && paths.is_empty() {
         return Ok(cwd);
     }
@@ -582,7 +622,7 @@ fn resolve_win32_with_drive_cwd<'a>(
         path_ffi::drive_cwd_from_env(cx, letter)?
     };
     if !cwd.to_js().to_boolean() {
-        cwd = path_ffi::call_cwd(cx)?;
+        cwd = process_cwd(cx)?;
     }
     let cwd = if cwd.is_undefined() {
         cx.heap.create_latin1_string(&[letter, b':', b'\\'])
@@ -592,27 +632,47 @@ fn resolve_win32_with_drive_cwd<'a>(
     resolve_with_cwd_win32(&cx.heap, cwd, paths).map(JsLocal::as_value)
 }
 
+pub(crate) fn join_with_original_normalize<'a>(
+    heap: &JsHeap<'a>,
+    paths: &[JsStr<'a>],
+) -> StrResult<'a> {
+    let joined = try_join::<HOST_IS_WIN32>(heap, paths)?;
+    Ok(joined.unwrap_or_else(|| heap.create_latin1_string(b".")))
+}
+
 pub(crate) fn resolve_with_real_cwd<'a>(
     cx: &mut JsScope<'a>,
     paths: &[JsLocal<'a>],
 ) -> StrResult<'a> {
+    const DOT: u16 = b'.' as u16;
+    const SLASH: u16 = b'/' as u16;
+    // `fs.createWriteStream("")` has to throw in a removed directory, whose path names a file that can be created.
+    if !HOST_IS_WIN32
+        && let [path] = paths
+        && let Some(path) = path.as_string()
+        && matches!(
+            path.characters(&cx.heap)?.units(),
+            CodeUnits::U8(b"" | b"." | b"./") | CodeUnits::U16([] | [DOT] | [DOT, SLASH])
+        )
+    {
+        let cwd = path_ffi::call_original_cwd(cx)?;
+        return Ok(cwd.as_string().expect("process.cwd() is a string"));
+    }
     let heap = &cx.heap;
     let (args, mut scratch) = (Args { heap, paths }, Scratch::new());
-    let drive = match platform_call!(HOST_IS_WIN32, resolve(None, args, &mut scratch)) {
-        Ok(ResolveStep::Done(output)) => return to_js_string(heap, paths, output),
+    let drive_cwd = match platform_call!(HOST_IS_WIN32, resolve(None, args, &mut scratch)) {
+        Ok(ResolveStep::Done(output)) => return to_detached_js_string(heap, paths, output),
         Ok(ResolveStep::NeedsCwd) => None,
-        Ok(ResolveStep::NeedsDriveCwd(letter)) => Some(letter),
+        Ok(ResolveStep::NeedsDriveCwd(letter)) => drive_cwd(heap, letter)?,
         Err(ArgError::NotAString { index }) => {
             return Err(path_ffi::throw_not_a_string(cx, paths, index));
         }
         Err(error) => return Err(error.into_js_error(heap)),
     };
-    let mut cwd = heap.create_utf8_string(utf8::real_cwd(&mut path_buffer_pool::get()))?;
-    if let Some(letter) = drive
-        && !win32::is_on_drive(&cwd.first_characters::<2>(), letter)
-    {
-        cwd = drive_cwd(heap, letter)?.unwrap_or(cwd);
-    }
+    let cwd = match drive_cwd {
+        Some(cwd) => cwd,
+        None => heap.create_utf8_string(utf8::real_cwd())?,
+    };
     resolve_with_cwd::<HOST_IS_WIN32>(heap, cwd, paths)
 }
 

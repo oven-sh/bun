@@ -27,7 +27,8 @@ const {
   unlink,
   utimes,
 } = require("node:fs/promises");
-const { dirname, isAbsolute, join, parse } = require("node:path");
+const { dirname, isAbsolute, parse } = require("node:path");
+const join = $bindgen("node_path.bind.ts", "joinWithOriginalNormalize");
 const resolve = $bindgen("node_path.bind.ts", "resolveWithRealCwd");
 
 const PromisePrototypeThen = $Promise.prototype.$then;

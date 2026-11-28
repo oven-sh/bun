@@ -1,5 +1,6 @@
 // src/runtime/node/path.rs reads strings in place, in either width, and returns substrings of its arguments.
 // The two widths have different search kernels, and short 8-bit paths have a fast path.
+import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
@@ -348,6 +349,40 @@ test("the parts of a path that is then looked up among keys in 16-bit storage", 
     formatted: "/var/data/reports/2026/summary.final.txt",
     joinedOnWindows: "\\var\\data\\reports\\2026\\summary.final.csv",
     url: "file:///var/data/reports/2026",
+  });
+});
+
+describe.each(["latin1", "utf16le"] as const)("a path that is cut from a long %s string", encoding => {
+  const [count, size] = [16, 1 << 20];
+  const directories = "/some-directory/another-directory";
+  function cut(text: string, resolvesIt: boolean) {
+    const whole = Buffer.alloc(size);
+    whole.write(text, encoding);
+    const part = whole.toString(encoding).slice(0, text.length);
+    if (resolvesIt) new Map().set(part, true);
+    expect(jscDescribe(part).includes("rope")).toBe(!resolvesIt);
+    return part;
+  }
+
+  test.each([
+    ["posix.resolve", "", (it: string) => path.posix.resolve(it)],
+    ["posix.resolve of two", "", (it: string) => path.posix.resolve("/a", it)],
+    ["posix.relative", "", (it: string) => path.posix.relative("/", it)],
+    ["win32.resolve", "C:", (it: string) => path.win32.resolve(it)],
+    ["win32.relative", "C:", (it: string) => path.win32.relative("C:\\", it)],
+    ["win32.toNamespacedPath", "C:", (it: string) => path.win32.toNamespacedPath(it)],
+    ["posix.extname", "", (it: string) => path.posix.extname(it)],
+  ])("is not kept alive by the result of %s", (_, drive, call) => {
+    for (const resolvesIt of [false, true]) {
+      const text = (index: number) => drive + `${directories}/${index}.ext`.replaceAll("/", drive ? "\\" : "/");
+      const results: string[] = [];
+      Bun.gc(true);
+      const before = heapStats().extraMemorySize;
+      for (let index = 0; index < count; index++) results.push(call(cut(text(index), resolvesIt)));
+      Bun.gc(true);
+      expect(heapStats().extraMemorySize - before).toBeLessThan((count * size) / 2);
+      expect(results).toEqual(results.map((_, index) => call(text(index))));
+    }
   });
 });
 

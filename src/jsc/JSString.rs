@@ -32,6 +32,7 @@ unsafe extern "C" {
         count: usize,
         substrings: *mut JSValue,
     );
+    fn JSC__JSString__mayHoldLongTextFor(this: &JSString, length: u32) -> bool;
     fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32);
     safe fn JSC__JSString__singleLatin1Character(global: &JSGlobalObject, character: u8)
     -> JSValue;
@@ -179,6 +180,13 @@ impl JSString {
         // SAFETY: at most `N` of them are written.
         unsafe { JSC__JSString__firstCharacters(self, characters.as_mut_ptr(), N as u32) };
         characters
+    }
+
+    /// Whether `length` characters of this string, which is no rope, are few and may keep many alive.
+    #[inline(always)]
+    pub(crate) unsafe fn may_hold_long_text_for(&self, length: u32) -> bool {
+        // SAFETY: the caller's.
+        unsafe { JSC__JSString__mayHoldLongTextFor(self, length) }
     }
 
     /// `length` characters of this string from `offset` on.

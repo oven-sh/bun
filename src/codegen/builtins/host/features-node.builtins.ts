@@ -199,9 +199,11 @@ export default b.declarations(
       "tryRelativeWin32",
       "tryResolveWin32",
       "driveCwd",
+      "joinWithOriginalNormalize",
       "registerModule",
       "resolveWithRealCwd",
       "toForeignCwd",
+      "removedInitialCwd",
     ),
   ),
 

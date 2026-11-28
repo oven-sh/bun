@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/path.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a68c412887e4a7e5ff6c4c3eead93f11c16469383b449f78fc51d713edcfd91a.
+// Written against that file with the SHA-256 77651cdd4bedc6dd3be1ff68a728a053897e32440423e082d060d64120c82c29.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:path"
@@ -57,6 +57,7 @@ const tryJoinWin32 = $bindgen("node_path.bind.ts", "tryJoinWin32");
 const tryRelativeWin32 = $bindgen("node_path.bind.ts", "tryRelativeWin32");
 const tryResolveWin32 = $bindgen("node_path.bind.ts", "tryResolveWin32");
 const driveCwd = $bindgen("node_path.bind.ts", "driveCwd");
+const removedInitialCwd = $bindgen("node_path.bind.ts", "removedInitialCwd");
 const toForeignCwd = $bindgen("node_path.bind.ts", "toForeignCwd");
 // On Windows `process.env` is a proxy, which slows down every compiled program whose library code names it.
 const getEnvUnlessOfProcess = $newCppFunction("BunProcess.cpp", "jsFunctionGetEnvUnlessOfProcess", 1);
@@ -95,7 +96,7 @@ function coerceToString(value: any): string {
 function processCwd() {
   // The name is in the message if `cwd` is no function.
   const process = $process;
-  return process.cwd();
+  return removedInitialCwd() ?? process.cwd();
 }
 
 function meansCwd(paths: string[]): boolean {
@@ -106,14 +107,39 @@ function formatExt(ext: any) {
   return ext ? `${ext[0] === "." ? "" : "."}${ext}` : "";
 }
 
+const ObjectPrototype = $getPrototypeOf({})!;
+
+/** `object[name]`, unless it comes from `Object.prototype`. A proxy answers for itself. */
+function memberOf(object: any, name: string) {
+  for (let holder = object; holder !== null && holder !== ObjectPrototype; holder = $getPrototypeOf(holder)) {
+    if ($isProxyObject(holder) || $Object.$getOwnPropertyDescriptor(holder, name)) return object[name];
+  }
+}
+
 function _format(sep: string, pathObject: any) {
   // validateObject(), without loading internal/validators.
   if (pathObject === null || $isArray(pathObject) || typeof pathObject !== "object") {
     throw $ERR_INVALID_ARG_TYPE("pathObject", "object", pathObject);
   }
+  if (
+    CAN_REPLACE_BUILT_INS &&
+    ("dir" in ObjectPrototype ||
+      "root" in ObjectPrototype ||
+      "base" in ObjectPrototype ||
+      "name" in ObjectPrototype ||
+      "ext" in ObjectPrototype)
+  ) {
+    pathObject = {
+      dir: memberOf(pathObject, "dir"),
+      root: memberOf(pathObject, "root"),
+      base: memberOf(pathObject, "base"),
+      name: memberOf(pathObject, "name"),
+      ext: memberOf(pathObject, "ext"),
+    };
+  }
   const dir = pathObject.dir || pathObject.root;
   const base = pathObject.base || `${pathObject.name || ""}${formatExt(pathObject.ext)}`;
-  if (!dir) return base;
+  if (!dir) return `${base}`;
   return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
 }
 

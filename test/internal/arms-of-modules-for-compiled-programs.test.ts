@@ -288,6 +288,12 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       arm("the-functions-of-node-fs-that-node-net-calls.mjs"),
     ],
   ],
+  "ahead-of-time/node/path.ts": [
+    [
+      "CAN_REPLACE_BUILT_INS &&",
+      "parallel-test-runs/arms-of-the-library/format-while-a-name-lies-on-object-prototype/a_test.js",
+    ],
+  ],
   "ahead-of-time/internal/fs/streams.ts": [
     [
       'if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("node:fs/promises");',

@@ -731,18 +731,13 @@ describe.concurrent("relative paths start at the cwd of the process", () => {
     );
   });
 
-  // Windows neither renames nor removes the cwd of a process.
-  test.skipIf(isWindows)("when the cwd is renamed", async () => {
-    using dir = tempDir("cp-renamed-cwd", { "before/src/file": "x" });
+  test("when path.normalize is replaced", async () => {
+    using dir = tempDir("cp-replaced-normalize", { "src/inner/file": "x" });
     const script = `${eachCopy}
-      const after = path.join(path.dirname(process.cwd()), "after");
-      fs.renameSync("../before", after);
-      await eachCopy(".", path.join(after, "a", "b"));
-      await eachCopy("src", path.join(after, "src", "a", "b"));
-      console.log(fs.readdirSync(after, { recursive: true }).sort().join());`;
-    expect(await bunRun(["--cwd", join(String(dir), "before"), "-e", script])).toSpawn(
-      [...Array(6).fill("ERR_FS_CP_EINVAL"), "src,src/file"].join("\n"),
-    );
+      path.normalize = () => "replaced";
+      await eachCopy("src", "dest");
+      console.log([0, 1, 2].map(index => fs.readdirSync("dest" + index + "/inner")).join());`;
+    expect(await bunRun(["--cwd", String(dir), "-e", script])).toSpawn("copied\ncopied\ncopied\nfile,file,file");
   });
 
   test.skipIf(isWindows)("when the cwd is removed, absolute paths do not need it", async () => {

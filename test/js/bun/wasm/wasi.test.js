@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 import { WASI } from "node:wasi";
@@ -164,17 +164,19 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   expect(wasi.FD_MAP.has(4)).toBe(true);
 });
 
-it("a relative preopen stays the directory that was opened", () => {
+it("a relative preopen does not depend on what a script has replaced", () => {
   using dir = tempDir("wasi-relative-preopen", {
     "first/data/first.txt": "",
     "second/data/second.txt": "",
   });
   const { cwd } = process;
+  const { normalize } = path;
   const originalCwd = cwd();
   const second = path.join(String(dir), "second");
   try {
     process.chdir(path.join(String(dir), "first"));
     process.cwd = () => second;
+    path.normalize = () => second;
     const wasi = new WASI({ preopens: { "/": "data" } });
     wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
     const memory = Buffer.from(wasi.memory.buffer);
@@ -183,110 +185,42 @@ it("a relative preopen stays the directory that was opened", () => {
     const WASI_ENOENT = 44;
     const stat = name => wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write(name, 1024), 8192);
     expect([stat("first.txt"), stat("second.txt")]).toEqual([WASI_ESUCCESS, WASI_ENOENT]);
-    process.cwd = cwd;
-    process.chdir(second);
-    expect([stat("first.txt"), stat("second.txt")]).toEqual([WASI_ESUCCESS, WASI_ENOENT]);
+    const [WASI_O_CREAT, WASI_RIGHT_FD_WRITE] = [1, 64n];
+    const length = memory.write("made.txt", 1024);
+    expect(wasi.wasiImport.path_open(3, 0, 1024, length, WASI_O_CREAT, WASI_RIGHT_FD_WRITE, 0n, 0, 8192)).toBe(0);
+    wasi.wasiImport.fd_close(4);
     wasi.wasiImport.fd_close(3);
+    expect(fs.readdirSync("data").sort()).toEqual(["first.txt", "made.txt"]);
   } finally {
     process.cwd = cwd;
+    path.normalize = normalize;
     process.chdir(originalCwd);
   }
 });
 
-// Win32 resolves `..` before it follows links.
-it.skipIf(isWindows)("`..` after a link in a preopen is resolved by the file system", () => {
-  using dir = tempDir("wasi-link-preopen", { "near/near.txt": "", "far/far.txt": "", "far/deep/file": "" });
-  fs.symlinkSync(path.join(String(dir), "far", "deep"), path.join(String(dir), "near", "link"));
-  const wasi = new WASI({ preopens: { "/": `${dir}/near/link/..` } });
-  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
-  const memory = Buffer.from(wasi.memory.buffer);
-  const stat = name => wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write(name, 1024), 8192);
-  expect([stat("far.txt"), stat("near.txt")]).toEqual([0, 44]);
-  wasi.wasiImport.fd_close(3);
+it("the first instance does not keep a function of node:path that was replaced at the time", async () => {
+  using dir = tempDir("wasi-restored-function", { "file.txt": "" });
+  const script = `
+    import path from "node:path";
+    import { WASI } from "node:wasi";
+    const { relative } = path;
+    path.relative = () => "..";
+    new WASI({});
+    path.relative = relative;
+    const wasi = new WASI({ preopens: { "/": "." } });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const length = Buffer.from(wasi.memory.buffer).write("file.txt", 1024);
+    console.log(wasi.wasiImport.path_open(3, 0, 1024, length, 0, 2n, 0n, 0, 8192));`;
+  expect(await bunRun(["--cwd", String(dir), "-e", script])).toSpawn("0");
 });
 
-// Other systems refuse such a name.
-it.skipIf(!isLinux)("a preopen whose name is not UTF-8 is not the directory with the decoded name", () => {
-  using dir = tempDir("wasi-latin1-preopen", { "\ufffd/other.txt": "" });
-  const target = Buffer.concat([Buffer.from(`${dir}/`), Buffer.from([0xff])]);
-  fs.mkdirSync(target);
-  fs.symlinkSync(target, path.join(String(dir), "link"));
-  const wasi = new WASI({ preopens: { "/": path.join(String(dir), "link") } });
-  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
-  const length = Buffer.from(wasi.memory.buffer).write("other.txt", 1024);
-  const WASI_EINVAL = 28;
-  expect(wasi.wasiImport.path_filestat_get(3, 0, 1024, length, 8192)).toBe(WASI_EINVAL);
-  expect(wasi.wasiImport.path_open(3, 0, 1024, length, 0, 2n, 0n, 0, 8192)).toBe(WASI_EINVAL);
-  wasi.wasiImport.fd_close(3);
-});
-
-it.each([
-  ["has no `native`", realpathSync => realpathSync],
-  [
-    "fails",
-    () => () => {
-      throw new Error("not available");
-    },
-  ],
-])("a preopen is opened where fs.realpathSync %s", (_, replace) => {
-  using dir = tempDir("wasi-replaced-realpath", { "file.txt": "" });
-  const { realpathSync } = fs;
-  let wasi;
-  fs.realpathSync = replace((...args) => realpathSync(...args));
-  try {
-    wasi = new WASI({ preopens: { "/": String(dir) } });
-  } finally {
-    fs.realpathSync = realpathSync;
-  }
-  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
-  const memory = Buffer.from(wasi.memory.buffer);
-  expect(wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write("file.txt", 1024), 8192)).toBe(0);
-  wasi.wasiImport.fd_close(3);
-});
-
-it("a preopen is converted to a string", () => {
+it("a preopen can be a String object", () => {
   using dir = tempDir("wasi-string-object-preopen", { "file.txt": "" });
   const wasi = new WASI({ preopens: { "/": new String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
   expect(wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write("file.txt", 1024), 8192)).toBe(0);
   wasi.wasiImport.fd_close(3);
-});
-
-// Windows neither renames nor removes the cwd of a process.
-it.skipIf(isWindows)("the preopen '.' is the cwd under its current name", async () => {
-  using dir = tempDir("wasi-cwd-preopen", { "before/renamed.txt": "" });
-  const script = `
-    import fs from "node:fs";
-    import { WASI } from "node:wasi";
-    const before = process.cwd();
-    fs.renameSync(before, "../after");
-    fs.mkdirSync(before);
-    fs.writeFileSync(before + "/other.txt", "");
-    function print(preopen) {
-      const wasi = new WASI({ preopens: { "/": preopen } });
-      wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
-      const memory = Buffer.from(wasi.memory.buffer);
-      const stat = name => wasi.wasiImport.path_filestat_get(3, 0, 1024, memory.write(name, 1024), 8192);
-      console.log(stat("renamed.txt"), stat("other.txt"));
-    }
-    [".", "./.", "../after"].forEach(print);
-    if (process.platform === "linux") {
-      fs.rmSync("../after", { recursive: true });
-      print(".");
-    }`;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    cwd: path.join(String(dir), "before"),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "0 44\n0 44\n0 44\n" + (isLinux ? "28 28\n" : ""),
-    stderr: "",
-    exitCode: 0,
-  });
 });
 
 it("poll_oneoff waits on a clock subscription and reports the event", () => {

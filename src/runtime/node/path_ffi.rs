@@ -29,6 +29,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__Process__cachedCwdUnlessReplaced(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__callCwd(global: &JSGlobalObject) -> JSValue;
+    safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__isEnvOfProcess(global: &JSGlobalObject) -> bool;
     safe fn Bun__Process__getDriveCwdFromEnv(global: &JSGlobalObject, letter: u8) -> JSValue;
 }
@@ -78,20 +79,23 @@ pub(super) fn throw_not_a_string<'a>(
     }
 }
 
-/// The result of `process.cwd()` if calling it would have no effect.
+/// The result of `process.cwd()` if calling it would have no effect, `undefined` if it is replaced, and `None` if it asks the system.
 #[inline(always)]
-pub(super) fn cached_cwd<'a>(heap: &JsHeap<'a>) -> Option<JsLocal<'a, JSString>> {
+pub(super) fn cached_cwd<'a>(heap: &JsHeap<'a>) -> Option<JsLocal<'a>> {
     // SAFETY: it compares slots of `process` and returns a field. It neither runs JavaScript nor throws.
     let cwd = Bun__Process__cachedCwdUnlessReplaced(unsafe { heap.global() });
-    (!cwd.is_empty())
-        .then(|| JsLocal::new(heap, cwd))?
-        .as_string()
+    (!cwd.is_empty()).then(|| JsLocal::new(heap, cwd))
 }
 
 /// `process.cwd()`
 #[inline(always)]
 pub(super) fn call_cwd<'a>(cx: &mut JsScope<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
     call(cx, Bun__Process__callCwd)
+}
+
+/// The original `process.cwd()`.
+pub(super) fn call_original_cwd<'a>(cx: &mut JsScope<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    call(cx, Process__getCachedCwd)
 }
 
 /// Whether `process.env` is neither replaced nor the copy that a Worker has.

@@ -6050,6 +6050,11 @@ JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 
+extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(getCachedCwd(globalObject));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(getCachedCwd(globalObject));
@@ -6078,7 +6083,7 @@ extern "C" JSC::EncodedJSValue Bun__Process__cachedCwdUnlessReplaced(JSC::JSGlob
         return {};
     auto* processObject = globalObject->processObject();
     if (processObject->isCwdReplaced())
-        return {};
+        return JSValue::encode(jsUndefined());
     return JSValue::encode(processObject->cachedCwd(Bun__cwdGeneration.load(std::memory_order_acquire)));
 }
 

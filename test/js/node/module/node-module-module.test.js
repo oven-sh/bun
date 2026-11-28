@@ -1276,6 +1276,12 @@ console.log("survived", require("./late.js"));`,
     expect(dn).toBe(path.dirname(filename));
   });
 
+  test("Module.prototype._compile with a String object as the file name", () => {
+    const module = new Module("module id goes here");
+    module._compile("module.exports = __dirname", new String("/a/b.js"));
+    expect(module.exports).toBe("/a");
+  });
+
   test("Module._extensions", () => {
     expect(".js" in Module._extensions).toBeTrue();
     expect(".json" in Module._extensions).toBeTrue();

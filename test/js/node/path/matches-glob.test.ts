@@ -140,7 +140,7 @@ it.each(
     "16-bit": (text: string) => ("\u65e5" + text).slice(1),
   }),
 )("returns the results recorded from Node.js, with %s strings", (_, form) => {
-  expect(nodeResults).toHaveLength(1172);
+  expect(nodeResults).toHaveLength(1234);
   const different: unknown[] = [];
   for (const [glob, flags, matching, others = []] of nodeResults) {
     const actual = (pathname: string) => {
@@ -225,6 +225,61 @@ it("caches a pattern for each platform and string width", () => {
   }
 });
 
+describe("numeric ranges", () => {
+  const { matchesGlob } = path.posix;
+  const bounds = [
+    "0",
+    "1",
+    "8",
+    "9",
+    "10",
+    "11",
+    "19",
+    "20",
+    "89",
+    "99",
+    "100",
+    "101",
+    "110",
+    "00",
+    "07",
+    "010",
+    "0120",
+  ];
+
+  it.each(bounds)("from %s match the numbers that they list", first => {
+    const different: string[] = [];
+    for (const last of bounds) {
+      const width = /^0\d/.test(first) || /^0\d/.test(last) ? Math.max(first.length, last.length) : 0;
+      const glob = `a{${first}..${last}}`;
+      for (let number = 0; number <= 121; number++) {
+        for (const text of new Set([1, 2, 3, 4].map(length => String(number).padStart(length, "0")))) {
+          const isInRange = number >= Math.min(+first, +last) && number <= Math.max(+first, +last);
+          const isListed = isInRange && text === String(number).padStart(width, "0");
+          if (matchesGlob("a" + text, glob) !== isListed) different.push(`${text} ${glob}`);
+        }
+      }
+    }
+    expect(different).toEqual([]);
+  });
+
+  it("do not count towards the limit of brace expansion", () => {
+    expect(["1", "150000", "200000", "0", "200001"].map(it => matchesGlob(it, "{1..200000}"))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    const hours = "{2015..2030}/{01..12}/{01..31}/{00..23}/*.gz";
+    expect(matchesGlob("2030/12/31/23/a.gz", hours)).toBe(true);
+    expect(matchesGlob("2030/12/31/24/a.gz", hours)).toBe(false);
+    expect(matchesGlob("9007199254740991", "{0..9007199254740991}")).toBe(true);
+    expect(matchesGlob("9007199254740991", "{0..9007199254740990}")).toBe(false);
+    expect(matchesGlob("9007199254740992", "{9007199254740992..9007199254740992}")).toBe(true);
+  });
+});
+
 describe("large arguments", () => {
   const times = (count: number, text: string) => Buffer.alloc(count * text.length, text).toString();
   const { matchesGlob } = path.posix;
@@ -274,8 +329,8 @@ describe("large arguments", () => {
   });
 
   it("many alternatives", () => {
-    expect(matchesGlob("x/4999", "**/{1..5000}")).toBe(true);
-    expect(matchesGlob("x/5001", "**/{1..5000}")).toBe(false);
+    expect(matchesGlob("x/9998", "**/{2..10000..2}")).toBe(true);
+    expect(matchesGlob("x/9999", "**/{2..10000..2}")).toBe(false);
     expect(matchesGlob("x", "{{1..3000},*}")).toBe(true);
     expect(matchesGlob("{a}", times(3000, "{a}") + ",{b}")).toBe(false);
   });
@@ -289,10 +344,10 @@ describe("large arguments", () => {
   });
 
   it("many alternatives against a long name", () => {
-    expect(matchesGlob(times(4000, "a") + "b", "{1..3000}*" + times(32, "a") + "*b")).toBe(false);
-    expect(matchesGlob(times(300_000, "a") + "b", "{1..1000}*a*b")).toBe(false);
-    expect(matchesGlob("999" + times(300_000, "a") + "b", "{1..1000}*a*b")).toBe(true);
-    expect(matchesGlob(times(4000, "a") + "b", "*" + times(32, "a") + "*{1..3000}*b")).toBe(false);
+    expect(matchesGlob(times(4000, "a") + "b", "{1..6000..2}*" + times(32, "a") + "*b")).toBe(false);
+    expect(matchesGlob(times(300_000, "a") + "b", "{1..2000..2}*a*b")).toBe(false);
+    expect(matchesGlob("1999" + times(300_000, "a") + "b", "{11..2000..2}*a*b")).toBe(true);
+    expect(matchesGlob(times(4000, "a") + "b", "*" + times(32, "a") + "*{1..6000..2}*b")).toBe(false);
   });
 
   // 4 s on a debug build.
@@ -329,12 +384,21 @@ describe("large arguments", () => {
     expect(["1-a${b}-2c", "2-z${b}-3d", "2-z${b}-4d"].map(it => matchesGlob(it, glob))).toEqual([true, true, false]);
   });
 
-  // 6 s on a debug build.
-  it.skipIf(isDebug)("brace expansion stops after 4 million characters", () => {
-    const [long, tail] = [times(1000, "a"), times(10, "x")];
-    expect(matchesGlob(long, long + times(40, "{,}"))).toBe(true);
-    expect(matchesGlob(long + times(29, "x") + "y" + tail, long + times(40, "{x,y}"))).toBe(true);
-    expect(matchesGlob(long + times(27, "x") + "yxx" + tail, long + times(40, "{x,y}"))).toBe(false);
+  it.each([
+    ["100,000 results", "y", times(17, "{x,y}")],
+    ["100,000 results", "200001", "{1..200001..2}"],
+    ["100,000 results", "", times(40, "{,}")],
+    ["4 million characters", "y", times(1000, "a") + times(12, "{x,y}")],
+  ])("throws where Node.js drops what brace expansion makes after %s (%#)", (_, pathname, glob) => {
+    for (let round = 0; round < 2; round++) {
+      expect(() => matchesGlob(pathname, glob)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    }
+  });
+
+  // 10 s on a debug build.
+  it.skipIf(isDebug)("expands braces up to the limits of Node.js", () => {
+    expect(matchesGlob("199999", "{1..199999..2}")).toBe(true);
+    expect(matchesGlob(times(1000, "a") + times(11, "y"), times(1000, "a") + times(11, "{x,y}"))).toBe(true);
   });
 
   it("nested groups", () => {
@@ -354,11 +418,23 @@ describe("large arguments", () => {
   // 20 s on a debug build.
   it.skipIf(isDebug)("more compiled bytes than the cache holds", () => {
     for (let round = 0; round < 2; round++) {
-      for (const prefix of "abcd") {
-        expect(matchesGlob(`${prefix}50000`, `${prefix}{1..50000}`)).toBe(true);
-        expect(matchesGlob(`${prefix}50001`, `${prefix}{1..50000}`)).toBe(false);
+      for (const prefix of "abcdefgh") {
+        expect(matchesGlob(`${prefix}100000`, `${prefix}{2..100000..2}`)).toBe(true);
+        expect(matchesGlob(`${prefix}99999`, `${prefix}{2..100000..2}`)).toBe(false);
       }
     }
+  });
+
+  // Compiling one takes as long as a few hundred matches.
+  it.skipIf(isDebug || isASAN)("compiles a few large patterns once when they take turns", () => {
+    let matches = 0;
+    for (let i = 0; i < 400; i++) for (const prefix of "abc") matches += +matchesGlob("b8", `${prefix}{2..80000..2}`);
+    expect(matches).toBe(400);
+  });
+
+  it.skipIf(isDebug || isASAN)("gives up on compiling a pattern once", () => {
+    const match = () => matchesGlob("a", "{{1..10000}/*,*/{1..10000}}");
+    for (let i = 0; i < 100; i++) expect(match).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
   });
 
   it.each([

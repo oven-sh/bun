@@ -1,7 +1,6 @@
 //! `brace-expansion`, for a pattern without backslashes: <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L96-L291>
 
 use core::ops::Range;
-use std::collections::VecDeque;
 
 use bun_core::fmt::FormatDouble;
 use bun_core::{strings, w};
@@ -9,84 +8,74 @@ use bun_paths::PathChar;
 
 use super::append_ascii;
 use super::budget::{Abort, Budget, check_stack, cost};
-use crate::{BACKSLASH, CodeUnit, byte_at};
+use crate::{BACKSLASH, CodeUnit, byte_at, scan};
 
 const OPEN: u8 = b'{';
 const CLOSE: u8 = b'}';
 const COMMA: u8 = b',';
 /// Stands in for `escOpen` and `escClose`.
 const ESCAPED_BRACE: u8 = BACKSLASH;
-/// The usual length of `"\0CLOSE" + Math.random() + "\0"`, which counts toward [`EXPANSION_MAX_LENGTH`].
-const UPSTREAM_ESCAPED_BRACE_LEN: usize = 25;
 
 const EXPANSION_MAX: usize = 100_000;
 const EXPANSION_MAX_LENGTH: usize = 4_000_000;
 
 const NOT_FOUND: usize = usize::MAX;
 
-fn upstream_len(text: &[u16]) -> usize {
-    let escaped = text.iter().filter(|unit| unit.eq_ascii(ESCAPED_BRACE));
-    text.len() + (UPSTREAM_ESCAPED_BRACE_LEN - 1) * escaped.count()
+/// Upstream drops the expansions that do not fit, and answers `false` for the paths that they match.
+fn check_limits(count: usize, total_len: usize) -> Result<(), Abort> {
+    let fits = count <= EXPANSION_MAX && total_len <= EXPANSION_MAX_LENGTH;
+    fits.then_some(()).ok_or(Abort::BudgetExceeded)
 }
 
-#[derive(Clone, Copy)]
-struct Expansion {
-    /// In [`Expansions::units`].
-    end: usize,
-    upstream_len: usize,
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Numbers {
+    Listed,
+    /// `{8..25}` is `{[8-9],1[0-9],2[0-5]}`, for a pattern without brackets and parentheses.
+    AsDigitClasses,
 }
 
 #[derive(Default)]
 pub(super) struct Expansions {
     units: Vec<u16>,
-    entries: Vec<Expansion>,
-    total_upstream_len: usize,
+    ends: Vec<usize>,
 }
 
 impl Expansions {
     fn one(text: &[u16]) -> Self {
-        let mut expansions = Expansions::default();
-        expansions.push(&[text], upstream_len(text));
-        expansions
+        Expansions {
+            units: text.to_vec(),
+            ends: vec![text.len()],
+        }
     }
 
-    fn push(&mut self, pieces: &[&[u16]], upstream_len: usize) {
+    fn push(&mut self, pieces: &[&[u16]]) -> Result<(), Abort> {
         for piece in pieces {
             self.units.extend_from_slice(piece);
         }
-        let end = self.units.len();
-        self.entries.push(Expansion { end, upstream_len });
-        self.total_upstream_len += upstream_len;
+        self.ends.push(self.units.len());
+        check_limits(self.len(), self.units.len())
     }
 
     fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn has_room_for(&self, upstream_len: usize) -> bool {
-        self.len() < EXPANSION_MAX && self.total_upstream_len + upstream_len <= EXPANSION_MAX_LENGTH
+        self.ends.len()
     }
 
     fn memory_cost(&self) -> usize {
-        size_of_val(&self.units[..]) + size_of_val(&self.entries[..])
+        size_of_val(&self.units[..]) + size_of_val(&self.ends[..])
     }
 
     fn get(&self, index: usize) -> &[u16] {
-        let start = index.checked_sub(1).map_or(0, |it| self.entries[it].end);
-        &self.units[start..self.entries[index].end]
-    }
-
-    fn iter_with_upstream_len(&self) -> impl Iterator<Item = (&[u16], usize)> {
-        let mut start = 0;
-        self.entries.iter().map(move |entry| {
-            let text = &self.units[start..entry.end];
-            start = entry.end;
-            (text, entry.upstream_len)
-        })
+        let start = index.checked_sub(1).map_or(0, |it| self.ends[it]);
+        &self.units[start..self.ends[index]]
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &[u16]> {
-        self.iter_with_upstream_len().map(|(text, _)| text)
+        let mut start = 0;
+        (self.ends.iter()).map(move |&end| &self.units[core::mem::replace(&mut start, end)..end])
+    }
+
+    pub(super) fn has_bracket(&self) -> bool {
+        scan::index_of(&self.units, b'[').is_some()
     }
 }
 
@@ -99,30 +88,36 @@ fn has_braces(pattern: &[u16]) -> bool {
     })
 }
 
-/// <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1238-L1244>
+/// `None` if the numbers have to be listed: <https://github.com/nodejs/node/blob/v26.12.1/deps/minimatch/index.js#L1238-L1244>
 pub(super) fn brace_expand(
-    mut pattern: Vec<u16>,
+    pattern: &[u16],
+    numbers: Numbers,
     budget: &mut Budget<'_>,
-) -> Result<Expansions, Abort> {
-    if !has_braces(&pattern) {
-        return Ok(Expansions::one(&pattern));
+) -> Result<Option<Expansions>, Abort> {
+    if !has_braces(pattern) {
+        return Ok(Some(Expansions::one(pattern)));
     }
+    let mut pattern = pattern.to_vec();
     let starts_with_empty_braces = pattern.starts_with(w!("{}"));
     if starts_with_empty_braces {
         pattern[.."{}".len()].fill(ESCAPED_BRACE.into());
     }
     let checkpoint = budget.bytes_in_use();
-    let mut expansions = Expander::new(pattern).expand_all(Scope::Top, budget)?;
+    let mut expander = Expander::new(pattern, numbers);
+    let mut expansions = expander.expand_all(Scope::Top, budget)?;
+    if numbers == Numbers::AsDigitClasses && expander.has_listed_bracket {
+        return Ok(None);
+    }
     budget.settle_memory(checkpoint, expansions.memory_cost())?;
     strings::replace_char_in_place(&mut expansions.units, ESCAPED_BRACE, CLOSE);
     if starts_with_empty_braces {
         let mut start = 0;
-        for entry in &expansions.entries {
+        for &end in &expansions.ends {
             expansions.units[start] = OPEN.into();
-            start = entry.end;
+            start = end;
         }
     }
-    Ok(expansions)
+    Ok(Some(expansions))
 }
 
 struct BraceGroup {
@@ -134,29 +129,29 @@ struct BraceGroup {
 /// The `acc` of `expand_`. Its strings are only written out once, after the last group.
 struct LazyCombine {
     common_prefix: Vec<u16>,
-    /// Those with more than one value in use. The last varies fastest.
-    groups: VecDeque<BraceGroup>,
-    upstream_lens: Vec<u32>,
+    /// Those with more than one value. The last varies fastest.
+    groups: Vec<BraceGroup>,
+    count: usize,
+    total_len: usize,
 }
 
 impl LazyCombine {
     fn new() -> Self {
         LazyCombine {
             common_prefix: Vec::new(),
-            groups: VecDeque::new(),
-            upstream_lens: vec![0],
+            groups: Vec::new(),
+            count: 1,
+            total_len: 0,
         }
     }
 
     fn memory_cost(&self) -> usize {
         let of_group = |it: &BraceGroup| it.values.memory_cost() + size_of_val(&it.post[..]);
-        size_of_val(&self.common_prefix[..])
-            + size_of_val(&self.upstream_lens[..])
-            + self.groups.iter().map(of_group).sum::<usize>()
+        size_of_val(&self.common_prefix[..]) + self.groups.iter().map(of_group).sum::<usize>()
     }
 
     fn is_all_empty(&self) -> bool {
-        self.upstream_lens.iter().all(|&len| len == 0)
+        self.total_len == 0
     }
 
     /// `acc = combine(acc, pre, values)`
@@ -166,50 +161,28 @@ impl LazyCombine {
         values: Expansions,
         budget: &mut Budget<'_>,
     ) -> Result<(), Abort> {
-        let pre_len = upstream_len(pre);
-        let mut upstream_lens = Vec::new();
-        let mut total_len = 0;
-        'combine: for &acc_len in &self.upstream_lens {
-            for value in &values.entries {
-                let len = acc_len as usize + pre_len + value.upstream_len;
-                total_len += len;
-                if upstream_lens.len() == EXPANSION_MAX || total_len > EXPANSION_MAX_LENGTH {
-                    break 'combine;
-                }
-                upstream_lens.push(len as u32);
-            }
-        }
-        budget.spend(pre.len() + self.upstream_lens.len() + upstream_lens.len())?;
-        self.upstream_lens = upstream_lens;
+        budget.spend(cost::CALL + pre.len() + values.units.len())?;
+        self.total_len = (self.total_len + self.count * pre.len()) * values.len()
+            + self.count * values.units.len();
+        self.count *= values.len();
+        check_limits(self.count, self.total_len)?;
 
-        let literal = match self.groups.back_mut() {
+        let literal = match self.groups.last_mut() {
             Some(last) => &mut last.post,
             None => &mut self.common_prefix,
         };
         literal.extend_from_slice(pre);
         if values.len() < 2 {
             literal.extend_from_slice(&values.units);
-            return Ok(());
-        }
-        let post = Vec::new();
-        self.groups.push_back(BraceGroup { values, post });
-        // The limits cut the list off before the leading groups get to their second value.
-        let mut combinations = 1;
-        let still_varies = |group: &&BraceGroup| {
-            let still_varies = combinations < self.upstream_lens.len();
-            combinations = combinations.saturating_mul(group.values.len());
-            still_varies
-        };
-        let varying = self.groups.iter().rev().take_while(still_varies).count();
-        for fixed in self.groups.drain(..self.groups.len() - varying) {
-            self.common_prefix.extend_from_slice(fixed.values.get(0));
-            self.common_prefix.extend_from_slice(&fixed.post);
+        } else {
+            let post = Vec::new();
+            self.groups.push(BraceGroup { values, post });
         }
         Ok(())
     }
 
     fn write_expansion(&self, index: usize, text: &mut Vec<u16>) {
-        let mut stride: usize = self.groups.iter().map(|it| it.values.len()).product();
+        let mut stride = self.count;
         text.clone_from(&self.common_prefix);
         for group in &self.groups {
             stride /= group.values.len();
@@ -227,22 +200,16 @@ impl LazyCombine {
         budget: &mut Budget<'_>,
     ) -> Result<Expansions, Abort> {
         let mut out = Expansions::default();
-        let pre_len = upstream_len(pre);
-        budget.spend(pre.len())?;
         let mut acc = Vec::new();
-        for (index, &acc_len) in self.upstream_lens.iter().enumerate() {
-            budget.spend(cost::CALL * self.groups.len() + acc_len as usize)?;
+        for index in 0..self.count {
             self.write_expansion(index, &mut acc);
-            for (value, value_len) in values.iter_with_upstream_len() {
-                let len = acc_len as usize + pre_len + value_len;
+            budget.spend(cost::CALL * self.groups.len() + acc.len())?;
+            for value in values.iter() {
+                let len = acc.len() + pre.len() + value.len();
                 budget.spend(cost::CALL + len)?;
-                if drop_empties && len == 0 {
-                    continue;
+                if !(drop_empties && len == 0) {
+                    out.push(&[&acc, pre, value])?;
                 }
-                if !out.has_room_for(len) {
-                    return Ok(out);
-                }
-                out.push(&[&acc, pre, value], len);
             }
         }
         Ok(out)
@@ -271,10 +238,13 @@ struct Expander {
     text: Vec<u16>,
     /// One per index of `text` and one for its end. Not updated when a brace is escaped.
     lookahead: Vec<Lookahead>,
+    numbers: Numbers,
+    /// `{A..z}` has one.
+    has_listed_bracket: bool,
 }
 
 impl Expander {
-    fn new(text: Vec<u16>) -> Self {
+    fn new(text: Vec<u16>, numbers: Numbers) -> Self {
         let at_end = Lookahead {
             unmatched_close: NOT_FOUND,
             comma: NOT_FOUND,
@@ -298,7 +268,12 @@ impl Expander {
             }
             lookahead[at] = next;
         }
-        Expander { text, lookahead }
+        Expander {
+            text,
+            lookahead,
+            numbers,
+            has_listed_bracket: false,
+        }
     }
 
     fn expand_all(&mut self, scope: Scope, budget: &mut Budget<'_>) -> Result<Expansions, Abort> {
@@ -382,7 +357,11 @@ impl Expander {
                     is_first_group = false;
                 }
                 let values = match sequence {
-                    Some(sequence) => sequence.expand(budget)?,
+                    Some(sequence) => {
+                        let values = sequence.expand(self.numbers, budget)?;
+                        self.has_listed_bracket |= sequence.is_alpha && values.has_bracket();
+                        values
+                    }
                     None => {
                         let drops_empties =
                             drop_empties && is_last && start == open && acc.is_all_empty();
@@ -411,34 +390,27 @@ impl Expander {
         budget: &mut Budget<'_>,
     ) -> Result<Expansions, Abort> {
         let mut values = Expansions::default();
-        // Returns whether everything fit.
         let mut push_all = |expanded: Expansions, checkpoint: usize, budget: &mut Budget<'_>| {
-            for (value, len) in expanded.iter_with_upstream_len() {
-                if drops_empties && len == 0 {
-                    continue;
+            for value in expanded.iter() {
+                if !(drops_empties && value.is_empty()) {
+                    values.push(&[value])?;
                 }
-                if !values.has_room_for(len) {
-                    return Ok(false);
-                }
-                values.push(&[value], len);
             }
-            budget
-                .settle_memory(checkpoint, values.memory_cost())
-                .map(|()| true)
+            budget.settle_memory(checkpoint, values.memory_cost())
         };
         let checkpoint = budget.bytes_in_use();
         let comma_parts = self.parse_comma_parts(body.clone());
         if comma_parts.len() > 1 {
             for part in comma_parts {
                 let expanded = self.expand(part, Scope::InBraces, budget)?;
-                if !push_all(expanded, checkpoint, budget)? {
-                    break;
-                }
+                push_all(expanded, checkpoint, budget)?;
             }
             return Ok(values);
         }
-        // `x{{a,b}}y` is `x{a}y` and `x{b}y`.
+        // `x{{a,b}}y` is `x{a}y` and `x{b}y`, which are parsed again.
+        let numbers = core::mem::replace(&mut self.numbers, Numbers::Listed);
         let inner = self.expand(body, Scope::InBraces, budget)?;
+        self.numbers = numbers;
         let embrace = |text: &[u16]| [w!("{"), text, w!("}")].concat();
         if inner.len() == 1 {
             return Ok(Expansions::one(&embrace(&inner.units)));
@@ -446,10 +418,10 @@ impl Expander {
         budget.settle_memory(checkpoint, inner.memory_cost())?;
         let checkpoint = budget.bytes_in_use();
         for text in inner.iter() {
-            let expanded = Expander::new(embrace(text)).expand_all(Scope::Embraced, budget)?;
-            if !push_all(expanded, checkpoint, budget)? {
-                break;
-            }
+            let mut expander = Expander::new(embrace(text), numbers);
+            let expanded = expander.expand_all(Scope::Embraced, budget)?;
+            self.has_listed_bracket |= expander.has_listed_bracket;
+            push_all(expanded, checkpoint, budget)?;
         }
         Ok(values)
     }
@@ -531,17 +503,21 @@ impl Sequence {
     }
 
     /// `expandSequence`
-    fn expand(&self, budget: &mut Budget<'_>) -> Result<Expansions, Abort> {
+    fn expand(&self, numbers: Numbers, budget: &mut Budget<'_>) -> Result<Expansions, Abort> {
         let mut values = Expansions::default();
         let mut text = Vec::new();
-        let reverse = self.last < self.first;
-        let step = if reverse { -self.step } else { self.step };
-        let mut value = self.first;
-        while if reverse {
-            value >= self.last
-        } else {
-            value <= self.last
-        } {
+        let (low, high) = (self.first.min(self.last), self.first.max(self.last));
+        let as_digit_classes = numbers == Numbers::AsDigitClasses
+            && !self.is_alpha
+            && self.step == 1.0
+            && low >= 0.0
+            && high <= MAX_SAFE_INTEGER
+            // `{10..9}` has no class, so it keeps its order.
+            && high - low >= 2.0;
+        let reverse = self.last < self.first && !as_digit_classes;
+        let mut step = if reverse { -self.step } else { self.step };
+        let mut value = if reverse { high } else { low };
+        while (low..=high).contains(&value) {
             text.clear();
             if !self.is_alpha {
                 let mut buffer = [0; 124];
@@ -554,13 +530,41 @@ impl Sequence {
             } else if value != f64::from(BACKSLASH) {
                 text.push(value as u16);
             }
+            if as_digit_classes {
+                step = widen_last_digits(&mut text, (high - value) as u64 + 1) as f64;
+            }
             budget.spend(cost::LOOKUP + text.len())?;
-            if !values.has_room_for(text.len()) {
+            values.push(&[&text])?;
+            // From 2^53 on, adding 1 changes nothing.
+            if low == high {
                 break;
             }
-            values.push(&[&text], text.len());
             value += step;
         }
         Ok(values)
     }
+}
+
+const MAX_SAFE_INTEGER: f64 = ((1u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+
+/// Makes `digits` match the numbers that follow it too, at most `max_count` in all. Returns how many it matches.
+fn widen_last_digits(digits: &mut Vec<u16>, max_count: u64) -> u64 {
+    let (mut at, mut place_value) = (digits.len() - 1, 1);
+    while at != 0 && digits[at].eq_ascii(b'0') && place_value * 10 <= max_count {
+        at -= 1;
+        place_value *= 10;
+    }
+    let first = digits[at].to_u8_saturating();
+    let count = (max_count / place_value).min(u64::from(b'9' + 1 - first));
+    let any_digits = digits.len() - 1 - at;
+    if count > 1 {
+        digits.truncate(at);
+        append_ascii(digits, &[b'[', first, b'-', first + count as u8 - 1, b']']);
+    } else {
+        digits.truncate(at + 1);
+    }
+    for _ in 0..any_digits {
+        append_ascii(digits, b"[0-9]");
+    }
+    count * place_value
 }

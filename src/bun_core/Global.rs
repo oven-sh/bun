@@ -49,6 +49,11 @@ pub fn did_change_working_directory() {
     Bun__cwdGeneration.fetch_add(1, Ordering::Release);
 }
 
+/// Whether the process started in [`top_level_dir`] and has not left it.
+pub fn is_in_initial_working_directory() -> bool {
+    Bun__cwdGeneration.load(Ordering::Acquire) == 0
+}
+
 static HAS_WORKING_DIRECTORY_IN_EXECUTABLE: AtomicBool = AtomicBool::new(false);
 static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> =
     crate::RwLock::new(None);

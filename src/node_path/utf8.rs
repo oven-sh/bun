@@ -3,19 +3,13 @@
 use bun_core::UnwrapOrOom;
 use bun_core::strings::{self, CodeUnits};
 use bun_paths::fs::FileSystem;
-use bun_paths::{PathBuffer, path_buffer_pool};
 
 use crate::{Output, ResolveStep, Result, Scratch};
 
-/// Where a relative path that is passed to the file system starts. Once that directory is removed, its path as of startup or the last `process.chdir()`.
-pub fn real_cwd(buf: &mut PathBuffer) -> &[u8] {
-    if let Some(directory) = bun_core::working_directory_in_executable() {
-        return directory;
-    }
-    match bun_core::getcwd(buf) {
-        Ok(cwd) => cwd,
-        Err(_) => bun_paths::without_trailing_sep(FileSystem::instance().top_level_dir()),
-    }
+/// The working directory as of startup or the last `process.chdir()`, even if a script replaces `process.cwd`.
+pub fn real_cwd() -> &'static [u8] {
+    bun_core::working_directory_in_executable()
+        .unwrap_or_else(|| bun_paths::without_trailing_sep(FileSystem::instance().top_level_dir()))
 }
 
 fn to_bytes(text: CodeUnits<'_>) -> Vec<u8> {
@@ -76,8 +70,7 @@ pub mod posix {
         {
             return into_bytes(output, paths);
         }
-        let mut buf = path_buffer_pool::get();
-        let mut cwd = real_cwd(&mut buf);
+        let mut cwd = real_cwd();
         if cfg!(windows) {
             cwd = posix::cwd_from_win32(cwd, &mut cwd_scratch).unwrap_or_oom();
         }
@@ -143,9 +136,8 @@ pub mod win32 {
             ResolveStep::NeedsDriveCwd(letter) => win32::drive_cwd(letter),
         };
         let drive_cwd = drive_cwd.map(|cwd| strings::to_utf8_alloc(&cwd));
-        let mut buf = path_buffer_pool::get();
         let cwd = match drive_cwd.as_deref() {
-            None | Some([]) => real_cwd(&mut buf),
+            None | Some([]) => real_cwd(),
             Some(cwd) => cwd,
         };
         let cwd = Some(CodeUnits::U8(cwd));

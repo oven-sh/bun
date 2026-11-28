@@ -292,8 +292,8 @@ function mergeWorkerParts(fileName: string) {
   }
   for (const name of names) {
     if (!name.startsWith(base) || !name.endsWith(".part")) continue;
+    const partPath = $bindgen("node_path.bind.ts", "joinWithOriginalNormalize")(dir, name);
     try {
-      const partPath = path.join(dir, name);
       const parsed = JSON.parse(fs.readFileSync(partPath, "utf8"));
       if ($isArray(parsed)) {
         for (const event of parsed) events.push(event);

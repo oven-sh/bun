@@ -374,7 +374,8 @@ is what costs least, and compiled code passes the string it holds as it is. It i
 - `string.first_characters::<N>()` copies the first `N` characters without resolving a rope.
 - `characters.substring(heap, range)` shares the characters with the string, and returns the string itself for
   the whole range. A few characters of a long string are copied, so that they do not keep it alive.
-  `characters.substrings(heap, &ranges)` makes several with one call.
+  `characters.substrings(heap, &ranges)` makes several with one call. `characters.detached_substring(heap, range)`
+  copies up to 4096 characters of a long string.
 - `heap.create_latin1_string(characters)` makes a new string. It ends the process when the characters cannot be
   allocated.
 - `heap.try_create_latin1_string(characters)`, `heap.try_create_string_from_units(units)` and

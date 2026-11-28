@@ -1262,6 +1262,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
+        #[cfg(windows)]
+        bun_sys::save_working_directory_of_drive();
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
         let mut phys = bun_paths::path_buffer_pool::get();

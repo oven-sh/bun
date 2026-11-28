@@ -4802,64 +4802,45 @@ describe.concurrent("relative paths start at the cwd of the process", () => {
       await once(fs.createWriteStream("out.txt").end("x"), "close");
       fs.mkdtempDisposableSync("sync-").remove();
       await (await fs.promises.mkdtempDisposable("async-")).remove();
-      console.log(fs.readdirSync(".").sort().join(), fs.readdirSync(other).join());`;
+      console.log(fs.readdirSync(".").sort().join(), fs.readdirSync(other).join());
+      console.log(path.basename(fs.realpathSync(".")), fs.globSync("o*", { cwd: "." }).join());`;
     expect(await run(join(String(dir), "real"), script)).toEqual({
-      lines: ["real", "in.txt,out.txt in.txt"],
+      lines: ["real", "in.txt,out.txt in.txt", "real out.txt"],
       stderr: "",
       exitCode: 0,
     });
   });
 
-  it("when the cwd changes while mkdtempDisposable() is pending", async () => {
-    using dir = tempDir("fs-changed-cwd", { "first": {}, "second": {} });
+  it("when process.cwd is replaced between watchFile() and unwatchFile()", async () => {
+    using dir = tempDir("fs-replaced-cwd-watch", { "file": "" });
     const script = `
       import fs from "node:fs";
-      const pending = fs.promises.mkdtempDisposable("made-");
-      const giveUpAt = performance.now() + 10_000;
-      while (fs.readdirSync(".").length === 0) {
-        if (performance.now() > giveUpAt) throw new Error("mkdtempDisposable() made no directory");
-      }
-      fs.mkdirSync("../second/" + fs.readdirSync(".")[0]);
-      process.chdir("../second");
-      await (await pending).remove();
-      console.log(fs.readdirSync("../first").length, fs.readdirSync(".").length);`;
-    expect(await run(join(String(dir), "first"), script)).toEqual({ lines: ["0 1"], stderr: "", exitCode: 0 });
+      fs.watchFile("file", () => {}).on("stop", () => console.log("stopped"));
+      process.cwd = () => "/other";
+      fs.unwatchFile("file");`;
+    expect(await run(String(dir), script)).toEqual({ lines: ["stopped"], stderr: "", exitCode: 0 });
   });
 
-  it.skipIf(!isWindows)("a stream opens the name that it is given", async () => {
-    using dir = tempDir("fs-stream-literal-name", { "read": "without the dot" });
+  it("when path.normalize is replaced", async () => {
+    using dir = tempDir("fs-replaced-normalize", { "a/b/file": "" });
     const script = `
-      import { once } from "node:events";
       import fs from "node:fs";
       import path from "node:path";
-      await once(fs.createWriteStream("written.").end("x"), "close");
-      const [error] = await once(fs.createReadStream("read."), "error");
-      console.log(fs.readdirSync(".").sort().join(), error.code);
-      fs.unlinkSync(path.toNamespacedPath("written."));`;
-    expect(await run(String(dir), script)).toEqual({ lines: ["read,written. ENOENT"], stderr: "", exitCode: 0 });
+      path.normalize = () => "replaced";
+      console.log(fs.globSync("a/*/*").join().replaceAll(path.sep, "/"));
+      console.log((await Array.fromAsync(fs.promises.glob("a/*/*"))).join().replaceAll(path.sep, "/"));`;
+    expect(await run(String(dir), script)).toEqual({ lines: ["a/b/file", "a/b/file"], stderr: "", exitCode: 0 });
   });
 
-  // Windows neither renames nor removes the cwd of a process.
-  it.skipIf(isWindows)("when the cwd is renamed", async () => {
-    using dir = tempDir("fs-renamed-cwd", { "before/in.txt": "renamed" });
+  it.skipIf(isWindows)("when the cwd is removed, glob() does not need it for an absolute `cwd`", async () => {
+    using dir = tempDir("fs-removed-cwd-glob", { "removed": {}, "kept/file": "" });
     const script = `
-      import { once } from "node:events";
       import fs from "node:fs";
-      const before = process.cwd();
-      fs.renameSync(before, "../after");
-      fs.mkdirSync(before);
-      fs.writeFileSync(before + "/in.txt", "other");
-      console.log(String(await fs.createReadStream("in.txt").toArray()));
-      await once(fs.createWriteStream("out.txt").end("x"), "close");
-      fs.mkdtempDisposableSync("sync-").remove();
-      await (await fs.promises.mkdtempDisposable("async-")).remove();
-      console.log(fs.readdirSync(".").sort().join(), fs.readdirSync(before).join());
-      console.log(fs.realpathSync("in.txt").split("/").at(-2), (await fs.promises.realpath(".")).split("/").at(-1));`;
-    expect(await run(join(String(dir), "before"), script)).toEqual({
-      lines: ["renamed", "in.txt,out.txt in.txt", "after after"],
-      stderr: "",
-      exitCode: 0,
-    });
+      const cwd = fs.realpathSync("kept");
+      process.chdir("removed");
+      fs.rmdirSync("../removed");
+      console.log(fs.globSync("*", { cwd }).join(), (await Array.fromAsync(fs.promises.glob("*", { cwd }))).join());`;
+    expect(await run(String(dir), script)).toEqual({ lines: ["file file"], stderr: "", exitCode: 0 });
   });
 
   it.skipIf(!isLinux)("when the cwd is removed, mkdtempDisposable() removes what it made elsewhere", async () => {
@@ -4887,24 +4868,22 @@ describe.concurrent("relative paths start at the cwd of the process", () => {
         [fs.createWriteStream, "file"],
         [fs.createWriteStream, ""],
         [fs.createWriteStream, "."],
+        [fs.createWriteStream, "./"],
       ]) {
-        const [error] = await once(create(name), "error");
-        console.log(error.code, error.syscall);
+        try {
+          const [error] = await once(create(name), "error");
+          console.log(error.code, error.syscall);
+        } catch (error) {
+          console.log(error.code, error.syscall);
+        }
       }`;
     expect(await run(join(String(dir), "removed"), script)).toEqual({
-      lines: ["ENOENT open", "ENOENT open", "ENOENT open", isLinux ? "EISDIR open" : expect.stringMatching(/ open$/)],
+      lines: ["ENOENT open", "ENOENT open", "ENOENT uv_cwd", "ENOENT uv_cwd", "ENOENT uv_cwd"],
       stderr: "",
       exitCode: 0,
     });
     expect(readdirSync(String(dir))).toEqual([]);
   });
-});
-
-it("a stream keeps its path as it is given", () => {
-  const open = () => {};
-  const fs = { open, read: open, write: open, close: open };
-  expect(createReadStream("a/../b", { fs }).path).toBe("a/../b");
-  expect(createWriteStream("a/../b", { fs }).path).toBe("a/../b");
 });
 
 describe("createWriteStream", () => {

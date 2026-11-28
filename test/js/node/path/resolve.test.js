@@ -213,13 +213,16 @@ describe("path.resolve", () => {
     expect(path.resolve(drive + "a", "b")).toBe(drive + "\\a\\b");
   });
 
-  test.skipIf(!isWindows)("process.chdir() updates the cwd of the drive", async () => {
+  test.skipIf(!isWindows).each([
+    ["process.chdir()", [], `process.chdir("inner");`],
+    ["--cwd", ["--cwd", "inner"], ""],
+  ])("%s updates the cwd of the drive", async (_, flags, change) => {
     using dir = tempDir("resolve-chdir-drive-cwd", { "inner/file": "" });
     const drive = path.parse(String(dir)).root.slice(0, 2);
-    const script = `process.chdir("inner");
+    const script = `${change}
       console.log(require("node:path").resolve(${JSON.stringify(drive + "a")}).slice(2) === process.cwd().slice(2) + "\\\\a");`;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
+      cmd: [bunExe(), ...flags, "-e", script],
       env: { ...bunEnv, [`=${drive.toUpperCase()}`]: `${drive}\\Windows` },
       cwd: String(dir),
       stderr: "pipe",
@@ -338,5 +341,76 @@ describe("path.resolve", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([cwd + "/z", cwd, "e\\/z"]);
     expect(exitCode).toBe(0);
+  });
+
+  // Windows does not remove the cwd of a process.
+  describe.skipIf(isWindows).concurrent("when the cwd is removed", () => {
+    const print = `
+      for (const ask of [
+        () => path.resolve("a").split("/").slice(-2).join("/"),
+        () => path.resolve("\u65e5", "..", "a").split("/").slice(-2).join("/"),
+        () => path.relative("a", "b"),
+        () => path.win32.relative("a", "b"),
+        () => path.basename(path.resolve()),
+        () => path.relative(".", "a"),
+        () => path.win32.basename(path.win32.resolve(".")),
+        () => path.win32.resolve("C:a").split("\\\\").slice(-2).join("/"),
+      ]) {
+        try {
+          console.log(ask());
+        } catch (error) {
+          console.log(error.code, error.syscall);
+        }
+      }`;
+    const imports = `import fs from "node:fs"; import path from "node:path";`;
+    const resolvedIn = name => [`${name}/a`, `${name}/a`, "../b", "..\\b", name, "a", name, `${name}/a`];
+    const resolved = resolvedIn("removed");
+    const refused = resolved.map(() => "ENOENT uv_cwd");
+
+    test.each([
+      ["after the process started in it", "removed", [], `fs.rmdirSync("../removed");`, resolved],
+      ["after --cwd", ".", ["--cwd", "removed"], `fs.rmdirSync("../removed");`, resolved],
+      ["after process.chdir()", ".", [], `process.chdir("removed"); fs.rmdirSync("../removed");`, refused],
+      [
+        "after process.chdir() and process.cwd()",
+        ".",
+        [],
+        `process.chdir("removed"); process.cwd(); fs.rmdirSync("../removed");`,
+        resolved,
+      ],
+      [
+        "and process.cwd is replaced",
+        "removed",
+        [],
+        `fs.rmdirSync("../removed"); process.cwd = () => "/made";`,
+        resolvedIn("made"),
+      ],
+    ])("%s", async (_, cwd, flags, remove, lines) => {
+      using dir = tempDir("resolve-removed-cwd", { "removed": {}, "main.mjs": imports + remove + print });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, path.join(String(dir), "main.mjs")],
+        env: bunEnv,
+        cwd: path.join(String(dir), cwd),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({ lines, stderr: "", exitCode: 0 });
+    });
+
+    test("before the process starts", async () => {
+      using dir = tempDir("resolve-removed-cwd", { "removed": {}, "main.mjs": imports + print });
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `rmdir ../removed && exec "$0" "$1"`, bunExe(), path.join(String(dir), "main.mjs")],
+        env: bunEnv,
+        cwd: path.join(String(dir), "removed"),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        lines: refused,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });

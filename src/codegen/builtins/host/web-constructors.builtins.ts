@@ -464,8 +464,9 @@ const partOfByteStream = (name: string, proto: Readonly<Record<string, b.Field>>
   });
 // A stream that the program has made runs the functions that it was made with. Every refusal has a message that is written in the C++.
 // write() and enqueue() describe nothing themselves. A chunk that a native transformer refuses in a later job (JSTextDecoderStream.cpp, JSCompressionStreamShared.cpp :128 :140 :151) is described there, by
-// determineSpecificType() in ErrorCode.cpp, which reads `constructor` and its `name`. What gives no name is described natively,
-// or by util.inspect if a script has given it a method of inspection: a program that can name the symbol brings util.inspect.
+// determineSpecificType() in ErrorCode.cpp, which reads `constructor`, its `name`, and the symbol of inspection. What has a truthy constructor is called by that name.
+// What has none is described natively if its method of inspection is not callable, and is handed to the printer otherwise: an object that may have none brings the printer wherever it is refused
+// (noteInstancesLoseTheirConstructor() in AOTFactsOfProgram.cpp).
 const onStream = {
   capability: "js",
   throws: true,

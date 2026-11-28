@@ -766,6 +766,21 @@ impl<'a> JsCharacters<'_, 'a> {
         })
     }
 
+    /// As [`substring`](Self::substring), but copied if they would keep a long string alive.
+    #[inline(always)]
+    pub fn detached_substring(
+        &self,
+        heap: &JsHeap<'a>,
+        range: Range<usize>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        // SAFETY: the owner is no rope.
+        if unsafe { self.text.owner.may_hold_long_text_for(range.len() as u32) } {
+            core::hint::cold_path();
+            return heap.try_create_string_from_units(self.text.units.slice(range));
+        }
+        Ok(self.substring(heap, range))
+    }
+
     /// As [`substring`](Self::substring), several with one call.
     #[inline(always)]
     pub fn substrings<const N: usize>(

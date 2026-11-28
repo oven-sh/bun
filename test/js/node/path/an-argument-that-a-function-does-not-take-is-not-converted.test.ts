@@ -50,6 +50,18 @@ describe.each([
     expect(converted).toEqual([]);
   });
 
+  test("the message does not hold the members of an object without a constructor", () => {
+    expect(() => holder.join(JSON.parse('{ "constructor": null, "a": 1 }'))).toThrow(/Received \[Object\]$/);
+    expect(() => holder.resolve({ __proto__: null, a: 1 } as any)).toThrow(/Received \[Object: null prototype\]$/);
+    expect(() => holder.dirname(new Proxy({ a: 1 }, { get() {} }) as any)).toThrow(/Received \[Object\]$/);
+  });
+
+  test("the name of a constructor is not converted", () => {
+    expect(() => holder.join(JSON.parse('{ "constructor": { "name": { "toString": null } } }'))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
   test("toNamespacedPath returns a String object as it is", () => {
     const converted: number[] = [];
     const text = textThatCounts(converted, 0);

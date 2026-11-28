@@ -15,9 +15,11 @@ const whatChildHasWritten = table.union(
   table.strictNull,
 );
 const output = { ...stdio, getter: b.any.returning(whatChildHasWritten.spec) } as const;
-/** Writable.rs `to_js`: the sink of a pipe, the number of a descriptor, undefined for all else. `null` where a terminal stands in. */
-const whatChildReads = table.union(table.instance("FileSink"), table.f64, table.undefined, table.strictNull);
-const input = { ...stdio, getter: b.any.returning(whatChildReads.spec) } as const;
+/** Writable.rs `to_js`: the sink of a pipe, the number of a descriptor, undefined for all else. `null` where a terminal stands in. `Bun.spawn` puts the stream that it reads from into the field itself. */
+const input = {
+  ...stdio,
+  getter: b.any.returning("FileSink", "ReadableStream", "number", "undefined", "null"),
+} as const;
 /** `get_stdio`: a new list each time, `null` for the first three and for a pipe that is gone, the number of a descriptor for the others. */
 const extraPipes = table.instance("Array").holding({ element: table.union(table.f64, table.strictNull) }).fresh;
 

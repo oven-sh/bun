@@ -7895,6 +7895,10 @@ pub mod elf {
             if context.address < info.dlpi_addr as usize {
                 return 0;
             }
+            // musl lists no headers for an object if no `PT_LOAD` holds them. A file can put them at an odd address.
+            if info.dlpi_phdr.is_null() || !info.dlpi_phdr.is_aligned() {
+                return 0;
+            }
             // SAFETY: dlpi_phdr points to dlpi_phnum entries.
             let phdrs =
                 unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };

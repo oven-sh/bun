@@ -483,19 +483,23 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
          json,
          inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
          nativeInspected: Bun.inspect(mark),
-         // util.inspect never calls the hook on a prototype object. Bun.inspect / console.log do,
-         // and the hook has to fall back to the default formatting there instead of throwing
-         // from the brand-checked toJSON.
+         // util.inspect, Bun.inspect and console.log never call the hook on a prototype object,
+         // so a prototype gets the default formatting and not a throw from the brand-checked toJSON.
          protos: [
            inspect(PerformanceMark.prototype),
            Bun.inspect(PerformanceEntry.prototype).split("\\n")[0],
            Bun.inspect(PerformanceMark.prototype).split("\\n")[0],
            Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0],
          ],
+         // A direct call of the hook with the prototype throws from toJSON, as in Node.
+         direct: (() => { try { return typeof PerformanceEntry.prototype[custom].call(PerformanceEntry.prototype, 1, {}, inspect); } catch (e) { return e.code; } })(),
          descriptor: { ...Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, custom), value: PerformanceEntry.prototype[custom].name },
          toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
          generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
        };
+       // Node reads constructor.prototype with a [[Get]]: a prototype whose constructor is a Proxy of the class prints too.
+       Object.defineProperty(PerformanceMeasure.prototype, "constructor", { value: new Proxy(PerformanceMeasure, {}), configurable: true, writable: true });
+       result.proxyConstructor = Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0];
        // util.inspect forwards an option it does not know to the hook as-is, so the hook's copy
        // of the options has to cope with an index key.
        result.indexOption = inspect(mark, { 0: 1 }).split("\\n")[0];
@@ -527,6 +531,8 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
     "PerformanceMark {",
     "PerformanceMeasure {",
   ]);
+  expect(result.direct).toBe("ERR_INVALID_THIS");
+  expect(result.proxyConstructor).toBe("PerformanceMeasure {");
   expect(result.descriptor).toEqual({
     value: "[nodejs.util.inspect.custom]",
     writable: true,

@@ -122,6 +122,7 @@ use crate::shell::io_writer::IOWriter as ShellIoWriter;
 use crate::shell::states::r#async::ShellAsyncTask;
 use crate::shell::subproc::{PipeReader as ShellPipeReader, ShellSubprocess};
 
+use crate::socket::DeferredWriteCompletion;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
 use crate::webcore::file_sink::FileSink;
@@ -135,7 +136,7 @@ use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as Subprocess
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::cron_os::OsJob;
-use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
+use crate::api::js_bundle_completion_task::{JSBundleCompletionTask, StuckBuildsProbe};
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 
 use crate::napi::{FinishedAsyncWork, NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest};
@@ -176,10 +177,10 @@ use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThr
 use bun_bundler::DeferredBatchTask::DeferredBatch;
 type BundleV2ParseTaskResult = bun_bundler::parse_task::Result<'static>;
 
-use crate::socket::upgraded_duplex::UpgradedDuplex;
+use crate::socket::fd_pipe::FdPipe;
+use crate::socket::upgraded_duplex::{UpgradedDuplex, UpgradedDuplexFree};
 #[cfg(windows)]
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
-use crate::socket::{DuplexUpgradeContext, DuplexUpgradeContextFree};
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
@@ -230,6 +231,13 @@ pub(crate) fn run_task(
         task_tag::SendQueueDeferred => task_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
             queue.run_deferred();
         }),
+        task_tag::H2HeldInput => task_arm!(
+            task,
+            [Sockets],
+            |parser: crate::api::H2FrameParser| -> JsResult<()> {
+                crate::api::H2FrameParser::run_held_input_task(parser)
+            }
+        )?,
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
             (
@@ -259,6 +267,9 @@ pub(crate) fn run_task(
             [Bundler],
             |build: JSBundleCompletionTask| -> JsResult<()> { build.on_complete() }
         )?,
+        task_tag::StuckBuildsProbe => task_arm!(task, [Bundler], |probe: StuckBuildsProbe| {
+            probe.run(VirtualMachine::get());
+        }),
         task_tag::FetchTaskletPromiseSettle => task_arm!(
             task,
             [Fetch],
@@ -267,19 +278,22 @@ pub(crate) fn run_task(
                 holder.run()
             }
         )?,
-        task_tag::DuplexUpgradeContext => {
-            task_arm!(task, [Sockets], |context: DuplexUpgradeContext| {
-                context.run_start_tls();
+        task_tag::UpgradedDuplex => {
+            task_arm!(task, [Sockets], |engine: UpgradedDuplex| {
+                engine.start_tls();
             })
         }
-        task_tag::DuplexUpgradeContextFree => {
-            task_arm!(task, [Sockets], |context: DuplexUpgradeContextFree| {
-                drop(context);
+        task_tag::UpgradedDuplexFree => {
+            task_arm!(task, [Sockets], |engine: UpgradedDuplexFree| {
+                drop(engine);
             })
         }
+        task_tag::FdPipe => task_arm!(task, [Sockets], |pipe: FdPipe| {
+            FdPipe::close_and_free(pipe);
+        }),
         #[cfg(windows)]
-        task_tag::WindowsNamedPipeContext => {
-            drop(payload!(task, crate::socket::WindowsNamedPipeContext));
+        task_tag::WindowsNamedPipe => {
+            drop(payload!(task, WindowsNamedPipe));
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
@@ -349,6 +363,13 @@ pub(crate) fn run_task(
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
         }
+        task_tag::FetchTaskletDelivered => task_arm!(
+            task,
+            [Fetch],
+            |tasklet: crate::webcore::fetch::FetchTaskletDelivered| {
+                crate::webcore::fetch::FetchTaskletDelivered::run(&tasklet);
+            }
+        ),
         task_tag::FetchTaskletRequestDrain => task_arm!(
             task,
             [Fetch],
@@ -394,17 +415,17 @@ pub(crate) fn run_task(
         }
         // A server that speaks TLS was given TLS options, which is what retains `TlsSockets`.
         task_tag::HTTPServerDeinit => task_arm!(task, [Serve], |server: HTTPServer| {
-            server.run_scheduled_close();
+            HTTPServer::run_scheduled_deinit(server);
         }),
         task_tag::HTTPSServerDeinit => task_arm!(task, [TlsSockets], |server: HTTPSServer| {
-            server.run_scheduled_close();
+            HTTPSServer::run_scheduled_deinit(server);
         }),
         task_tag::DebugHTTPServerDeinit => task_arm!(task, [Serve], |server: DebugHTTPServer| {
-            server.run_scheduled_close();
+            DebugHTTPServer::run_scheduled_deinit(server);
         }),
         task_tag::DebugHTTPSServerDeinit => {
             task_arm!(task, [TlsSockets], |server: DebugHTTPSServer| {
-                server.run_scheduled_close();
+                DebugHTTPSServer::run_scheduled_deinit(server);
             })
         }
         #[cfg(windows)]
@@ -665,6 +686,20 @@ pub(crate) fn run_task(
         task_tag::StreamPending => task_arm!(task, [WebStreams], |pending: StreamPending| {
             (*pending).run(StreamResult::Done);
         }),
+        task_tag::TCPSocketWriteCompletion => {
+            task_arm!(task, [Sockets], |completion: DeferredWriteCompletion<
+                false,
+            >| {
+                completion.run();
+            })
+        }
+        task_tag::TLSSocketWriteCompletion => {
+            task_arm!(task, [Sockets], |completion: DeferredWriteCompletion<
+                true,
+            >| {
+                completion.run();
+            })
+        }
 
         _ => {
             // A value outside `task_tag::COUNT` is a producer bug, but it's
@@ -715,7 +750,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 88,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -839,6 +874,13 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         #[cfg(target_os = "macos")]
         PollTag::GetAddrInfoRequest => {
             crate::dns_jsc::dns_sd::SharedConnection::on_readable();
+        }
+        #[cfg(not(windows))]
+        PollTag::FdPipe => {
+            in_features!([Sockets], (pipe: *mut FdPipe = owner.ptr().cast()) {
+                // SAFETY: fn contract.
+                unsafe { (*pipe).on_poll() }
+            })
         }
 
         // A ref is held across the handler, which may release every other one.
@@ -1168,14 +1210,6 @@ pub(crate) unsafe fn fire_timer(
                 |c, _now, _vm| RefPtr::init_ref(c).timer_callback()
             )
         }
-        EventLoopTimerTag::UpgradedDuplex => {
-            feature_timer_arm!(
-                [Sockets],
-                UpgradedDuplex,
-                event_loop_timer,
-                |c, _now, _vm| (*c).on_timeout()
-            )
-        }
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
@@ -1316,16 +1350,6 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         ),
-        EventLoopTimerTag::QuicEndpoint => in_features!(
-            [NodeQuic],
-            (
-                c: *mut crate::node::quic::QuicEndpoint =
-                    owner!(crate::node::quic::QuicEndpoint, event_loop_timer),
-            ) -> JsResult<()> {
-                crate::node::quic::QuicEndpoint::on_timer_fire(c);
-                Ok(())
-            }
-        ),
         EventLoopTimerTag::ViWait => in_features!(
             [Test],
             (
@@ -1438,8 +1462,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
         task_tag::CppTask => release!(CppTask),
-        task_tag::DuplexUpgradeContext => release_in!([Sockets], DuplexUpgradeContext),
-        task_tag::DuplexUpgradeContextFree => release_in!([Sockets], DuplexUpgradeContextFree),
+        task_tag::UpgradedDuplex => release_in!([Sockets], UpgradedDuplex),
+        task_tag::UpgradedDuplexFree => release_in!([Sockets], UpgradedDuplexFree),
+        task_tag::FdPipe => release_in!([Sockets], FdPipe),
         task_tag::FetchTasklet => release_in!([Fetch], FetchTasklet),
         task_tag::FetchTaskletDeinit => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletDeinitHop)
@@ -1453,6 +1478,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FSWatchTask => release_in!([NodeFs], FSWatchTask),
         task_tag::HotReloadTask => release_in!([HotReload], hot_reloader::HotReloadTask),
         task_tag::JSBundleCompletionTask => release_in!([Bundler], JSBundleCompletionTask),
+        task_tag::StuckBuildsProbe => release_in!([Bundler], StuckBuildsProbe),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
             release_in!(
@@ -1473,6 +1499,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             )
         }
         task_tag::BundleV2ParseTaskResult => release_in!([Bundler], BundleV2ParseTaskResult),
+        task_tag::FetchTaskletDelivered => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletDelivered)
+        }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
@@ -1523,6 +1552,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
         task_tag::S3RefusedRequest => release_in!([S3Client], S3RefusedRequest),
         task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
+        task_tag::H2HeldInput => release_in!([Sockets], crate::api::H2FrameParser),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_in!([Serve], ServerAllConnectionsClosedTask)
@@ -1550,6 +1580,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::AsyncCpTask => release_in!([NodeFs], crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_in!([WebStreams], StreamPending),
+        task_tag::TCPSocketWriteCompletion => {
+            release_in!([Sockets], DeferredWriteCompletion<false>)
+        }
+        task_tag::TLSSocketWriteCompletion => release_in!([Sockets], DeferredWriteCompletion<true>),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
         task_tag::ThreadSafeFunctionRefRequest => release_in!([NativeAddons], TsfnRefRequest),
         task_tag::UvLoopDispatch => {
@@ -1586,9 +1620,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
-        task_tag::WindowsNamedPipeContext => {
+        task_tag::WindowsNamedPipe => {
             #[cfg(windows)]
-            release!(crate::socket::WindowsNamedPipeContext);
+            release!(WindowsNamedPipe);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

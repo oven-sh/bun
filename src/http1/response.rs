@@ -87,6 +87,7 @@ impl ResponseParser {
                     }
                     return match stop {
                         Stop::Malformed => Err(Error::MalformedHead),
+                        Stop::TooManyHeaders => Err(Error::HeadTooLong),
                         Stop::Short(_) if window.len() < data.len() => Err(Error::HeadTooLong),
                         Stop::Short(run) => {
                             self.open_run = run;
@@ -122,6 +123,7 @@ impl ResponseParser {
 
 enum Stop {
     Malformed,
+    TooManyHeaders,
     Short(Option<Run>),
 }
 
@@ -170,7 +172,7 @@ impl Lines {
                 [] => return Err(Stop::Short(None)),
                 [b'\r' | b'\n', ..] => return Ok(head.len() - skip_line_end(rest)?.len()),
                 _ if self.response.headers.entries.len() >= max_headers => {
-                    return Err(Stop::Malformed);
+                    return Err(Stop::TooManyHeaders);
                 }
                 _ => rest = self.parse_field_line(rest)?,
             }

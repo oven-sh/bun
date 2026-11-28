@@ -6,7 +6,6 @@ use std::borrow::Cow;
 use bun_core::String as BunString;
 use bun_http::request_trace::{Event, Hop, RequestTrace};
 use bun_http::{AsyncHTTP, Headers, Protocol};
-use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSUint8Array, JSValue, JsCell, JsResult, StringJsc as _, Strong,
     StrongOptional, Weak, bun_string_jsc,
@@ -258,7 +257,7 @@ fn port_to_js(address: Option<SocketAddr>) -> JSValue {
 fn arguments_of_hop(global: &JSGlobalObject, hop: &Hop) -> JsResult<[JSValue; 7]> {
     Ok([
         number(RequestEvent::Create),
-        hop.method.to_js(global),
+        BunString::clone_latin1(&hop.method).into_js(global)?,
         bun_string_jsc::create_utf8_for_js(global, &hop.origin)?,
         bun_string_jsc::create_utf8_for_js(global, &hop.path)?,
         headers_to_js(global, &hop.headers, |global, text| {

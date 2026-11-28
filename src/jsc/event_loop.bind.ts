@@ -12,6 +12,9 @@ export const ActiveTasks = b.dictionary({
   concurrentRef: b.i32,
   numPolls: b.i32,
   iteration: b.u64,
+  sweepTimerCount: b.i32,
+  sweepDeadline: b.f64.optional,
 });
 
 export const getActiveTasks = b.fn({ returns: ActiveTasks, capability: "heap" });
+export const runUntilSettled = b.fn({ args: { promise: b.any }, capability: "js", throws: true });

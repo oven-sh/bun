@@ -58,6 +58,8 @@ impl TransferEncoding {
                     this.is_chunked = this.ends_in_chunked;
                     has_coding = true;
                 }
+                // llhttp rejects a comma after `chunked`, even with nothing behind it.
+                this.has_more_after_chunked |= this.is_chunked && list.is_some();
             }
         }
         this
@@ -66,11 +68,12 @@ impl TransferEncoding {
 
 impl<'a> Request<'a> {
     /// The value that all `Content-Length` fields have.
-    pub(super) fn content_length(&self) -> Result<Option<&'a [u8]>, RequestError> {
+    pub(super) fn content_length_field(&self) -> Result<Option<&'a [u8]>, RequestError> {
         let mut values = self.values(b"content-length");
         match values.next() {
-            Some(first) if first.is_empty() || values.any(|other| other != first) => {
-                Err(RequestError::InvalidContentLength)
+            Some([]) => Err(RequestError::EmptyContentLength),
+            Some(first) if values.any(|other| other != first) => {
+                Err(RequestError::DuplicateContentLength)
             }
             first => Ok(first),
         }
@@ -113,11 +116,16 @@ impl<'a> Request<'a> {
     }
 }
 
-pub(super) fn parse_content_length(value: &[u8]) -> Option<u64> {
-    let add =
-        |length: u64, byte: &u8| Some(length * 10 + u64::from(char::from(*byte).to_digit(10)?));
-    if value.len() > MAX_CONTENT_LENGTH_DIGITS {
-        return None;
+pub(super) fn parse_content_length(value: &[u8]) -> Result<u64, RequestError> {
+    if !value.iter().all(u8::is_ascii_digit) {
+        return Err(RequestError::InvalidContentLength);
     }
-    (value.iter().try_fold(0, add)).filter(|&length| length <= MAX_CONTENT_LENGTH)
+    if value.len() > MAX_CONTENT_LENGTH_DIGITS {
+        return Err(RequestError::ContentLengthOverflow);
+    }
+    let add = |length: u64, digit: &u8| length * 10 + u64::from(digit - b'0');
+    match value.iter().fold(0, add) {
+        length @ ..=MAX_CONTENT_LENGTH => Ok(length),
+        _ => Err(RequestError::ContentLengthOverflow),
+    }
 }

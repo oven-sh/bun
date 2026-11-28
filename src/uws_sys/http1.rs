@@ -13,6 +13,7 @@ const _: () = assert!(
         && offset_of!(RequestParser, is_closing) == 0
         && offset_of!(RequestParser, is_body_until_eof) == 1
         && offset_of!(RequestParser, is_tunnel) == 2
+        && offset_of!(RequestParser, parks_next_request) == 3
 );
 
 #[repr(C)]
@@ -62,6 +63,7 @@ struct ReadResult {
     /// 0 if there is none.
     error: u8,
     is_stopped: bool,
+    is_parked: bool,
     consumed: usize,
     error_response: Bytes,
 }
@@ -70,12 +72,13 @@ impl From<Outcome> for ReadResult {
     fn from(outcome: Outcome) -> Self {
         let (error, consumed, error_response) = match outcome {
             Outcome::Consumed => (0, 0, &b""[..]),
-            Outcome::Stopped { consumed } => (0, consumed, &b""[..]),
+            Outcome::Stopped { consumed } | Outcome::Parked { consumed } => (0, consumed, &b""[..]),
             Outcome::Failed(error) => (error as u8, 0, error.response()),
         };
         Self {
             error,
-            is_stopped: outcome != Outcome::Consumed,
+            is_stopped: matches!(outcome, Outcome::Stopped { .. } | Outcome::Failed(_)),
+            is_parked: matches!(outcome, Outcome::Parked { .. }),
             consumed,
             error_response: error_response.into(),
         }
@@ -156,6 +159,12 @@ extern "C" fn Bun__Http1Request__afterHead(request: &Request<'_>, out: Out<'_>) 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Http1Request__isHttp10(request: &Request<'_>) -> bool {
     request.is_http_1_0()
+}
+
+/// `NO_CONTENT_LENGTH` (Utilities.h) if there is none.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Http1Request__contentLength(request: &Request<'_>) -> u64 {
+    request.content_length().unwrap_or(u64::MAX)
 }
 
 /// SAFETY: `name` has `len` bytes.

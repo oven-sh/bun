@@ -108,14 +108,7 @@ export default b.declarations(
   extendAll(["NodeFs", "FsStats"], "%StatWatcher%"),
   extendAll(["NodeFs"], "%FSWatcher%"),
 
-  extendAll(
-    ["HttpParser"],
-    "%HTTPParser%",
-    "node:_http_common",
-    "node:_http_client",
-    "node:_http_server",
-    "internal/http1_server_fallback",
-  ),
+  extendAll(["HttpParser"], "%HTTPParser%", "node:_http_common", "node:_http_client", "node:_http_server"),
 
   extendAll(["StringDecoder", "Buffer"], "node:string_decoder"),
 
@@ -143,14 +136,17 @@ export default b.declarations(
     ...nativeBindings(
       "Bindgen",
       "node_http_binding.bind.ts",
-      "getBunServerOpenCount",
+      "closedWithAllDataSent",
       "insecureHTTPParser",
       "getMaxHTTPHeaderSize",
       "sendWebSocketFrame",
+      "setBunServerSocketHandlers",
       "setMaxHTTPHeaderSize",
-      "upgradeNodeHTTPResponseToWebSocket",
+      "setServerAppFlags",
+      "setServerCustomOptions",
+      "setServerMaxHeadersCount",
+      "upgradeSocketToWebSocket",
     ),
-    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "getBunServerAllClosedPromise"),
   ),
 
   extendAll(

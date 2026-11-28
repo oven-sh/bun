@@ -56,6 +56,9 @@ pub struct Graph<'a> {
     /// tasks will be run, and the count is "moved" back to `pending_items`
     pub(crate) deferred_pending: u32,
 
+    /// How many units of the two counters above are `onResolve` and `onLoad` requests.
+    pub(crate) plugin_requests: u32,
+
     /// Which deferred batch is being collected: bumped each time `drain_deferred_tasks` moves the parked
     /// units back, so a `Load` can tell whether its own unit is still parked. Only the bundle thread writes it.
     pub(crate) defer_epoch: u32,
@@ -188,6 +191,7 @@ impl<'a> Graph<'a> {
             ast: MultiArrayList::default(),
             pending_items: 0,
             deferred_pending: 0,
+            plugin_requests: 0,
             defer_epoch: 0,
             cancelled: false,
             build_graphs: EnumMap::default(),

@@ -157,7 +157,9 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
       expect(result).toEqual({
         // The process exits with the connection open: the client reads the response or only the close.
         responses: [result.responses[0] === "" ? "" : ok],
-        stderr: expect.stringMatching(/TypeError: null is not an object.*\s+at onResponseFinishHandleSocket \(/),
+        stderr: expect.stringMatching(
+          /TypeError: Cannot destructure property 'keepAliveTimeout' from null.*\s+at keepAliveIdleTimeout \(.*\s+at onResponseFinishHandleSocket \(/,
+        ),
         exitCode: 1,
       });
     },
@@ -472,7 +474,11 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
       expect(
         await run("remove-all-listeners-after-body", [post("/", "hello"), post("/", "hello"), post("/", "hello")]),
       ).toEqual({
-        responses: [ok, "HTTP/1.1 200 OK\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "closed"],
+        responses: [
+          ok,
+          "HTTP/1.1 200 OK\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n",
+          "closed",
+        ],
         stderr: expect.stringContaining('code: "ERR_HTTP_SOCKET_ASSIGNED"'),
         exitCode: 1,
       });

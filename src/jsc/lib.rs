@@ -886,6 +886,10 @@ pub enum BuiltinName {
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
     sharedFd,
+    /// Private name (`$defaultTimeout` in builtins); user code cannot set it.
+    defaultTimeout,
+    /// Private name (`$fdIsWriteOnly` in builtins); user code cannot set it.
+    fdIsWriteOnly,
 }
 
 #[allow(non_upper_case_globals)]

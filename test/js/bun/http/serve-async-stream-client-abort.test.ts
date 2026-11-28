@@ -85,27 +85,37 @@ test.concurrent("a req.signal abort listener cannot write to the direct stream o
 });
 
 test.concurrent.each([
-  { transport: "TCP", how: "FIN", answer: "file", target: "a:1", heard: ["end"] },
-  { transport: "TCP", how: "FIN", answer: "stream", target: "a:1", heard: ["end", "abort"] },
-  { transport: "TCP", how: "FIN", answer: "failing stream", target: "a:1", heard: ["end"] },
-  { transport: "TCP", how: "RST", answer: "direct stream", target: "a:1", heard: ["end"] },
-  { transport: "TLS", how: "RST", answer: "stream", target: "a:1", heard: ["end", "abort"] },
+  { transport: "TCP", how: "FIN", answer: "file", request: "CONNECT a:1", heard: ["end"] },
+  { transport: "TCP", how: "FIN", answer: "stream", request: "CONNECT a:1", heard: ["end", "abort"] },
+  { transport: "TCP", how: "FIN", answer: "failing stream", request: "CONNECT a:1", heard: ["end"] },
+  { transport: "TCP", how: "RST", answer: "direct stream", request: "CONNECT a:1", heard: ["end"] },
+  { transport: "TLS", how: "RST", answer: "stream", request: "CONNECT a:1", heard: ["end", "abort"] },
+  { transport: "TCP", how: "FIN", answer: "file", request: "CONNECT /", heard: ["end"] },
   // Not a tunnel: the body has a length.
-  { transport: "TCP", how: "FIN", answer: "file", target: "/", heard: ["abort", "AbortError"] },
+  { transport: "TCP", how: "FIN", answer: "file", request: "POST /", heard: ["abort", "AbortError"] },
+  // Refused, not ended.
+  {
+    transport: "TCP",
+    how: "maxRequestBodySize",
+    answer: "file",
+    request: "CONNECT a:1",
+    heard: ["abort", "Error"],
+    status: "HTTP/1.1 413",
+  },
 ])(
-  "the body of CONNECT $target settles on $how and the handler answers with a $answer ($transport)",
-  async ({ transport, how, answer, target, heard }) => {
+  "the body of $request settles on $how and the handler answers with a $answer ($transport)",
+  async ({ transport, how, answer, request, heard, status = "" }) => {
     const { stdout, stderr, exitCode, signalCode } = await runFixture(
       "serve-connect-body-close-fixture.ts",
       transport,
       how,
       answer,
-      target,
+      request,
     );
 
     if (answer === "failing stream") expect(stderr).toContain("error: failing stream");
     else expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ heard, status: "", pendingRequests: 0, later: "ok" });
+    expect(JSON.parse(stdout)).toEqual({ heard, status, pendingRequests: 0, later: "ok" });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   },
 );

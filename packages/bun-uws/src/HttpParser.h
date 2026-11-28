@@ -29,7 +29,6 @@
 #include <utility>
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
-extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS {
 
@@ -71,7 +70,7 @@ struct Bytes {
 struct Options {
     uint64_t maxHeaderSize;
     uint32_t maxHeadersCount;
-    bool requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding;
+    bool requireHostHeader, useInsecureHTTPParser, useLenientTransferEncoding;
 };
 
 /* A handler that upgraded or closed the socket, which destroys the parser, has to return nullptr. */
@@ -86,7 +85,9 @@ struct Result {
     HttpParserError error;
     /* By an error or a handler. */
     bool isStopped;
-    /* When a handler stopped it: the bytes behind are the caller's. */
+    /* By parkAtNextBoundary. */
+    bool isParked;
+    /* When a handler stopped it, or it parked: the bytes behind are the caller's. */
     size_t consumed;
     Bytes errorResponse;
 };
@@ -102,6 +103,7 @@ extern "C" void Bun__Http1Request__target(const Request *, Bytes *);
 extern "C" void Bun__Http1Request__path(const Request *, Bytes *);
 extern "C" void Bun__Http1Request__afterHead(const Request *, Bytes *);
 extern "C" bool Bun__Http1Request__isHttp10(const Request *);
+extern "C" uint64_t Bun__Http1Request__contentLength(const Request *);
 extern "C" void Bun__Http1Request__field(const Request *, const char *name, size_t length, Bytes *);
 extern "C" bool Bun__Http1Request__fieldAt(const Request *, size_t index, Bytes *name, Bytes *value);
 
@@ -114,6 +116,8 @@ struct HttpRequest {
     explicit HttpRequest(const http1::Request *parsed) : parsed(parsed) {}
 
     bool isAncient() { return http1::Bun__Http1Request__isHttp10(parsed); }
+    /* The number the parser frames the body by, or NO_CONTENT_LENGTH. */
+    uint64_t getContentLength() { return http1::Bun__Http1Request__contentLength(parsed); }
     std::string_view getCaseSensitiveMethod() { return get<http1::Bun__Http1Request__method>(); }
     std::string_view getFullUrl() { return get<http1::Bun__Http1Request__target>(); }
     std::string_view getUrlForRouting() { return get<http1::Bun__Http1Request__path>(); }
@@ -150,11 +154,13 @@ private:
 
 /* RequestParser in src/http1/request/mod.rs. */
 struct alignas(8) HttpParser {
-    /* A request on this connection was its last one, or a Bun.serve response closed it (RFC 9112 9.6). */
+    /* A request on this connection was its last one. */
     bool sawConnectionClose;
     /* node:http: every byte until the peer's FIN is body. onEnd delivers the fin and clears this. */
     bool nodeHttpBodyUntilEof;
     bool isConnectRequest;
+    /* Bun.serve: the read stops at the next request boundary. HttpContext::onData derives it, and parks the rest. */
+    bool parkAtNextBoundary;
 
     HttpParser() { http1::Bun__RequestParser__construct(this, BUN_DEFAULT_MAX_HTTP_HEADER_SIZE); }
     ~HttpParser() { http1::Bun__RequestParser__destruct(this); }
@@ -165,7 +171,7 @@ struct alignas(8) HttpParser {
     bool hasIncompleteRequestBody() const { return http1::Bun__RequestParser__hasIncompleteBody(this); }
 
 private:
-    [[maybe_unused]] unsigned char rest[77];
+    [[maybe_unused]] unsigned char rest[76];
 };
 static_assert(sizeof(HttpParser) == 80);
 

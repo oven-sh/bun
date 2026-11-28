@@ -12,7 +12,7 @@ use bun_core::strings::eql_case_insensitive_ascii_check_length as eql_ignoring_c
 pub use error::RequestError;
 use framing::{Framing, parse_content_length};
 pub use head::{Field, Request, parse_trailers};
-use head::{MAX_FIELDS, Stop};
+use head::{MAX_FIELDS, MAX_TRAILER_FIELDS, Stop, for_each_trailer};
 
 /// Room for what `max_header_size` does not count: the method, the version, colons and line ends.
 const MAX_FRAMING_LEN: u64 = (MAX_FIELDS as u64 + 2) * 4 + 64;
@@ -26,7 +26,6 @@ pub struct RequestOptions {
     /// 0 if it is not set.
     pub max_headers_count: u32,
     pub requires_host: bool,
-    pub has_strict_methods: bool,
     pub has_lenient_values: bool,
     pub has_lenient_transfer_encoding: bool,
 }
@@ -43,6 +42,10 @@ pub enum Outcome {
     Consumed,
     /// By the connection. What follows the first `consumed` bytes of the read is not HTTP.
     Stopped {
+        consumed: usize,
+    },
+    /// By [`RequestParser::parks_next_request`]. What follows the first `consumed` bytes is for a later read.
+    Parked {
         consumed: usize,
     },
     Failed(RequestError),
@@ -63,8 +66,6 @@ enum Body {
     ChunkExtension,
     ChunkSizeLf,
     ChunkData,
-    LastCr,
-    LastLf,
     Trailers,
     AfterTrailers,
     Tunnel,
@@ -74,11 +75,13 @@ enum Body {
 /// packages/bun-uws/src/HttpParser.h mirrors the public fields and the size.
 #[repr(C)]
 pub struct RequestParser {
-    /// A request was the last one, or a response of `Bun.serve()` closed the connection.
+    /// A request was the last one.
     pub is_closing: bool,
     pub is_body_until_eof: bool,
     /// After CONNECT or an accepted upgrade.
     pub is_tunnel: bool,
+    /// `Bun.serve()` has one response at a time.
+    pub parks_next_request: bool,
     has_size_digit: bool,
     body: Body,
     /// Of the content, or of the chunk with its line end. The size so far in a chunk's first line.
@@ -95,6 +98,7 @@ impl RequestParser {
             is_closing: false,
             is_body_until_eof: false,
             is_tunnel: false,
+            parks_next_request: false,
             has_size_digit: false,
             body: Body::None,
             remaining: 0,
@@ -118,29 +122,35 @@ impl RequestParser {
         take(&mut self.trailers)
     }
 
+    /// Not behind the last request: parking can pause reads, and closing over unread bytes resets the connection.
+    fn is_parking<const IS_NODE: bool>(&self) -> bool {
+        !IS_NODE && self.parks_next_request && !self.is_closing
+    }
+
     fn check_trailers(&self, options: &RequestOptions) -> Result<(), RequestError> {
         if self.trailers.len() <= 2 {
             return Ok(());
         }
-        let fields = parse_trailers(&self.trailers, options.has_lenient_values);
-        if fields.is_empty() {
+        let (mut count, mut framing) = (0, Ok(()));
+        let is_valid = for_each_trailer(&self.trailers, options.has_lenient_values, |field| {
+            count += 1;
+            if eql_ignoring_case(field.name, b"content-length") {
+                framing = framing.and(Err(RequestError::ContentLengthInTrailers));
+            } else if eql_ignoring_case(field.name, b"transfer-encoding") {
+                framing = framing.and(Err(RequestError::InvalidTransferEncoding));
+            }
+        });
+        if !is_valid {
             return Err(RequestError::InvalidField);
         }
-        if options.max_headers_count != 0 && fields.len() > options.max_headers_count as usize {
+        let max_count = options.max_headers_count as usize;
+        if max_count != 0 && MAX_TRAILER_FIELDS.min(count) > max_count {
             return Err(RequestError::TrailersTooLarge);
         }
-        if options.has_lenient_transfer_encoding {
-            return Ok(());
+        match options.has_lenient_transfer_encoding {
+            true => Ok(()),
+            false => framing,
         }
-        fields.iter().try_for_each(|field| {
-            if eql_ignoring_case(field.name, b"content-length") {
-                Err(RequestError::ContentLengthInTrailers)
-            } else if eql_ignoring_case(field.name, b"transfer-encoding") {
-                Err(RequestError::InvalidTransferEncoding)
-            } else {
-                Ok(())
-            }
-        })
     }
 }
 
@@ -184,7 +194,7 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         let parser = connection.parser();
         if parser.is_body_until_eof || parser.body != Body::None {
             (connection, rest) = self.continue_body(connection, rest)?;
-        } else if parser.has_partial_head() {
+        } else if parser.has_partial_head() && !parser.is_parking::<IS_NODE>() {
             (connection, rest) = self.continue_head(connection)?;
         }
 
@@ -192,12 +202,15 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
             // RFC 9112 §2.2
             while let [b'\r' | b'\n', after @ ..] = rest
                 && IS_NODE
-                && !connection.parser().is_tunnel
             {
                 rest = after;
             }
             if rest.is_empty() {
                 return Ok(());
+            }
+            if connection.parser().is_parking::<IS_NODE>() {
+                let consumed = self.bytes.len() - rest.len();
+                return Err(Outcome::Parked { consumed });
             }
             let start;
             (connection, rest, start) = self.start(connection, rest, 0, rest)?;
@@ -262,15 +275,6 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
                 .unwrap_or_default()
         };
         let parser = connection.parser();
-        if IS_NODE && parser.is_tunnel {
-            let rest = after(message.len());
-            let connection = connection.on_body(message, false);
-            return Ok((
-                connection.ok_or_else(|| self.stop(rest))?,
-                rest,
-                Start::NotHttp,
-            ));
-        }
         if parser.is_closing {
             return match IS_NODE {
                 true => Err(RequestError::ClosedConnection.into()),
@@ -294,16 +298,19 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
                 false => request.has_in_connection(b"close"),
             };
 
-        let content_length = request.content_length()?;
+        let content_length = request.content_length_field()?;
         let framing = request.decide_framing::<IS_NODE>(content_length.is_some(), self.options)?;
-        if self.options.requires_host && !request.is_http_1_0() && request.field(b"host").is_none()
-        {
+        let mut hosts = request.values(b"host");
+        if hosts.next().is_none() && self.options.requires_host && !request.is_http_1_0() {
             return Err(RequestError::MissingHost.into());
         }
-        let Some(content_length) = content_length.map_or(Some(0), parse_content_length) else {
-            parser.body = Body::Failed(RequestError::InvalidContentLength);
-            return Err(RequestError::InvalidContentLength.into());
-        };
+        // RFC 9112 §3.2. llhttp keeps the first.
+        if !IS_NODE && hosts.next().is_some() {
+            return Err(RequestError::InvalidRequest.into());
+        }
+        request.content_length = (content_length.map(parse_content_length).transpose())
+            .inspect_err(|&error| parser.body = Body::Failed(error))?;
+        let content_length = request.content_length.unwrap_or(0);
         parser.remaining = content_length;
         if content_length != 0 {
             parser.body = Body::Content;
@@ -375,7 +382,7 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         }
         loop {
             let parser = connection.parser();
-            let chunk = parser.next_chunk::<IS_NODE>(&mut rest, self.max_head_len);
+            let chunk = parser.next_chunk(&mut rest, self.max_head_len);
             if parser.extension_len > MAX_EXTENSION_LEN {
                 return Err(RequestError::ChunkExtensionsTooLarge.into());
             }
@@ -386,8 +393,11 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
                 };
             };
             let is_last = data.is_empty();
-            if IS_NODE && is_last {
+            if is_last {
                 parser.check_trailers(self.options)?;
+                if !IS_NODE {
+                    parser.trailers = Vec::new();
+                }
             }
             connection = connection
                 .on_body(data, is_last)

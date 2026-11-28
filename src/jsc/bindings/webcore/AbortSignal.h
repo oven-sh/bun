@@ -57,6 +57,7 @@ enum class CommonAbortReason : uint8_t {
     Timeout,
     UserAbort,
     ConnectionClosed,
+    RequestBodyTooLarge,
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);

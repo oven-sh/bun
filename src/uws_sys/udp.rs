@@ -319,10 +319,10 @@ pub mod raw {
 
 bun_opaque::opaque_ffi! {
     /// Opaque uSockets UDP packet buffer (`us_udp_packet_buffer_t`).
-    struct PacketBuffer;
+    pub(crate) struct PacketBuffer;
 }
 
-extern "C" fn on_data<H: Fn(*mut Socket, Packets<'_>) + Copy + 'static>(
+pub(crate) extern "C" fn on_data<H: Fn(*mut Socket, Packets<'_>) + Copy + 'static>(
     socket: *mut Socket,
     buf: &PacketBuffer,
     count: c_int,
@@ -360,10 +360,9 @@ impl<'a> Packet<'a> {
         unsafe { &*us_udp_packet_buffer_peer(self.buf, self.index) }
     }
 
-    /// In the loop's receive buffer, which the next read on the loop refills.
     pub fn payload(self) -> &'a [u8] {
         // SAFETY: `index` is below the count that came with `buf`, so the read wrote `len` bytes there.
-        // Only convention keeps a nested tick or `read_now` from writing under the borrow.
+        // The dispatch has taken the buffer from the loop: reads under the callback get another one.
         unsafe {
             let payload = us_udp_packet_buffer_payload(self.buf, self.index);
             let len = us_udp_packet_buffer_payload_length(self.buf, self.index);

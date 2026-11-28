@@ -103,6 +103,11 @@ impl BufferedReader {
         self.limit.0.set(len);
     }
 
+    /// Returns true if `set_limit` asked for more bytes than the reader has read so far.
+    pub fn is_below_limit(&self) -> bool {
+        self.limit.0.get().is_some_and(|remaining| remaining > 0)
+    }
+
     pub fn start_file_offset(
         &self,
         ev: EventLoopHandle,

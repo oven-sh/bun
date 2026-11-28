@@ -30,6 +30,9 @@ class JSFetchHeaders final : public JSDOMInterface<JSFetchHeaders, FetchHeaders>
 public:
     using JSDOMInterface::JSDOMInterface;
 
+    // toWrapped() for a HeadersInit. Returns null if Symbol.iterator isn't Headers.prototype.entries, so Web IDL converts through it.
+    static FetchHeaders* toWrappedAsInit(JSC::JSValue);
+
     DECLARE_INFO;
     static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForFetchHeaders, m_subspaceForFetchHeaders);
     static constexpr uint8_t jsType = JSDOMWrapperType;

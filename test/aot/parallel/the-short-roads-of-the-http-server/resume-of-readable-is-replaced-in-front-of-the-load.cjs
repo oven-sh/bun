@@ -26,5 +26,5 @@ server.listen(0, () => {
   });
 });
 /* Output:
-answers 4 resume 4
+answers 4 resume 5
 */

@@ -49,27 +49,17 @@ use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
 use crate::websocket_client::{ErrorCode, WebSocketClient};
 
-// LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
-// bun_http::ssl_config (data + as_usockets/for_client_verification). The
-// JSC-dependent `from_js` constructor stays in bun_runtime; the C-ABI
-// `Bun__WebSocket__parseSSLConfig` export therefore lives in
-// bun_runtime::socket::SSLConfig and bridges to this lower-tier type via
-// `into_http()`.
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
 
-/// Opening-handshake timeout in seconds, normalised for uSockets' timer
-/// wheel (short-timeout counter wraps at 240 ticks; `set_timeout` routes
-/// larger values onto the minute-granularity long timer). 0 disables.
+/// Opening-handshake timeout in seconds. 0 disables.
 #[inline]
 fn handshake_timeout_seconds() -> core::ffi::c_uint {
-    bun_http::normalize_idle_timeout_seconds(
-        bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
-            .get()
-            .unwrap_or(120),
-    )
+    bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
+        .get()
+        .map_or(120, |seconds| u32::try_from(seconds).unwrap_or(u32::MAX))
 }
 
 /// Max raw size of a response head. `--max-http-header-size` only counts header names, values and
@@ -475,7 +465,6 @@ where
                 secure_ptr,
                 path.slice(),
                 this.as_ptr(),
-                false,
             ),
             None => Socket::<SSL>::connect_group(
                 group,
@@ -484,7 +473,6 @@ where
                 display_host,
                 c_int::from(connect_port),
                 this.as_ptr(),
-                false,
             ),
         }
         .inspect_err(|_| *connect_error_code = last_connect_error_code())
@@ -1087,30 +1075,28 @@ where
             return;
         };
 
-        // Use ssl_config if available, otherwise use defaults
-        let ssl_options: SSLConfig = match self.ssl_config.get().as_deref() {
-            Some(config) => config.clone(),
-            None => {
-                let mut c = SSLConfig::default();
-                c.reject_unauthorized = 0; // We verify manually
-                c.request_cert = 1;
-                let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-                if let Some(ciphers) = vm.tls_default_ciphers() {
-                    c.set_default_ciphers(ciphers);
-                }
-                c
-            }
+        // The handshake completes whatever the chain is: `CppWebSocket::accepts_tls_peer` judges it.
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+        let mut err = uws::create_bun_socket_error_t::none;
+        let ctx = match self.ssl_config.get().as_deref() {
+            Some(config) => vm.ssl_ctx_cache_get_or_create(
+                &config.as_usockets_for_client_verification(),
+                &mut err,
+            ),
+            None => vm.ssl_ctx_cache_get_or_create(
+                &vm.tls_config(Default::default(), false)
+                    .as_usockets_for_client_verification(),
+                &mut err,
+            ),
         };
 
         // Start TLS handshake
-        if tunnel
-            .start(&ssl_options, reject_unauthorized, initial_data)
-            .is_err()
-        {
+        let Some(ctx) = ctx else {
             drop(tunnel);
             self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
-        }
+        };
+        tunnel.start(ctx, reject_unauthorized, initial_data);
 
         // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
         // can fail the client and take `proxy`.
@@ -1552,17 +1538,15 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// On Windows, only WSA codes (>= 10000) are real socket errors, and WSAENOTCONN comes from
-/// uSockets' recv() probe, not from the actual failure. Both return `None`.
 fn socket_errno_name(errno: c_int) -> Option<&'static str> {
-    if errno == 0 || (cfg!(windows) && (errno < 10000 || errno == 10057)) {
-        return None;
-    }
-    bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
+    uws::SocketGroup::errno(errno).map(Into::into)
 }
 
-/// Errno name after `socket(2)` / `connect(2)` failed synchronously.
+/// Errno name after `socket(2)` / `connect(2)` failed synchronously. Winsock doesn't set `errno`.
 fn last_connect_error_code() -> BunString {
+    if cfg!(windows) {
+        return BunString::EMPTY;
+    }
     socket_errno_name(bun_core::ffi::errno()).map_or(BunString::EMPTY, BunString::static_)
 }
 
@@ -1749,7 +1733,7 @@ fn identity_name<'a>(
 
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
 // live in `bun_runtime::socket::ssl_config` (src/runtime/socket/SSLConfig.rs).
-// `SSLConfig::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
+// `ParsedTls::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
 // `bun_runtime → bun_http_jsc`, so the C-ABI export is hosted upstream where
 // `from_js` is defined. The result is bridged to `bun_http::ssl_config::SSLConfig`
 // (the type `connect()` consumes) via `into_http()` before boxing. C++ links by

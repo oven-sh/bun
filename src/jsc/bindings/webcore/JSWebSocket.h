@@ -50,7 +50,6 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 };
 template<> JSC::JSValue toJS<WebSocket>(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&);
 
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
 // Native binding for the built-in `ws` module:
 // { createWebSocket, createWebSocketOverStream, sendFrame, setRef, detach, remoteAddress, feed, streamClosed }
 JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject);

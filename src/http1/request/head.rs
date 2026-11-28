@@ -15,7 +15,7 @@ use crate::byte_sets::{
 
 /// 2 fewer than `UWS_HTTP_MAX_HEADERS_COUNT` in HttpParser.h.
 pub(super) const MAX_FIELDS: usize = 198;
-const MAX_TRAILER_FIELDS: usize = 199;
+pub(super) const MAX_TRAILER_FIELDS: usize = 199;
 pub(super) const BLANKS: &[u8] = b" \t";
 
 #[derive(Clone, Copy)]
@@ -34,6 +34,7 @@ pub struct Request<'a> {
     fields: &'a [Cell<Field<'a>>],
     names: NameFilter,
     pub(super) after_head: &'a [u8],
+    pub(super) content_length: Option<u64>,
     pub(super) has_transfer_encoding: bool,
     pub(super) ends_connection: bool,
 }
@@ -119,6 +120,7 @@ impl<'a> Request<'a> {
             fields: Cell::from_mut(fields.into_filled_mut()).as_slice_of_cells(),
             names,
             after_head: &[],
+            content_length: None,
             has_transfer_encoding: false,
             ends_connection: false,
         };
@@ -160,6 +162,11 @@ impl<'a> Request<'a> {
     /// What follows the head in the read that completed it.
     pub fn after_head(&self) -> &'a [u8] {
         self.after_head
+    }
+
+    /// The number that frames the body.
+    pub fn content_length(&self) -> Option<u64> {
+        self.content_length
     }
 
     /// Whether `Transfer-Encoding` frames the body.
@@ -244,7 +251,6 @@ struct RequestLine<'a> {
     method: &'a [u8],
     target: &'a [u8],
     is_http_1_0: bool,
-    /// With a target that is not a path.
     is_connect: bool,
 }
 
@@ -253,7 +259,7 @@ impl<'a> RequestLine<'a> {
         bytes: &'a [u8],
         options: &RequestOptions,
     ) -> Result<(Self, &'a [u8]), Stop> {
-        let methods = match options.has_strict_methods {
+        let methods = match IS_NODE {
             true => &UPPERCASE_METHOD,
             false => &METHOD,
         };
@@ -266,16 +272,16 @@ impl<'a> RequestLine<'a> {
             _ => return Err(RequestError::InvalidVersion.into()),
         };
         let is_connect = match (method, rest) {
+            (b"CONNECT", _) => true,
             (_, [b'/', ..]) => false,
             (b"PRI", [b'*', ..]) => return Err(after_pri(bytes)),
-            (b"CONNECT", _) => true,
-            _ if rest.len() > b"https://".len() && skip_scheme(rest).is_some() => false,
-            _ if rest.len() <= b"https://".len() && split_run(rest, &ABOVE_SPACE).1.is_empty() => {
+            _ if rest.len() >= b"https://".len() && skip_scheme(rest).is_some() => false,
+            _ if rest.len() < b"https://".len() && split_run(rest, &ABOVE_SPACE).1.is_empty() => {
                 return Err(Stop::Short);
             }
             _ => return Err(RequestError::InvalidRequest.into()),
         };
-        if options.has_strict_methods && Method::find(method).is_none() {
+        if IS_NODE && Method::find(method).is_none() {
             return Err(RequestError::InvalidMethod.into());
         }
 
@@ -330,23 +336,38 @@ fn skip_scheme(target: &[u8]) -> Option<&[u8]> {
 
 /// The first fields of a trailer section, which ends in an empty line. None if one is malformed.
 pub fn parse_trailers(section: &[u8], has_lenient_values: bool) -> Vec<Field<'_>> {
+    let mut fields = Vec::new();
+    let is_valid = for_each_trailer(section, has_lenient_values, |field| {
+        if fields.len() < MAX_TRAILER_FIELDS {
+            fields.push(field);
+        }
+    });
+    if is_valid { fields } else { Vec::new() }
+}
+
+/// False if a field is malformed.
+pub(super) fn for_each_trailer<'a>(
+    section: &'a [u8],
+    has_lenient_values: bool,
+    mut on_field: impl FnMut(Field<'a>),
+) -> bool {
     let values = match has_lenient_values {
         true => &RELAXED_CONTENT,
         false => &CONTENT,
     };
-    let (mut fields, mut rest) = (Vec::new(), section);
-    while fields.len() < MAX_TRAILER_FIELDS && !rest.starts_with(b"\r\n") {
+    let mut rest = section;
+    while !rest.starts_with(b"\r\n") {
         let (name @ [_, ..], [b':', value @ ..]) = split_run(rest, &TOKEN) else {
-            return Vec::new();
+            return false;
         };
         let (value, [b'\r', b'\n', next @ ..]) = split_run(value, values) else {
-            return Vec::new();
+            return false;
         };
         let value = strings::trim(value, BLANKS);
-        fields.push(Field { name, value });
+        on_field(Field { name, value });
         rest = next;
     }
-    fields
+    true
 }
 
 /// By llhttp's grammar of `Connection`, where a control character ends the list.

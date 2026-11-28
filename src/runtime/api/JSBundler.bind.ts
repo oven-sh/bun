@@ -38,4 +38,16 @@ export const build = b.fn({
   rustPath: "crate::api::js_bundler::js_bundler::build",
 });
 
+const reaction = { ...js, feature: "Bundler", args: { value: b.any, call: b.any } } as const;
+export const onResolveSetup = b.fn({
+  ...reaction,
+  export: "Bun__Bundler__onResolveSetup",
+  rustPath: "crate::api::js_bundler::js_bundler::on_resolve_setup",
+});
+export const onRejectSetup = b.fn({
+  ...reaction,
+  export: "Bun__Bundler__onRejectSetup",
+  rustPath: "crate::api::js_bundler::js_bundler::on_reject_setup",
+});
+
 export const workerLiveCount = b.fn({ returns: b.usize });

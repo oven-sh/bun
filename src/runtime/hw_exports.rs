@@ -160,7 +160,7 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 
 // ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
 //
-// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfigFromJs`
+// `bun_sql_jsc` cannot name `RuntimeState` / `socket::ssl_config::ParsedTls`
 // (this crate depends on it). Instead of Rust→Rust
 // `extern "C"` re-decls (which let the two sides silently disagree on pointee
 // layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
@@ -172,19 +172,15 @@ mod sql_hooks {
     use super::*;
     use bun_sql_jsc::jsc::SqlRuntimeHooks;
 
-    fn ssl_ctx_get_or_create(
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        crate::jsc_hooks::ssl_ctx_cache().get_or_create_opts(opts, err)
-    }
     fn ssl_config_from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> Option<Box<crate::socket::SSLConfig>> {
-        use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
-            Ok(config) => config.map(Box::new),
+        use crate::socket::ssl_config::ParsedTls;
+        let vm = global.bun_vm_ref();
+        match ParsedTls::from_js(vm, global, value, false) {
+            // `sslmode` already asked for TLS, so `tls: {}` is `tls: true`.
+            Ok(parsed) => Some(Box::new(parsed.or_defaults(vm, false))),
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
                 None
@@ -197,7 +193,6 @@ mod sql_hooks {
     #[unsafe(no_mangle)]
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare: crate::jsc_hooks::sql_rare,
-        ssl_ctx_get_or_create,
         ssl_config_from_js,
     };
 }

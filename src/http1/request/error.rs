@@ -19,6 +19,9 @@ pub enum RequestError {
     ChunkTerminatorExpected = 16,
     ContentLengthInTrailers = 17,
     InvalidTarget = 18,
+    EmptyContentLength = 19,
+    ContentLengthOverflow = 20,
+    DuplicateContentLength = 21,
 }
 
 impl RequestError {

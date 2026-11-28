@@ -578,7 +578,6 @@ impl All {
         &self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
-        quic_next_tick_us: Option<i64>,
         vm: &VirtualMachine,
         now_out: &mut Option<Timespec>,
     ) -> bool {
@@ -597,15 +596,6 @@ impl All {
         let reg_next = self.timers.first_deadline();
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
-            if let Some(us) = quic_next_tick_us {
-                if us >= 0 {
-                    *spec = Timespec {
-                        sec: us / US_PER_S,
-                        nsec: (us % US_PER_S) * NS_PER_US,
-                    };
-                    return true;
-                }
-            }
             return false;
         };
 
@@ -614,25 +604,10 @@ impl All {
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
         if next.greater(&now) && !self.is_due_when_idle() {
             *spec = next.duration(&now);
-            if let Some(us) = quic_next_tick_us {
-                if us >= 0 {
-                    Self::clamp_to_quic(spec, us);
-                }
-            }
         } else {
             *spec = Timespec { sec: 0, nsec: 0 };
         }
         true
-    }
-
-    fn clamp_to_quic(spec: &mut Timespec, us: i64) {
-        let cur_us = spec.sec * US_PER_S + spec.nsec / NS_PER_US;
-        if us < cur_us {
-            *spec = Timespec {
-                sec: us / US_PER_S,
-                nsec: (us % US_PER_S) * NS_PER_US,
-            };
-        }
     }
 
     /// Whether the first timer does not wait for its deadline. See `EventLoopTimer::is_due_when_idle`.
@@ -830,9 +805,6 @@ pub(crate) enum CountdownOverflowBehavior {
     /// `Bun.sleep`.
     Clamp,
 }
-
-const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
-const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
 
 /// The timer drain's fold: report what a fired timer's handler left pending
 /// as uncaught, or — if it is the VM's termination — tell the drain to stop.

@@ -800,6 +800,16 @@ impl SourceHandle {
         }
     }
 
+    /// A rewrite whose input is over: it holds no upstream, and its end makes a used body readable again.
+    pub(crate) fn has_all_input(&self) -> bool {
+        match *self {
+            SourceHandle::HTMLRewriter(p) => {
+                removable_body_behind_value!(HtmlRewriter, { p.has_all_input() })
+            }
+            _ => false,
+        }
+    }
+
     fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
         crate::dispatch::fold(ReadableSinkController::on_close(cpp, global, reason));
     }
@@ -852,6 +862,12 @@ impl SourceHandle {
             | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
+    pub(crate) fn reader_lock_changed(self) {
+        if let SourceHandle::FetchResponseBody(p) = self {
+            p.sync_body_unread();
         }
     }
 
@@ -1178,7 +1194,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `res` is `Copy` (raw uWS handle); see the note in
         // `send_without_auto_flusher` re: holding it across `on_first_write`.
 
-        if self.requested_end && !res.state().is_http_write_called() {
+        // Over HTTP/1 the head can be out before the first byte of the body, and `try_end` continues either framing.
+        let can_try_end = matches!(res, uws::AnyResponse::SSL(_) | uws::AnyResponse::TCP(_))
+            || !res.state().is_http_write_called();
+        if self.requested_end && can_try_end {
             self.handle_first_write_if_necessary();
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
@@ -1658,7 +1677,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     ///
     /// # Safety
     /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    pub(crate) unsafe fn abort(this: *mut Self, reason: CommonAbortReason) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
@@ -1674,7 +1693,14 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.abort(CommonAbortReason::ConnectionClosed);
+        source.abort(reason);
+    }
+
+    /// Returns true if the sink ended the response, parked an `end()` or queued a flush. Each completes the head.
+    pub(crate) fn sends_head_itself(&self) -> bool {
+        self.ended_response
+            || self.requested_end
+            || (self.auto_flusher.registered.get() && !self.readable_slice().is_empty())
     }
 
     fn unregister_auto_flusher(&mut self) {

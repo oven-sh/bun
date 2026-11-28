@@ -3,7 +3,6 @@ import { bunEnv, bunExe, isDebug } from "harness";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
-import { bunEnv, bunExe } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -232,6 +231,180 @@ describe("Headers", () => {
           ),
       ).toThrow(error);
     });
+    test.each([
+      [1, "type number (1)"],
+      ["a: b", "type string ('a: b')"],
+      [true, "type boolean (true)"],
+      [null, "null"],
+    ])("says what it expected when the init is %p", (init: any, received) => {
+      const message = (name: string) =>
+        `The "${name}" argument must be an instance of Headers, Array, or Object. Received ${received}`;
+      const thrownBy = (fn: () => unknown) => {
+        try {
+          fn();
+        } catch (e: any) {
+          return { name: e.name, code: e.code, message: e.message };
+        }
+      };
+      const error = { name: "TypeError", code: "ERR_INVALID_ARG_TYPE" };
+      expect(thrownBy(() => new Headers(init))).toEqual({ ...error, message: message("init") });
+      expect(thrownBy(() => new Response("", { headers: init }))).toEqual({ ...error, message: message("headers") });
+      expect(thrownBy(() => new Request("http://x/", { headers: init }))).toEqual({
+        ...error,
+        message: message("headers"),
+      });
+    });
+  });
+  // Web IDL converts a HeadersInit through its Symbol.iterator method.
+  describe("a Headers object as HeadersInit", () => {
+    const entries = (headers: Headers) => [...Headers.prototype.entries.call(headers)];
+
+    class Overridden extends Headers {
+      // @ts-expect-error declared as a property
+      *[Symbol.iterator](): Generator<[string, string], undefined, unknown> {
+        yield ["x-from-iterator", "1"];
+      }
+    }
+    const overridden = () => new Overridden([["a", "b"]]);
+    const fromIterator: [string, string][] = [["x-from-iterator", "1"]];
+
+    test("new Headers() calls a subclass's iterator", () => {
+      expect(entries(new Headers(overridden()))).toEqual(fromIterator);
+    });
+
+    test("new Headers() calls an own iterator", () => {
+      const headers = new Headers([["a", "b"]]);
+      (headers as any)[Symbol.iterator] = function* (this: Headers) {
+        yield ["x-own", this.get("a")];
+      };
+      expect(entries(new Headers(headers))).toEqual([["x-own", "b"]]);
+    });
+
+    test("new Headers() reads an accessor once", () => {
+      const headers = new Headers([["a", "b"]]);
+      let reads = 0;
+      Object.defineProperty(headers, Symbol.iterator, {
+        get() {
+          reads++;
+          return function* () {
+            yield ["x-getter", "1"];
+          };
+        },
+      });
+      expect(entries(new Headers(headers))).toEqual([["x-getter", "1"]]);
+      expect(reads).toBe(1);
+    });
+
+    test("new Headers() reads the iterator once through a Proxy in the prototype chain", () => {
+      const headers = new Headers([["a", "b"]]);
+      const keys: PropertyKey[] = [];
+      const proxy = new Proxy(Headers.prototype, {
+        get(target, key, receiver) {
+          keys.push(key);
+          if (key !== Symbol.iterator) return Reflect.get(target, key, receiver);
+          return function* () {
+            yield ["x-proxy", "1"];
+          };
+        },
+      });
+      Object.setPrototypeOf(headers, proxy);
+      expect(entries(new Headers(headers))).toEqual([["x-proxy", "1"]]);
+      expect(keys).toEqual([Symbol.iterator]);
+    });
+
+    test("new Headers() copies the header list when only entries() is overridden", () => {
+      class OnlyEntries extends Headers {
+        // @ts-expect-error declared as a property
+        *entries(): Generator<[string, string], undefined, unknown> {
+          yield ["x-entries", "1"];
+        }
+      }
+      expect(entries(new Headers(new OnlyEntries([["a", "b"]])))).toEqual([["a", "b"]]);
+    });
+
+    test("Response and Request call the iterator", () => {
+      const request = new Request("http://localhost/", { headers: { "x-request": "1" } });
+      expect({
+        response: entries(new Response(null, { headers: overridden() }).headers),
+        json: entries(Response.json(null, { headers: overridden() }).headers),
+        redirect: entries(Response.redirect("http://localhost/", { headers: overridden() }).headers),
+        request: entries(new Request("http://localhost/", { headers: overridden() }).headers),
+        requestFromRequest: entries(new Request(request, { headers: overridden() }).headers),
+      }).toEqual({
+        response: fromIterator,
+        json: [["content-type", "application/json;charset=utf-8"], ...fromIterator],
+        redirect: [["location", "http://localhost/"], ...fromIterator],
+        request: fromIterator,
+        requestFromRequest: fromIterator,
+      });
+    });
+
+    // Bun.serve lowercases names, so read them off the wire.
+    async function sentHeaders(send: (url: string) => Promise<unknown>) {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, chunk) {
+            received += chunk.toString("latin1");
+            if (!received.includes("\r\n\r\n")) return;
+            resolve(received);
+            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          },
+          close() {
+            reject(new Error("The connection closed before the end of the headers."));
+          },
+          error(_, error) {
+            reject(error);
+          },
+        },
+      });
+      const [head] = await Promise.all([promise, send(`http://127.0.0.1:${server.port}/`)]);
+      return head.split("\r\n").filter(line => /^(a|x-[a-z-]+):/i.test(line));
+    }
+
+    test("fetch() sends what the iterator yields", async () => {
+      expect(await sentHeaders(url => fetch(url, { headers: overridden() }))).toEqual(["x-from-iterator: 1"]);
+      expect(await sentHeaders(url => fetch({ url, headers: overridden() } as any))).toEqual(["x-from-iterator: 1"]);
+      expect(
+        await sentHeaders(url => fetch("http://example.invalid/", { proxy: { url, headers: overridden() } })),
+      ).toEqual(["x-from-iterator: 1"]);
+    });
+
+    test("fetch() keeps the names' case for a subclass with the built-in iterator", async () => {
+      class Plain extends Headers {}
+      const headers = new Plain([["X-Mixed-Case", "1"]]);
+      expect(await sentHeaders(url => fetch(url, { headers }))).toEqual(["X-Mixed-Case: 1"]);
+    });
+
+    test("server.fetch() and server.upgrade() call the iterator", async () => {
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request, server) {
+          if (server.upgrade(request, { headers: overridden() })) return;
+          return Response.json(entries(request.headers));
+        },
+        websocket: { message() {} },
+      });
+      expect(await (await server.fetch("/", { headers: overridden() })).json()).toEqual(fromIterator);
+
+      const upgraded = await fetch(server.url, {
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Version": "13",
+          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        },
+      });
+      expect({
+        status: upgraded.status,
+        a: upgraded.headers.get("a"),
+        fromIterator: upgraded.headers.get("x-from-iterator"),
+      }).toEqual({ status: 101, a: null, fromIterator: "1" });
+    });
   });
   describe("append()", () => {
     test("can append header", () => {
@@ -409,6 +582,16 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.get()).toThrow(TypeError);
+    });
+    test.each(["getSetCookie", "getAll"])("%s() throws when `this` is not a Headers", method => {
+      for (const receiver of [{}, null, undefined, 42, new Response(), new Map([["set-cookie", "a=1"]])]) {
+        expect(() => (Headers.prototype as any)[method].call(receiver, "set-cookie")).toThrow(
+          `Can only call Headers.${method} on instances of Headers`,
+        );
+      }
+      expect((Headers.prototype as any)[method].call(new Headers([["Set-Cookie", "a=1"]]), "set-cookie")).toEqual([
+        "a=1",
+      ]);
     });
     test("throws when the joined set-cookie values are too long", () => {
       const half = Buffer.alloc(512 * 1024, "a").toString();
@@ -624,8 +807,8 @@ describe("Headers", () => {
       const values = [...headers.values()];
       expect({
         forEach,
-        forOf: [...headers],
-        entries: [...headers.entries()],
+        forOf: [...headers] as string[][],
+        entries: [...headers.entries()] as string[][],
         keysAndValues: [...headers.keys()].map((key, i) => [key, values[i]]),
       }).toEqual({ forEach: expected, forOf: expected, entries: expected, keysAndValues: expected });
     }
@@ -803,26 +986,32 @@ describe("Headers", () => {
       });
       // Script did not ask for these, so unlike delete() they leave the iterator on the name it stood on.
       describe("a name that native code removes", () => {
-        const names = ["accept", "content-length", "content-type", "host", "x-custom"];
-        const response = () =>
-          new Response("ok", {
-            headers: { "Accept": "a", "Content-Length": "2", "Content-Type": "t/t", "Host": "h", "X-Custom": "x" },
+        const names = ["accept", "content-encoding", "content-type", "host", "x-custom"];
+        // fetch() decoded the body, so the server removes the Content-Encoding that no longer describes it.
+        async function response() {
+          using upstream = Bun.serve({
+            port: 0,
+            fetch: () => new Response(Bun.gzipSync("ok"), { headers: { "Content-Encoding": "gzip" } }),
           });
+          return new Response(await (await fetch(upstream.url)).blob(), {
+            headers: { "Accept": "a", "Content-Encoding": "gzip", "Content-Type": "t/t", "Host": "h", "X-Custom": "x" },
+          });
+        }
         function take(iterator: Iterator<string>, steps: number) {
           const seen: string[] = [];
           for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
           return seen;
         }
-        // Content-Length is only seen by an iterator that got to it before it went away. Nothing else is lost.
-        const expected = (steps: number) => (steps >= 2 ? names : names.filter(name => name !== "content-length"));
+        // Content-Encoding is only seen by an iterator that got to it before it went away. Nothing else is lost.
+        const expected = (steps: number) => (steps >= 2 ? names : names.filter(name => name !== "content-encoding"));
 
         test.each([0, 1, 2, 3, 4, 5])("as the server writes the response, after %d steps", async steps => {
           let iterator: Iterator<string> & Iterable<string>;
           let seen: string[] = [];
           using server = Bun.serve({
             port: 0,
-            fetch() {
-              const res = response();
+            async fetch() {
+              const res = await response();
               iterator = res.headers.keys();
               seen = take(iterator, steps);
               return res;
@@ -832,8 +1021,8 @@ describe("Headers", () => {
           expect([...seen, ...iterator!]).toEqual(expected(steps));
         });
 
-        test.each([0, 1, 2, 3, 4, 5])("as a static route takes the response, after %d steps", steps => {
-          const res = response();
+        test.each([0, 1, 2, 3, 4, 5])("as a static route takes the response, after %d steps", async steps => {
+          const res = await response();
           const iterator = res.headers.keys();
           const seen = take(iterator, steps);
           using server = Bun.serve({ port: 0, routes: { "/": res }, fetch: () => new Response() });
@@ -881,8 +1070,8 @@ describe("Headers", () => {
           let seen: string[] = [];
           using server = Bun.serve({
             port: 0,
-            fetch() {
-              res = response();
+            async fetch() {
+              res = await response();
               iterator = res.headers.keys();
               seen = take(iterator, 2);
               return res;
@@ -891,7 +1080,7 @@ describe("Headers", () => {
           expect(await (await fetch(server.url)).text()).toBe("ok");
           res!.headers.set("X-Later", "l");
           // The index is kept, as after any change by script: one name fewer before it, so "content-type" is passed over.
-          expect([...seen, ...iterator!]).toEqual(["accept", "content-length", "host", "x-custom", "x-later"]);
+          expect([...seen, ...iterator!]).toEqual(["accept", "content-encoding", "host", "x-custom", "x-later"]);
         });
       });
       test("forEach sees what its callback changes", () => {
@@ -967,7 +1156,7 @@ describe("Headers", () => {
         return iterator;
       })();
       Bun.gc(true);
-      expect([...iterator]).toEqual(
+      expect<string[][]>([...iterator]).toEqual(
         Array.from({ length: 32 }, (_, i) => [`x-custom-${i}`, valueOf(i)]).sort((a, b) => byCodeUnit(a[0], b[0])),
       );
     });

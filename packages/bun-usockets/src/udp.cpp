@@ -230,8 +230,7 @@ struct us_udp_socket_t *us_create_udp_socket(
 
     /* IP_RECVERR is only useful when there is an on_recv_error handler to
      * drain the error queue; without one it only poisons subsequent sends. */
-    if (recv_error_cb) flags |= LIBUS_UDP_LINUX_RECVERR;
-    else flags &= ~LIBUS_UDP_LINUX_RECVERR;
+    if (!recv_error_cb) flags &= ~LIBUS_UDP_LINUX_RECVERR;
     us_fd_t fd = bsd_create_udp_socket(host, port, flags, err);
     if (!fd) {
         return 0;

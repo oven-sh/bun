@@ -75,6 +75,16 @@ pub(crate) fn handle_internal_message_child(
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
+    // A worker that hasn't loaded node:cluster has no server to close first. If it loads later, it finds the message.
+    if !is_child_listening()
+        && message.is_object()
+        && let Some(act) = message.get(global, "act")?
+        && act.is_string()
+        && act.to_bun_string(global)?.eq_ascii(b"disconnect")
+    {
+        crate::hw_exports::close_child_ipc(global);
+    }
+
     // The listener can close the channel, which drops the singleton.
     let singleton = child_singleton();
     let Some((cb, worker)) = singleton.cb.get().zip(singleton.worker.get()) else {
@@ -238,7 +248,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.get().is_ready() {
+    if !message.is_object() || !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -331,7 +341,7 @@ pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObjec
 }
 
 pub(crate) fn cluster_raw_bind<'a>(
-    cx: &mut JsScope<'a>,
+    _cx: &mut JsScope<'a>,
     address_type: BindAddressType<'a>,
     address: BindAddress<'a>,
     port: f64,
@@ -341,7 +351,6 @@ pub(crate) fn cluster_raw_bind<'a>(
 
     #[cfg(windows)]
     {
-        let _ = cx;
         match address_type {
             BindAddressType::Udp(_) => return Ok(BindResult::Errno(-bun_sys::UV_E::NOTSUP)),
             BindAddressType::Family(family) if family == -1.0 => {
@@ -399,8 +408,8 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
     #[cfg(not(windows))]
     {
-        use bun_sys::net::{Address, bind, getsockname, setsockopt_int, socket};
-        use bun_sys::{CloseOnDrop, Fd};
+        use bun_sys::Fd;
+        use bun_sys::net::{Address, bind, getsockname, setsockopt_int};
         use core::ffi::c_int;
         use core::net::{Ipv4Addr, Ipv6Addr};
 
@@ -411,20 +420,23 @@ pub(crate) fn cluster_raw_bind<'a>(
             BindAddressType::Family(_) | BindAddressType::Ignored(_) => (false, 4),
         };
 
+        use bun_uws::udp::raw::{bsd_close_socket, bsd_create_socket};
+
         fn create_and_bind(
             family: c_int,
             socktype: c_int,
             flags: i32,
             address: &[u8],
         ) -> Result<Fd, i32> {
-            let negated_errno = |err: bun_sys::Error| -i32::from(err.errno);
-            let socket = CloseOnDrop::new(socket(family, socktype).map_err(negated_errno)?);
-            let fd = socket.fd();
-            let _ = bun_sys::set_close_on_exec(fd);
-            let _ = bun_sys::set_nonblocking(fd);
+            let mut err: c_int = 0;
+            let fd = bsd_create_socket(family, socktype, 0, &mut err);
+            if fd < 0 {
+                return Err(-err);
+            }
+            let fd = Fd::from_native(fd);
 
             let is_udp = socktype == libc::SOCK_DGRAM;
-            if family != libc::AF_UNIX && (!is_udp || flags & 0x4 != 0) {
+            if !is_udp || flags & 0x4 != 0 {
                 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
                 if is_udp {
                     let _ = setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, 1);
@@ -435,45 +447,33 @@ pub(crate) fn cluster_raw_bind<'a>(
                 let _ = setsockopt_int(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, flags & 0x1);
             }
 
-            bind(fd, address).map_err(negated_errno)?;
-            Ok(socket.into_raw())
+            if let Err(err) = bind(fd, address) {
+                bsd_close_socket(fd.native());
+                return Err(-i32::from(err.errno));
+            }
+            Ok(fd)
         }
 
         if atype == -1 {
-            let path_bytes = match address {
-                BindAddress::Text(path) => path,
-                BindAddress::Ignored(value) => {
-                    return Err(cx.global().throw_invalid_argument_type_value(
-                        "address",
-                        "string",
-                        value.to_js(),
-                    ));
-                }
+            let BindAddress::Text(path_bytes) = address else {
+                return Ok(BindResult::Errno(-(libc::EINVAL)));
             };
-            let mut sun: libc::sockaddr_un = bun_core::ffi::zeroed();
-            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
-            if path_bytes.len() >= sun.sun_path.len() {
-                return Ok(BindResult::Errno(-(libc::ENAMETOOLONG)));
-            }
-            for (i, b) in path_bytes.iter().enumerate() {
-                sun.sun_path[i] = *b as _;
-            }
-            // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
-            let len = if path_bytes.first() == Some(&0) {
-                core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
-            } else {
-                core::mem::size_of::<libc::sockaddr_un>()
+            let mut err: c_int = 0;
+            // SAFETY: `path_bytes` is readable for its length, and `err` is a live local.
+            let fd = unsafe {
+                bun_uws::socket_transfer::bsd_create_bound_socket_unix(
+                    path_bytes.as_ptr().cast(),
+                    path_bytes.len(),
+                    &raw mut err,
+                )
             };
-            let sun = &bun_core::bytes_of(&sun)[..len];
-            return Ok(
-                match create_and_bind(libc::AF_UNIX, libc::SOCK_STREAM, flags, sun) {
-                    Ok(fd) => BindResult::Handle(BoundHandle {
-                        fd: fd.native() as u64,
-                        port: -1,
-                    }),
-                    Err(e) => BindResult::Errno(e),
-                },
-            );
+            if fd < 0 {
+                return Ok(BindResult::Errno(-err));
+            }
+            return Ok(BindResult::Handle(BoundHandle {
+                fd: fd as u64,
+                port: -1,
+            }));
         }
 
         let family: c_int = if atype == 6 {
@@ -533,7 +533,7 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
 }
 
-/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
+/// Returns 0 if `fd` is an unconnected socket of the wanted type that this thread doesn't listen on, or a negative errno.
 pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
@@ -558,6 +558,9 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         {
             return -bun_sys::UV_E::INVAL;
         }
+        if !want_dgram && VirtualMachine::get().uws_loop().listens_on(fd.native()) {
+            return -bun_sys::UV_E::EXIST;
+        }
         0
     }
     #[cfg(windows)]
@@ -568,19 +571,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
 }
 
 pub(crate) fn cluster_close_handle(fd: f64) {
-    #[cfg(windows)]
-    {
-        if fd.is_finite() && fd >= 0.0 {
-            bun_uws::socket_transfer::bsd_close_socket(
-                fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let fd = fd as i32;
-        if fd >= 0 {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
+    if fd.is_finite() && fd >= 0.0 {
+        bun_uws::socket_transfer::bsd_close_socket(fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR);
     }
 }

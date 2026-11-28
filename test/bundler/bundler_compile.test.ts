@@ -449,6 +449,8 @@ describe("bundler", () => {
       "/entry.ts": /* js */ `
         import bar from './foo.file' with {type: "file"};
         if ((await Bun.file(bar).text()).trim() !== "abcd") throw "fail";
+        // The embedded file isn't on disk, and fetch() rejects a file: URL whose path doesn't exist.
+        if ((await (await fetch(Bun.pathToFileURL(bar))).text()).trim() !== "abcd") throw "fetch fail";
         console.log("Hello, world!");
       `,
       "/foo.file": /* js */ `

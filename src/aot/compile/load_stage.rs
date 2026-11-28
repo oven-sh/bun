@@ -652,7 +652,11 @@ impl<'a> Build<'a> {
             }
             Some(_) => Some(ChosenThreads::new(self.threads)),
         };
-        let disk = create_disk(options, self.threads);
+        let mut disk = create_disk(options, self.threads);
+        if self.provider.has_resolve_plugins() {
+            // A plugin may wait for another build.
+            disk = disk.without_reader_threads();
+        }
         let application_session = sessions.application;
         let atoms = Interner::new_in(application_session);
         let builtin_names = BuiltinNames::new(&atoms);

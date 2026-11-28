@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { Readable } from "node:stream";
 
 describe("UTF-8 BOM should be ignored", () => {
   test("handles empty strings", async () => {
@@ -172,6 +173,149 @@ describe("UTF-8 BOM should be ignored", () => {
       });
       const blob = await stream.blob();
       expect(await blob.text()).toBe("Hello, World!");
+    });
+  });
+});
+
+test("formData() drops one BOM, and only at the start of a url-encoded body", async () => {
+  const headers = { "content-type": "application/x-www-form-urlencoded" };
+  const parse = async (body: string) => [...(await new Response(body, { headers }).formData())];
+  expect({
+    only: await parse("\uFEFF"),
+    two: await parse("\uFEFF\uFEFFa=1"),
+    inside: await parse("\uFEFFa=\uFEFF1&\uFEFFb=2"),
+  }).toEqual({
+    only: [],
+    two: [["\uFEFFa", "1"]],
+    inside: [
+      ["a", "\uFEFF1"],
+      ["\uFEFFb", "2"],
+    ],
+  });
+});
+
+// A part is decoded with "UTF-8 decode without BOM", which treats a leading U+FEFF as data.
+describe("UTF-8 BOM should be preserved in formData()", () => {
+  it("in multipart/form-data part values", async () => {
+    const boundary = "----x";
+    const body = [`------x`, `Content-Disposition: form-data; name="field"`, ``, `\uFEFFvalue`, `------x--`, ``].join(
+      "\r\n",
+    );
+    const response = new Response(body, {
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    });
+    const formData = await response.formData();
+    expect([...formData]).toEqual([["field", "\uFEFFvalue"]]);
+  });
+
+  it("in multipart/form-data round-tripped through FormData", async () => {
+    const sent = new FormData();
+    sent.append("leading", "\uFEFFbom");
+    sent.append("only", "\uFEFF");
+    sent.append("trailing", "x\uFEFF");
+    sent.append("file", new Blob([new Uint8Array([0xef, 0xbb, 0xbf, 0x41])]), "f.txt");
+    const received = await new Request("http://h/", { method: "POST", body: sent }).formData();
+
+    const strings = [...received].filter(([, v]) => typeof v === "string");
+    expect(strings).toEqual([
+      ["leading", "\uFEFFbom"],
+      ["only", "\uFEFF"],
+      ["trailing", "x\uFEFF"],
+    ]);
+    const file = received.get("file") as Blob;
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0xef, 0xbb, 0xbf, 0x41]);
+  });
+});
+
+// text() is one UTF-8 decode of the body's bytes, so it drops exactly one leading EF BB BF. json() parses that text.
+describe("text() and json() drop one leading UTF-8 BOM", () => {
+  type Chunk = string | Uint8Array;
+  const json = '{"ok":"🌎"}';
+  const BOM = [0xef, 0xbb, 0xbf];
+  const bytes = (...parts: (string | number[])[]) =>
+    new Uint8Array(parts.flatMap(part => (typeof part === "string" ? [...Buffer.from(part)] : part)));
+  const decoded = (chunks: Chunk[]) => new TextDecoder().decode(Buffer.concat(chunks.map(chunk => Buffer.from(chunk))));
+  const request = (body: Bun.BodyInit) => new Request("http://localhost/", { method: "POST", body });
+
+  test.each([
+    ["a BOM, then JSON", "\uFEFF" + json, json],
+    ["a BOM, then Latin-1 text", '\uFEFF"h\u00e9llo"', '"h\u00e9llo"'],
+    ["two BOMs", '\uFEFF\uFEFF"a"', '\uFEFF"a"'],
+    ["a BOM in the middle", '"x\uFEFFy"', '"x\uFEFFy"'],
+    ["only a BOM", "\uFEFF", ""],
+  ])("string body: %s", async (_, body, text) => {
+    expect(decoded([body])).toBe(text);
+    expect({
+      response: await new Response(body).text(),
+      request: await request(body).text(),
+      textStream: (await Array.fromAsync(new Response(body).textStream())).join(""),
+    }).toEqual({ response: text, request: text, textStream: text });
+  });
+
+  test("string body: json() parses the text after the BOM", async () => {
+    expect(await new Response("\uFEFF" + json).json()).toEqual({ ok: "🌎" });
+    expect(await request("\uFEFF" + json).json()).toEqual({ ok: "🌎" });
+  });
+
+  test("string body: bytes() keeps the BOM", async () => {
+    expect([...(await new Response("\uFEFFa").bytes())]).toEqual([...BOM, 0x61]);
+  });
+
+  const carriers: [string, (chunks: Chunk[]) => any][] = [
+    [
+      "an async generator",
+      chunks =>
+        (async function* () {
+          yield* chunks;
+        })(),
+    ],
+    [
+      "an object with Symbol.asyncIterator",
+      chunks => ({
+        async *[Symbol.asyncIterator]() {
+          yield* chunks;
+        },
+      }),
+    ],
+    ["a node:stream Readable", chunks => Readable.from(chunks)],
+    [
+      "a direct ReadableStream",
+      chunks =>
+        new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            for (const chunk of chunks) controller.write(chunk);
+            controller.close();
+          },
+        }),
+    ],
+    [
+      "a default ReadableStream",
+      chunks =>
+        new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) controller.enqueue(chunk);
+            controller.close();
+          },
+        }),
+    ],
+  ];
+  const documents: [string, () => Chunk[], string][] = [
+    ["a BOM, then JSON", () => [bytes(BOM, json)], json],
+    ["a BOM split across chunks", () => [bytes([0xef]), bytes([0xbb, 0xbf], json)], json],
+    ["two BOMs", () => [bytes(BOM, BOM, '"a"')], '\uFEFF"a"'],
+    ["a BOM in the middle", () => [bytes('"x'), bytes(BOM, 'y"')], '"x\uFEFFy"'],
+    ["a string chunk with a BOM", () => ["\uFEFF" + json], json],
+    ["a string chunk with a BOM, then bytes", () => ["\uFEFF{", bytes('"ok":"🌎"}')], json],
+  ];
+  describe.each(carriers)("%s", (_, carry) => {
+    test.each(documents)("%s", async (_, chunks, text) => {
+      expect(decoded(chunks())).toBe(text);
+      expect({
+        response: await new Response(carry(chunks())).text(),
+        request: await request(carry(chunks())).text(),
+      }).toEqual({ response: text, request: text });
+      if (text === json) expect(await new Response(carry(chunks())).json()).toEqual({ ok: "🌎" });
     });
   });
 });

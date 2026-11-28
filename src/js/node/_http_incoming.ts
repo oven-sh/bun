@@ -11,7 +11,6 @@ const {
   abortedSymbol,
   eofInProgress,
   kHandle,
-  kHandoffResponse,
   kHeaderSource,
   noBodySymbol,
   emitErrorNextTickIfErrorListenerNT,
@@ -331,9 +330,9 @@ IncomingMessage.prototype._read = function _read(_n) {
   // Native server path.
   const socket = this.socket;
   if (socket && socket.readable) {
-    if (this.upgrade || socket[kHandoffResponse] !== undefined) {
+    if (this.upgrade || socket.parser === null) {
       // Upgrade request with a body (Node 26 semantics): reading the request
-      // must not flip the raw socket into flowing mode - tunnel bytes pushed
+      // must not flip the raw socket into flowing mode - raw bytes pushed
       // to the socket before the 'upgrade' listener attaches its own 'data'
       // handler would be discarded by a flowing stream with no readers.
       // Resume the native body source directly instead.
@@ -408,7 +407,11 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     socket.destroy(err);
     const state = { cleanup: undefined as undefined | (() => void) };
     state.cleanup = finished(socket, onFinishedAfterDestroy.bind(this, state, err, cb));
+  } else if (err == null && !this.aborted) {
+    cb();
   } else {
+    // pipeline() and `for await` destroy a request but keep its connection (req.socket is null). The rest of the body is dropped, not held back.
+    if (!socket && !this.complete) readStart(this.client);
     process.nextTick(onError, this, err, cb);
   }
 };
@@ -720,7 +723,8 @@ IncomingMessage.prototype._dump = function _dump() {
     // Remove 'data' event listeners explicitly.
     this.removeAllListeners("data");
     // ondata stays armed: it drops the chunks and still delivers the last one, which completes the request.
-    this.resume();
+    if (this._readableState.ended && !this.destroyed && this.readableLength === 0) this.read(0);
+    else this.resume();
   }
 };
 

@@ -15,6 +15,7 @@ use crate::bun_fs as Fs;
 use crate::bundle_v2::api::JSBundler::{
     Load, LoadOwner, LoadValue, MiniImportRecord, Plugin, Resolve, ResolveOwner, ResolveValue,
 };
+use crate::bundle_v2::dispatch::CompletionHandle;
 use crate::options::Target;
 
 const FILE_NAMESPACE: &[u8] = b"file";
@@ -22,6 +23,8 @@ const FILE_NAMESPACE: &[u8] = b"file";
 #[derive(Default)]
 struct WaiterState {
     has_deferred: bool,
+    /// Of the thread that has lent the turn until it is woken.
+    sleeper: Option<CompletionHandle<'static>>,
     answer: Option<Answer>,
 }
 
@@ -48,7 +51,7 @@ impl PluginWaiter {
     pub fn defer(&self) {
         let mut state = self.state.lock();
         state.has_deferred = true;
-        self.changed.broadcast();
+        self.wake(&mut state);
     }
 
     pub(crate) fn answer_load(&self, value: LoadValue) {
@@ -68,7 +71,27 @@ impl PluginWaiter {
         debug_assert!(state.answer.is_none());
         state.answer = Some(answer);
         // Still locked: once the sleeper has the answer, `shut_down` may free the waiter.
+        self.wake(&mut state);
+    }
+
+    fn wake(&self, state: &mut WaiterState) {
+        if let Some(sleeper) = state.sleeper.take() {
+            sleeper.turn.answer_sent();
+        }
         self.changed.broadcast();
+    }
+
+    fn lend_turn<R>(&self, completion: CompletionHandle<'static>, wait: fn(&Self) -> R) -> R {
+        let mut state = self.state.lock();
+        if state.answer.is_some() || state.has_deferred {
+            drop(state);
+            return wait(self);
+        }
+        state.sleeper = Some(completion);
+        drop(state);
+        let result = completion.wait_for_plugins(|| wait(self));
+        completion.turn.answer_taken();
+        result
     }
 
     fn wait(&self) -> WakeReason {
@@ -77,7 +100,7 @@ impl PluginWaiter {
             if let Some(answer) = state.answer.take() {
                 return WakeReason::Answered(answer);
             }
-            if state.has_deferred {
+            if core::mem::take(&mut state.has_deferred) {
                 return WakeReason::Deferred;
             }
             self.changed.wait_guarded(&mut state);
@@ -159,6 +182,7 @@ unsafe impl Send for Carrier {}
 
 pub(crate) struct PluginRequests {
     plugins: SharedPlugins,
+    completion: CompletionHandle<'static>,
     post: Guarded<Carrier>,
     waiters: Guarded<WaiterPool>,
     deferred: Guarded<Vec<PendingDeferredLoad>>,
@@ -173,13 +197,13 @@ impl PluginRequests {
     pub(crate) fn new(bundle: NonNull<BundleV2<'static>>) -> PluginRequests {
         // SAFETY: the caller owns the carrier, and no other thread has it yet.
         let carrier = unsafe { bundle.as_ref() };
-        debug_assert!(carrier.completion.is_some());
         let working_directory = Fs::FileSystem::get().top_level_dir();
         let in_memory_files = carrier.file_map.into_iter();
         let in_memory_files =
             in_memory_files.flat_map(|files| in_memory_files_by_path(files, working_directory));
         PluginRequests {
             plugins: SharedPlugins(carrier.plugins.expect("plugin requests need plugins")),
+            completion: carrier.completion.expect("plugins come with one"),
             post: Guarded::new(Carrier(bundle)),
             waiters: Guarded::default(),
             deferred: Guarded::default(),
@@ -226,7 +250,7 @@ impl PluginRequests {
             resolve.dispatch(bundle);
         });
         // SAFETY: the pool owns every waiter until `self` drops.
-        let answer = unsafe { waiter.as_ref() }.wait_for_answer();
+        let answer = self.wait_for_answer(unsafe { waiter.as_ref() });
         self.waiters.lock().release(waiter);
 
         match answer {
@@ -285,7 +309,8 @@ impl PluginRequests {
 
         let pending = self.post_load(request);
         // SAFETY: the pool owns every waiter until `self` drops.
-        match unsafe { pending.waiter.as_ref() }.wait() {
+        let waiter = unsafe { pending.waiter.as_ref() };
+        match waiter.lend_turn(self.completion, PluginWaiter::wait) {
             WakeReason::Answered(answer) => {
                 self.release_load(pending);
                 loaded_from_value(
@@ -343,6 +368,10 @@ impl PluginRequests {
         work(unsafe { bundle.0.as_mut() })
     }
 
+    fn wait_for_answer(&self, waiter: &PluginWaiter) -> Answer {
+        waiter.lend_turn(self.completion, PluginWaiter::wait_for_answer)
+    }
+
     fn post_load(&self, request: &LoadRequest<'_>) -> PendingLoad {
         let waiter = self.waiters.lock().acquire();
         let owner = LoadOwner::Waiter {
@@ -391,7 +420,7 @@ impl PluginRequests {
             file,
         } = entry;
         // SAFETY: the pool owns every waiter until `self` drops.
-        let value = load_value(unsafe { pending.waiter.as_ref() }.wait_for_answer());
+        let value = load_value(self.wait_for_answer(unsafe { pending.waiter.as_ref() }));
         let (namespace, path) = self.release_load(pending);
         let loaded = loaded_from_value(value, || file, default_loader, log);
         (namespace, path, loaded)

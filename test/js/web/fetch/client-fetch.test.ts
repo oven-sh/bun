@@ -257,6 +257,7 @@ test("text with BOM", async () => {
   expect(text).toBe("test=\uFEFF");
 });
 
+// The key is "test": Bun drops the BOM at the start of a url-encoded body (utf8-bom.test.ts).
 test.todo("formData with BOM", async () => {
   await using server = createServer((req, res) => {
     res.setHeader("content-type", "application/x-www-form-urlencoded");
@@ -782,10 +783,10 @@ describe.concurrent("response head", () => {
     ]);
   });
 
-  test("up to 256 header lines", async () => {
+  test("up to 1000 header lines", async () => {
     const head = (lines: number) => `HTTP/1.1 204 OK\r\n${Buffer.alloc(lines * 4, "A:\r\n")}\r\n`;
-    expect((await fetchFrom([head(256)]))[0]).toBe(204);
-    expect(await fetchFrom([head(257)])).toBe("Malformed_HTTP_Response");
+    expect((await fetchFrom([head(1000)]))[0]).toBe(204);
+    expect(await fetchFrom([head(1001)])).toBe("ResponseHeadersTooLarge");
   });
 
   test("up to 1 MiB", async () => {

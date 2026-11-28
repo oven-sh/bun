@@ -354,7 +354,7 @@ pub struct VirtualMachine {
     /// Kept between calls of `Bun.TOML.parse` and its siblings.
     pub text_format_arena: Cell<Option<bun_alloc::Arena>>,
 
-    pub(crate) gc_controller: crate::GarbageCollectionController,
+    pub gc_controller: crate::GarbageCollectionController,
     /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
     /// The thread holds a ref on it for its whole life.
     pub worker: Cell<Option<*const c_void>>,
@@ -374,6 +374,8 @@ pub struct VirtualMachine {
     pub(crate) has_started_debugger: Cell<bool>,
 
     pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
+    /// Set by a deferred task that can call JS, so the checkpoint drains microtasks again after the queue.
+    pub deferred_task_called_js: Cell<bool>,
     /// When true, drainMicrotasksWithGlobal is suppressed.
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
     /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one.
@@ -723,6 +725,7 @@ impl VMHolder {
         None
     }
 
+    /// WebKit's `WTF::RunLoop` calls this through a weak symbol, so nothing in this repository names it. Without it a Worker's run loop isn't Bun's.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()
@@ -784,11 +787,16 @@ impl ExitHandler {
         vm.entry_evaluation_started.set(true);
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
+    /// Only a worker's start (`wait_for_worker_entry_evaluation`) and the channel of a cluster worker wait on this;
     /// any other VM answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started.get() || vm.worker.get().is_none()
+        vm.entry_evaluation_started.get()
+            || (vm.worker.get().is_none()
+                && !vm
+                    .pending_ipc
+                    .get()
+                    .is_some_and(|ipc| ipc.of_cluster_worker))
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -1624,6 +1632,11 @@ impl VirtualMachine {
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
+        self.has_work_left_besides(0)
+    }
+
+    /// Whether it would have without `refs` of its keep-alives.
+    pub fn has_work_left_besides(&self, refs: u32) -> bool {
         // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
         #[cfg(unix)]
         if bun_spawn::process::WaiterThread::is_watching() {
@@ -1635,7 +1648,7 @@ impl VirtualMachine {
         let timers =
             runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
         timers.armed
-            || self.has_handles(timers.holds_loop_ref)
+            || self.has_handles(timers.holds_loop_ref, refs)
             || self.has_handles_off_the_loop()
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
     }
@@ -1650,7 +1663,7 @@ impl VirtualMachine {
 
     /// `num_polls` also counts plain loop refs, so subtract the entries that can't settle anything a test waits on.
     #[cfg(not(windows))]
-    fn has_handles(&self, timers_hold_loop_ref: bool) -> bool {
+    fn has_handles(&self, timers_hold_loop_ref: bool, refs: u32) -> bool {
         let rare = self.rare_data.get();
         // A `--parallel` worker's IPC group only ever holds the socket to its coordinator.
         let has_coordinator =
@@ -1661,14 +1674,14 @@ impl VirtualMachine {
             .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
-            .is_some_and(|h| h.num_polls.get() > fires_nothing)
+            .is_some_and(|h| h.num_polls.get() > fires_nothing + refs as i32)
     }
 
     /// Over-reports: `uv_loop_alive` can't exclude the timers' ref or a `--parallel` worker's pipe to its coordinator.
     #[cfg(windows)]
-    fn has_handles(&self, _timers_hold_loop_ref: bool) -> bool {
+    fn has_handles(&self, _timers_hold_loop_ref: bool, refs: u32) -> bool {
         self.platform_loop_opt()
-            .is_some_and(|h| h.is_active() || h.has_active_io_handles())
+            .is_some_and(|h| h.is_active_besides(refs) || h.has_active_io_handles())
     }
 
     pub fn wakeup(&self) {
@@ -2676,8 +2689,7 @@ pub struct RuntimeHooks {
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `bun_aot::module_keys::name_of_text` of the text behind an object URL.
     pub name_text_of_blob_url: fn(blob_id: &[u8], vm: &VirtualMachine) -> Option<Vec<u8>>,
-    /// `Response::get_blob_without_call_frame` /
-    /// `Request::get_blob_without_call_frame`. If
+    /// `blob()` of a `Response` or `Request`. If
     /// `value` downcasts to a `Response` or `Request` (both live in
     /// `bun_runtime::webcore`), return its body Blob wrapped in a resolved
     /// Promise; `Ok(None)` to fall through to the `Blob`/`BuildMessage`/
@@ -3068,6 +3080,7 @@ impl VirtualMachine {
             channel_ref: Default::default(),
             channel_ref_overridden: Cell::new(false),
             channel_ref_should_ignore_one_disconnect_event_listener: Cell::new(false),
+            deferred_task_called_js: Cell::new(false),
             commonjs_custom_extensions: JsCell::default(),
             has_mutated_built_in_extensions: Cell::new(0),
             initial_script_execution_context_identifier: context_id,
@@ -3656,6 +3669,8 @@ pub struct Options {
 pub struct PendingIpc {
     pub fd: bun_sys::Fd,
     pub advanced: bool,
+    /// The primary waits for this side to close it, so it opens when the entry point starts to run.
+    pub of_cluster_worker: bool,
 }
 
 /// Caller intent for runtime module resolution.
@@ -3924,8 +3939,41 @@ impl VirtualMachine {
     }
 
     /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
-    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+    pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
         self.rare_data.get()?.tls_default_ciphers()
+    }
+
+    /// Returns the `tls.setDefaultCACertificates()` list, or `None` if it was never called.
+    pub(crate) fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
+        self.rare_data.get()?.tls_default_ca()
+    }
+
+    /// Fills what `given` leaves out from `NODE_TLS_REJECT_UNAUTHORIZED` (clients only), `tls.DEFAULT_CIPHERS` and `tls.setDefaultCACertificates()`.
+    pub fn tls_config(
+        &self,
+        given: bun_http::ssl_config::Builder,
+        is_server: bool,
+    ) -> bun_http::ssl_config::SSLConfig {
+        let reject_unauthorized = given
+            .reject_unauthorized
+            .unwrap_or_else(|| is_server || self.get_tls_reject_unauthorized());
+        given.build(
+            reject_unauthorized,
+            self.tls_default_ciphers(),
+            self.tls_default_ca(),
+        )
+    }
+
+    /// Changes when `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` does.
+    pub fn tls_defaults_version(&self) -> u64 {
+        self.rare_data
+            .get()
+            .map_or(0, |rare| rare.tls_defaults_version.get())
+    }
+
+    /// Returns true if `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` overrides what a client with no TLS options uses.
+    pub fn tls_client_defaults_set(&self) -> bool {
+        self.tls_default_ciphers().is_some() || self.tls_default_ca().is_some()
     }
 
     /// Registers a spawned subprocess with the auto-killer.
@@ -3997,6 +4045,7 @@ impl VirtualMachine {
                     Some(fd) => self.pending_ipc.set(Some(PendingIpc {
                         fd: bun_sys::Fd::from_uv(fd),
                         advanced,
+                        of_cluster_worker: map.get(b"NODE_UNIQUE_ID").is_some(),
                     })),
                     None => bun_core::warn!(
                         "Failed to parse IPC channel number '{}'",
@@ -5540,6 +5589,12 @@ impl VirtualMachine {
             // node:quic events into the dead realm.
             if !shares_global {
                 rare.node_quic_callbacks.set(Default::default());
+                // The next file's `node:tls` starts from the stock defaults, so native clients must too.
+                let had_ca = rare.tls_default_ca.take().is_some();
+                let had_ciphers = rare.tls_default_ciphers.take().is_some();
+                if had_ca || had_ciphers {
+                    rare.drop_client_tls_defaults();
+                }
             }
         }
         let _ = self.event_loop().drain_microtasks();

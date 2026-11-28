@@ -277,10 +277,20 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     name_dns_exception(instance, global_this)
 }
 
+/// The `getaddrinfo <CODE> <hostname>` error for what getaddrinfo(3) returned. `None` for 0.
+pub(crate) fn getaddrinfo_error(status: i32, hostname: &[u8]) -> Option<SystemError> {
+    let error = bun_dns::getaddrinfo_error(status)?;
+    let mut err = system_error_with_syscall_and_hostname(error, b"getaddrinfo", hostname);
+    err.errno = bun_dns::getaddrinfo_uv_errno(status).unwrap_or(err.errno);
+    Some(err)
+}
+
 /// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
 pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
-    system_error_with_syscall_and_hostname(Error::ENOTFOUND, b"getaddrinfo", hostname)
-        .to_error_instance(global_this)
+    let mut err =
+        system_error_with_syscall_and_hostname(Error::ENOTFOUND, b"getaddrinfo", hostname);
+    err.errno = bun_dns::UV_EAI_NONAME;
+    err.to_error_instance(global_this)
 }
 
 /// The address that libuv's `uv_inet_pton` reads, without the zone id of an IPv6 address.

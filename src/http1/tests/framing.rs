@@ -319,11 +319,11 @@ mod head {
         };
         let bytes = b"HTTP/1.1 200 OK\r\na: 1\r\nb: 2\r\n\r\n";
         assert!(parse_within(bytes, limits(2)).is_ok());
-        assert_eq!(parse_within(bytes, limits(1)), Err(Error::MalformedHead));
+        assert_eq!(parse_within(bytes, limits(1)), Err(Error::HeadTooLong));
         assert_eq!(parse_within(&bytes[..23], limits(1)), Ok(None));
         assert_eq!(
             parse_within(&bytes[..24], limits(1)),
-            Err(Error::MalformedHead)
+            Err(Error::HeadTooLong)
         );
         assert!(parse_within(b"HTTP/1.1 200 OK\r\n\r\n", limits(0)).is_ok());
     }

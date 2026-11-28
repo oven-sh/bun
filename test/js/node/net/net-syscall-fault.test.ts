@@ -1,8 +1,11 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
+import tls from "node:tls";
+import { bytesWrittenUntil, patterned, receive } from "./unsent-bytes-helpers";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
@@ -165,6 +168,85 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
+  // Calls `write` from the 'connection' (server) or 'connect' (client) listener. Resolves once both sockets closed.
+  async function writeInOpenListener(
+    side: "client" | "server",
+    write: (s: net.Socket, fd: number, written: (err?: Error | null) => void) => void,
+  ) {
+    let writeError: NodeJS.ErrnoException | null | undefined;
+    let socketError: NodeJS.ErrnoException | undefined;
+    let received = Buffer.alloc(0);
+    const sockets: net.Socket[] = [];
+    const closed: Promise<unknown>[] = [];
+    function track(s: net.Socket) {
+      sockets.push(s);
+      // Not events.once(), which rejects on 'error'.
+      closed.push(new Promise(resolve => s.once("close", resolve)));
+    }
+    function writer(s: net.Socket) {
+      s.on("error", err => (socketError = err));
+      write(s, (s as any)._handle.fd, err => (writeError = err ?? null));
+    }
+    function reader(s: net.Socket) {
+      s.on("error", () => {});
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
+    }
+
+    const server = net.createServer(s => {
+      track(s);
+      if (side === "server") writer(s);
+      else reader(s);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    track(client);
+    if (side === "client") client.once("connect", () => writer(client));
+    else reader(client);
+
+    try {
+      await Promise.all([once(client, "connect"), once(server, "connection")]);
+      await Promise.all(closed);
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+    }
+
+    const shape = (err: NodeJS.ErrnoException | null | undefined) => err && { code: err.code, syscall: err.syscall };
+    return { writeError: shape(writeError), socketError: shape(socketError), received: received.length };
+  }
+
+  describe.each(["client", "server"] as const)("write in the %s's open listener", side => {
+    test("send → EPIPE on the flush after the listener fails the write", async () => {
+      const result = await writeInOpenListener(side, (s, fd, written) => {
+        // The first send is short, so 199 bytes stay buffered until the listener returns.
+        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+        s.write(Buffer.alloc(200, "h"), written);
+        fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd });
+        s.write(Buffer.alloc(4096, "b"));
+        s.end();
+      });
+      expect(result).toEqual({
+        writeError: { code: "EPIPE", syscall: "write" },
+        socketError: { code: "EPIPE", syscall: "write" },
+        received: 1,
+      });
+    });
+
+    test("send → ECONNRESET doesn't send the failed write again", async () => {
+      const result = await writeInOpenListener(side, (s, fd, written) => {
+        // Fails once: a second send of the same bytes would succeed.
+        fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: 1, fd });
+        s.write(Buffer.alloc(200, "h"), written);
+      });
+      expect(result).toEqual({
+        writeError: { code: "ECONNRESET", syscall: "write" },
+        socketError: { code: "ECONNRESET", syscall: "write" },
+        received: 0,
+      });
+    });
+  });
+
   // us_socket_write_check_error gives send() errnos that are neither
   // would-block/transient nor known peer-gone (EPROTOTYPE: macOS returns it
   // racily from send() on healthy sockets) a bounded retry through the
@@ -190,29 +272,29 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   // syscall, then close. Before the fix the buffered bytes were silently
   // dropped, the write was acknowledged as flushed and the peer saw a clean
   // FIN terminating a truncated stream.
-  test("send → sustained EPROTOTYPE surfaces as 'error' + close, not silent truncation", async () => {
-    using p = await connectedPair();
-    const fd = (p.client as any)._handle.fd as number;
-    expect(fd).toBeGreaterThanOrEqual(0);
-    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: -1, fd });
-    const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
-    // Not events.once(): that helper rejects its promise when 'error' fires
-    // first, and 'error' arriving before 'close' is exactly this contract.
-    const closeP = new Promise<void>(resolve => p.client.once("close", () => resolve()));
-    p.client.write(Buffer.alloc(64, "x"));
-    const [err] = await errP;
-    fault.clear();
-    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
-    await closeP;
-    expect(p.client.destroyed).toBe(true);
-  });
+  test.each(["EPROTOTYPE", "EPERM"])(
+    "send → sustained %s surfaces as 'error' + close, not silent truncation",
+    async errno => {
+      using p = await connectedPair();
+      const fd = (p.client as any)._handle.fd as number;
+      expect(fd).toBeGreaterThanOrEqual(0);
+      fault.set({ syscall: "send", action: "errno", errno: errno as any, repeat: -1, fd });
+      const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
+      // Not events.once(): that helper rejects its promise when 'error' fires
+      // first, and 'error' arriving before 'close' is exactly this contract.
+      const closeP = new Promise<void>(resolve => p.client.once("close", () => resolve()));
+      p.client.write(Buffer.alloc(64, "x"));
+      const [err] = await errP;
+      fault.clear();
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: errno, syscall: "write" });
+      await closeP;
+      expect(p.client.destroyed).toBe(true);
+    },
+  );
 
-  // Server-side twin of the above. On kqueue the fatal flush from on_writable
-  // runs before the read dispatch (EV_EOF sets eof, not error), and its close
-  // short-circuits the read-error path, so ServerHandlers.error is the only
-  // place the errno is visible. With the plain-TCP delegation swallowing it,
-  // the server socket's 'error' never fired and 'close' was stuck behind an
-  // un-failed pending write (test-net-stream.js timeout on darwin).
+  // Server-side twin of the above. On kqueue the failed flush from the writable event
+  // runs before the read dispatch (EV_EOF sets eof, not error), so the pending
+  // write's completion is the only place the errno is visible (test-net-stream.js on darwin).
   test("server: send → sustained fatal flush surfaces 'error' + 'close' on the accepted socket", async () => {
     using p = await connectedPair();
     const fd = (p.serverSock as any)._handle.fd as number;
@@ -275,6 +357,94 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
+  // A cluster worker adopts each accepted connection with socket.connect({ fd }).
+  test("send → fatal flush of a buffered write emits 'error' once in a cluster worker", async () => {
+    using dir = tempDir("net-fault-cluster", {
+      "fixture.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.on("message", msg => {
+            if (msg.port) {
+              const peer = net.connect(msg.port, "127.0.0.1");
+              peer.on("error", () => {});
+              peer.resume();
+            } else {
+              console.log(JSON.stringify(msg.events));
+              worker.kill();
+              process.exit(0);
+            }
+          });
+        } else {
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const events = [];
+          const server = net.createServer(c => {
+            const fd = c._handle.fd;
+            c.on("error", e => events.push("error:" + e.code));
+            c.on("close", hadError => {
+              events.push("close:" + hadError);
+              setImmediate(() => process.send({ events }));
+            });
+            // The first send is short, so 199 bytes stay buffered and the write callback waits.
+            fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+            c.write(Buffer.alloc(200, "h"), err => events.push("write:" + (err ? err.code : "ok")));
+            // The second send is the flush on the writable event.
+            fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd });
+          });
+          server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port }));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["write:EPIPE", "error:EPIPE", "close:true"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("poll_start → a cluster worker drops a connection that it can't adopt and serves the next", async () => {
+    using dir = tempDir("net-fault-cluster-adopt", {
+      "fixture.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          const dial = (port, next) =>
+            net.connect(port, "127.0.0.1").on("data", chunk => console.log(String(chunk))).on("close", next);
+          worker.on("message", port => dial(port, () => (console.log("dropped"), dial(port, () => worker.disconnect()))));
+          worker.on("exit", code => console.log("exit", code));
+        } else {
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const server = net.createServer(c => c.end("served"));
+          server.listen(0, "127.0.0.1", () => {
+            fault.set({ syscall: "poll_start", action: "errno", errno: "ENOMEM", repeat: 1 });
+            process.send(server.address().port);
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "dropped\nserved\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
     server.listen(0, "127.0.0.1");
@@ -290,6 +460,16 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
       server.close();
     }
   });
+
+  test.each(["ENETUNREACH", "EHOSTUNREACH", "EPERM", "ENOBUFS", "EMFILE"])(
+    "connect → %s keeps its code",
+    async errno => {
+      fault.set({ syscall: "connect", action: "errno", errno, repeat: 1 });
+      const client = net.connect({ port: 1, host: "127.0.0.1" });
+      const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: errno, syscall: "connect" });
+    },
+  );
 
   test("fd targeting: rule on the server fd does not affect the client", async () => {
     using p = await connectedPair();
@@ -459,6 +639,376 @@ describe.skipIf(skip)("node:net seeded syscall fuzz", () => {
       p.client.destroy();
       await once(p.client, "close").catch(() => {});
       expect(p.client.destroyed).toBe(true);
+    }
+  });
+});
+
+// A short send leaves the rest of the chunk in the native queue, and each writable event sends more of it.
+describe.skipIf(skip)("node:net pending-write queue under short sends", () => {
+  test.each([
+    // 64 sends of 16,384 bytes, so the last one empties the queue exactly.
+    ["client", 16384],
+    ["server", 16384],
+    ["client", 10000],
+  ] as const)(
+    "a write drained by writable events arrives intact (%s writer, %d bytes per send)",
+    async (side, bytes) => {
+      using p = await connectedPair();
+      const [writer, reader] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
+      const handle = (writer as any)._handle;
+      const payload = patterned(1024 * 1024);
+      const state = receive(reader, payload);
+      const idle = estimateShallowMemoryUsageOf(handle);
+
+      fault.set({ syscall: "send", action: "short", bytes, repeat: -1, fd: handle.fd });
+      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      writer.write(payload, err => (err ? reject(err) : resolve()));
+      const queued = estimateShallowMemoryUsageOf(handle) - idle;
+      const bytesWritten = await bytesWrittenUntil(written, writer);
+      const heldAfter = estimateShallowMemoryUsageOf(handle) - idle;
+      writer.end();
+      await once(reader, "end");
+
+      expect({ queued, bytesWritten, heldAfter, ...state }).toEqual({
+        queued: payload.length - bytes,
+        bytesWritten: [payload.length],
+        heldAfter: 0,
+        received: payload.length,
+        intact: true,
+      });
+    },
+  );
+
+  // Socket.prototype._write reaches the native write while a tail is queued, as the inspector's socket transport does.
+  test("a write behind a queued tail arrives in order", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(16384);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const bytesWritten = await bytesWrittenUntil(written, p.client);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ bytesWritten, ...state }).toEqual({
+      bytesWritten: [expected.length],
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // Writable events send from the tail before the second write arrives, so the
+  // second chunk goes behind a tail whose front the socket already took.
+  test("a write behind a tail that writable events partly sent arrives in order", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(256 * 1024);
+    const second = patterned(1024 * 1024, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    // The write itself sent 1,024 bytes. What arrives beyond them left in a writable event.
+    while (state.received <= 1024) await once(p.serverSock, "data");
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    const allocatedAfterDrain = estimateShallowMemoryUsageOf(handle) - idle;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ bytesWritten, allocatedAfterDrain, ...state }).toEqual({
+      bytesWritten: [expected.length],
+      allocatedAfterDrain: 0,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // A write that brings no bytes still sends from the front of a queued tail.
+  test("an empty write behind a queued tail sends from the front of the tail", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const payload = patterned(41 * 1024);
+    const state = receive(p.serverSock, payload);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(payload, "buffer", () => {});
+    const queuedTail = estimateShallowMemoryUsageOf(handle) - idle;
+    const errors: Error[] = [];
+    // Each of these sends 1,024 bytes more of the tail. The queue frees its
+    // allocation when the last one takes the last byte, and not before.
+    let allocatedBeforeLastWrite = 0;
+    for (let i = 0; i < 40; i++) {
+      if (i === 39) allocatedBeforeLastWrite = estimateShallowMemoryUsageOf(handle) - idle;
+      (p.client as any)._write(Buffer.alloc(0), "buffer", (err?: Error | null) => {
+        if (err) errors.push(err);
+      });
+    }
+    expect({
+      queuedTail,
+      allocatedBeforeLastWrite,
+      allocatedAfterWrites: estimateShallowMemoryUsageOf(handle) - idle,
+      bytesWritten: handle.bytesWritten,
+      errors,
+    }).toEqual({
+      queuedTail: payload.length - 1024,
+      allocatedBeforeLastWrite: payload.length - 1024,
+      allocatedAfterWrites: 0,
+      bytesWritten: payload.length,
+      errors: [],
+    });
+
+    p.client.end();
+    await once(p.serverSock, "end");
+    expect({ errors, ...state }).toEqual({ errors: [], received: payload.length, intact: true });
+  });
+
+  // The queue drops its sent prefix when a chunk arrives behind a tail that is
+  // more than half sent. The chunk then fits in the allocation of the tail.
+  test("a write behind a tail that is mostly sent does not grow the allocation", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(256 * 1024);
+    const second = patterned(65536, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1, fd: handle.fd });
+    (p.client as any)._write(first, "buffer", () => {});
+    while (state.received <= (first.length * 3) / 4) await once(p.serverSock, "data");
+    const allocatedBefore = estimateShallowMemoryUsageOf(handle) - idle;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    (p.client as any)._write(second, "buffer", (err?: Error | null) => (err ? reject(err) : resolve()));
+    const allocatedAfter = estimateShallowMemoryUsageOf(handle) - idle;
+    const bytesWritten = await bytesWrittenUntil(written, handle);
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ allocatedBefore, allocatedAfter, bytesWritten, ...state }).toEqual({
+      allocatedBefore: first.length - 4096,
+      allocatedAfter: first.length - 4096,
+      bytesWritten: [expected.length],
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  // 64 chunks of 64 KiB go behind a tail that never empties. About 4 chunks
+  // wait in the queue at a time, so the allocation does not follow the total.
+  test("writes behind a tail that never empties keep the allocation near the unsent bytes", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const chunk = 65536;
+    const count = 64;
+    const expected = patterned(count * chunk);
+    const state = receive(p.serverSock, expected);
+    const idle = estimateShallowMemoryUsageOf(handle);
+
+    fault.set({ syscall: "send", action: "short", bytes: 8192, repeat: -1, fd: handle.fd });
+    let peak = 0;
+    let emptied = 0;
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    for (let i = 0; i < count; i++) {
+      const last = i === count - 1;
+      // An empty queue holds no allocation.
+      if (i > 0 && estimateShallowMemoryUsageOf(handle) === idle) emptied++;
+      (p.client as any)._write(expected.subarray(i * chunk, (i + 1) * chunk), "buffer", (err?: Error | null) =>
+        err ? reject(err) : last && resolve(),
+      );
+      peak = Math.max(peak, estimateShallowMemoryUsageOf(handle) - idle);
+      while ((i + 1) * chunk - state.received > 4 * chunk) await once(p.serverSock, "data");
+    }
+    await written;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ emptied, ...state }).toEqual({ emptied: 0, received: expected.length, intact: true });
+    expect(peak).toBeLessThan(16 * chunk);
+  });
+
+  // Each run sends 1,024 times, 1 KiB per send. The second queue holds 16 times
+  // the bytes of the first. A queue that moves its unsent bytes to the front
+  // after each send takes many times the CPU time for the second run.
+  test("the CPU time of a send does not follow the bytes still queued", async () => {
+    const sends = 1024;
+    const bytesPerSend = 1024;
+
+    // The CPU time from the return of write() until the peer has what `sends` sends carry.
+    async function cpuTimeOfSends(queued: number) {
+      using p = await connectedPair();
+      const handle = (p.client as any)._handle;
+      const { promise: sent, resolve } = Promise.withResolvers<void>();
+      let received = 0;
+      p.serverSock.on("data", chunk => {
+        received += chunk.length;
+        if (received >= sends * bytesPerSend) resolve();
+      });
+
+      fault.set({ syscall: "send", action: "short", bytes: bytesPerSend, repeat: -1, fd: handle.fd });
+      p.client.write(Buffer.alloc(queued, 0x61));
+      const before = process.cpuUsage();
+      await sent;
+      const { user, system } = process.cpuUsage(before);
+      fault.clear();
+      return user + system;
+    }
+
+    const small = sends * bytesPerSend;
+    const large = 16 * small;
+    // The first run pays for what the later runs find warm.
+    await cpuTimeOfSends(small);
+    const smallTimes: number[] = [];
+    const largeTimes: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      smallTimes.push(await cpuTimeOfSends(small));
+      largeTimes.push(await cpuTimeOfSends(large));
+    }
+    expect(Math.min(...largeTimes) / Math.min(...smallTimes)).toBeLessThan(5);
+  });
+
+  test("a write made from the 'drain' listener queues behind nothing and arrives in order", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const first = patterned(512 * 1024);
+    const second = patterned(512 * 1024, 0x85ebca6b);
+    const expected = Buffer.concat([first, second]);
+    const state = receive(p.serverSock, expected);
+    const callbacks: string[] = [];
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    p.client.once("drain", () => {
+      callbacks.push(`drain at ${p.client.bytesWritten}`);
+      p.client.write(second, err => {
+        callbacks.push("second");
+        err ? reject(err) : resolve();
+      });
+    });
+    const flushed = p.client.write(first, err => {
+      callbacks.push("first");
+      if (err) reject(err);
+    });
+    await written;
+    const bytesWritten = p.client.bytesWritten;
+    p.client.end();
+    await once(p.serverSock, "end");
+
+    expect({ flushed, callbacks, bytesWritten, ...state }).toEqual({
+      flushed: false,
+      // Like Node, 'drain' comes before the callback of the write that drained.
+      callbacks: [`drain at ${first.length}`, "first", "second"],
+      bytesWritten: expected.length,
+      received: expected.length,
+      intact: true,
+    });
+  });
+
+  test("a reset by the peer halfway through the queue fails the write once, frees the queue and keeps bytesWritten", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const payload = patterned(1024 * 1024);
+    const state = receive(p.serverSock, payload);
+    const idle = estimateShallowMemoryUsageOf(handle);
+    const callbacks: (string | undefined)[] = [];
+    const closed = Promise.withResolvers<void>();
+    p.client.on("error", () => {});
+    p.client.on("close", () => closed.resolve());
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    p.client.write(payload, err => callbacks.push((err as NodeJS.ErrnoException | undefined)?.code));
+    while (state.received < 128 * 1024) await once(p.serverSock, "data");
+    p.serverSock.resetAndDestroy();
+    await closed.promise;
+
+    expect(callbacks).toHaveLength(1);
+    // ECANCELED if the loop reads the reset first, the send's errno if the writable event comes first.
+    expect(["ECANCELED", "ECONNRESET", "EPIPE"]).toContain<string | undefined>(callbacks[0]);
+    expect(estimateShallowMemoryUsageOf(handle) - idle).toBeLessThan(1024);
+    expect({ bytesWritten: p.client.bytesWritten, intact: state.intact }).toEqual({
+      bytesWritten: payload.length,
+      intact: true,
+    });
+  });
+
+  test("a send that fails halfway through the queue fails the write once, frees the queue and keeps bytesWritten", async () => {
+    using p = await connectedPair();
+    const handle = (p.client as any)._handle;
+    const payload = patterned(1024 * 1024);
+    const state = receive(p.serverSock, payload);
+    const idle = estimateShallowMemoryUsageOf(handle);
+    const callbacks: (string | undefined)[] = [];
+    const closed = Promise.withResolvers<void>();
+    p.client.on("error", () => {});
+    p.client.on("close", () => closed.resolve());
+
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+    p.client.write(payload, err => callbacks.push((err as NodeJS.ErrnoException | undefined)?.code));
+    while (state.received < 128 * 1024) await once(p.serverSock, "data");
+    fault.clear();
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: handle.fd });
+    await closed.promise;
+
+    expect(estimateShallowMemoryUsageOf(handle) - idle).toBeLessThan(1024);
+    expect({ callbacks, bytesWritten: p.client.bytesWritten, intact: state.intact }).toEqual({
+      callbacks: ["EPIPE"],
+      bytesWritten: payload.length,
+      intact: true,
+    });
+  });
+
+  // The TLS queue holds plaintext, and TLS has no writev path.
+  test("tls: writes drained by writable events arrive in order", async () => {
+    const server = tls.createServer({ key: certs.key, cert: certs.cert });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const connection = once(server, "secureConnection") as Promise<[tls.TLSSocket]>;
+    const client = tls.connect({
+      port: (server.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      ca: certs.cert,
+      rejectUnauthorized: true,
+    });
+    try {
+      const [[serverSock]] = await Promise.all([connection, once(client, "secureConnect")]);
+      const handle = (client as any)._handle;
+      const first = patterned(1024 * 1024);
+      const second = patterned(256 * 1024, 0x85ebca6b);
+      const expected = Buffer.concat([first, second]);
+      const state = receive(serverSock, expected);
+      const idle = estimateShallowMemoryUsageOf(handle);
+      const callbacks: string[] = [];
+
+      fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: handle.fd });
+      const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+      client.write(first, err => (err ? reject(err) : callbacks.push("first")));
+      client.write(second, err => (err ? reject(err) : (callbacks.push("second"), resolve())));
+      const bytesWritten = await bytesWrittenUntil(written, client);
+      const heldAfter = estimateShallowMemoryUsageOf(handle) - idle;
+      client.end();
+      await once(serverSock, "end");
+
+      expect({ callbacks, bytesWritten, heldAfter, ...state }).toEqual({
+        callbacks: ["first", "second"],
+        bytesWritten: [expected.length],
+        heldAfter: 0,
+        received: expected.length,
+        intact: true,
+      });
+    } finally {
+      client.destroy();
+      server.close();
     }
   });
 });

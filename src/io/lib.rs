@@ -328,7 +328,8 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 // ════════════════════════════════════════════════════════════════════════════
 
 pub use crate::closer::Closer;
-pub use crate::waker::Waker;
+#[cfg(not(windows))]
+use crate::waker::Waker;
 use bun_sys::Fd;
 
 // ── libc shims with no preconditions ────────────────────────────────────────
@@ -398,30 +399,26 @@ pub enum PathOrFileDescriptor<'a> {
 
 // ─── Waker (moved from bun_io) ──────────────────────────────────────────────
 
-pub mod waker {
-    #[cfg(not(windows))]
+#[cfg(not(windows))]
+mod waker {
     use bun_sys::{Fd, File};
-    #[cfg(windows)]
-    use core::sync::atomic::{AtomicPtr, Ordering};
 
     #[cfg(target_os = "macos")]
-    pub type Waker = KEventWaker;
+    pub(crate) type Waker = KEventWaker;
     /// FreeBSD 13+ has eventfd(2), so the Linux waker works as-is.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub type Waker = LinuxWaker;
-    #[cfg(windows)]
-    pub type Waker = WindowsWaker;
+    pub(crate) type Waker = LinuxWaker;
 
     // ── Linux / FreeBSD ───────────────────────────────────────────────────────
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub struct LinuxWaker {
+    pub(crate) struct LinuxWaker {
         eventfd: File,
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     impl LinuxWaker {
-        pub fn init() -> crate::error::Result<Self> {
+        pub(crate) fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
                 Ok(fd) => Ok(Self {
                     eventfd: File::from_fd(fd),
@@ -437,11 +434,7 @@ pub mod waker {
             self.eventfd.fd()
         }
 
-        pub fn wait(&self) {
-            let _ = self.eventfd.read(&mut [0; size_of::<u64>()]);
-        }
-
-        pub fn wake(&self) {
+        pub(crate) fn wake(&self) {
             let _ = bun_sys::write(self.get_fd(), &1u64.to_ne_bytes());
         }
     }
@@ -449,17 +442,14 @@ pub mod waker {
     // ── macOS (kqueue + machport) ─────────────────────────────────────────────
 
     #[cfg(target_os = "macos")]
-    use core::ffi::{c_int, c_void};
+    use core::ffi::c_void;
 
     #[cfg(target_os = "macos")]
-    pub struct KEventWaker {
+    pub(crate) struct KEventWaker {
         kq: File,
         machport: libc::mach_port_t,
-        pub machport_buf: Box<[u8]>,
+        _machport_buf: Box<[u8]>,
     }
-
-    #[cfg(target_os = "macos")]
-    type Kevent64 = libc::kevent64_s;
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
@@ -471,10 +461,7 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     impl KEventWaker {
-        // SAFETY: all-zero is a valid kevent64_s array (POD).
-        const ZEROED: [Kevent64; 16] = bun_core::ffi::zeroed();
-
-        pub fn wake(&self) {
+        pub(crate) fn wake(&self) {
             let _ = io_darwin_schedule_wakeup(self.machport);
         }
 
@@ -483,23 +470,7 @@ pub mod waker {
             self.kq.fd()
         }
 
-        pub fn wait(&self) {
-            let mut events = Self::ZEROED;
-            // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
-            unsafe {
-                libc::kevent64(
-                    self.kq.fd().native(),
-                    events.as_ptr(),
-                    0,
-                    events.as_mut_ptr(),
-                    c_int::try_from(events.len()).expect("int cast"),
-                    0,
-                    core::ptr::null(),
-                );
-            }
-        }
-
-        pub fn init() -> crate::error::Result<Self> {
+        pub(crate) fn init() -> crate::error::Result<Self> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
                 return Err(
@@ -525,39 +496,8 @@ pub mod waker {
             Ok(Self {
                 kq,
                 machport,
-                machport_buf,
+                _machport_buf: machport_buf,
             })
-        }
-    }
-
-    // ── Windows (uws WindowsLoop wakeup) ──────────────────────────────────────
-
-    #[cfg(windows)]
-    pub struct WindowsWaker {
-        /// The loop of the thread that called `init`. Other threads only wake it. `AtomicPtr` only to be `Sync`.
-        loop_: AtomicPtr<bun_uws_sys::WindowsLoop>,
-    }
-
-    #[cfg(windows)]
-    impl WindowsWaker {
-        pub fn init() -> crate::error::Result<Self> {
-            let loop_: &bun_uws_sys::WindowsLoop = bun_uws_sys::WindowsLoop::get();
-            Ok(Self {
-                loop_: AtomicPtr::new(core::ptr::from_ref(loop_).cast_mut()),
-            })
-        }
-
-        /// On the thread that called `init`.
-        pub fn wait(&self) {
-            bun_uws_sys::WindowsLoop::get().run();
-        }
-
-        pub fn wake(&self) {
-            // Relaxed: only `init` writes it, before the waker is shared.
-            let loop_ = self.loop_.load(Ordering::Relaxed);
-            // SAFETY: `loop_` came from `WindowsLoop::get()`, which is `&'static`;
-            // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(loop_) };
         }
     }
 }

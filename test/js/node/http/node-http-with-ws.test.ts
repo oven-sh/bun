@@ -260,27 +260,18 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
 
   test.each([
     ["a fresh caller cork", "fresh"],
-    ["a caller cork below the dispatcher cork", "below-dispatcher"],
+    ["a caller cork on a reused keep-alive socket", "reused"],
     ["nested caller corks after a partial release", "partial-nested"],
-    ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
-    ["a caller cork when dispatcher corking is suppressed", "suppressed-dispatcher"],
   ] as const)("preserves %s and its pending writes", async (_name, mode) => {
     let serverSocket!: Socket;
-    let suppressedCork: Socket["cork"] | undefined;
     const server = http.createServer((_req, res) => res.end("ok"));
     server.on("connection", socket => {
       serverSocket = socket;
-      if (mode !== "replaced-dispatcher") socket.cork();
-      if (mode === "partial-nested") socket.cork();
-      if (mode === "suppressed-dispatcher") {
-        suppressedCork = socket.cork;
-        socket.cork = () => {};
-      }
+      socket.cork();
     });
     const wss = new NpmWebSocketServer({ noServer: true });
     const upgraded = Promise.withResolvers<void>();
     server.on("upgrade", (req, socket, head) => {
-      if (suppressedCork) socket.cork = suppressedCork;
       try {
         wss.handleUpgrade(req, socket, head, ws => {
           ws.send("pending");
@@ -297,12 +288,14 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     try {
       if (mode !== "fresh") {
         await finishKeepAliveRequest(port, agent);
-      }
-      if (mode === "replaced-dispatcher") {
-        serverSocket.uncork();
+        // Like Node, res.end() fully uncorks the connection, including the cork from the 'connection' listener.
+        expect(serverSocket.writableCorked).toBe(0);
         serverSocket.cork();
       }
-      if (mode === "partial-nested") serverSocket.uncork();
+      if (mode === "partial-nested") {
+        serverSocket.cork();
+        serverSocket.uncork();
+      }
       client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
       const opened = waitForWebSocketOpen(client);
       const message = waitForWebSocketMessage(client);
@@ -996,8 +989,8 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
           req.read();
           return upgrade();
         case "paused, resumed in the upgrade tick":
-          // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
-          req.read();
+          // As in Node, what came with the head is in the request's buffer when 'upgrade' is emitted.
+          events.push("read:" + req.read());
           req.pause();
           return setImmediate(() => {
             listenForData();
@@ -1088,16 +1081,13 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     });
   });
 
-  // This reader called read() before the pause, so nothing calls _read() again: resume() has to bring
-  // the bytes. They come after handleUpgrade() returned. A 'data' listener that closed the socket inside
-  // it left a closed WebSocket in wsServer.clients.
-  test("a reader that paused and resumes in the upgrade tick gets the buffered bytes", async () => {
+  test("a reader that paused and resumes in the upgrade tick gets 'end'", async () => {
     const sent = body.slice(0, 5);
     expect(await upgradeBeforeTheBodyIsComplete("upgrade", sent, "paused, resumed in the upgrade tick")).toEqual({
       ...upgraded,
       readerWaitedBeforeUpgrade: true,
       duringUpgrade: ["connection"],
-      events: ["connection", "data:" + sent, "end", "close"],
+      events: ["read:" + sent, "connection", "end", "close"],
       complete: true,
     });
   });
@@ -1230,9 +1220,6 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
     "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
     `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n${fields}\r\n`;
 
-  const RESPONSE_HEAD = 129;
-  const FRAME_HEAD = 10;
-
   async function open(serverOptions: http.ServerOptions = {}) {
     const server =
       protocol === "https" ? https.createServer({ ...options, ...serverOptions }) : http.createServer(serverOptions);
@@ -1283,6 +1270,18 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
     expect(await c.firstEvent).toBe("message hi");
   });
 
+  test("once the tail of a res.write() ahead has drained", async () => {
+    using c = await open();
+    c.server.on("request", (req, res) => {
+      if (req.url === "/ahead") res.write(Buffer.alloc(16 * 1024 * 1024, "a"), () => res.end());
+      else res.once("socket", () => process.nextTick(c.upgrade, req));
+    });
+    c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest("Connection: Upgrade\r\n"));
+    await Promise.race([c.switched, c.firstEvent]);
+    c.client.write(maskedTextFrame("hi"));
+    expect(await c.firstEvent).toBe("message hi");
+  });
+
   test("once the response ahead has drained, after the FIN", async () => {
     using c = await open();
     c.server.on("request", (req, res) => {
@@ -1291,36 +1290,10 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
       else res.once("socket", () => process.nextTick(c.upgrade, req));
     });
     c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest("Connection: Upgrade\r\n"));
+    // A close_notify in the read of the requests ends req.socket before reads pause, as in Node.
+    await once(c.server, "request");
     await once(c.client.end(), "close");
     expect(await c.firstEvent).toBe("close 1006");
-  });
-
-  // TLS has a second end, the FIN behind the close_notify.
-  test.skipIf(protocol === "https")("a long message is sent after the FIN", async () => {
-    using c = await open();
-    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
-    const [req] = await once(c.server, "request");
-    c.server.on("clientError", () =>
-      c.upgrade(req, ws => ws.send(Buffer.alloc(16 * 1024 * 1024, "m"), () => req.socket.end())),
-    );
-    await once(c.client.end(), "close");
-    expect(c.received()).toBe(RESPONSE_HEAD + FRAME_HEAD + 16 * 1024 * 1024);
-  });
-
-  test("destroySoon() after the FIN keeps what is no longer buffered", async () => {
-    using c = await open();
-    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
-    const [req] = await once(c.server, "request");
-    let sent = 0;
-    c.server.on("clientError", () =>
-      c.upgrade(req, ws => {
-        ws.send(Buffer.alloc(16 * 1024 * 1024, "m"));
-        sent = FRAME_HEAD + 16 * 1024 * 1024 - ws.bufferedAmount;
-        req.socket.destroySoon();
-      }),
-    );
-    await once(c.client.end(), "close");
-    expect(c.received()).toBeGreaterThanOrEqual(RESPONSE_HEAD + sent);
   });
 
   test("'clientError' for bytes behind a request that closes the connection", async () => {
@@ -1334,20 +1307,26 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
     expect(await c.firstEvent).toBe("message hi");
   });
 
+  // As in Node: req.socket has emitted 'end', so handleUpgrade() destroys it.
   test("'clientError' for a FIN in the middle of the next head", async () => {
     using c = await open();
+    const events: string[] = [];
     c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
     const [req] = await once(c.server, "request");
-    c.server.on("clientError", () => c.upgrade(req));
+    c.server.on("clientError", () => (events.push("handleUpgrade"), c.upgrade(req, () => events.push("open"))));
     await once(c.client.end(), "close");
-    expect(await c.firstEvent).toBe("close 1006");
+    expect({ events, received: c.received() }).toEqual({ events: ["handleUpgrade"], received: 0 });
   });
 
   test("'end' of a body that the FIN completes", async () => {
     using c = await open({ insecureHTTPParser: true });
-    c.server.on("request", req => req.on("data", () => c.client.end()).on("end", () => c.upgrade(req)));
+    const events: string[] = [];
+    c.server.on("request", req => {
+      req.on("data", () => c.client.end());
+      req.on("end", () => (events.push("handleUpgrade"), c.upgrade(req, () => events.push("open"))));
+    });
     c.client.write(upgradeRequest("Transfer-Encoding: foo\r\n") + "body");
     await once(c.client, "close");
-    expect(await c.firstEvent).toBe("close 1006");
+    expect({ events, received: c.received() }).toEqual({ events: ["handleUpgrade"], received: 0 });
   });
 });

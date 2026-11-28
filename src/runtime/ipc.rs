@@ -685,8 +685,9 @@ pub(crate) enum CallbackList {
 
 impl CallbackList {
     /// protects the callback
-    pub(crate) fn init(callback: JSValue) -> Self {
+    pub(crate) fn init(callback: JSValue, global: &JSGlobalObject) -> Self {
         if callback.is_callable() {
+            let callback = callback.with_async_context_if_needed(global);
             return CallbackList::Callback(callback.protected());
         }
         CallbackList::None
@@ -694,6 +695,7 @@ impl CallbackList {
 
     /// protects the callback
     pub(crate) fn push(&mut self, callback: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let callback = callback.with_async_context_if_needed(global);
         match self {
             CallbackList::AckNack => unreachable!(),
             CallbackList::None => {
@@ -718,19 +720,19 @@ impl CallbackList {
         Ok(())
     }
 
-    fn call_next_tick(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+    fn call_next_tick(&mut self, global: &JSGlobalObject, result: JSValue) -> JsResult<()> {
         match self {
             CallbackList::AckNack => {}
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
-                JSValue::call_next_tick_1(cb.value(), global, JSValue::NULL)?;
+                JSValue::call_next_tick_1(cb.value(), global, result)?;
                 // Assignment drops the old `Callback(cb)` guard → unprotect.
                 *self = CallbackList::None;
             }
             CallbackList::CallbackArray(arr, _) => {
                 let mut iter = arr.value().array_iterator(global)?;
                 while let Some(item) = iter.next()? {
-                    JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
+                    JSValue::call_next_tick_1(item, global, result)?;
                 }
                 // Assignment drops the old `CallbackArray(arr)` guard → unprotect.
                 *self = CallbackList::None;
@@ -738,6 +740,21 @@ impl CallbackList {
         }
         Ok(())
     }
+}
+
+fn broken_pipe_error(global: &JSGlobalObject) -> JSValue {
+    #[cfg(windows)]
+    let errno = uv::UV_EPIPE;
+    #[cfg(not(windows))]
+    let errno = -(bun_sys::E::EPIPE as c_int);
+    jsc::SystemError {
+        errno,
+        code: BunString::static_("EPIPE"),
+        message: BunString::static_("write EPIPE"),
+        syscall: BunString::static_("write"),
+        ..Default::default()
+    }
+    .to_error_instance(global)
 }
 
 pub(crate) struct SendHandle {
@@ -755,28 +772,25 @@ impl SendHandle {
     }
 
     /// Call the callback and deinit
-    pub(crate) fn complete(mut self, global: &JSGlobalObject) {
-        if let Some(handle) = &self.handle {
-            if handle.close_on_complete {
-                let js = handle.js.value();
-                if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
-                }
-            }
-        }
-        let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
-        // self drops here → data/callbacks/handle Drop.
+    pub(crate) fn complete(self, global: &JSGlobalObject) {
+        let _ = self.call_back(global, Some(JSValue::NULL)); // TODO: properly propagate exception upwards
     }
 
-    pub(crate) fn abort_unsent(self, global: &JSGlobalObject) {
+    /// Closes a handle that was given away. `result`: what the callbacks get, if they are called.
+    fn call_back(mut self, global: &JSGlobalObject, result: Option<JSValue>) -> JsResult<()> {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
                 if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                    JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js)?;
                 }
             }
         }
+        match result {
+            Some(result) => self.callbacks.call_next_tick(global, result),
+            None => Ok(()),
+        }
+        // self drops here → data/callbacks/handle Drop.
     }
 }
 
@@ -844,6 +858,8 @@ pub(crate) enum AckNack {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum ContinueSendReason {
+    /// To an empty queue, and without a handle. Node reports the failure of no other write.
+    OnlyMessageAppended,
     NewMessageAppended,
     OnWritable,
 }
@@ -1120,8 +1136,13 @@ impl SendQueue {
 
     /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
     pub(crate) fn run_deferred(&self) {
-        let _alive = self.hold_owner();
         self.deferred_scheduled.set(false);
+        self.run_pending();
+    }
+
+    /// Does now what the queued task would do.
+    pub(crate) fn run_pending(&self) {
+        let _alive = self.hold_owner();
         if self.pending_close.get() {
             log!("SendQueue#closeSocketTask");
             #[cfg(not(windows))]
@@ -1138,12 +1159,18 @@ impl SendQueue {
             log!("SendQueue#_onAfterIPCClosed");
             if !self.close_event_sent.replace(true) {
                 let global = self.get_global_this();
-                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
-                    item.complete(&global);
-                }
-                // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                for item in self.queue.with_mut(std::mem::take) {
-                    item.abort_unsent(&global);
+                let _entered = global.bun_vm().enter_event_loop_scope();
+                let mut answer = true;
+                let unacked = self.waiting_for_ack.with_mut(|w| w.take());
+                // on_write_complete already dequeued everything fully written. Node doesn't look at how the other writes ended.
+                for item in unacked
+                    .into_iter()
+                    .chain(self.queue.with_mut(std::mem::take))
+                {
+                    let has_handle = item.handle.is_some();
+                    crate::dispatch::fold(item.call_back(&global, answer.then_some(JSValue::NULL)));
+                    // Like node, a message held back until an earlier handle is acked gets no answer.
+                    answer &= !has_handle;
                 }
                 if let Some(owner) = self.owner.get() {
                     owner.handle_ipc_close();
@@ -1238,7 +1265,7 @@ impl SendQueue {
                 queue.push_back(SendHandle {
                     data: payload,
                     handle,
-                    callbacks: CallbackList::init(callback),
+                    callbacks: CallbackList::init(callback, global),
                 });
             }
             Ok(())
@@ -1398,6 +1425,7 @@ impl SendQueue {
         log!(
             "IPC continueSend: {}",
             match reason {
+                ContinueSendReason::OnlyMessageAppended => "only_message_appended",
                 ContinueSendReason::NewMessageAppended => "new_message_appended",
                 ContinueSendReason::OnWritable => "on_writable",
             }
@@ -1453,7 +1481,8 @@ impl SendQueue {
             Next::Send(fd) => {
                 debug_assert!(!self.write_in_progress.get());
                 self.write_in_progress.set(true);
-                self.write(fd).then_some(ContinueSendReason::OnWritable)
+                self.write(fd, reason)
+                    .then_some(ContinueSendReason::OnWritable)
             }
         }
     }
@@ -1551,7 +1580,7 @@ impl SendQueue {
                 handle_oom(queue[last].data.write(bytes));
             });
             log!("IPC call continueSend() from version packet");
-            self.continue_send(global, ContinueSendReason::NewMessageAppended);
+            self.continue_send(global, ContinueSendReason::OnlyMessageAppended);
         }
         #[cfg(debug_assertions)]
         {
@@ -1581,17 +1610,28 @@ impl SendQueue {
             let unsent = SendHandle {
                 data: payload,
                 handle,
-                callbacks: CallbackList::None,
+                callbacks: CallbackList::init(callback, global),
             };
-            unsent.abort_unsent(global);
-        } else if self
-            .start_message(global, callback, handle, payload)
-            .is_err()
-        {
-            return SerializeAndSendResult::Failure;
+            if unsent
+                .call_back(global, Some(broken_pipe_error(global)))
+                .is_err()
+            {
+                return SerializeAndSendResult::Failure;
+            }
         } else {
+            let reason = if handle.is_none() && self.queue.get().is_empty() {
+                ContinueSendReason::OnlyMessageAppended
+            } else {
+                ContinueSendReason::NewMessageAppended
+            };
+            if self
+                .start_message(global, callback, handle, payload)
+                .is_err()
+            {
+                return SerializeAndSendResult::Failure;
+            }
             log!("IPC call continueSend() from serializeAndSend");
-            self.continue_send(global, ContinueSendReason::NewMessageAppended);
+            self.continue_send(global, reason);
         }
 
         if indicate_backoff {
@@ -1648,7 +1688,7 @@ impl SendQueue {
     /// call _onWriteComplete later.
     ///
     /// The outbound bytes are read from `queue[0]` *inside* this method. Returns whether to write on.
-    fn write(&self, fd: Option<Fd>) -> bool {
+    fn write(&self, fd: Option<Fd>, reason: ContinueSendReason) -> bool {
         #[cfg(windows)]
         {
             let _ = fd;
@@ -1656,7 +1696,7 @@ impl SendQueue {
                 pipe.ref_(); // ref on write
                 pipe.as_stream()
             }) else {
-                return self.on_write_complete(-1);
+                return self.on_write_failed(reason);
             };
 
             let write_req_slice: Box<[u8]> = self.queue.with_mut(|queue| {
@@ -1691,10 +1731,8 @@ impl SendQueue {
             if result.is_err() {
                 drop(write_req);
                 self.with_pipe(|pipe| pipe.unref());
-                self.on_write_complete(-1);
-                if self.windows.get().try_close_after_write {
-                    self.close_socket(CloseReason::Normal, CloseFrom::User);
-                }
+                self.on_write_failed(reason);
+                self.close_socket(CloseReason::Failure, CloseFrom::User);
                 return false;
             }
             // write request is queued. it will call _onWriteComplete when it completes.
@@ -1704,21 +1742,40 @@ impl SendQueue {
         #[cfg(not(windows))]
         {
             let Some(socket) = self.get_socket() else {
-                return self.on_write_complete(-1);
+                return self.on_write_failed(reason);
             };
-            let n: i32 = self.queue.with_mut(|queue| {
+            let (n, errno) = self.queue.with_mut(|queue| {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
                 let data = &data[..data.len().min(MAX_WRITE_LEN)];
                 if let Some(fd_unwrapped) = fd {
-                    socket.write_fd(data, fd_unwrapped.native())
+                    (socket.write_fd(data, fd_unwrapped.native()), 0)
+                } else if reason == ContinueSendReason::OnlyMessageAppended {
+                    socket.write_check_error(data)
                 } else {
-                    socket.write(data)
+                    (socket.write(data), 0)
                 }
             });
+            if errno != 0 {
+                // The socket stays open, for what the peer wrote before it left.
+                return self.on_write_failed(reason);
+            }
             self.on_write_complete(n)
         }
+    }
+
+    /// Returns whether to write on.
+    fn on_write_failed(&self, reason: ContinueSendReason) -> bool {
+        if reason != ContinueSendReason::OnlyMessageAppended {
+            return self.on_write_complete(-1);
+        }
+        self.write_in_progress.set(false);
+        let global = self.get_global_this();
+        if let Some(item) = self.queue.with_mut(VecDeque::pop_front) {
+            crate::dispatch::fold(item.call_back(&global, Some(broken_pipe_error(&global))));
+        }
+        false
     }
 
     #[cfg(windows)]
@@ -1926,10 +1983,44 @@ fn received_fd_to_js(fd: Fd) -> JSValue {
     }
 }
 
+fn deliver_handle(
+    global: &JSGlobalObject,
+    target: JSValue,
+    message: JSValue,
+    received: CloseOnDrop,
+) -> JsResult<()> {
+    let _scope = global.bun_vm().enter_event_loop_scope();
+    let emit = ipc_parse(global, target, message, received_fd_to_js(received.fd()))?;
+    // The object that `ipc_parse` made closes it. Before the listener, which can end the thread.
+    received.into_raw();
+    if emit.is_callable() {
+        emit.call_for_running_script(global, JSValue::UNDEFINED, &[])?;
+    }
+    Ok(())
+}
+
+/// A `NODE_HANDLE` message that `Process__holdMessage` kept, with what `received_fd_to_js` made of its descriptor.
+pub(crate) fn deliver_held_handle(
+    global: &JSGlobalObject,
+    message: JSValue,
+    fd: JSValue,
+) -> JsResult<()> {
+    #[cfg(windows)]
+    let fd = Fd::from_system(fd.as_number() as usize as *mut c_void);
+    #[cfg(not(windows))]
+    let fd = Fd::from_uv(fd.as_int32());
+    deliver_handle(global, JSValue::NULL, message, CloseOnDrop::new(fd))
+}
+
 enum IPCCommand {
     Handle(JSValue),
     Ack,
     Nack,
+}
+
+unsafe extern "C" {
+    /// `fd`: the descriptor of a `NODE_HANDLE` message, or `undefined`.
+    safe fn Process__holdMessage(global: &JSGlobalObject, message: JSValue, fd: JSValue) -> bool;
 }
 
 /// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
@@ -2021,17 +2112,15 @@ fn handle_ipc_message(
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 
-                // RAII: `enter()` now, `exit()` on drop — covers both the
-                // early-error return and the fall-through.
-                let _scope = global_this.bun_vm().enter_event_loop_scope();
-                let fd_js = received_fd_to_js(received.fd());
-                let emit = ipc_parse(global_this, target, msg_data, fd_js)?;
-                // The object that `ipc_parse` made closes it. Before the listener, which can end the thread.
-                received.into_raw();
-                if emit.is_callable() {
-                    emit.call_for_running_script(global_this, JSValue::UNDEFINED, &[])?;
+                if target.is_null()
+                    && Process__holdMessage(global_this, msg_data, received_fd_to_js(received.fd()))
+                {
+                    // The held message has it.
+                    received.into_raw();
+                    return Ok(());
                 }
-                drop(_scope);
+
+                deliver_handle(global_this, target, msg_data, received)?;
 
                 // ipc_parse will call the callback which calls handleIPCMessage()
                 // we have sent the ack already so the next message could arrive at any time. maybe even before
@@ -2049,6 +2138,12 @@ fn handle_ipc_message(
             }
         }
     } else {
+        if let DecodedIPCMessage::Data(data) = message
+            && matches!(send_queue.owner.get(), Some(SendQueueOwner::Instance))
+            && Process__holdMessage(global_this, data, JSValue::UNDEFINED)
+        {
+            return Ok(());
+        }
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
         let mut received = None;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
@@ -2230,7 +2325,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 }
             }
 
-            // `data` is the loop's receive buffer, which a handler that runs the event loop overwrites.
+            // Before the first handler: one that runs the event loop reads on from the buffer.
             let capacity = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()

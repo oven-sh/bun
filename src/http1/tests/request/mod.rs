@@ -14,6 +14,7 @@ enum Then {
     Drop,
     Close,
     Tunnel,
+    Park,
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +87,7 @@ impl Server {
             Then::Drop => self.parser = None,
             Then::Close => self.parser().is_closing = true,
             Then::Tunnel => self.parser().is_tunnel = true,
+            Then::Park => self.parser().parks_next_request = true,
         }
         self.parser.is_some().then_some(self)
     }
@@ -145,7 +147,6 @@ impl Setup {
             max_header_size: self.max_header_size,
             max_headers_count: self.max_headers_count,
             requires_host: self.requires_host,
-            has_strict_methods: self.is_node,
             has_lenient_values: self.has_lenient_values,
             has_lenient_transfer_encoding: self.has_lenient_transfer_encoding,
         }
@@ -166,7 +167,7 @@ impl Setup {
         }
     }
 
-    /// `(GET / 1.1 [a=b] close {body} [trailer=c])`, then `!error`, `+rest` or what the parser waits for.
+    /// `(GET / 1.1 [a=b] close {body} [trailer=c])`, then `!error`, `+rest`, `|parked` or what the parser waits for.
     fn feed(self, reads: &[&[u8]]) -> String {
         let mut server = self.server();
         for (i, read) in reads.iter().enumerate() {
@@ -176,6 +177,10 @@ impl Setup {
                 Outcome::Stopped { consumed } => {
                     let rest = [&read[consumed..], &reads[i + 1..].concat()].concat();
                     return format!("{}+{}", server.log, show(&rest));
+                }
+                Outcome::Parked { consumed } => {
+                    let rest = [&read[consumed..], &reads[i + 1..].concat()].concat();
+                    return format!("{}|{}", server.log, show(&rest));
                 }
             }
         }
@@ -279,7 +284,10 @@ fn request_line() {
             b"GET HTTPS://a/ HTTP/1.1\r\n\r\n",
             "(GET HTTPS://a/ 1.1 [])",
         ),
-        (b"CONNECT / HTTP/1.1\r\n\r\n", "(CONNECT / 1.1 [])"),
+        (
+            b"CONNECT / HTTP/1.1\r\n\r\n",
+            "(CONNECT / 1.1 [] tunnel..body",
+        ),
         (
             b"CONNECT a:80 HTTP/1.1\r\n\r\n",
             "(CONNECT a:80 1.1 [] tunnel..body",
@@ -290,7 +298,7 @@ fn request_line() {
         ),
         (b"G", "..head"),
         (b"GET ", "..head"),
-        (b"GET abcdefgh", "..head"),
+        (b"GET abcdefg", "..head"),
         (b"GET https://", "..head"),
         (b"GET / HTTP/1.", "..head"),
         (b"GET / HTTP/1.0\r\n", "..head"),
@@ -310,7 +318,7 @@ fn request_line() {
         (b"GET\n", "!InvalidVersion"),
         (b"GET  / HTTP/1.1\r\n\r\n", "!InvalidRequest"),
         (b"GET a HTTP/1.1\r\n\r\n", "!InvalidRequest"),
-        (b"GET abcdefghi", "!InvalidRequest"),
+        (b"GET abcdefgh", "!InvalidRequest"),
         (b"GET ftp://a/ HTTP/1.1\r\n\r\n", "!InvalidRequest"),
         (b"GET http:/a HTTP/1.1\r\n\r\n", "!InvalidRequest"),
         (b"GET httq://a HTTP/1.1\r\n\r\n", "!InvalidRequest"),
@@ -445,7 +453,7 @@ fn fields() {
 #[test]
 fn lookups() {
     let head = b"GET / HTTP/1.1\r\nHost: a\r\nx: b\r\nHOST: c\r\nEmpty:\r\nab: d\r\n\r\nrest";
-    SERVE.with_request(head, |request| {
+    NODE.with_request(head, |request| {
         assert_eq!(request.after_head(), b"rest");
         assert_eq!(request.field(b"host"), Some(&b"a"[..]));
         assert_eq!(request.field(b"x"), Some(&b"b"[..]));
@@ -538,6 +546,11 @@ fn host() {
         assert_eq!(serve.end(bytes), expected, "{}", show(bytes));
         assert_eq!(node.end(bytes), expected, "{}", show(bytes));
     }
+    for version in ["1.1", "1.0"] {
+        let bytes = format!("GET / HTTP/{version}\r\nHost: a\r\nhost: a\r\n\r\n");
+        assert_eq!(serve.end(bytes.as_bytes()), "!InvalidRequest");
+        assert_eq!(node.end(bytes.as_bytes()), ")");
+    }
 }
 
 #[test]
@@ -618,22 +631,35 @@ fn content_length() {
     for (value, expected) in [
         ("000000000000000001", "..body"),
         ("576460752303423487", "..body"),
-        ("576460752303423488", "!InvalidContentLength"),
-        ("0000000000000000001", "!InvalidContentLength"),
-        ("", "!InvalidContentLength"),
+        ("576460752303423488", "!ContentLengthOverflow"),
+        ("0000000000000000001", "!ContentLengthOverflow"),
+        ("", "!EmptyContentLength"),
         ("+1", "!InvalidContentLength"),
         ("-1", "!InvalidContentLength"),
         ("1 1", "!InvalidContentLength"),
         ("1,1", "!InvalidContentLength"),
         ("a", "!InvalidContentLength"),
-        ("1\r\nContent-Length: 2", "!InvalidContentLength"),
-        ("1\r\nContent-Length: 01", "!InvalidContentLength"),
-        ("1\r\nContent-Length:", "!InvalidContentLength"),
+        ("000000000000000000a", "!InvalidContentLength"),
+        ("\r\nContent-Length: 1", "!EmptyContentLength"),
+        ("1\r\nContent-Length: 2", "!DuplicateContentLength"),
+        ("1\r\nContent-Length: 01", "!DuplicateContentLength"),
+        ("1\r\nContent-Length:", "!DuplicateContentLength"),
     ] {
         let bytes = post(&format!("Content-Length: {value}\r\n"), b"");
         for setup in [SERVE, NODE, INSECURE] {
             assert_eq!(setup.end(&bytes), expected, "{value}");
         }
+    }
+
+    for (fields, expected) in [
+        ("", None),
+        ("Content-Length: 0\r\n", Some(0)),
+        ("Content-Length: 012\r\n", Some(12)),
+        ("Transfer-Encoding: chunked\r\n", None),
+    ] {
+        SERVE.with_request(&post(fields, b""), |request| {
+            assert_eq!(request.content_length(), expected);
+        });
     }
 
     // `closeIdleConnections()` leaves it alone.
@@ -660,7 +686,8 @@ fn transfer_encoding() {
         (&[TE, "CHUNKED"], CHUNKS, CHUNKS, CHUNKS),
         (&[TE, ", chunked"], CHUNKS, CHUNKS, CHUNKS),
         (&[TE, TE, "chunked"], CHUNKS, CHUNKS, CHUNKS),
-        (&[TE, "chunked,"], CHUNKS, CHUNKS, UNTIL_EOF),
+        (&[TE, "chunked,"], REJECTED, REJECTED, UNTIL_EOF),
+        (&[TE, "chunked ,,"], REJECTED, REJECTED, UNTIL_EOF),
         (&[TE, "gzip,\tchunked"], REJECTED, CHUNKS, CHUNKS),
         (&[TE, "gzip", TE, "chunked"], REJECTED, CHUNKS, CHUNKS),
         (&[TE, "chunked, chunked"], REJECTED, REJECTED, CHUNKS),
@@ -791,56 +818,47 @@ fn chunks() {
 
 #[test]
 fn trailers() {
-    const NONE_ALLOWED: &str = ")!InvalidChunkedEncoding";
+    const NO_LF: &str = "!ChunkTerminatorExpected";
     for (body, serve, node, insecure) in [
-        (&b"0\r\n"[..], ")..body", "..body", "..body"),
-        (b"0\r\n\r", ")..body", "..body", "..body"),
-        (b"0\r\na: b\r\n", NONE_ALLOWED, "..body", "..body"),
+        (&b"0\r\n"[..], "..body", "..body", "..body"),
+        (b"0\r\n\r", "..body", "..body", "..body"),
+        (b"0\r\na: b\r\n", "..body", "..body", "..body"),
         (
             b"0\r\na: b\r\nC:\t d \r\n\r\nGET / HTTP/1.1\r\n\r\n",
-            NONE_ALLOWED,
+            ")(GET / 1.1 [])",
             " [a=b C=d])(GET / 1.1 [])",
             " [a=b C=d])(GET / 1.1 [])",
         ),
         (
-            b"0\r\nContent-Length: 1\r\n\r\n",
-            NONE_ALLOWED,
+            b"0\r\nContent-Length: 1\r\nTransfer-Encoding: a\r\n\r\n",
             "!ContentLengthInTrailers",
-            " [Content-Length=1])",
+            "!ContentLengthInTrailers",
+            " [Content-Length=1 Transfer-Encoding=a])",
         ),
         (
             b"0\r\na: b\r\nTransfer-Encoding: a\r\n\r\n",
-            NONE_ALLOWED,
+            "!InvalidTransferEncoding",
             "!InvalidTransferEncoding",
             " [a=b Transfer-Encoding=a])",
         ),
         (
             b"0\r\na: b\r\n: c\r\n\r\n",
-            NONE_ALLOWED,
             "!InvalidField",
-            "!InvalidField",
-        ),
-        (
-            b"0\r\na: b\rc\r\n\r\n",
-            NONE_ALLOWED,
             "!InvalidField",
             "!InvalidField",
         ),
-        (
-            b"0\r\n\rx\r\n\r\n",
-            NONE_ALLOWED,
-            "!InvalidField",
-            "!InvalidField",
-        ),
+        (b"0\r\na: b\rc", NO_LF, NO_LF, NO_LF),
+        (b"0\r\n\rx", NO_LF, NO_LF, NO_LF),
+        (b"0\r\n\r\r", NO_LF, NO_LF, NO_LF),
         (
             b"0\r\n\n",
-            NONE_ALLOWED,
+            "!InvalidChunkedEncoding",
             "!InvalidChunkedEncoding",
             "!InvalidChunkedEncoding",
         ),
         (
             b"0\r\na: b\n",
-            NONE_ALLOWED,
+            "!InvalidChunkedEncoding",
             "!InvalidChunkedEncoding",
             "!InvalidChunkedEncoding",
         ),
@@ -848,6 +866,18 @@ fn trailers() {
         for (setup, expected) in [(SERVE, serve), (NODE, node), (INSECURE, insecure)] {
             let log = setup.parse(&chunked(body));
             assert_eq!(log, [CHUNKED, expected].concat(), "{}", show(body));
+        }
+    }
+
+    // Behind the fields that are passed on.
+    for (last, expected) in [
+        ("c", "!InvalidField"),
+        ("Content-Length: 1", "!ContentLengthInTrailers"),
+    ] {
+        let body = format!("0\r\n{}{last}\r\n\r\n", "a: b\r\n".repeat(200));
+        for setup in [SERVE, NODE] {
+            let log = setup.feed(&[&chunked(body.as_bytes())]);
+            assert_eq!(log, [CHUNKED, expected].concat());
         }
     }
 
@@ -931,12 +961,10 @@ fn limits() {
         assert_eq!(by_default.end(&of_len(101)[..100]), TOO_LARGE);
         assert_eq!(by_default.end(&[of_len(100), of_len(100)].concat()), ")");
 
-        if setup.is_node {
-            let of_len =
-                |len: usize| chunked(&[b"0\r\na:", &*vec![b' '; len - 6], b"\r\n\r\n"].concat());
-            assert_eq!(by_default.end(&of_len(100)), ")");
-            assert_eq!(by_default.end(&of_len(101)), "!TrailersTooLarge");
-        }
+        let of_len =
+            |len: usize| chunked(&[b"0\r\na:", &*vec![b' '; len - 6], b"\r\n\r\n"].concat());
+        assert_eq!(by_default.end(&of_len(100)), ")");
+        assert_eq!(by_default.end(&of_len(101)), "!TrailersTooLarge");
     }
 }
 
@@ -963,22 +991,6 @@ fn tunnels() {
     };
     let expected = r"(GET / 1.1 [Connection=close] close {\r\nab}..body";
     assert_eq!(at_once.parse(upgrade), expected);
-
-    let after_body = Setup {
-        after_body: Then::Tunnel,
-        ..NODE
-    };
-    let expected = r"(GET / 1.1 [Connection=close] close) {\r\nab}";
-    assert_eq!(after_body.parse(upgrade), expected);
-    let log = after_body.parse(&chunked(b"1\r\na\r\n0\r\n\r\n\r\nb"));
-    assert_eq!(log, [CHUNKED, r" {a}) {\r\nb}"].concat());
-
-    let dropped = Setup {
-        after_data: Then::Drop,
-        ..after_body
-    };
-    let expected = r"(GET / 1.1 [Connection=close] close) {\r\nab}+";
-    assert_eq!(dropped.feed(&[upgrade]), expected);
 }
 
 #[test]
@@ -1012,8 +1024,7 @@ fn stopped() {
         let log = after_body.parse(&post("Content-Length: 1\r\n", b"ab"));
         assert_eq!(log, "(POST / 1.1 [Content-Length=1] {a})+b");
         let log = after_body.parse(&chunked(b"0\r\n\r\nab"));
-        let rest = if setup.is_node { ")+ab" } else { r")+\r\nab" };
-        assert_eq!(log, [CHUNKED, rest].concat());
+        assert_eq!(log, [CHUNKED, ")+ab"].concat());
     }
 
     let until_eof = Setup {
@@ -1022,6 +1033,42 @@ fn stopped() {
     };
     let log = until_eof.feed(&[&post("Transfer-Encoding: a\r\n", b"ab")]);
     assert_eq!(log, "(POST / 1.1 [Transfer-Encoding=a] coded {ab}+");
+}
+
+#[test]
+fn parked() {
+    let parks = Setup {
+        after_body: Then::Park,
+        ..SERVE
+    };
+    let log = parks.parse(b"GET / HTTP/1.1\r\n\r\nab");
+    assert_eq!(log, "(GET / 1.1 [])|ab");
+    let log = parks.parse(b"GET / HTTP/1.1\r\n\r\n");
+    assert_eq!(log, "(GET / 1.1 [])");
+    let log = parks.parse(&post("Content-Length: 1\r\n", b"ab"));
+    assert_eq!(log, "(POST / 1.1 [Content-Length=1] {a})|b");
+    let log = parks.parse(&chunked(b"1\r\na\r\n0\r\nb: c\r\n\r\nd"));
+    assert_eq!(log, [CHUNKED, " {a})|d"].concat());
+    let log = parks.parse(b"GET / HTTP/1.0\r\n\r\nab");
+    assert_eq!(log, "(GET / 1.0 [] close)");
+
+    // What a read under a handler left of a head waits for the rest.
+    let mut server = SERVE.server();
+    SERVE.read(&mut server, b"GET / HT");
+    server.parser.as_mut().unwrap().parks_next_request = true;
+    let outcome = SERVE.read(&mut server, b"TP/1.1\r\n\r\n");
+    assert_eq!(outcome, Outcome::Parked { consumed: 0 });
+    server.parser.as_mut().unwrap().parks_next_request = false;
+    SERVE.read(&mut server, b"TP/1.1\r\n\r\n");
+    assert_eq!(server.log, "(GET / 1.1 [])");
+
+    // The body is not the next request.
+    let early = Setup {
+        after_request: Then::Park,
+        ..SERVE
+    };
+    let log = early.parse(&post("Content-Length: 2\r\n", b"abc"));
+    assert_eq!(log, "(POST / 1.1 [Content-Length=2] {ab})|c");
 }
 
 #[test]

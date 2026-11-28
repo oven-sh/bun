@@ -1,4 +1,5 @@
 import { TCPSocketListener } from "bun";
+import { runEventLoopUntil } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
@@ -456,10 +457,9 @@ describe("aborting while CONNECTING", () => {
 
 describe("data received while a handshake listener spins the event loop", () => {
   // Call from a listener. Sends `bytes` from the peer, then blocks until `until` settles.
-  // `Bun.build()` ticks the event loop until a plugin's `setup()` settles.
   function sendAndWaitSynchronously(peer: RawSocket, bytes: string, until: Promise<void>) {
     write(peer, bytes);
-    Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup: () => until }] }).catch(() => {});
+    runEventLoopUntil(until);
   }
 
   test("a frame received during a 101's handshake listener is delivered after 'open'", async () => {

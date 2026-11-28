@@ -563,6 +563,8 @@ describe.concurrent("fetch-tls", () => {
       await using peer = Bun.spawn({
         cmd: [nodeExe()!, join(import.meta.dir, "fetch.tls.renegotiation-peer-fixture.mjs")],
         env: { ...bunEnv, SERVER_CERT: validTls.cert, SERVER_KEY: validTls.key },
+        // The peer exits when this pipe closes, so a timed-out test doesn't leave it running.
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "inherit",
       });
@@ -610,13 +612,12 @@ describe.concurrent("fetch-tls", () => {
       timeout,
     );
 
-    // Observed: the request gets no answer, and the test times out. Its write
-    // parks while the renegotiation runs, and uSockets does not retry it when
-    // the renegotiation ends.
-    it.todo(
+    // The request's write parks during the renegotiation. uSockets has to retry it afterwards.
+    it.skipIf(!nodeExe())(
       "a request that reuses a pooled socket mid-renegotiation gets its answer",
       async () => {
-        const { stdout, exitCode } = await pickUpMidRenegotiation("await-second");
+        const { stdout, stderr, exitCode } = await pickUpMidRenegotiation("await-second");
+        expect(stderr).toBe("");
         expect(stdout).toEqual(["first ok", "held record type 22", "after the pooled pickup pong", "second ok"]);
         expect(exitCode).toBe(0);
       },
@@ -626,15 +627,15 @@ describe.concurrent("fetch-tls", () => {
 
   // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where
   // a certificate identity failure during a handshake completed from the
-  // SSL_read path, racing aborts, idle timeouts, and keepalive churn, caused a
-  // finished HTTPClient to deliver its final result twice: the second delivery
-  // read the freed AsyncHTTP clone and called through a null callback pointer.
-  // The fixture drives that exact traffic shape and exits non-zero on any
-  // unexpected outcome; every failure must surface as a catchable error.
+  // SSL_read path, racing aborts, mid-handshake teardowns, and keepalive churn,
+  // caused a finished HTTPClient to deliver its final result twice: the second
+  // delivery read the freed AsyncHTTP clone and called through a null callback
+  // pointer. The fixture drives that exact traffic shape and counts every
+  // outcome; every failure must surface as a catchable error.
   it("rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
-      env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -644,11 +645,19 @@ describe.concurrent("fetch-tls", () => {
     // surfaces the actual report instead of a bare exit-code mismatch.
     // Don't assert emptiness: debug builds emit benign startup noise.
     expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
-    // Fixture reports unexpected outcomes on stdout.
-    expect(stdout).toStartWith("OK ");
+    // 16 batches of 4 fetches per class, plus 3 stalled handshakes.
+    const outcome = JSON.parse(stdout);
+    expect(outcome).toEqual({
+      mismatch: { altname: 64 },
+      racedMismatch: { altname: expect.any(Number), aborted: expect.any(Number) },
+      keepalive: { ok: expect.any(Number), churn: expect.any(Number) },
+      stalled: { aborted: 3 },
+      failures: [],
+    });
+    // Either side can win a race, but the totals are fixed.
+    expect(outcome.racedMismatch.altname + outcome.racedMismatch.aborted).toBe(64);
+    expect(outcome.keepalive.ok + outcome.keepalive.churn).toBe(64);
     expect(exitCode).toBe(0);
-    // The fixture's stalled handshakes wait for the padded 1s idle timer,
-    // which the 4s sweep fires at ~4-8s, so this outlives the 5s default.
   }, 30_000);
 
   // When checkServerIdentity is provided, the HTTP thread sends an intermediate
@@ -914,6 +923,51 @@ describe.concurrent("fetch-tls", () => {
 
   // A function given here replaces Bun's own hostname check, so one that
   // approves by mistake turns hostname verification off.
+  it("a checkServerIdentity that can no longer be called approves nothing", async () => {
+    // --isolate=modules shares built-in modules, so `fs` carries the function into b, and retires the node:vm realm of a.
+    const check = `
+      import { test } from "bun:test";
+      import fs from "node:fs";
+      test("fetch", async () => {
+        let heard = 0;
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(validTls)},
+          fetch: () => (heard++, new Response()),
+        });
+        const tls = { ca: ${JSON.stringify(validTls.cert)}, checkServerIdentity: fs.approve };
+        const results = [];
+        for (const request of [() => fetch(server.url, { tls }), () => new Bun.FetchSession({ tls }).fetch(server.url)]) {
+          results.push(await request().then(response => response.status, error => error.code));
+        }
+        console.log(JSON.stringify({ results, heard, asked: fs.asked }));
+      });
+    `;
+    using dir = tempDir("fetch-tls-retired-callback", {
+      "a.test.ts": `
+        import vm from "node:vm";
+        ${check}
+        fs.asked = 0;
+        fs.approve = vm.runInNewContext("() => { fs.asked++; }", { fs });
+      `,
+      "b.test.ts": check,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate=modules", "--timeout=30000", "./a.test.ts", "./b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.match(/^{.*$/gm)?.map(line => JSON.parse(line))).toEqual([
+      { results: [200, 200], heard: 2, asked: 2 },
+      { results: ["ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_CERT_ALTNAME_INVALID"], heard: 0, asked: 2 },
+    ]);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("an async checkServerIdentity does not turn hostname verification off", async () => {
     // This certificate names only DNS:localhost, and the request dials 127.0.0.1.
     await createServer(CERT_LOCALHOST_ONLY, async port => {

@@ -1,6 +1,7 @@
 // The expected values are what postgres.js 3.4.9 (`result.columns`, `result.statement`) and mysql2 3.24.6 (`fields`) report, but for
 // `number` of a system column (postgres.js reads it unsigned, 65535) and the type of a MariaDB JSON column (mysql2 says 252).
 import { SQL, randomUUIDv7 } from "bun";
+import { runEventLoopUntil } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 import type { Socket } from "node:net";
@@ -239,15 +240,12 @@ test.each([0, 3])("postgres: the column transform runs the event loop with %p by
   const write = (socket: Socket, bytes: Buffer) => (socket.write(bytes), loopbackFence());
   try {
     let socket: Socket;
-    let built: Promise<unknown> | undefined;
     await using sql = new SQL({
       url: `postgres://u@127.0.0.1:${port}/db`,
       max: 1,
       transform: {
         column: name => {
-          // Bun.build() runs the event loop until an async setup() settles.
-          const setup = () => write(socket, reply.subarray(description.length + extra));
-          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+          runEventLoopUntil(write(socket, reply.subarray(description.length + extra)));
           return name.toUpperCase();
         },
       },
@@ -258,7 +256,6 @@ test.each([0, 3])("postgres: the column transform runs the event loop with %p by
     // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
     socket.write(reply.subarray(7, description.length + extra));
     expect(await result).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
-    await built;
   } finally {
     server.close();
   }

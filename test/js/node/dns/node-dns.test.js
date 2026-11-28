@@ -549,31 +549,17 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
     const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
     resolver.setServers(["127.0.0.1:" + server.port]);
 
-    // Bun.build() spins the event loop until the promise returned by a plugin's setup() settles.
+    const { runEventLoopUntil } = require("bun:internal-for-testing");
     let reentries = 0;
-    const builds = [];
-    function reenterEventLoop() {
-      const before = reentries;
-      builds.push(Bun.build({
-        entrypoints: ["/entry.js"],
-        files: { "/entry.js": "" },
-        plugins: [{
-          name: "spin",
-          setup: () => new Promise(resolve => setImmediate(() => { reentries++; resolve(); })),
-        }],
-      }));
-      if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
-    }
 
     // Each round uses a new name, because the resolver answers a repeated name from its cache without opening a socket.
     for (let i = 0; i < ${rounds}; i++) {
       const addresses = await resolver.resolve4("round" + i + ".example.test").then(addresses => {
-        reenterEventLoop();
+        runEventLoopUntil(new Promise(setImmediate).then(() => reentries++));
         return addresses;
       });
       if (addresses[0] !== "127.0.0.1") throw new Error("unexpected answer: " + addresses);
     }
-    await Promise.all(builds);
     server.close();
     console.log("reentries=" + reentries);
   `;

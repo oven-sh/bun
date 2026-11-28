@@ -18,8 +18,6 @@ import { locksEnvironment } from "./aot/hardened";
 import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
 import { temporaryFolderThatInstalls } from "./aot/harness/without-installing-packages";
 
-export const BREAKING_CHANGES_BUN_1_2 = false;
-
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
@@ -54,7 +52,6 @@ export const libcFamily: "glibc" | "musl" =
 export const isMusl = isLinux && libcFamily === "musl";
 export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";
-export const isVerbose = process.env.DEBUG === "1";
 
 // Use these to mark a test as flaky or broken.
 // This will help us keep track of these tests.

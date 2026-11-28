@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import type { Duplex } from "node:stream";
-import type { ServerOptions } from "ws";
+import type { WebSocket as Client, ServerOptions } from "ws";
 import {
   createInflater,
   createServer,
@@ -621,6 +621,33 @@ describe.each(implementations)("ws server opening handshake ($name)", ({ ws: imp
       expect(seen).toEqual(["/", "websocket", WebSocket.OPEN]);
       client.text("hi");
       expect(await client.next()).toBe('text "echo:hi"');
+    });
+
+    test.skipIf(!builtin).each<[string, (res: http.ServerResponse, ws: Client, server: http.Server) => void]>([
+      ["ws.terminate()", (_, ws) => ws.terminate()],
+      ["res.destroy()", res => res.destroy()],
+      ["server.closeAllConnections()", (_, __, server) => server.closeAllConnections()],
+    ])("the response of a 'request' listener closes with the connection: %s", async (_, close) => {
+      for (const later of [false, true]) {
+        const wss = new WebSocketServer({ noServer: true });
+        const seen: unknown[] = [];
+        const upgraded = Promise.withResolvers<[http.ServerResponse, Client]>();
+        await using web = await serve(
+          http.createServer(async (req, res) => {
+            res.on("close", () => seen.push("res close"));
+            req.socket.on("close", () => seen.push("socket close"));
+            if (later) await new Promise(setImmediate);
+            wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => upgraded.resolve([res, ws]));
+          }),
+        );
+        const client = web.connect();
+        expect(await client.responseLines()).toEqual(switchingProtocols);
+        const [res, ws] = await upgraded.promise;
+        expect(res.socket).toBe(res.req.socket);
+        close(res, ws, web.server);
+        await once(ws, "close");
+        expect(seen).toEqual(["res close", "socket close"]);
+      }
     });
 
     test.skipIf(!builtin)("rejects an invalid handshake from a 'request' listener through its response", async () => {

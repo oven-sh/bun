@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
+import { expectMaxObjectTypeCount, isWindows, tempDir, tls } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { connect, createServer, TLSSocket } from "node:tls";
+import { connect, createSecureContext, createServer, TLSSocket } from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "./tls-handshake-alert-utils";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
@@ -285,6 +285,64 @@ it.if(isWindows)("setSecureContext() rotates the certificate of a server listeni
   } finally {
     server.close();
   }
+});
+
+// Elsewhere the path is a unix socket, which has its own TLS engine: both have to give the same answers.
+describe.each(["a synchronous", "an asynchronous"])("%s SNICallback of a server listening on a pipe path", kind => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
+  const agent3 = { key: fixture("agent3-key.pem"), cert: fixture("agent3-cert.pem") };
+
+  async function outcomeOf(answer: () => [Error | null, ReturnType<typeof createSecureContext>?]) {
+    using dir = tempDir("tls-pipe-sni", {});
+    const path = isWindows ? `\\\\.\\pipe\\test\\${randomUUID()}` : join(String(dir), "sni.sock");
+    const asked: string[] = [];
+    const server = createServer(
+      {
+        ...agent1,
+        SNICallback(name, callback) {
+          asked.push(name);
+          if (kind === "a synchronous") callback(...answer());
+          else setImmediate(() => callback(...answer()));
+        },
+      },
+      socket => socket.end("hello"),
+    );
+    server.on("tlsClientError", () => {});
+    try {
+      await once(server.listen(path), "listening");
+      const presented = await new Promise<string>(resolve => {
+        const client = connect({ path, servername: "agent3.example", rejectUnauthorized: false });
+        client.on("error", err => resolve(`error ${(err as NodeJS.ErrnoException).code}`));
+        client.on("close", () => resolve("closed"));
+        client.on("data", () => {
+          resolve(client.getPeerCertificate().subject.CN as string);
+          client.destroy();
+        });
+      });
+      return { asked, presented };
+    } finally {
+      server.close();
+    }
+  }
+
+  it("selects the certificate", async () => {
+    expect(await outcomeOf(() => [null, createSecureContext(agent3)])).toEqual({
+      asked: ["agent3.example"],
+      presented: "agent3",
+    });
+  });
+
+  it("keeps the default certificate when it gives no context", async () => {
+    expect(await outcomeOf(() => [null])).toEqual({ asked: ["agent3.example"], presented: "agent1" });
+  });
+
+  it("drops the connection when it reports an error", async () => {
+    expect(await outcomeOf(() => [new Error("no such name")])).toEqual({
+      asked: ["agent3.example"],
+      presented: "error ECONNRESET",
+    });
+  });
 });
 
 it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", async () => {

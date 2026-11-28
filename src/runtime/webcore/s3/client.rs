@@ -334,7 +334,7 @@ pub(crate) fn list_objects(
             ..Default::default()
         },
     );
-    task.async_http_id = http.async_http_id;
+    task.async_http_id = http.client.async_http_id;
 
     // queue http request
     bun_http::http_thread::init(&Default::default());
@@ -501,12 +501,11 @@ pub(crate) fn upload_stream(
     // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
     // `readStreamIntoSink` pump.
     if let Some(byte_stream) = readable_stream.ptr.bytes() {
-        if byte_stream.sink.get().is_none() {
+        if byte_stream.sink.get().is_none() && readable_stream.try_lock_native(cx.global()) {
             sink.source.set(SourceHandle::ByteStream(byte_stream));
             let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new(&sink));
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);
-            readable_stream.lock_native(cx.global());
             byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
@@ -694,7 +693,7 @@ fn download_stream(
             ..Default::default()
         },
     );
-    task.async_http_id = http.async_http_id;
+    task.async_http_id = http.client.async_http_id;
     task.wrapper.task.set(task_ptr);
     task.self_box = Some(owner);
     // enable streaming

@@ -1,5 +1,6 @@
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum Encoding {
+    #[default]
     Identity,
     Gzip,
     Deflate,

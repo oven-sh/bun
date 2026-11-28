@@ -205,14 +205,22 @@ impl MiniEventLoop {
 
     #[inline]
     pub fn tick_once(&self, context: *mut c_void) {
-        if self.tick_concurrent() == 0 {
+        self.wait_for_tasks();
+        self.run_tasks(context);
+    }
+
+    pub fn has_tasks(&self) -> bool {
+        self.tick_concurrent() > 0
+    }
+
+    /// Runs none of them, and may return without any.
+    pub fn wait_for_tasks(&self) {
+        if !self.has_tasks() {
             self.loop_.inc();
             self.loop_.tick();
             self.loop_.dec();
             self.on_after_event_loop();
         }
-
-        self.run_tasks(context);
     }
 
     fn run_tasks(&self, context: *mut c_void) {

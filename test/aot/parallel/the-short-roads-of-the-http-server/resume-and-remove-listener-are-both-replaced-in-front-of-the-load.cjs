@@ -33,5 +33,5 @@ function run(done) {
 }
 run(() => {});
 /* Output:
-answers 4 resume 4 removeListener 4
+answers 4 resume 5 removeListener 4
 */

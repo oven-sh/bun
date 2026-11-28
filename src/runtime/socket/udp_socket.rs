@@ -132,6 +132,22 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     }
 }
 
+/// `address%scope`. The scope is the interface's name where the platform has one for the index.
+fn scoped_address(address: &[u8], scope_id: u32) -> BunString {
+    #[cfg(not(windows))]
+    {
+        let mut buffer = [0u8; libc::IF_NAMESIZE];
+        if let Some(name) = bun_sys::net::if_indextoname(scope_id, &mut buffer) {
+            return BunString::create_format(format_args!(
+                "{}%{}",
+                bstr::BStr::new(address),
+                bstr::BStr::new(name)
+            ));
+        }
+    }
+    BunString::create_format(format_args!("{}%{}", bstr::BStr::new(address), scope_id))
+}
+
 fn on_data(socket: *mut uws::udp::Socket, packets: uws::udp::Packets<'_>) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = udp_socket.enter_owners_context();
@@ -172,22 +188,9 @@ fn on_data(socket: *mut uws::udp::Socket, packets: uws::udp::Packets<'_>) {
         // `slice`'s borrow ends at the `binary_type.to_js` copy below, before user JS runs.
         let slice = packet.payload();
 
-        #[allow(unused_labels)]
-        let hostname_string = if let Some(id) = scope_id {
-            'blk: {
-                #[cfg(not(windows))]
-                {
-                    let mut buffer = [0u8; libc::IF_NAMESIZE];
-                    if let Some(name) = bun_sys::net::if_indextoname(id, &mut buffer) {
-                        let name = bstr::BStr::new(name);
-                        break 'blk BunString::create_format(format_args!("{ip}%{name}"));
-                    }
-                }
-
-                BunString::create_format(format_args!("{ip}%{id}"))
-            }
-        } else {
-            BunString::clone_latin1(&ip)
+        let hostname_string = match scope_id {
+            Some(id) => scoped_address(&ip, id),
+            None => BunString::clone_latin1(&ip),
         };
 
         let _entered = VirtualMachine::get().enter_event_loop_scope();
@@ -578,7 +581,7 @@ impl UDPSocket {
                 on_recv_error,
                 &hostname_z,
                 config.port,
-                config.flags,
+                config.flags | uws::LIBUS_UDP_LINUX_RECVERR,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )
@@ -606,7 +609,7 @@ impl UDPSocket {
                     ))
                 };
                 let sys_err = SystemError {
-                    errno: err,
+                    errno: if is_fd { -err } else { err },
                     code: BunString::static_(code),
                     message,
                     syscall: BunString::static_(syscall),
@@ -1755,9 +1758,7 @@ fn dgram_not_supported() -> bun_sys::Error {
     bun_sys::Error::from_code_int(SystemErrno::ENOTSUP as c_int, bun_sys::Tag::open)
 }
 
-/// `(fd)` → whether a live `UDPSocket` already owns this descriptor. Backs
-/// node:dgram's synchronous EEXIST check on `bind({ fd })` so it does not have
-/// to keep a second, per-VM copy of DGRAM_FDS.
+/// `(fd)` → whether a live `UDPSocket` already owns this descriptor.
 pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
     #[cfg(not(windows))]
     {
@@ -1765,8 +1766,7 @@ pub(crate) fn dgram_is_fd_adopted(fd: i32) -> bool {
     }
     #[cfg(windows)]
     {
-        // The registry is POSIX-only; on Windows the async adoption path
-        // reports EEXIST itself and Node skips the sync-throw test.
+        // The registry is POSIX-only.
         let _ = fd;
         false
     }

@@ -27,6 +27,7 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
+#include <wtf/SetForScope.h>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -63,6 +64,12 @@ public:
         return (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this)));
     }
 
+    /* A handler can tick the loop (waitForPromise). After an await no tick is under its caller to keep a socket that closes there allocated. */
+    [[nodiscard]] SetForScope<int> holdClosedSockets() {
+        int &tickDepth = us_socket_group_loop(us_socket_group((us_socket_t *) this))->data.tick_depth;
+        return SetForScope<int>(tickDepth, tickDepth + 1);
+    }
+
     /* Get socket extension */
     AsyncSocketData<SSL> *getAsyncSocketData() {
         return (AsyncSocketData<SSL> *) us_socket_ext((us_socket_t *) this);
@@ -90,10 +97,11 @@ public:
         return (us_socket_t *) this;
     }
 
-    /* Immediately close socket */
-    us_socket_t *close() {
+    /* Immediately close socket. A close_notify says that the stream is whole: not if more was to come, or if this drops buffered bytes. */
+    us_socket_t *close(bool moreWasToCome = false) {
         this->uncork();
-        return us_socket_close((us_socket_t *) this, 0, nullptr);
+        const bool truncates = SSL && (moreWasToCome || getBufferedAmount());
+        return us_socket_close((us_socket_t *) this, truncates ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, nullptr);
     }
 
     void uncorkWithoutSending() {
@@ -265,6 +273,7 @@ public:
         return total_written;
     }
 
+    /* Room for `length` bytes in this socket's cork buffer, which the caller fills. nullptr if write() has to take them. */
     char *reserveInCorkBuffer(size_t length) {
         if (!length || length > LoopData::CORK_COPY_MAX || us_socket_is_closed((us_socket_t *) this) || getAsyncSocketData()->buffer.length()) {
             return nullptr;

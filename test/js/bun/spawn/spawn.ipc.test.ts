@@ -1,6 +1,7 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isDebug, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -568,6 +569,79 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(exitCode).toBe(0);
 });
 
+describe("every ipc call, then onDisconnect, then exited and onExit", () => {
+  async function callsOf(env: { LEAVE: string; MESSAGES: number; BUSY: boolean; CHILDREN: number }) {
+    using dir = tempDir("spawn-callback-order", {
+      "parent.js": `
+        const { readFileSync } = require("node:fs");
+        const { LEAVE, MESSAGES, BUSY, CHILDREN } = JSON.parse(process.env.ORDER);
+        for (let i = 0; i < CHILDREN; i++) {
+          const calls = [];
+          let left = 3;
+          const done = () => --left || console.log(calls.join(", "));
+          const child = Bun.spawn({
+            cmd: [process.execPath, "child.js"],
+            stdio: ["ignore", "inherit", "inherit"],
+            ipc(message) {
+              if (message !== "ready") return calls.push("ipc");
+              child.send({ leave: LEAVE, messages: MESSAGES });
+              // A zombie with one thread left: the channel has ended and the exit has been reported.
+              while (BUSY && !/^\\d+ \\(.*\\) Z (?:-?\\d+ ){16}1 /s.test(readFileSync("/proc/" + child.pid + "/stat", "utf8")));
+            },
+            onDisconnect: () => (calls.push("onDisconnect"), done()),
+            onExit: (_, code, signal) => (calls.push("onExit " + (signal ?? code)), done()),
+          });
+          child.exited.then(() => (calls.push("exited"), done()));
+        }`,
+      "child.js": `
+        process.once("message", ({ leave, messages }) => {
+          const go = () => {
+            if (leave === "process.disconnect()") process.disconnect();
+            else if (leave === "process.exit()") process.exit(0);
+            else process.kill(process.pid, "SIGKILL");
+          };
+          if (!messages) return go();
+          for (let i = 1; i <= messages; i++) process.send(i, i === messages ? go : undefined);
+        });
+        process.send("ready");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, ORDER: JSON.stringify(env) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  const leaves = ["process.disconnect()", "process.exit()", "SIGKILL"];
+  it.skipIf(!isLinux).concurrent.each(leaves.flatMap(leave => [[leave, 2] as const, [leave, 0] as const]))(
+    "when a busy parent finds them all waiting: %s after %d unread messages",
+    async (LEAVE, MESSAGES) => {
+      expect(await callsOf({ LEAVE, MESSAGES, BUSY: true, CHILDREN: 1 })).toEqual({
+        stdout: [
+          `${Buffer.alloc(5 * MESSAGES, "ipc, ")}onDisconnect, exited, onExit ${LEAVE === "SIGKILL" ? LEAVE : 0}`,
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.concurrent("when children of an idle parent exit right after their last message", async () => {
+    const result = await callsOf({ LEAVE: "process.exit()", MESSAGES: 1, BUSY: false, CHILDREN: 8 });
+    // An exit that another thread waited for is a task, which runs microtasks at its end.
+    result.stdout = result.stdout.map(line => line.replace("onExit 0, exited", "exited, onExit 0"));
+    expect(result).toEqual({
+      stdout: Array(8).fill("ipc, onDisconnect, exited, onExit 0"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
   // The version packet is the first frame on the channel:
   // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the
@@ -597,6 +671,134 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+// The peer hand-rolls the sendmsg(2) so it can attach three descriptors to one
+// NODE_HANDLE message, which neither Bun nor libuv ever do. The receiver (this
+// test process) has to use the first one and close the others. The peer keeps
+// the far ends of the two extras, so EOF on those proves we closed our copies.
+const scmRightsPeerSource = `
+const { dlopen, FFIType, ptr } = require("bun:ffi");
+const isDarwin = process.platform === "darwin";
+const libc = dlopen(process.env.LIBC_PATH, {
+  socket: { args: [FFIType.int, FFIType.int, FFIType.int], returns: FFIType.int },
+  socketpair: { args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr], returns: FFIType.int },
+  sendmsg: { args: [FFIType.int, FFIType.ptr, FFIType.int], returns: FFIType.i64_fast },
+  recv: { args: [FFIType.int, FFIType.ptr, FFIType.u64, FFIType.int], returns: FFIType.i64_fast },
+  close: { args: [FFIType.int], returns: FFIType.int },
+});
+const AF_UNIX = 1, AF_INET = 2, SOCK_STREAM = 1, SOCK_DGRAM = 2;
+const SOL_SOCKET = isDarwin ? 0xffff : 1;
+const SCM_RIGHTS = 1;
+const MSG_DONTWAIT = isDarwin ? 0x80 : 0x40;
+
+function socketpair() {
+  const fds = new Int32Array(2);
+  if (libc.symbols.socketpair(AF_UNIX, SOCK_STREAM, 0, fds) !== 0) throw new Error("socketpair() failed");
+  return fds;
+}
+
+// fds[0] is the handle the message describes; the receiver must close the rest.
+const udp = libc.symbols.socket(AF_INET, SOCK_DGRAM, 0);
+if (udp < 0) throw new Error("socket() failed");
+const [extraA, keptA] = socketpair();
+const [extraB, keptB] = socketpair();
+const fds = [udp, extraA, extraB];
+
+const payload = Buffer.from(JSON.stringify({ cmd: "NODE_HANDLE", type: "dgram.Native", msg: { hello: "handle" } }) + "\\n");
+
+// struct cmsghdr: Linux { size_t len; int level; int type; } (data 8-aligned),
+// Darwin { socklen_t len; int level; int type; } (data 4-aligned). Both are
+// little-endian, so 32-bit writes into a zeroed buffer fill the wider fields too.
+const cmsgHeader = isDarwin ? 12 : 16;
+const cmsgAlign = isDarwin ? 4 : 8;
+const cmsgLen = cmsgHeader + 4 * fds.length;
+const cmsgSpace = cmsgHeader + Math.ceil((4 * fds.length) / cmsgAlign) * cmsgAlign;
+const control = new Uint8Array(cmsgSpace);
+const controlView = new DataView(control.buffer);
+controlView.setUint32(0, cmsgLen, true);
+controlView.setInt32(isDarwin ? 4 : 8, SOL_SOCKET, true);
+controlView.setInt32(isDarwin ? 8 : 12, SCM_RIGHTS, true);
+fds.forEach((fd, i) => controlView.setInt32(cmsgHeader + 4 * i, fd, true));
+
+// struct iovec { void *base; size_t len; } is the same on both.
+const iov = new Uint8Array(16);
+const iovView = new DataView(iov.buffer);
+iovView.setBigUint64(0, BigInt(ptr(payload)), true);
+iovView.setUint32(8, payload.byteLength, true);
+
+// struct msghdr: name @0, namelen @8, iov @16, iovlen @24 (size_t on Linux, int
+// on Darwin), control @32, controllen @40 (size_t on Linux, socklen_t on Darwin
+// followed by flags @44), flags @48 on Linux. Zeroed buffer, so the narrower
+// Darwin fields and the padding come out right from the same 32-bit writes.
+const msg = new Uint8Array(56);
+const msgView = new DataView(msg.buffer);
+msgView.setBigUint64(16, BigInt(ptr(iov)), true);
+msgView.setUint32(24, 1, true);
+msgView.setBigUint64(32, BigInt(ptr(control)), true);
+msgView.setUint32(40, control.byteLength, true);
+
+// Bun put the IPC channel on fd 3 (no other extra stdio).
+const sent = libc.symbols.sendmsg(3, msg, 0);
+if (sent !== payload.byteLength) throw new Error("sendmsg() returned " + sent);
+// Drop our copies: from here on only the receiver keeps extraA/extraB open, so
+// EOF on keptA/keptB means the receiver closed them.
+for (const fd of fds) libc.symbols.close(fd);
+
+// Nothing is ever written on these pairs, so recv() is 0 (EOF) once every copy
+// of the far end is closed and -1 (EAGAIN) while the receiver still holds one.
+process.on("message", () => {
+  const probe = new Uint8Array(1);
+  const state = fd => (libc.symbols.recv(fd, probe, 1, MSG_DONTWAIT) === 0 ? "closed" : "open");
+  process.send({ extras: [state(keptA), state(keptB)] });
+});
+`;
+
+it.skipIf(isWindows)(
+  "a NODE_HANDLE message carrying several descriptors delivers the first and closes the rest",
+  async () => {
+    using dir = tempDir("ipc-scm-rights", { "peer.js": scmRightsPeerSource });
+    const { promise, resolve, reject } = Promise.withResolvers<{ message: unknown; handle: any; peer: unknown }>();
+    let first: { message: unknown; handle: any } | undefined;
+    await using child = spawn({
+      cmd: [bunExe(), "peer.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "json",
+      ipc(message, subprocess, handle) {
+        if (!first) {
+          first = { message, handle };
+          // By the time the handle reaches us the receive path has already dealt
+          // with the other descriptors, so the peer can check its ends now.
+          subprocess.send("probe");
+        } else {
+          resolve({ ...first, peer: message });
+        }
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`peer exited (${exitCode}, ${signalCode}) before reporting`));
+      },
+    });
+    const { message, handle, peer } = await promise;
+
+    // `handle` is the dgram wrap Bun built around the first descriptor, so
+    // handle.fd is that descriptor as received into this process.
+    const F_GETFD = 1;
+    const FD_CLOEXEC = 1;
+    const libc = dlopen(libcPathForDlopen(), { fcntl: { args: ["int", "int"], returns: "int" } });
+    const fdFlags = libc.symbols.fcntl(handle.fd, F_GETFD);
+    libc.close();
+    handle.close();
+
+    // A failed fcntl() returns -1, and -1 & FD_CLOEXEC would read as the flag being set.
+    expect(fdFlags).toBeGreaterThanOrEqual(0);
+    expect({ message, peer, cloexec: fdFlags & FD_CLOEXEC }).toEqual({
+      message: { hello: "handle" },
+      peer: { extras: ["closed", "closed"] },
+      cloexec: FD_CLOEXEC,
+    });
+  },
+);
 
 /** Runs parent.js next to child.js. Both have the helpers below. */
 async function runPair(parent: string, child: string, env: Record<string, string> = {}, prelude = "") {
@@ -647,14 +849,13 @@ async function runPair(parent: string, child: string, env: Record<string, string
       });
     const turn = () => new Promise(resolve => setImmediate(resolve));
     const openFds = () => fs.readdirSync("/proc/self/fd").length;
-    // Bun.build() runs the event loop until the setup() of a plugin has settled.
-    const runEventLoopUntil = promise =>
-      void Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise.then(() => {}) }] });
   `;
+  const nested = parent.includes("runEventLoopUntil")
+    ? `const { runEventLoopUntil } = require("bun:internal-for-testing");`
+    : "";
   using dir = tempDir("ipc-pair", {
-    "parent.js": prelude + helpers + parent,
+    "parent.js": prelude + helpers + nested + parent,
     "child.js": helpers + child,
-    "empty.js": "",
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--no-orphans", "parent.js"],
@@ -751,6 +952,32 @@ describe.concurrent("the send queue", () => {
     );
     expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
   });
+
+  it.each(["undefined", "server"])(
+    "calls the callback with EPIPE if the channel closes while its message is serialized (handle: %s)",
+    async handle => {
+      const result = await runPair(
+        `
+        const server = await listen();
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const { promise: ready, resolve: ipc } = Promise.withResolvers();
+        const child = spawnChild({ ipc, onDisconnect });
+        await ready.then(turn);
+        const message = {
+          toJSON() {
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+            return "late";
+          },
+        };
+        child.send(message, ${handle}, {}, error => console.log(error?.code));
+        server.close();
+      `,
+        `process.on("message", () => {}).send("ready");`,
+      );
+      expect(result).toEqual({ stdout: ["EPIPE"], stderr: "", exitCode: 0 });
+    },
+  );
 
   // Windows has given the child its duplicate by then, so the peer sees no end while the child lives.
   it.skipIf(isWindows).each(["json", "advanced"])(
@@ -869,6 +1096,136 @@ describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event lo
     );
     expect(result.stdout.sort()).toEqual(["collected garbage", "disconnected", "sent"]);
     expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+  });
+});
+
+// Linux only: elsewhere the sender does not see that the peer shut down its reading side.
+it.skipIf(!isLinux)("the channel closes if the peer refuses a handle and stays", async () => {
+  const result = await runPair(
+    `
+      const server = await listen();
+      const child = spawnChild({
+        onDisconnect: () => (console.log("disconnect"), server.close(), fs.writeFileSync("done", "")),
+      });
+      until("shut down");
+      child.send("handle", server, error => console.log("callback", error));
+    `,
+    `
+      const libc = require("bun:ffi").dlopen(process.env.LIBC_PATH, { shutdown: { args: ["int", "int"], returns: "int" } });
+      if (libc.symbols.shutdown(3, 0) !== 0) throw new Error("shutdown() failed");
+      fs.writeFileSync("shut down", "");
+      until("done");
+    `,
+    { LIBC_PATH: libcPathForDlopen() },
+  );
+  expect(result.stdout.sort()).toEqual(["callback null", "disconnect"]);
+  expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+});
+
+// Linux only: reads /proc, so that the end of the channel and the exit are found by one poll.
+describe.concurrent.skipIf(!isLinux)("a child that is killed with messages it never took", () => {
+  const untilZombie = `
+    const untilZombie = pid => {
+      // With one thread left: the channel has ended and the exit has been reported.
+      while (!/^\\d+ \\(.*\\) Z (?:-?\\d+ ){16}1 /s.test(fs.readFileSync("/proc/" + pid + "/stat", "utf8"))) Bun.sleepSync(1);
+    };
+  `;
+  const neverReads = `until("never");`;
+
+  describe.each([
+    ["a backlog", `Buffer.alloc(8 << 20, "x").toString(), undefined`],
+    ["a handle", `"handle", server`],
+  ])("%s", (_, args) => {
+    it.each([
+      { spawner: "graph", sender: "graph", stdout: ["reaped"] },
+      { spawner: "host", sender: "graph", stdout: ["reaped"] },
+      { spawner: "graph", sender: "host", stdout: ["called", "reaped"] },
+    ])("after dispose() of a Bun.ModuleGraph: $spawner spawned, $sender sent", async ({ spawner, sender, stdout }) => {
+      const result = await runPair(
+        `
+          const server = await listen();
+          const graph = new Bun.ModuleGraph();
+          const host = { run: fn => fn() };
+          const child = ${spawner}.run(() => spawnChild({ onExit() {} }));
+          ${sender}.run(() => child.send(${args}, {}, () => console.log("called")));
+          process.kill(child.pid, "SIGKILL");
+          graph.dispose();
+          while (fs.existsSync("/proc/" + child.pid)) await turn();
+          await turn();
+          server.close();
+          console.log("reaped");
+        `,
+        neverReads,
+      );
+      expect(result).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+
+    it("calls the callback in the context of the send()", async () => {
+      const result = await runPair(
+        `
+          const server = await listen();
+          const storage = new (require("node:async_hooks").AsyncLocalStorage)();
+          const graph = new Bun.ModuleGraph();
+          const child = spawnChild({ onExit() {} });
+          const sent = () => {
+            console.log(storage.getStore());
+            // The process ends only if this is the graph's.
+            setInterval(() => {}, 1000);
+            graph.dispose();
+            server.close();
+          };
+          graph.run(() => storage.run("store", () => child.send(${args}, {}, sent)));
+          child.kill("SIGKILL");
+        `,
+        neverReads,
+      );
+      expect(result).toEqual({ stdout: ["store"], stderr: "", exitCode: 0 });
+    });
+  });
+
+  it("closes the socket that a disposed Bun.ModuleGraph sent", async () => {
+    const result = await runPair(
+      `${untilZombie}
+        const { once } = require("node:events");
+        const server = await listen();
+        const peer = require("node:net").connect(server.address().port, "127.0.0.1");
+        const [socket] = await once(server, "connection");
+        const graph = new Bun.ModuleGraph();
+        const child = graph.run(() => spawnChild({ onDisconnect() {} }));
+        graph.run(() => child.send("socket", socket));
+        graph.dispose();
+        untilZombie(child.pid);
+        await once(peer.resume(), "close");
+        console.log("closed");
+        server.close();
+      `,
+      neverReads,
+    );
+    expect(result).toEqual({ stdout: ["closed"], stderr: "", exitCode: 0 });
+  });
+
+  it("reports the disconnect and the exit if process.nextTick throws", async () => {
+    const result = await runPair(
+      `${untilZombie}
+        process.on("uncaughtException", error => console.log(error.message));
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const handle = Object.assign(Object.create(require("node:net").Server.prototype), { _handle: server });
+        const child = spawnChild({
+          onDisconnect: () => console.log("disconnect"),
+          onExit: () => (console.log("exit"), server.stop()),
+        });
+        child.send("handle", handle, function sent() {});
+        child.kill("SIGKILL");
+        untilZombie(child.pid);
+      `,
+      neverReads,
+      {},
+      `process.nextTick = (callback, ...args) => {
+        if (callback.name === "sent") throw new Error("from nextTick");
+        queueMicrotask(() => callback(...args));
+      };`,
+    );
+    expect(result).toEqual({ stdout: ["from nextTick", "disconnect", "exit"], stderr: "", exitCode: 0 });
   });
 });
 

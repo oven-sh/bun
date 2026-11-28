@@ -82,18 +82,6 @@ impl<B> FixedBufferStream<B> {
     pub fn new(buffer: B) -> Self {
         Self { buffer, pos: 0 }
     }
-
-    /// Seek to absolute position `p`.
-    #[inline]
-    pub fn seek_to(&mut self, p: usize) {
-        self.pos = p;
-    }
-
-    /// Rewind to position 0.
-    #[inline]
-    pub fn reset(&mut self) {
-        self.pos = 0;
-    }
 }
 
 impl<'a> FixedBufferStream<&'a mut [u8]> {

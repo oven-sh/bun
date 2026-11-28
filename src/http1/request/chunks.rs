@@ -8,7 +8,7 @@ impl RequestParser {
     }
 
     /// Takes the next data from `input`. It is empty at the end of the body.
-    pub(super) fn next_chunk<'a, const IS_NODE: bool>(
+    pub(super) fn next_chunk<'a>(
         &mut self,
         input: &mut &'a [u8],
         max_trailers_len: usize,
@@ -23,8 +23,9 @@ impl RequestParser {
                     if self.body != Body::ChunkData || self.remaining != 2 {
                         continue;
                     }
-                    if !IS_NODE {
-                        self.body = Body::LastCr;
+                    self.remaining = 0;
+                    if let [b'\r', b'\n', rest @ ..] = *input {
+                        (self.body, *input) = (Body::AfterTrailers, rest);
                         return Some(&[]);
                     }
                     self.body = Body::Trailers;
@@ -45,15 +46,9 @@ impl RequestParser {
                         return Some(&[]);
                     } else if *byte == b'\n' && !self.trailers.ends_with(b"\r\n") {
                         self.body = Body::Failed(RequestError::InvalidChunkedEncoding);
+                    } else if *byte != b'\n' && matches!(*self.trailers, [.., b'\r', _]) {
+                        self.body = Body::Failed(RequestError::ChunkTerminatorExpected);
                     }
-                }
-                Body::LastCr | Body::LastLf => {
-                    *input = rest;
-                    self.body = match (self.body, byte) {
-                        (Body::LastCr, b'\r') => Body::LastLf,
-                        (Body::LastLf, b'\n') => Body::None,
-                        _ => Body::Failed(RequestError::InvalidChunkedEncoding),
-                    };
                 }
                 Body::None
                 | Body::Content

@@ -140,10 +140,11 @@ pub struct BunSocketContextOptions<'a> {
     pub crl: CStrArray<'a>,
     pub sigalgs: Option<CStrRef<'a>>,
     pub ecdh_curve: Option<CStrRef<'a>>,
+    pub ca_is_default: i32,
 }
 bun_core::assert_ffi_layout!(
-    BunSocketContextOptions<'static>, 168, 8;
-    allow_partial_trust_chain @ 52, secure_options @ 104, crl @ 136,
+    BunSocketContextOptions<'static>, 176, 8;
+    allow_partial_trust_chain @ 52, secure_options @ 104, crl @ 136, ca_is_default @ 168,
 );
 
 impl Default for BunSocketContextOptions<'_> {
@@ -171,6 +172,7 @@ impl Default for BunSocketContextOptions<'_> {
             crl: CStrArray::default(),
             sigalgs: None,
             ecdh_curve: None,
+            ca_is_default: 0,
         }
     }
 }
@@ -191,6 +193,14 @@ impl BunSocketContextOptions<'_> {
         let ctx = self.create_ssl_context(err)?;
         ctx.set_session_id_context(digest);
         Some(ctx)
+    }
+
+    /// Whether the context is built from a file, of which `digest()` only knows the path, the size and the time.
+    pub fn reads_files(&self) -> bool {
+        self.key_file_name.is_some()
+            || self.cert_file_name.is_some()
+            || self.dh_params_file_name.is_some()
+            || self.ca_file_name.is_some()
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string
@@ -261,6 +271,7 @@ impl BunSocketContextOptions<'_> {
         h.update(bun_core::bytes_of(&self.session_timeout));
         feed_arr(&mut h, self.crl);
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
+        h.update(bun_core::bytes_of(&self.ca_is_default));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];
@@ -313,6 +324,8 @@ pub mod c {
         ) -> Option<OwnedSslCtx>;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        // safe: no args; computed once per process and never freed.
+        pub safe fn us_get_default_ca_store_digest() -> &'static [u8; 32];
         /// Appends the certificates in the NUL-terminated PEM `content` to
         /// `ctx`'s trust store; returns 0 when nothing could be added.
         pub fn us_ssl_ctx_add_ca_cert(

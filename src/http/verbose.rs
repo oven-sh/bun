@@ -10,6 +10,15 @@ use bun_http_types::ETag::Header;
 
 use crate::{Request, Response};
 
+/// Starts every line of the trace. The `[fetch]` tag only shows when stderr has colors.
+pub(crate) fn trace_line_prefix() -> &'static str {
+    if enable_ansi_colors_stderr() {
+        pretty_fmt!("<r><d>[fetch]<r> ", true)
+    } else {
+        ""
+    }
+}
+
 pub(crate) struct HeaderFormatter<'a>(pub(crate) Header<'a>);
 
 impl fmt::Display for HeaderFormatter<'_> {
@@ -75,7 +84,14 @@ impl fmt::Display for CurlFormatter<'_> {
             Quoted::Url(self.url),
         )?;
 
-        if request.method != b"GET" {
+        // Without this, curl expands `[1-3]` and `{a,b}` in the URL.
+        if strings::index_of_any(self.url, b"[]{}").is_some() {
+            f.write_str(" --globoff")?;
+        }
+
+        if !request.method.iter().all(u8::is_ascii_alphabetic) {
+            write!(f, " -X \"{}\"", Quoted::Text(request.method))?;
+        } else if request.method != b"GET" {
             write!(f, " -X {}", BStr::new(request.method))?;
         }
 
@@ -131,11 +147,7 @@ pub(crate) struct ResponseFormatter<'a>(pub(crate) &'a Response);
 
 impl fmt::Display for ResponseFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let prefix = if enable_ansi_colors_stderr() {
-            pretty_fmt!("<r><d>[fetch]<r> ", true)
-        } else {
-            ""
-        };
+        let prefix = trace_line_prefix();
         writeln!(
             f,
             "{prefix}< {} {}",

@@ -80,20 +80,32 @@ pub mod whatwg {
         safe fn URL__setQuery(url: &mut URL, value: &EncodedSlice<'_>);
         safe fn URL__setFragmentIdentifier(url: &mut URL, value: &EncodedSlice<'_>);
         fn URL__deinit(url: *mut URL);
-        safe fn URL__getHref(input: &String) -> String;
+        safe fn URL__getHref(input: &String, exclude_fragment: bool) -> String;
         safe fn URL__getFileURLString(input: &String) -> String;
         safe fn URL__pathFromFileURL(input: &String) -> String;
-        safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
+        safe fn URL__getHrefJoin(
+            base: &String,
+            relative: &String,
+            exclude_fragment: bool,
+        ) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        URL__getHref(str)
+        URL__getHref(str, false)
+    }
+    /// [`href_from_string`], serialized with the URL Standard's *exclude fragment* flag.
+    pub fn href_from_string_without_fragment(str: &String) -> String {
+        URL__getHref(str, true)
     }
     pub fn join(base: &String, relative: &String) -> String {
-        URL__getHrefJoin(base, relative)
+        URL__getHrefJoin(base, relative, false)
+    }
+    /// [`join`], serialized with the URL Standard's *exclude fragment* flag.
+    pub fn join_without_fragment(base: &String, relative: &String) -> String {
+        URL__getHrefJoin(base, relative, true)
     }
     pub fn file_url_from_string(str: &String) -> String {
         URL__getFileURLString(str)
@@ -234,7 +246,8 @@ pub mod whatwg {
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
 pub use whatwg::{
-    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+    file_url_from_string, href_from_string, href_from_string_without_fragment, join,
+    join_without_fragment, origin_from_slice, path_from_file_url,
 };
 
 /// Where the authority ends, which is where the search for the `@` of the userinfo stops.
@@ -264,7 +277,6 @@ pub struct URL<'a> {
     pub protocol: &'a [u8],
     pub(crate) search: &'a [u8],
     pub username: &'a [u8],
-    pub(crate) port_was_automatically_set: bool,
     /// The rule `parse` used, so `href_without_userinfo` cuts the same bytes.
     pub(crate) authority_end: AuthorityEnd,
 }
@@ -284,7 +296,6 @@ impl<'a> Default for URL<'a> {
             protocol: b"",
             search: b"",
             username: b"",
-            port_was_automatically_set: false,
             authority_end: AuthorityEnd::LikeNewURL,
         }
     }
@@ -374,7 +385,6 @@ impl<'a> URL<'a> {
             protocol: d(self.protocol),
             search: d(self.search),
             username: d(self.username),
-            port_was_automatically_set: self.port_was_automatically_set,
             authority_end: self.authority_end,
         }
     }
@@ -607,8 +617,9 @@ impl<'a> URL<'a> {
         bun_core::ip_address::is_ip_address(self.hostname)
     }
 
+    /// A URL without a port uses its scheme's default port.
     pub fn has_valid_port(&self) -> bool {
-        self.get_port().unwrap_or(0) > 0
+        self.port.is_empty() || self.get_port().unwrap_or(0) > 0
     }
 
     pub fn is_empty(&self) -> bool {

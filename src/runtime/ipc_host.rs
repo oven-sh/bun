@@ -54,6 +54,10 @@ pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<
     Process__emitErrorEvent(cx.global(), error.to_js());
 }
 
+pub(crate) fn emit_process_disconnect_event(cx: &mut JsScope<'_>) {
+    Process__emitDisconnectEvent(cx.global());
+}
+
 fn do_send_err(
     global_object: &JSGlobalObject,
     callback: JSValue,
@@ -434,7 +438,17 @@ impl IPCInstance {
         crate::jsc_hooks::ipc_child_singleton_deinit();
         {
             let _entered = vm.enter_event_loop_scope();
-            Process__emitDisconnectEvent(vm.global());
+            // On the next tick, so that it comes after the callbacks of the messages that never went out.
+            let emit = bun_jsc::JSFunction::create(
+                vm.global(),
+                "",
+                crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessDisconnectEvent,
+                0,
+                Default::default(),
+            );
+            if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
+                let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+            }
         }
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
@@ -543,4 +557,13 @@ pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
 // HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
 pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     let _ = get_ipc_instance(global.bun_vm());
+}
+
+// HOST_EXPORT(Bun__deliverHeldIPCMessage, c)
+pub(crate) fn deliver_held_ipc_message(global: &JSGlobalObject, message: JSValue, fd: JSValue) {
+    crate::dispatch::fold(if fd.is_undefined() {
+        IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), fd)
+    } else {
+        IPC::deliver_held_handle(global, message, fd)
+    });
 }

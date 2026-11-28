@@ -142,6 +142,20 @@ public:
         return getLazyLoop().loop;
     }
 
+    /* Like get(), but null with errno set if the loop cannot be created. */
+    static Loop *tryGet() {
+        if (!getLazyLoop().loop) {
+            Loop *loop = (Loop *) us_create_loop(nullptr, wakeupCb, preCb, postCb, sizeof(LoopData));
+            if (!loop) {
+                return nullptr;
+            }
+            getLazyLoop().loop = loop->init();
+            getLazyLoop().cleanMe = true;
+        }
+
+        return getLazyLoop().loop;
+    }
+
     /* A thread that ran a loop is exiting: free this thread's loop whether uSockets created the
      * native loop (cleanMe) or was handed one (Windows: the thread's libuv loop, which the caller
      * closes afterwards; us_loop_free leaves a borrowed native loop alone). */
@@ -193,17 +207,7 @@ public:
         us_wakeup_loop((us_loop_t *) this);
     }
 
-    /* Actively block and run this loop */
-    void run() {
-        us_loop_run((us_loop_t *) this);
-    }
-
 };
-
-/* Can be called from any thread to run the thread local loop */
-inline void run() {
-    Loop::get()->run();
-}
 
 }
 

@@ -2,7 +2,6 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ptr::RefPtr;
@@ -14,7 +13,7 @@ use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
 use crate::InFlightRequest;
-use crate::http_thread::WriteMessageType;
+use crate::ssl_config::SSLConfig;
 
 use crate::h3_client::h3_client;
 
@@ -96,15 +95,22 @@ impl ClientContext {
         &mut self,
         client: InFlightRequest,
         port: u16,
-    ) -> Result<(), InFlightRequest> {
+    ) -> Result<(), (InFlightRequest, crate::Error)> {
         let hostname = bun_url::strip_ipv6_brackets(client.url.hostname);
         let reject = client.flags.reject_unauthorized;
+        // Same gate as `HTTPThread::connect`: `rejectUnauthorized` alone stays on the default context.
+        let tls_props = client
+            .tls_props
+            .clone()
+            .filter(|tls| tls.get().requires_custom_request_ctx);
+        let tls_props_ptr = SSLConfig::raw_ptr(tls_props.as_ref());
         for s in self.sessions.iter().map(RefPtr::as_ptr) {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
             let s = session_mut(s);
-            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
+            if s.matches(hostname, port, reject, tls_props_ptr, client.pool.id) && s.has_headroom()
+            {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
@@ -122,12 +128,31 @@ impl ClientContext {
         // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
         // it as a C string so an interior NUL truncates on the C side. This is
         // deliberately not `CString::new`, which would reject interior NUL
-        // and diverge by returning `Err`.
+        // and diverge by failing.
         // Resolution and certificate verification name an IPv6 literal without its brackets.
         let mut host_buf = hostname.to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let registry_ref = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
+        let ssl_ctx = tls_props
+            .as_ref()
+            .map(|tls| crate::http_thread().quic_ssl_ctx(tls))
+            .transpose();
+        let ssl_ctx = match ssl_ctx {
+            Ok(ssl_ctx) => ssl_ctx,
+            Err(err) => return Err((client, err)),
+        };
+        let sni = tls_props
+            .as_ref()
+            .and_then(|tls| tls.get().server_name_cstr())
+            .filter(|name| !name.to_bytes().is_empty())
+            .unwrap_or(host_z);
+        let registry_ref = ClientSession::new(
+            hostname.to_vec(),
+            port,
+            reject,
+            tls_props.clone(),
+            client.pool.id,
+        );
         let session = registry_ref.as_ptr();
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
@@ -135,9 +160,9 @@ impl ClientContext {
         self.sessions.push(registry_ref);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+        let result = self
+            .qctx_mut()
+            .connect(host_z, port, sni, reject, ssl_ctx.as_ref());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
@@ -174,7 +199,7 @@ impl ClientContext {
                 s.detach(s.pending[0].as_ptr());
                 let _registry_ref = self.unregister(s);
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-                return Err(client);
+                return Err((client, crate::Error::ConnectionRefused));
             }
         }
         Ok(())
@@ -200,59 +225,15 @@ impl ClientContext {
         Some(registry_ref)
     }
 
-    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
-        let Some(this) = Self::get() else {
-            return false;
-        };
-        // Leaked Box, process-lifetime; HTTP-thread only — `BackRef` (immortal
-        // referent) gives `&ClientContext` for the Vec iter. Each session is a
-        // disjoint heap allocation, and `ClientSession::abort_by_http_id` never
-        // calls back into `unregister`, so `sessions` is stable across the loop.
-        let ctx = bun_ptr::BackRef::from(this);
-        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
-            // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).abort_by_http_id(async_http_id) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {
             return;
         };
-        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        // Leaked Box, process-lifetime, HTTP-thread only. `close_if_idle` doesn't unregister, so `sessions` is stable.
         let ctx = bun_ptr::BackRef::from(this);
         for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
             session_mut(s).close_if_idle(pool_id);
-        }
-    }
-
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
-        let Some(this) = Self::get() else {
-            return;
-        };
-        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
-        let ctx = bun_ptr::BackRef::from(this);
-        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
-            // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
-                return;
-            }
-        }
-    }
-
-    pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
-        let Some(this) = Self::get() else {
-            return;
-        };
-        let ctx = bun_ptr::BackRef::from(this);
-        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
-            if session_mut(s).resume_receive_by_http_id(async_http_id) {
-                return;
-            }
         }
     }
 }

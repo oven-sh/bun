@@ -37,7 +37,11 @@ async function printedInThreeWays(program: string) {
 test("a difference that the second text of node:http declares is gone under the word", async () => {
   // If that difference is ever fixed, this test needs another program that tells the texts apart: without one it does not show that the word is read.
   const { plain, second, first } = await printedInThreeWays(
-    join(parallel, "the-short-roads-of-the-http-server", "declared-the-writable-state-of-the-socket-is-replaced.mjs"),
+    join(
+      parallel,
+      "what-lies-under-the-headers-of-a-response",
+      "declared-what-a-stand-in-for-the-handle-does-to-the-list-that-it-is-handed.cjs",
+    ),
   );
   expect(plain.exitCode).toBe(0);
   expect(first).toEqual(plain);

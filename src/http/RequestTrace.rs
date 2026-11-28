@@ -14,13 +14,13 @@ use crate::http_context::HTTPSocket;
 use crate::internal_state::RequestStage;
 use crate::thread_safe_stream_buffer::Callback;
 use crate::{
-    AsyncHTTP, HTTPClient, HTTPRequestBody, HTTPThread, Headers, InFlightRequest, Method, Protocol,
-    Request, headers, signals,
+    AsyncHTTP, Carrier, HTTPClient, HTTPRequestBody, HTTPThread, Headers, InFlightRequest, Method,
+    Protocol, Request, headers, signals,
 };
 
 /// The first request, or the one that follows a redirect, before it is sent.
 pub struct Hop {
-    pub method: Method,
+    pub method: Box<[u8]>,
     pub origin: Vec<u8>,
     pub path: Box<[u8]>,
     /// The caller's, and the defaults that a caller can replace.
@@ -104,7 +104,7 @@ impl RequestTrace {
     }
 
     /// `None` sends the headers of the [`Hop`].
-    pub fn follow_redirect(&self, async_http_id: u32, headers: Option<Headers>) {
+    pub fn follow_redirect(&self, async_http_id: u64, headers: Option<Headers>) {
         self.state.lock().headers_of_next_hop = headers;
         HTTPThread::schedule_receive_resume(async_http_id);
     }
@@ -151,7 +151,7 @@ impl AsyncHTTP<'_> {
 }
 
 impl InFlightRequest {
-    pub(crate) fn follow_redirect(mut self) {
+    pub(crate) fn start_next_hop(mut self) {
         let Some(tracing) = &self.tracing else {
             return self.connect();
         };
@@ -159,7 +159,7 @@ impl InFlightRequest {
             return self.connect();
         }
         self.flags.disable_keepalive = tracing.own_disable_keepalive;
-        self.unregister_abort_tracker();
+        self.carrier = Carrier::None;
         self.state.flags.is_waiting_for_headers = true;
         self.trace(|this| Event::Redirect(this.hop(&this.state.original_request_body)));
         self.hold();
@@ -305,7 +305,10 @@ impl HTTPClient<'_> {
 
         let (has_body, content_length) = match body {
             HTTPRequestBody::Stream(stream) => (true, stream.framing.content_length),
-            HTTPRequestBody::Bytes([]) => (false, self.method.has_request_body().then_some(0)),
+            HTTPRequestBody::Bytes([]) => {
+                let declares_zero = self.method.known().is_some_and(Method::has_request_body);
+                (false, declares_zero.then_some(0))
+            }
             _ => (true, self.compress.is_none().then_some(body.len() as u64)),
         };
         let scheme: &[u8] = if self.url.is_https() {
@@ -314,7 +317,7 @@ impl HTTPClient<'_> {
             b"http://"
         };
         Hop {
-            method: self.method,
+            method: self.method_name().into(),
             origin: [scheme, self.url.host].concat(),
             path: self.url.pathname.into(),
             headers,

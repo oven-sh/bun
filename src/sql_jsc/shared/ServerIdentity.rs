@@ -3,6 +3,7 @@
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc};
 use bun_boringssl_sys::{SSL, X509};
 use bun_jsc::ErrorCode;
+use bun_uws::AnySocket;
 
 unsafe extern "C" {
     // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
@@ -24,19 +25,23 @@ pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSV
     }
 }
 
-/// `Err` is what the connection fails with. Last uses `ssl` before it runs user code, which can close the connection.
+/// `Err` is what the connection fails with. Last uses `ssl`, which is `socket`'s, before it runs user code, which can close the connection.
 pub fn check(
     global: &JSGlobalObject,
     callback: JSValue,
+    socket: AnySocket,
     ssl: Option<&mut SSL>,
     hostname: &[u8],
 ) -> Result<(), JSValue> {
     let _entered = VirtualMachine::get().enter_event_loop_scope();
-    match verdict(global, callback, ssl, hostname) {
-        Ok(None) => Ok(()),
-        Ok(Some(reason)) => Err(reason),
-        Err(thrown) => Err(global.take_exception(thrown)),
-    }
+    let reason = match verdict(global, callback, ssl, hostname) {
+        Ok(None) => return Ok(()),
+        Ok(Some(reason)) => reason,
+        Err(thrown) => global.take_error(thrown),
+    };
+    // TLS 1.3 has not sent the client certificate yet.
+    socket.release_held_flight();
+    Err(reason)
 }
 
 /// `None` approves.

@@ -43,6 +43,7 @@ use crate::server::html_bundle;
 
 #[path = "bundle_thread.rs"]
 mod bundle_thread;
+pub(crate) use bundle_thread::{StuckBuildsProbe, park, unpark};
 #[path = "compile_ahead_of_time.rs"]
 mod compile_ahead_of_time;
 
@@ -143,12 +144,13 @@ impl BundleJs {
 }
 
 impl JSBundleCompletionTask {
-    /// Takes a process-keepalive ref and hands the build to the bundle thread.
+    /// Takes a process-keepalive ref and hands the build to the bundle thread. `call` is what `park` returned.
     pub(crate) fn schedule(
         config: JSBundlerConfig,
         global_this: &JSGlobalObject,
         context: jsc::ContextId,
         owner: BuildOwner,
+        call: Option<u64>,
     ) {
         let vm = global_this.bun_vm();
         let plugins = match &owner {
@@ -174,6 +176,8 @@ impl JSBundleCompletionTask {
         // SAFETY: `js` stays where it is until `finish` takes the task and frees it. Until then it
         // keeps the plugins, or the route in it keeps the server that does.
         let (js, plugins) = unsafe {
+            js.as_ref().abort_handle.set_only_waits_to_be_closed();
+            js.as_ref().caller.handle.set_only_waits_to_be_closed();
             jsc::AbortHandle::arm_owner(js.as_ptr(), vm.root_context());
             if let Some(caller) = vm.as_graph_context(vm.context_of(context)) {
                 jsc::AbortHandle::arm_owner(&raw mut (*js.as_ptr()).caller, caller);
@@ -192,10 +196,10 @@ impl JSBundleCompletionTask {
             declarations: None,
             js,
         });
-        bundle_thread::enqueue(task, vm.ticket());
+        bundle_thread::enqueue(task, vm, call);
     }
 
-    fn fail_to_start(mut self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
+    fn fail_to_start(mut self: Box<Self>, err: &dyn core::fmt::Display, ticket: &jsc::Ticket) {
         self.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -1104,18 +1108,28 @@ impl JSBundleCompletionTask {
         Ok(config)
     }
 
-    fn run(mut self: Box<Self>, ticket: jsc::Ticket, generation: bun_core::Generation) {
+    fn run(
+        mut self: Box<Self>,
+        ticket: jsc::Ticket,
+        seat: &bundle_thread::Seat,
+        generation: bun_core::Generation,
+    ) {
         let heap = Arena::new();
         let mut ast_memory_store = bun_ast::ASTMemoryAllocator::default();
         // Declared here so that it drops after `ticket.post`.
         let mut transpiler = None;
         let _ast_scope = ast_memory_store.enter();
 
-        self.result = self.build(&mut transpiler, &heap, &ticket, generation);
+        if seat.has_turn() {
+            self.result = self.build(&mut transpiler, &heap, &ticket, seat, generation);
+        }
 
         // It knows a source by its address, and the log outlives the sources.
         self.log.line_column_tracker = None;
-        if let Some(declarations) = self.declarations.take() {
+        // Without the turn, what the checker has emitted is another build's.
+        if let Some(declarations) = self.declarations.take()
+            && seat.has_turn()
+        {
             self.add_declarations(&declarations);
         }
         ticket.post(ConcurrentTask::create_boxed(self));
@@ -1171,6 +1185,7 @@ impl JSBundleCompletionTask {
         transpiler: &'a mut Option<Transpiler<'a>>,
         heap: &'a Arena,
         ticket: &'a jsc::Ticket,
+        seat: &'a bundle_thread::Seat,
         generation: bun_core::Generation,
     ) -> bun_bundler::Result<BuildResult> {
         let log = &mut self.log;
@@ -1187,8 +1202,9 @@ impl JSBundleCompletionTask {
         let worker_pool = Some(NonNull::from(WorkPool::get()));
         let plugins = self.plugins.map(JsPtr::as_non_null);
         let completion = dispatch::CompletionHandle {
-            cancelled: &bundle_thread::CANCELLED,
+            cancelled: &seat.cancelled,
             poster: ticket,
+            turn: seat,
         };
         let file_map = (!config.files.map.is_empty()).then_some(&config.files);
         let entry_points: Vec<&[u8]> = config.entry_points.keys().iter().map(|b| &**b).collect();

@@ -3,7 +3,9 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
-use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
+use crate::generated_bindgen::js_bundler::{
+    Bun__Bundler__onRejectSetup, Bun__Bundler__onResolveSetup, js_BuildArtifact as js,
+};
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
@@ -22,7 +24,7 @@ use bun_options_types::schema::api; // bun.schema.api
 use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph;
 
-use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
+use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask, park, unpark};
 use crate::cli::compile_command::RequestOrigin;
 use crate::cli::compile_options::{self, CompileFlags, OptionError, TrimFlags};
 
@@ -877,11 +879,29 @@ pub(crate) mod js_bundler {
         }
     }
 
+    /// With the compile target of a `bun-<target>`.
+    fn parse_target(
+        global_this: &JSGlobalObject,
+        target: &[u8],
+    ) -> JsResult<(Target, Option<CompileTarget>)> {
+        if target.starts_with(b"bun-") {
+            let compile_target = compile_target_from_slice(global_this, target)?;
+            return Ok((Target::Bun, Some(compile_target)));
+        }
+        match options::TARGET_MAP.get(target) {
+            Some(target) => Ok((*target, None)),
+            None => Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected target to be one of 'browser', 'node', 'bun', 'macro', or 'bun-<target>', got {}",
+                bstr::BStr::new(target)
+            ))),
+        }
+    }
+
     impl Config {
-        pub(crate) fn from_js(
+        fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
-            plugins: &mut Option<OwnedPlugin>,
+            target: Option<&[u8]>,
         ) -> JsResult<Config> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
@@ -891,113 +911,14 @@ pub(crate) mod js_bundler {
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
 
             let mut did_set_target = false;
-            if let Some(slice) = config.get_optional_slice(global_this, b"target")? {
-                if slice.slice().starts_with(b"bun-") {
-                    this.compile = Some(CompileOptions {
-                        compile_target: compile_target_from_slice(global_this, slice.slice())?,
-                        ..Default::default()
-                    });
-                    this.target = Target::Bun;
-                    did_set_target = true;
-                } else {
-                    this.target = match options::TARGET_MAP.get(slice.slice()) {
-                        Some(t) => *t,
-                        None => {
-                            return Err(global_this.throw_invalid_arguments(
-                                format_args!(
-                                    "Expected target to be one of 'browser', 'node', 'bun', 'macro', or 'bun-<target>', got {}",
-                                    bstr::BStr::new(slice.slice())
-                                ),
-                            ));
-                        }
-                    };
-                    did_set_target = true;
-                }
-                drop(slice);
-            }
-
-            // Plugins must be resolved first as they are allowed to mutate the config JSValue
-            if let Some(array) = config.get_array(global_this, "plugins")? {
-                let length = array.get_length(global_this)?;
-                let mut iter = array.array_iterator(global_this)?;
-                let mut onstart_promise_array = JSValue::UNDEFINED;
-                let mut i: usize = 0;
-                while let Some(plugin) = iter.next()? {
-                    if !plugin.is_object() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to be an object"
-                        )));
-                    }
-
-                    if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
-                        if slice.slice().is_empty() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "Expected plugin to have a non-empty name"
-                            )));
-                        }
-                        drop(slice);
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a name"
-                        )));
-                    }
-
-                    let Some(function) = plugin.get_function(global_this, b"setup")? else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected plugin to have a setup() function"
-                        )));
-                    };
-
-                    let bun_plugins = plugins.get_or_insert_with(|| {
-                        OwnedPlugin::new(
-                            global_this,
-                            match this.target {
-                                Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
-                                Target::Node => BunPluginTarget::Node,
-                                _ => BunPluginTarget::Browser,
-                            },
-                        )
-                    });
-
-                    let is_last = i == (length as usize).saturating_sub(1);
-                    let mut plugin_result = bun_plugins.add_plugin(
-                        function,
-                        config,
-                        onstart_promise_array,
-                        is_last,
-                        false,
-                    )?;
-
-                    if !plugin_result.is_empty_or_undefined_or_null() {
-                        if let Some(promise) = plugin_result.as_any_promise() {
-                            promise.set_handled(global_this.vm());
-                            global_this
-                                .bun_vm()
-                                .wait_for_promise(promise)
-                                .map_err(|stopped| stopped.throw(global_this))?;
-                            match promise
-                                .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
-                            {
-                                jsc::PromiseResult::Pending => {
-                                    unreachable!("wait_for_promise returned Ok")
-                                }
-                                jsc::PromiseResult::Fulfilled(val) => {
-                                    plugin_result = val;
-                                }
-                                jsc::PromiseResult::Rejected(err) => {
-                                    return Err(global_this.throw_value(err));
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(err) = plugin_result.to_error() {
-                        return Err(global_this.throw_value(err));
-                    }
-
-                    onstart_promise_array = plugin_result;
-                    i += 1;
-                }
+            if let Some(target) = target {
+                let (target, compile_target) = parse_target(global_this, target)?;
+                this.target = target;
+                this.compile = compile_target.map(|compile_target| CompileOptions {
+                    compile_target,
+                    ..Default::default()
+                });
+                did_set_target = true;
             }
 
             if let Some(macros_flag) = config.get_boolean_loose(global_this, "macros")? {
@@ -1879,16 +1800,8 @@ pub(crate) mod js_bundler {
             )));
         }
 
-        let vm = global_this.bun_vm();
-        let context = vm.context_of_caller().id();
-
-        // Detect and prevent calling Bun.build from within a macro during bundling.
-        // This would cause a deadlock because:
-        // 1. The bundler thread (singleton) is processing the outer Bun.build
-        // 2. During parsing, it encounters a macro and evaluates it
-        // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
-        // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
-        if vm.macro_mode.get() {
+        // The build that runs the macro keeps its turn (`bundle_thread`) until the macro returns.
+        if global_this.bun_vm().macro_mode.get() {
             return Err(global_this.throw(format_args!("Bun.build cannot be called from within a macro during bundling.\n\n\
                  This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
                  but the macro's Bun.build call is waiting for the bundler.\n\n\
@@ -1896,17 +1809,188 @@ pub(crate) mod js_bundler {
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);")));
         }
 
-        let mut plugins = None;
-        let config = Config::from_js(global_this, config, &mut plugins)?;
-
-        let strong = jsc::JSPromiseStrong::init(global_this);
-        let promise = strong.value();
-        let owner = BuildOwner::Promise {
-            promise: strong,
-            plugins,
+        let target = config.get_optional_slice(global_this, b"target")?;
+        let plugin_target = match &target {
+            Some(target) => match parse_target(global_this, target.slice())?.0 {
+                Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
+                Target::Node => BunPluginTarget::Node,
+                _ => BunPluginTarget::Browser,
+            },
+            None => BunPluginTarget::Browser,
         };
-        JSBundleCompletionTask::schedule(config, global_this, context, owner);
-        Ok(promise)
+        let (plugins, plugin_count) = match config.get_array(global_this, "plugins")? {
+            Some(plugins) => (plugins, plugins.get_length(global_this)? as u32),
+            None => (JSValue::UNDEFINED, 0),
+        };
+
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let result = promise.value();
+        PendingBuild {
+            call: None,
+            config: jsc::Strong::create(config, global_this),
+            target,
+            plugins: jsc::Strong::create(plugins, global_this),
+            plugin_count,
+            next_plugin: 0,
+            host: (plugin_count > 0).then(|| OwnedPlugin::new(global_this, plugin_target)),
+            promise,
+        }
+        .run(global_this, JSValue::UNDEFINED)?;
+        Ok(result)
+    }
+
+    /// A `Bun.build()` call until its bundle is scheduled.
+    struct PendingBuild {
+        call: Option<u64>,
+        config: jsc::Strong,
+        /// Read before the first `setup()`, like `plugins`. The other options are read after the last, which may change them.
+        target: Option<Utf8Bytes<'static>>,
+        plugins: jsc::Strong,
+        plugin_count: u32,
+        next_plugin: u32,
+        host: Option<OwnedPlugin>,
+        promise: jsc::JSPromiseStrong,
+    }
+
+    pub(crate) struct ParkedBuild {
+        build: PendingBuild,
+        _keep_alive: bun_io::JsKeepAlive,
+        abort_handle: jsc::AbortHandle,
+    }
+
+    jsc::impl_abort_handle_owner!(ParkedBuild, abort_handle, |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ still parked).
+        let call = unsafe { &*this }.build.call;
+        drop(call.and_then(PendingBuild::unpark));
+    });
+
+    impl PendingBuild {
+        /// `setup_result` is what `runSetupFunction` last gave.
+        fn run(mut self, global: &JSGlobalObject, mut setup_result: JSValue) -> JsResult<()> {
+            let context = global.bun_vm().context_of_caller();
+            loop {
+                if setup_result.as_any_promise().is_some() {
+                    self.park(global, context, setup_result);
+                    return Ok(());
+                }
+                if let Some(err) = setup_result.to_error() {
+                    return Err(global.throw_value(err));
+                }
+                match &self.host {
+                    Some(host) if self.next_plugin < self.plugin_count => {
+                        let plugin = self.plugins.get().get_index(global, self.next_plugin)?;
+                        self.next_plugin += 1;
+                        setup_result = host.add_plugin(
+                            setup_function_of(global, plugin)?,
+                            self.config.get(),
+                            setup_result,
+                            self.next_plugin == self.plugin_count,
+                            false,
+                        )?;
+                    }
+                    _ => break,
+                }
+            }
+
+            let config = Config::from_js(global, self.config.get(), self.target.as_deref())?;
+            let owner = BuildOwner::Promise {
+                promise: self.promise,
+                plugins: self.host,
+            };
+            JSBundleCompletionTask::schedule(config, global, context.id(), owner, self.call);
+            Ok(())
+        }
+
+        fn park(
+            self,
+            global: &JSGlobalObject,
+            context: &jsc::ScriptExecutionContext,
+            setup: JSValue,
+        ) {
+            let call = self.call;
+            let parked = bun_core::heap::alloc_nn(ParkedBuild {
+                build: self,
+                _keep_alive: bun_io::JsKeepAlive::active(),
+                abort_handle: jsc::AbortHandle::for_owner::<ParkedBuild>(),
+            });
+            // SAFETY: it stays where it is until `unpark` frees it, on this thread.
+            let call = unsafe {
+                let call = park(call, global.bun_vm(), jsc::JsPtr::new(parked));
+                (*parked.as_ptr()).build.call = Some(call);
+                parked.as_ref().abort_handle.set_only_waits_to_be_closed();
+                jsc::AbortHandle::arm_owner(parked.as_ptr(), context);
+                call
+            };
+            setup.then_with_value(
+                global,
+                JSValue::js_number_from_uint64(call),
+                Bun__Bundler__onResolveSetup,
+                Bun__Bundler__onRejectSetup,
+            );
+        }
+
+        /// `None` once the context of the caller has stopped.
+        fn unpark(call: u64) -> Option<Self> {
+            // SAFETY: the allocation of `park`, which the list has given up.
+            Some(unsafe { bun_core::heap::take(unpark(call)?.as_ptr()) }.build)
+        }
+    }
+
+    fn setup_function_of(global: &JSGlobalObject, plugin: JSValue) -> JsResult<JSValue> {
+        if !plugin.is_object() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected plugin to be an object"))
+            );
+        }
+        match plugin.get_optional_slice(global, b"name")? {
+            Some(name) if name.slice().is_empty() => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected plugin to have a non-empty name"
+                )));
+            }
+            Some(_) => {}
+            None => {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected plugin to have a name"))
+                );
+            }
+        }
+        plugin.get_function(global, b"setup")?.ok_or_else(|| {
+            global
+                .throw_invalid_arguments(format_args!("Expected plugin to have a setup() function"))
+        })
+    }
+
+    pub(crate) fn on_resolve_setup(
+        cx: &mut JsScope<'_>,
+        setup_result: JsLocal<'_>,
+        call: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let Some(build) = PendingBuild::unpark(call.to_js().as_number() as u64) else {
+            return Ok(());
+        };
+        let promise: *mut jsc::JSPromise = build.promise.get();
+        build.run(global, setup_result.to_js()).or_else(|err| {
+            let err = match err {
+                jsc::JsError::Thrown if !global.has_pending_termination_exception() => {
+                    Ok(global.take_error(err))
+                }
+                err => Err(err),
+            };
+            jsc::JSPromise::opaque_mut(promise).reject_with_async_stack(global, err)
+        })
+    }
+
+    pub(crate) fn on_reject_setup(
+        cx: &mut JsScope<'_>,
+        reason: JsLocal<'_>,
+        call: JsLocal<'_>,
+    ) -> JsResult<()> {
+        match PendingBuild::unpark(call.to_js().as_number() as u64) {
+            Some(mut build) => build.promise.reject(cx.global(), Ok(reason.to_js())),
+            None => Ok(()),
+        }
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -2031,6 +2115,7 @@ pub(crate) mod js_bundler {
             // `js_loop_for_plugins` (the plugin host's JS loop)
             // when `Bun.build` runs the bundler on its own Mini event loop.
             let ctx = bv2_ref(self.bv2);
+            ctx.answer_sent();
             // SAFETY: the answer, which frees `self`, goes into the same queue later.
             unsafe {
                 match ctx.any_loop() {

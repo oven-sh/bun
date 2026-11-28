@@ -128,6 +128,13 @@ export default b.declarations(
     ["InternalForTesting", "TlsSockets"],
     ...nativeBindings("Bindgen", "SecureContext.bind.ts", "liveCount"),
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "setSocketOptions"),
+    ...nativeBindings(
+      "Bindgen",
+      "socket_body.bind.ts",
+      "namedPipeLiveCount",
+      "sweepSocketTimers",
+      "upgradedDuplexLiveCount",
+    ),
   ),
   extendAll(
     ["InternalForTesting", "NodeFs"],
@@ -140,6 +147,7 @@ export default b.declarations(
     ),
   ),
   extendAll(["InternalForTesting", "FsStats"], ...nativeBindings("Bindgen", "Stat.bind.ts", "createStatsForIno")),
+  extendAll(["InternalForTesting", "Test"], ...nativeBindings("Bindgen", "FakeTimers.bind.ts", "fakeLibraryTimers")),
   extendAll(["InternalForTesting", "Buffer"], ...nativeBindings("Bindgen", "memory_pressure.bind.ts", "psiTrigger")),
 
   extendAll(
@@ -404,7 +412,8 @@ export default b.declarations(
   extendAll(
     ["Sockets"],
     "%Listener%",
-    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "hasPendingRead", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBytesRead", "hasPendingRead", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "httpConnectionOf"),
   ),
 
   extendAll(
@@ -435,6 +444,7 @@ export default b.declarations(
     "%DNSResolver%",
     ...nativeBindings("Bindgen", "dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption"),
     ...nativeBindings("Bindgen", "dns_internals.bind.ts", "newResolver"),
+    ...nativeBindings("Bindgen", "dns_internals.bind.ts", "setConnectResultOrder"),
   ),
 
   extendAll(
@@ -472,6 +482,14 @@ export default b.declarations(
   extendAll(
     ["Tls"],
     ...nativeBindings("Bindgen", "Listener.bind.ts", "addServerName", "setSecureContext"),
+    ...nativeBindings("Bindgen", "SSLConfig.bind.ts", "protocolVersionCode"),
+    ...nativeBindings(
+      "Bindgen",
+      "node_tls_binding.bind.ts",
+      "getDefaultCA",
+      "getDefaultCACertificateTypes",
+      "setDefaultCA",
+    ),
     ...nativeBindings(
       "Bindgen",
       "socket_body.bind.ts",
@@ -484,6 +502,7 @@ export default b.declarations(
       "NodeTLS.cpp",
       "getBundledRootCertificates",
       "getExtraCACertificates",
+      "getOpenSSLDefaultCertificates",
       "getSystemCACertificates",
       "loadExtraCACertificates",
       "parseCACertificates",

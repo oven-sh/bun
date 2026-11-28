@@ -109,18 +109,23 @@ server.listen(0, "127.0.0.1", () => {
   const port = (server.address() as net.AddressInfo).port;
   const request = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
 
+  function isFinished() {
+    const covered = paths[0].cutAfterHead > 0 && paths.every(path => path.inCall > 0);
+    return (attempts >= ATTEMPTS && covered) || performance.now() - started > BUDGET_MS;
+  }
+
   function done() {
     const summary = {
       attempts,
       timeout,
       paths: paths.map(({ name, early, inCall, late, cutAfterHead }) => ({ name, early, inCall, late, cutAfterHead })),
     };
-    console.log("ok " + JSON.stringify(summary));
+    console.log(JSON.stringify(summary));
     process.exit(0);
   }
 
   function connect() {
-    if (attempts >= ATTEMPTS || performance.now() - started > BUDGET_MS) return done();
+    if (isFinished()) return done();
     const socket = net.connect(port, "127.0.0.1");
     let buffered = "";
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -140,7 +145,7 @@ server.listen(0, "127.0.0.1", () => {
       if (!buffered.includes("HTTP/1.") || !buffered.includes("\r\n\r\n")) return;
       buffered = "";
       clearTimeout(watchdog);
-      if (attempts >= ATTEMPTS || performance.now() - started > BUDGET_MS) return done();
+      if (isFinished()) return done();
       send();
     });
     socket.on("error", () => {});

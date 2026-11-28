@@ -60,11 +60,9 @@ const MAX_CONTROL_FRAME_SIZE: usize = WebsocketHeader::frame_size(MAX_CONTROL_PA
 /// Seconds to wait after sending our Close frame before dropping the connection (`closeTimeout` in `ws`).
 #[inline]
 fn close_timeout_seconds() -> core::ffi::c_uint {
-    bun_http::normalize_idle_timeout_seconds(
-        bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
-            .get()
-            .unwrap_or(30),
-    )
+    bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
+        .get()
+        .map_or(30, |seconds| u32::try_from(seconds).unwrap_or(u32::MAX))
 }
 
 /// Matches `WebSocketConnectedOptions` (WebSocketDeflate.h).
@@ -410,7 +408,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// `socket` closes with `code`. In tunnel mode it is the upgrade client's.
     pub(crate) fn report_close_error<const TLS: bool>(&self, socket: Socket<TLS>, code: i32) {
-        let is_write = TLS && socket.ssl_send_rejected();
+        let send_error = socket.rejected_send_error();
+        let is_write = send_error != 0;
         // A peer that has sent its Close frame does not have to wait for our close_notify.
         let is_over = self.sent_fin.get() && self.close_received.borrow().is_some();
         // Values above the `CloseCode` range are an errno.
@@ -418,7 +417,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             && !(is_write && is_over)
             && let Some(ws) = self.cpp_websocket()
         {
-            ws.did_close_with_error(code, is_write);
+            ws.did_close_with_error(if is_write { send_error } else { code }, is_write);
         }
     }
 
@@ -1411,7 +1410,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.resume_stream()
     }
 
-    /// Closes the socket if it cannot register the poll again.
     fn resume_stream(&self) -> bool {
         if let Some(tunnel) = self.tunnel().cloned() {
             return tunnel.resume_stream();

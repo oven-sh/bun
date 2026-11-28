@@ -2,7 +2,7 @@ use core::ops::Deref;
 
 use bun_ptr::BackRef;
 
-use crate::server::{AnyServer, ServerLike};
+use crate::server::{AnyServer, NewServer};
 
 /// A handle that leads to the same server for as long as it lives.
 pub(crate) trait Served {
@@ -15,7 +15,7 @@ impl Served for AnyServer {
     }
 }
 
-impl<S: ServerLike> Served for BackRef<S> {
+impl<const SSL: bool, const DEBUG: bool> Served for BackRef<NewServer<SSL, DEBUG>> {
     fn served_by(&self) -> Option<AnyServer> {
         Some(self.as_any_server())
     }

@@ -5,26 +5,29 @@ import { Readable, Writable } from "node:stream";
 
 // What a program can see of a few objects of node:http, node:stream and process.
 
-test("ServerResponse keeps chunkedEncoding, writable and shouldKeepAlive as accessors of its prototype", () => {
+test("ServerResponse keeps chunkedEncoding, writable and shouldKeepAlive as data properties of its own", () => {
   const response = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
-  for (const name of ["chunkedEncoding", "writable", "shouldKeepAlive"]) {
-    expect({ name, own: Object.getOwnPropertyDescriptor(response, name) }).toEqual({ name, own: undefined });
-    const inherited = Object.getOwnPropertyDescriptor(http.ServerResponse.prototype, name)!;
-    expect({ name, inherited }).toEqual({
+  for (const [name, value] of [
+    ["chunkedEncoding", false],
+    ["writable", true],
+    ["shouldKeepAlive", true],
+  ] as const) {
+    expect({ name, own: Object.getOwnPropertyDescriptor(response, name) }).toEqual({
       name,
-      inherited: { get: expect.any(Function), set: expect.any(Function), enumerable: false, configurable: false },
+      own: { value, writable: true, enumerable: true, configurable: true },
     });
-    expect([inherited.get!.name, inherited.get!.length, inherited.set!.name, inherited.set!.length]).toEqual([
-      "get",
-      0,
-      "set",
-      1,
-    ]);
+    expect({ name, inherited: name in http.ServerResponse.prototype }).toEqual({ name, inherited: false });
   }
-  expect(Object.keys(response)).not.toContain("chunkedEncoding");
-  expect(Object.keys(response)).not.toContain("writable");
-  expect(Object.keys(response)).not.toContain("shouldKeepAlive");
-  expect([response.chunkedEncoding, response.writable, response.shouldKeepAlive]).toEqual([false, true, true]);
+  const keys = Object.keys(response);
+  expect(keys.slice(keys.indexOf("outputSize"), keys.indexOf("maxRequestsOnConnectionReached") + 1)).toEqual([
+    "outputSize",
+    "writable",
+    "destroyed",
+    "_last",
+    "chunkedEncoding",
+    "shouldKeepAlive",
+    "maxRequestsOnConnectionReached",
+  ]);
 });
 
 test("IncomingMessage creates its own properties in this order", () => {

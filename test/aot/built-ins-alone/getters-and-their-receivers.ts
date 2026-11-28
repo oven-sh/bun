@@ -49,6 +49,7 @@ const otherInstances = [
   `${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder }).match("/a")`,
   'await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"])',
   'new Bun.S3Client({}).file("a")',
+  "new Bun.RedisClient()",
 ];
 
 /** The message of the TypeError for a receiver that is no Script prints the receiver, which inherits the getter. */

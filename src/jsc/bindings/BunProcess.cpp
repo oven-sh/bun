@@ -206,6 +206,7 @@ extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
+extern "C" void Bun__deliverHeldIPCMessage(JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 extern "C" const char* Bun__typescript_version();
@@ -1704,6 +1705,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     && totalListenerCount == 1) {
                     JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__ensureProcessIPCInitialized>(global);
                     Bun__refChannelUnlessOverridden(global);
+                    global->processObject()->releaseChannelEvents();
                 }
             } else {
                 if (Bun__GlobalObject__hasIPC(global)
@@ -4936,6 +4938,11 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
     visitor.append(thisObject->m_runsWhenProcessExits);
+    {
+        Locker locker { thisObject->cellLock() };
+        for (auto& message : thisObject->m_heldChannelMessages)
+            visitor.append(message);
+    }
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -5699,7 +5706,15 @@ extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, Encoded
 {
     auto process = globalObject->processObject();
     JSValue function = JSValue::decode(func);
+    JSValue asyncContext;
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(function)) {
+        asyncContext = wrapper->context.get();
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, asyncContext)) [[unlikely]]
+            return;
+        function = wrapper->callback.get();
+    }
 
+    AsyncContextScope asyncContextScope(globalObject, asyncContext);
     process->queueNextTick(globalObject, function, JSValue::decode(arg1));
 }
 extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1, EncodedJSValue arg2)
@@ -6195,23 +6210,25 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
 
 static constexpr auto kInternalIpcPrefix = "NODE_"_s;
 
+static bool isInternalIpcMessage(VM& vm, JSValue message)
+{
+    auto* object = message ? message.getObject() : nullptr;
+    if (!object)
+        return false;
+    JSValue cmd = object->getDirect(vm, WebCore::builtinNames(vm).cmdPublicName());
+    if (!cmd || !cmd.isString())
+        return false;
+    auto cmdString = JSC::asString(cmd)->tryGetValue();
+    return cmdString->length() > kInternalIpcPrefix.length() && cmdString->startsWith(kInternalIpcPrefix);
+}
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
 
-    auto& names = WebCore::builtinNames(vm);
-    auto ident = vm.propertyNames->message;
     JSValue message = JSValue::decode(value);
-    if (auto* object = message.getObject()) {
-        JSValue cmd = object->getDirect(vm, names.cmdPublicName());
-        if (cmd && cmd.isString()) {
-            auto cmdString = JSC::asString(cmd)->tryGetValue();
-            if (cmdString->length() > kInternalIpcPrefix.length() && cmdString->startsWith(kInternalIpcPrefix)) {
-                ident = names.internalMessagePublicName();
-            }
-        }
-    }
+    auto ident = isInternalIpcMessage(vm, message) ? WebCore::builtinNames(vm).internalMessagePublicName() : vm.propertyNames->message;
 
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
@@ -6224,12 +6241,66 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
+    if (process->holdDisconnect())
+        return;
     auto& vm = JSC::getVM(global);
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         process->wrapped().emit(ident, args);
     }
+}
+
+void Process::openChannelOfClusterWorker(Zig::GlobalObject* global)
+{
+    // An executable holds what a channel runs only if its program names one.
+    if (Bun::hasCompiledModules() || JSC::isFeatureRemoved(Bun::Feature::ProcessIpc))
+        return;
+    m_holdsChannelEvents = true;
+    JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__ensureProcessIPCInitialized>(global);
+}
+
+bool Process::holdMessage(JSValue message, JSValue fd)
+{
+    if (!m_holdsChannelEvents) [[likely]]
+        return false;
+    // An 'internalMessage' does not wait for a 'message' listener.
+    if (isInternalIpcMessage(vm(), fd.isUndefined() ? message : asObject(message)->getDirect(vm(), Identifier::fromString(vm(), "msg"_s))))
+        return false;
+    Locker locker { cellLock() };
+    m_heldChannelMessages.append(WriteBarrier<Unknown>(vm(), this, message));
+    m_heldChannelMessages.append(WriteBarrier<Unknown>(vm(), this, fd));
+    return true;
+}
+
+extern "C" bool Process__holdMessage(Zig::GlobalObject* global, EncodedJSValue message, EncodedJSValue fd)
+{
+    return global->processObject()->holdMessage(JSValue::decode(message), JSValue::decode(fd));
+}
+
+// One event a task, so that ticks and microtasks run between them as they do between the messages of a read.
+void Process::releaseChannelEvents()
+{
+    if (!m_holdsChannelEvents) [[likely]]
+        return;
+    wrapped().scriptExecutionContext()->postTask([](ScriptExecutionContext& context) {
+        auto* global = defaultGlobalObject(context.jsGlobalObject());
+        auto* process = global->processObject();
+        if (process->m_heldChannelMessages.isEmpty()) {
+            process->m_holdsChannelEvents = false;
+            if (std::exchange(process->m_heldDisconnect, false))
+                Process__emitDisconnectEvent(global);
+            return;
+        }
+        JSValue message, fd;
+        {
+            Locker locker { process->cellLock() };
+            message = process->m_heldChannelMessages.takeFirst().get();
+            fd = process->m_heldChannelMessages.takeFirst().get();
+        }
+        process->releaseChannelEvents();
+        JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__deliverHeldIPCMessage>(global, JSValue::encode(message), JSValue::encode(fd));
+    });
 }
 
 extern "C" void Process__emitMemoryPressureEvent(Zig::GlobalObject* global, int level)

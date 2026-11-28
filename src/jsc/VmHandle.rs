@@ -317,6 +317,12 @@ impl Drop for Access<'_> {
     }
 }
 
+impl PartialEq for VmHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 impl VmHandle {
     /// JS thread, at VM creation.
     pub(crate) fn new(vm: *mut VirtualMachine) -> Self {
@@ -551,13 +557,20 @@ impl VirtualMachine {
     #[track_caller]
     #[inline]
     pub fn ticket(&self) -> Ticket {
+        self.ticket_of(self.current_loop_kind())
+    }
+
+    /// As [`ticket`](Self::ticket), whichever loop is ticking.
+    #[track_caller]
+    #[inline]
+    pub fn ticket_of(&self, kind: LoopKind) -> Ticket {
         let h = self.handle_ref();
         h.assert_js_thread();
         debug_assert!(
             !h.closed(),
             "off-thread work started after the VM finished draining"
         );
-        Ticket::issue(&h.0, self.current_loop_kind())
+        Ticket::issue(&h.0, kind)
     }
 
     #[track_caller]

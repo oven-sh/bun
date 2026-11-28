@@ -79,6 +79,10 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
+    /// Like `yield_tasks`, for an iteration that no handler of the uws loop has on its stack.
+    outermost_tasks: Cell<Vec<Task>>,
+    /// The last checkpoint may have left `deferred_tasks` unrun. Counts as a yielded task, as `tick()` always runs a checkpoint.
+    owes_checkpoint: Cell<bool>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -136,6 +140,8 @@ impl EventLoop {
             immediate_tasks: Cell::default(),
             next_immediate_tasks: Cell::default(),
             yield_tasks: Cell::default(),
+            outermost_tasks: Cell::default(),
+            owes_checkpoint: Cell::new(false),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
@@ -466,6 +472,14 @@ impl EventLoop {
             self.deferred_tasks.run();
         }
 
+        // Drain again, or the microtasks that JS queued wait for the next event and are lost if the loop exits first.
+        if vm.deferred_task_called_js.take() {
+            let _scope = self.enter_scope_without_checkpoint();
+            global_object.drain_microtasks_and_next_ticks()?;
+        }
+        self.owes_checkpoint
+            .set(self.deferred_tasks.may_have_unrun_tasks());
+
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
         // `event_loop_handle` (which is the libuv loop).
@@ -603,6 +617,11 @@ impl EventLoop {
         self.task_drains.store(drains + 1, Ordering::Relaxed);
         __bun_tick_queue_with_count(self, virtual_machine, &mut counter)?;
         Ok(counter)
+    }
+
+    /// See [`EventLoop::task_drains`].
+    pub fn task_drains(&self) -> u64 {
+        self.task_drains.load(Ordering::Relaxed)
     }
 
     fn tick_concurrent(&self) {
@@ -962,7 +981,7 @@ impl EventLoop {
                 plugin_requests,
                 self.concurrent_plugin_requests.pop_batch(),
             );
-            let _ = self.promote_yield_tasks();
+            let _ = self.promote_yield_tasks(false);
             while let Some(task) = self.next_task() {
                 // SAFETY: JS thread, heap alive; `task` just left the queue.
                 unsafe { self.release_task_unrun(task) };
@@ -1013,12 +1032,22 @@ impl EventLoop {
     }
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
-        self.yield_tasks.len() > 0
+        self.yield_tasks.len() > 0 || self.owes_checkpoint.get()
+    }
+
+    /// See [`EventLoop::outermost_tasks`]. For a task that is running, so the queue is open.
+    pub fn enqueue_task_for_outermost_tick(&self, task: Task) {
+        // SAFETY: `push` only allocates.
+        unsafe { &mut *self.outermost_tasks.as_ptr() }.push(task);
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
-    pub fn promote_yield_tasks(&self) -> bool {
+    pub fn promote_yield_tasks(&self, is_nested: bool) -> bool {
+        if !is_nested && self.outermost_tasks.len() > 0 {
+            // SAFETY: `extend` only allocates.
+            unsafe { &mut *self.yield_tasks.as_ptr() }.extend(self.outermost_tasks.take());
+        }
         if !self.has_yield_tasks() {
             return false;
         }
@@ -1356,6 +1385,26 @@ impl EventLoop {
     }
 }
 
+/// Testing API: the nested turns that a macro or a debugger pause takes under script.
+pub(crate) fn run_until_settled(
+    cx: &mut crate::bindgen::JsScope<'_>,
+    promise: crate::bindgen::JsLocal<'_>,
+) -> JsResult<()> {
+    let global = cx.global();
+    let Some(promise) = promise.to_js().as_any_promise() else {
+        return Err(global.throw_invalid_arguments(format_args!("Expected a promise")));
+    };
+    promise.set_handled(global.vm());
+    global
+        .bun_vm()
+        .wait_for_promise(promise)
+        .map_err(|stopped| stopped.throw(global))?;
+    match promise.status() {
+        PromiseStatus::Rejected => Err(global.throw_value(promise.result(global.vm()))),
+        _ => Ok(()),
+    }
+}
+
 /// Testing API to expose event loop state
 pub(crate) fn get_active_tasks(
     heap: &crate::bindgen::JsHeap<'_>,
@@ -1380,6 +1429,19 @@ pub(crate) fn get_active_tasks(
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls,
         iteration: event_loop.usockets_loop().iteration_number(),
+        sweep_timer_count: event_loop
+            .usockets_loop()
+            .internal_loop_data
+            .sweep_timer_count(),
+        #[cfg(windows)]
+        sweep_deadline: None,
+        #[cfg(not(windows))]
+        sweep_deadline: Some(
+            event_loop
+                .usockets_loop()
+                .internal_loop_data
+                .sweep_next_tick_ns() as f64,
+        ),
     }
 }
 

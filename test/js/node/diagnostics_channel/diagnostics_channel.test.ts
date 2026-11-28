@@ -1244,6 +1244,62 @@ describe.each<[string, () => net.Server]>([
   });
 });
 
+describe.concurrent.each(["net", "http"])("net.server.listen of %s in a worker of a cluster", name => {
+  /** What the worker prints. The primary holds the port `taken`, and has just let go of the port `free`. */
+  async function inWorker(script: string) {
+    using dir = tempDir("listen-channels-in-worker", {
+      "cluster.js": `
+        const cluster = require("node:cluster");
+        const dc = require("node:diagnostics_channel");
+        if (cluster.isPrimary) {
+          const net = require("node:net");
+          const taken = net.createServer().listen(0, "127.0.0.1", () => {
+            const free = net.createServer().listen(0, "127.0.0.1", () => {
+              const ports = { taken: taken.address().port, free: free.address().port };
+              free.close(() => cluster.fork(ports).on("exit", code => (taken.close(), (process.exitCode = code))));
+            });
+          });
+        } else {
+          const [taken, free] = [+process.env.taken, +process.env.free];
+          const server = require("node:${name}").createServer();
+          for (const event of ["asyncStart", "asyncEnd", "error"])
+            dc.subscribe("tracing:net.server.listen:" + event, ({ error }) => console.log(error?.code ?? event));
+          ${script}
+        }
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "cluster.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.trimEnd().split("\n"), stderr, exitCode };
+  }
+
+  test.each(["0", "free"])("a subscriber of asyncEnd can close the server on port %s", async port => {
+    expect(
+      await inWorker(`
+        dc.subscribe("tracing:net.server.listen:asyncEnd", () => {
+          const { port } = server.address();
+          // On port 0 the primary holds the socket too. It stays open, and this connection makes it readable.
+          if (process.platform !== "win32") process.kill(process.ppid, "SIGSTOP");
+          server.close();
+          const socket = require("node:net").connect(port, "127.0.0.1").on("error", () => {});
+          socket.on("connect", () => socket.destroy()).on("close", () => {
+            if (process.platform !== "win32") process.kill(process.ppid, "SIGCONT");
+            cluster.worker.disconnect();
+          });
+        });
+        server.on("close", () => console.log("close"));
+        server.listen(${port}, "127.0.0.1", () => console.log("listening"));
+      `),
+    ).toEqual({ lines: ["asyncStart", "asyncEnd", "close"], stderr: "", exitCode: 0 });
+  });
+
+  test("the port is taken", async () => {
+    expect(await inWorker(`server.on("error", () => cluster.worker.disconnect()).listen(taken, "127.0.0.1");`)).toEqual(
+      { lines: ["asyncStart", "EADDRINUSE"], stderr: "", exitCode: 0 },
+    );
+  });
+});
+
 test.concurrent.each(["net", "http"])("listen(port) of %s takes no option from Object.prototype", async name => {
   expect(
     await run(`
@@ -1387,6 +1443,12 @@ describe.each<[string, (server: http.Server) => net.Server]>([
       ]);
     },
   );
+
+  test.each(["response.created", "request.start"])("a response that has to wait has no socket at %s", async event => {
+    using published = record("http.server.", [event], (_, { response }) => response.socket);
+    await exchange(pipelining(), get("/first") + get("/second") + last);
+    expect(published.log.slice(1)).toEqual([null, null]);
+  });
 
   test("what a subscriber of request.start enters lasts for that request", async () => {
     const store = new AsyncLocalStorage();
@@ -1556,7 +1618,7 @@ describe("http2.*", () => {
     using published = recordStreams("client");
     using _ = listen("http2.client.stream.created", ({ stream }) => stream.session.destroy());
     await closed(session.request().on("error", () => {}));
-    expect(published.log.slice(-2)).toEqual(["close 1", "error 1"]);
+    expect(published.log).toEqual(["created 1", "close 1"]);
   });
 
   test.each<[string, number, http2.OutgoingHttpHeaders, (stream: http2.ServerHttp2Stream) => void]>([
@@ -1599,6 +1661,48 @@ describe("http2.*", () => {
       "close true false",
     ]);
     expect(emitted).toEqual(["finish"]);
+  });
+
+  test.each<[string, (stream: http2.ServerHttp2Stream, log: unknown[]) => void, unknown[]]>([
+    ["close", stream => stream.close(), ["finish", "close"]],
+    ["destroy", stream => stream.destroy(), ["finish", "close"]],
+    [
+      "not write to",
+      (stream, log) => stream.on("error", () => {}).write("x", (error: any) => log.push(error?.code)),
+      ["finish", "ERR_STREAM_WRITE_AFTER_END", "close"],
+    ],
+  ])("a subscriber of finish can %s a stream whose response has no body", async (_, onFinish, expected) => {
+    const log: unknown[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using session = await connect(stream => {
+      for (const event of ["aborted", "finish", "close"]) stream.on(event, () => log.push(event));
+      stream.on("close", resolve).respond({}, { endStream: true });
+    });
+    using __ = listen("http2.server.stream.finish", ({ stream }) => onFinish(stream, log));
+    session.request().on("error", () => {});
+    await promise;
+    expect(log).toEqual(expected);
+  });
+
+  test("session.destroy() reaches a stream that respond() has closed", async () => {
+    const { promise, resolve } = Promise.withResolvers<object>();
+    await using session = await connect(stream => {
+      const { session } = stream;
+      session!.on("error", () => {});
+      // The answer comes behind the end of the request, whose body nobody reads.
+      session!.ping(() => {
+        stream.on("error", ({ message }) => resolve({ message, destroyed })).on("close", resolve);
+        stream.respond({}, { endStream: true });
+        session!.destroy(new Error("destroyed"));
+        const { destroyed } = stream;
+      });
+    });
+    session.on("error", () => {});
+    session
+      .request({ ":method": "POST" })
+      .on("error", () => {})
+      .end("body");
+    expect(await promise).toEqual({ message: "destroyed", destroyed: true });
   });
 
   test("a pushed stream", async () => {
@@ -2220,6 +2324,27 @@ describe("undici:* of fetch()", () => {
     ).toEqual(["UND_ERR_INVALID_ARG", "UND_ERR_INVALID_ARG", `[null,null,null,"1"]`]);
   });
 
+  test("a method that is not in the table", async () => {
+    const lines: string[] = [];
+    await using origin = await listening(
+      net.createServer(socket =>
+        socket.once("data", data => {
+          const isFirst = lines.push(data.toString().split("\r\n")[0]) === 1;
+          socket.end(`HTTP/1.1 ${isFirst ? 307 : 200} -\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n`);
+        }),
+      ),
+    );
+    using published = record("undici:request:", ["create"], (_, { request }) => {
+      request.addHeader("x-added", "1");
+      return `${request.method} ${request.path} ${request.contentLength}`;
+    });
+    await fetch(`http://127.0.0.1:${origin.port}/`, { method: "FROB" });
+    expect({ lines, published: published.log }).toEqual({
+      lines: ["FROB / HTTP/1.1", "FROB /next HTTP/1.1"],
+      published: ["FROB / null", "FROB /next null"],
+    });
+  });
+
   test("each redirect is a request of its own, and starts from the headers of the caller", async () => {
     using first = serve();
     using second = serve();
@@ -2730,9 +2855,15 @@ describe("undici:* of WebSocket", () => {
       "wss:// with %s proxy, the kernel refuses the second write",
       proxyScheme => {
         test.each([
-          ["a message, after the Pong", encodeFrame(OP.ping), ["write ECONNRESET", "1006 false"]],
-          ["the close_notify, after the Close frame", encodeFrame(OP.close, closePayload(1000)), ["1000 true"]],
-        ])("%s", async (_, afterUpgrade, expected) => {
+          ["a message, after the Pong", encodeFrame(OP.ping), "ECONNRESET", ["write ECONNRESET", "1006 false"]],
+          ["a message, after the Pong, with EPIPE", encodeFrame(OP.ping), "EPIPE", ["write EPIPE", "1006 false"]],
+          [
+            "the close_notify, after the Close frame",
+            encodeFrame(OP.close, closePayload(1000)),
+            "EPIPE",
+            ["1000 true"],
+          ],
+        ])("%s", async (_, afterUpgrade, errno, expected) => {
           // Neither answers a FIN, as a peer that is gone.
           await using proxy = await listening(createConnectProxy({ tls: true, tlsOptions: { allowHalfOpen: true } }));
           await using origin = await createPeer({ secure: true, afterUpgrade });
@@ -2746,7 +2877,7 @@ describe("undici:* of WebSocket", () => {
                 proxy: ${proxyScheme === "no" ? undefined : `"https://127.0.0.1:${proxy.port}"`},
                 tls: { rejectUnauthorized: false },
               });
-              ws.onopen = () => socketFaultInjection.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: 1 });
+              ws.onopen = () => socketFaultInjection.set({ syscall: "send", action: "errno", errno: "${errno}", after: 1 });
               ws.onclose = ({ code, wasClean }) => console.log(code, wasClean);
             `),
           ).toEqual(expected);

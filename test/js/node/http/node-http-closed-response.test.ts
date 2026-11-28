@@ -67,10 +67,10 @@ test("a response frozen between write() and end() keeps its socket, and the next
     '200 null ""',
     '200 2 "first last"',
     "connections 2",
-    `uncaught in <anonymous> < <anonymous> < emit < onNodeHTTPRequest: ${readonly}`,
+    `uncaught in <anonymous> < <anonymous> < emit < emitRequest < onNodeHTTPRequest: ${readonly}`,
     `uncaught in flushWriteAccountingNT < processTicksAndRejections: ${readonly}`,
     "uncaught in unknown < assignSocketInternal < onNodeHTTPRequest: ServerResponse has an already assigned socket",
-    `uncaught in emitCloseNT < emit < emitCloseNT < processTicksAndRejections: ${readonly}`,
+    `uncaught in emitCloseNT < nativeSocketOnClose < emit < emitClose: ${readonly}`,
   ]);
 });
 

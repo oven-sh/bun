@@ -447,24 +447,9 @@ impl JSMySQLConnection {
             // group after the SSLRequest exchange.
             let group = vm.mysql_socket_group::<false>(context);
             let result = if !path.is_empty() {
-                SocketTCP::connect_unix_group(
-                    group,
-                    uws::DispatchKind::Mysql,
-                    None,
-                    &path[..],
-                    ptr,
-                    false,
-                )
+                SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, &path[..], ptr)
             } else {
-                SocketTCP::connect_group(
-                    group,
-                    uws::DispatchKind::Mysql,
-                    None,
-                    hostname,
-                    port,
-                    ptr,
-                    false,
-                )
+                SocketTCP::connect_group(group, uws::DispatchKind::Mysql, None, hostname, port, ptr)
             };
             let socket = match result {
                 Ok(s) => s,
@@ -942,7 +927,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         if let Some(callback) = this.check_server_identity_callback() {
             let hostname = this.tls_config.server_name_bytes();
             if let Err(reason) =
-                server_identity::check(&this.global_object, callback, ssl, hostname)
+                server_identity::check(&this.global_object, callback, socket, ssl, hostname)
             {
                 return this.fail_with_js_value(reason);
             }

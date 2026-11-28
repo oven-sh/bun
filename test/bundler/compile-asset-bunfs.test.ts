@@ -436,6 +436,50 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     TIMEOUT,
   );
 
+  test(
+    "embedded files are Bun.serve() routes",
+    async () => {
+      using dir = tempDir("bunfs-serve-route", {
+        "index.ts": /* ts */ `
+          import { embeddedFiles, file, serve } from "bun";
+          import asset from "./asset.txt" with { type: "file" };
+          import "./icon.ico" with { type: "file" };
+
+          const routes: Record<string, Blob> = { "/asset.txt": file(asset) };
+          for (const blob of embeddedFiles) {
+            // "icon-a1b2c3d4.ico" -> "/embedded/icon.ico"
+            routes["/embedded/" + blob.name.replace(/-[a-z0-9]+\\./, ".")] = blob;
+          }
+
+          using server = serve({
+            port: 0,
+            routes,
+            fetch: () => new Response("fallback", { status: 404 }),
+          });
+          for (const path of ["/asset.txt", "/embedded/asset.txt", "/embedded/icon.ico", "/missing"]) {
+            const res = await fetch(new URL(path, server.url));
+            console.log(path, res.status, res.headers.get("Content-Type"), JSON.stringify(await res.text()));
+          }
+        `,
+        "asset.txt": "embedded text",
+        "icon.ico": "not really an icon",
+      });
+      await compile(String(dir));
+      const { stdout, stderr, code } = await run(String(dir));
+      expect({ stdout: stdout.trim().split(/\r?\n/), stderr }).toEqual({
+        stdout: [
+          `/asset.txt 200 text/plain;charset=utf-8 "embedded text"`,
+          `/embedded/asset.txt 200 text/plain;charset=utf-8 "embedded text"`,
+          `/embedded/icon.ico 200 image/x-icon "not really an icon"`,
+          `/missing 404 text/plain;charset=utf-8 "fallback"`,
+        ],
+        stderr: "",
+      });
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
   test.each([
     [["build", "./index.ts", "--asset", "./public"], "--asset requires --compile"],
     [

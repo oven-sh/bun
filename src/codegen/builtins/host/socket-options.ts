@@ -88,8 +88,7 @@ const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> =
   open: [socket],
   data: [socket, receivedChunk],
   close: [socket, b.thrown],
-  // A TLS socket passes a negative error number after a send has failed for good.
-  drain: [socket, b.union(b.f64, b.undefined)],
+  drain: [socket],
   error: [socket, b.thrown],
   end: [socket],
   timeout: [socket],
@@ -98,6 +97,8 @@ const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> =
   session: [socket, b.instance("Buffer").fresh],
   keylog: [socket, b.instance("Buffer").fresh],
   alpnCallback: [socket, b.union(b.string, b.undefined), b.instance("Buffer").fresh],
+  // The status of the write: 0, or a negative error number.
+  writeComplete: [socket, b.f64],
 };
 
 // The data of the listener for a socket that it accepted, the socket's own for one that was upgraded, undefined where there is none.
@@ -105,7 +106,7 @@ const dataOfServer = [b.nativeCell(socketDataCell), b.undefined];
 
 // SocketConfig.bind.ts and SSLConfig.bind.ts: a dictionary. Each member is read under its name and is of its type or refused, but these:
 // `hostname`, `host` and `port` are converted, so is a String object as `binaryType`, and `ca`, `cert`, `key` and `crl` of `tls` may be a sequence, which is iterated.
-// Listener.rs describes a `secureContext` that is none in its message: whatever is there may be printed.
+// SecureContext.rs describes a `secureContext` that is none in its message: whatever is there may be printed.
 export const socketOptions = [
   b.storedIn(b.nativeCell(socketOptionsCell)),
   b.reachableValuesStoredIn(b.nativeCell(socketOptionsCell)),

@@ -25,7 +25,6 @@ const { validateAbortSignal, validateObject } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
-const { kAutoDestroyed } = require("internal/shared");
 const isStandardOutputStream: (value: unknown) => boolean | undefined = $newCppFunction(
   "BunProcess.cpp",
   "jsFunctionIsStandardOutputStream",
@@ -1703,7 +1702,6 @@ function endReadableNT(state, stream) {
           (wState.finished || wState.writable === false));
 
       if (autoDestroy) {
-        stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
         stream.destroy();
       }
     }

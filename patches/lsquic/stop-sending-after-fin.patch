@@ -1,0 +1,26 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1328,16 +1328,19 @@ lsquic_stream_stop_sending_in (struct ls
+     maybe_conn_to_tickable_if_writeable(stream, 0);
+ 
+     lsquic_sfcw_consume_rem(&stream->fc);
+-    drop_buffered_data(stream);
+-    maybe_elide_stream_frames(stream);
+ 
+     /* bun: echo the received STOP_SENDING code in our RESET_STREAM
+      * (RFC 9000 sec 3.5: "the error code from the STOP_SENDING frame
+-     * SHOULD be used"). */
+-    if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
++     * SHOULD be used").  Behind an unacknowledged FIN too, which is elided
++     * from here on, and ahead of the elision, which finishes the stream. */
++    if (!(stream->stream_flags & STREAM_RST_SENT)
++            && (!(stream->stream_flags & STREAM_FIN_SENT) || stream->n_unacked)
+                                     && !(stream->sm_qflags & SMQF_SEND_RST))
+         stream_reset(stream, error_code, 0);
+ 
++    drop_buffered_data(stream);
++    maybe_elide_stream_frames(stream);
++
+     if (stream->sm_qflags & (SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
+                              | SMQF_SEND_STOP_SENDING))
+     {

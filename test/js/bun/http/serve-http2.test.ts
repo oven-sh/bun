@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { runEventLoopUntil, setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls as tlsCert } from "harness";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -118,6 +120,17 @@ for (const secure of [true, false]) {
       expect(res.status).toBe(200);
       expect(res.headers["content-length"]).toBe(String(5 * 1024 * 1024));
       expect(res.body.length).toBe(0);
+    });
+
+    // RFC 9110 8.6: a null body does not say what GET would send, so HEAD sends no content-length.
+    test("HEAD of a null-body Response has no content-length", async () => {
+      const res = await request(session, { ":path": "/null-body", ":method": "HEAD" });
+      expect({
+        status: res.status,
+        marker: res.headers["x-null"],
+        contentLength: res.headers["content-length"],
+        body: res.body.length,
+      }).toEqual({ status: 200, marker: "1", contentLength: undefined, body: 0 });
     });
 
     test("unknown route is 404 from fetch", async () => {
@@ -406,16 +419,28 @@ for (const secure of [true, false]) {
       for (const r of results) expect(sha256(r.body)).toBe(expected);
     }, 30000); // 40 MB through 64 KB client windows; slow on debug/ASAN
 
-    test("expect: 100-continue gets an interim response", async () => {
+    test.each(["100-continue", "100-Continue"])("expect: %s gets an interim response", async expectation => {
       const raw = await RawH2.connect(fx.port, secure);
       await raw.waitFor(f => f.type === T.SETTINGS);
-      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", expectation]], F.END_HEADERS);
       const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
       expect(decodeStatus(interim.payload)).toBe(100);
       expect(interim.flags & F.END_STREAM).toBe(0);
       raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.from("after-continue")));
       const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 0);
       expect(d.payload.toString()).toBe("after-continue");
+      raw.close();
+    });
+
+    // A 100 Continue would start an upload that the 413 behind it refuses. HTTP/1.1 and HTTP/3 do the same.
+    test("answers 413 without an interim response when content-length exceeds maxRequestBodySize", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      await raw.waitFor(f => f.type === T.SETTINGS);
+      // The default limit is 128 MiB.
+      const headers = [...baseHeaders("/echo", "POST"), ["expect", "100-continue"], ["content-length", "200000000"]];
+      raw.headers(1, headers as [string, string][], F.END_HEADERS);
+      const first = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      expect(decodeStatus(first.payload)).toBe(413);
       raw.close();
     });
 
@@ -969,5 +994,466 @@ describe("Bun.serve http2 in-process", () => {
       lateWriteFailed: true,
       pendingRequests: 0,
     });
+  });
+
+  // allowHalfOpen keeps the client's side open after the server's close_notify, so the client never answers it.
+  describe("a TLS client that never answers close_notify", () => {
+    async function pendingRequest(idleTimeout: number) {
+      const started = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      const server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          started.resolve();
+          return new Promise<Response>(() => {});
+        },
+      });
+      const raw = await RawH2.connect(server.port!, true);
+      raw.socket.allowHalfOpen = true;
+      raw.socket.once("close", () => started.reject(new Error("closed before the request reached the handler")));
+      raw.headers(1, baseHeaders("/"));
+      await started.promise;
+      return { server, raw, aborted: aborted.promise };
+    }
+
+    test("stop(true) aborts the open stream and resolves", async () => {
+      const { server, raw, aborted } = await pendingRequest(0);
+      try {
+        await Promise.all([server.stop(true), aborted]);
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("the idle timeout aborts the open stream", async () => {
+      const { server, raw, aborted } = await pendingRequest(1);
+      try {
+        sweepSocketTimers(2);
+        await aborted;
+      } finally {
+        raw.close();
+        await server.stop(true);
+      }
+    });
+  });
+
+  // The deadline is 8 s away or more.
+  describe.each([
+    ["cleartext", false],
+    ["TLS", true],
+  ] as const)("an idle client that never ends its side (%s)", (_name, secure) => {
+    test.each([
+      ["before", (server: Bun.Server) => (server.closeIdleConnections(), server.stop())],
+      ["after", (server: Bun.Server) => Promise.all([server.stop(), server.closeIdleConnections()])],
+    ])("doesn't hold stop() with closeIdleConnections() %s it", async (_label, stop) => {
+      using server = Bun.serve({
+        port: 0,
+        tls: secure ? tlsCert : undefined,
+        http2: true,
+        fetch: () => new Response(),
+      });
+      const raw = await RawH2.connect(server.port!, secure);
+      try {
+        raw.socket.allowHalfOpen = true;
+        raw.headers(1, baseHeaders("/"));
+        await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+        const startedAt = performance.now();
+        await Promise.all([stop(server), raw.waitFor(f => f.type === T.GOAWAY)]);
+        expect(performance.now() - startedAt).toBeLessThan(5_000);
+      } finally {
+        raw.close();
+      }
+    });
+  });
+
+  // Linux only: macOS sends to a reader that freed less than a segment of its window only at the next persist probe, seconds later.
+  test.skipIf(!isLinux).each([
+    ["cleartext", false],
+    ["TLS", true],
+  ] as const)("a slow reader stays connected until it stalls (%s)", async (_name, secure) => {
+    const onAbort = mock();
+    await using server = Bun.serve({
+      port: 0,
+      tls: secure ? tlsCert : undefined,
+      http2: true,
+      // Two sweeps, so each timeout comes a whole read after the timer was armed.
+      idleTimeout: 1,
+      fetch(req) {
+        req.signal.addEventListener("abort", onAbort);
+        return new Response(new Uint8Array(16 * 1024 * 1024));
+      },
+    });
+    // Both flow-control windows are wide open, so only the socket holds the response back.
+    const maxWindow = 0x7fffffff;
+    const streamWindow = Buffer.alloc(6);
+    streamWindow.writeUInt16BE(0x4 /* SETTINGS_INITIAL_WINDOW_SIZE */, 0);
+    streamWindow.writeUInt32BE(maxWindow, 2);
+    const connectionWindow = Buffer.alloc(4);
+    connectionWindow.writeUInt32BE(maxWindow - 65535);
+    const raw = await RawH2.connect(server.port!, secure, { settings: streamWindow });
+    // A small receive buffer makes every read open the window. The reads stay too small for a writable event on the server.
+    setSocketOptions(raw.socket, 2 /* SO_RCVBUF */, 128 * 1024);
+    let received = 0;
+    let wake = Promise.withResolvers<void>();
+    raw.socket.on("close", () => wake.resolve());
+    raw.socket.on("data", chunk => {
+      received += chunk.length;
+      wake.resolve();
+    });
+    try {
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, connectionWindow));
+      raw.headers(1, baseHeaders("/"));
+      for (let i = 0; i < 8; i++) {
+        const target = received + 256 * 1024;
+        raw.socket.resume();
+        while (received < target && !raw.closed) {
+          wake = Promise.withResolvers<void>();
+          await wake.promise;
+        }
+        raw.socket.pause();
+        sweepSocketTimers(1);
+      }
+      expect(onAbort).not.toHaveBeenCalled();
+
+      for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) sweepSocketTimers(1);
+      expect(onAbort).toHaveBeenCalledTimes(1);
+    } finally {
+      raw.close();
+    }
+  });
+});
+
+test.concurrent.each([
+  ["HTTP/2", "HTTP/1.1"],
+  ["HTTP/1.1", "HTTP/2"],
+])("development mode warns about the idle timeout once, whether %s or %s times out first", async (...order) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import http2 from "node:http2";
+      import net from "node:net";
+      let started = Promise.withResolvers();
+      let aborted = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        http2: true,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          started.resolve();
+          return new Promise(() => {});
+        },
+      });
+      for (const protocol of ${JSON.stringify(order)}) {
+        let client;
+        if (protocol === "HTTP/2") {
+          client = http2.connect("http://127.0.0.1:" + server.port);
+          client.request({ ":path": "/" }).on("error", () => {}).end();
+        } else {
+          client = net.connect(server.port, "127.0.0.1");
+          client.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+        }
+        client.on("error", () => {});
+        await started.promise;
+        // uWS arms the request's timer after the handler returns. The default 10 seconds are 4 sweeps.
+        await new Promise(setImmediate);
+        sweepSocketTimers(4);
+        await aborted.promise;
+        console.log(protocol, "timed out");
+        client.destroy();
+        started = Promise.withResolvers();
+        aborted = Promise.withResolvers();
+      }
+      await server.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure.\n");
+  expect(stdout).toBe(order.map(protocol => protocol + " timed out\n").join(""));
+  expect(exitCode).toBe(0);
+});
+
+test.each([
+  [false, "one read"],
+  [false, "two reads"],
+  [true, "one read"],
+  [true, "two reads"],
+])("frames that arrive while a handler runs the event loop wait their turn (tls: %p, %s)", async (secure, reads) => {
+  const late = Buffer.alloc(16384, "b");
+  let ranLoop = false;
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    http2: true,
+    tls: secure ? tlsCert : undefined,
+    async fetch(req) {
+      if (req.method === "GET") return new Response("fence");
+      client.write(Buffer.concat([frame(T.DATA, 0, 1, late), frame(T.DATA, F.END_STREAM, 1, late)]));
+      let waited = false;
+      runEventLoopUntil(fence().then(() => void (waited = true)));
+      ranLoop = waited;
+      return new Response(sha256(await req.bytes()));
+    },
+  });
+  // The server polls its sockets.
+  const fence = () => fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+  const client = await RawH2.connect(server.port!, secure);
+  try {
+    await client.waitFor(f => f.type === T.SETTINGS && f.flags === F.ACK);
+    let frames = Buffer.concat([
+      frame(T.HEADERS, F.END_HEADERS, 1, hpackLiteral(baseHeaders("/", "POST"))),
+      frame(T.DATA, 0, 1, Buffer.from("first")),
+    ]);
+    if (reads === "two reads") {
+      client.write(frames.subarray(0, 5));
+      frames = frames.subarray(5);
+      await fence();
+    }
+    client.write(frames);
+    const answer = await client.waitFor(
+      f => f.type === T.GOAWAY || (f.streamId === 1 && f.type !== T.HEADERS && f.type !== T.WINDOW_UPDATE),
+    );
+    expect(answer.payload.toString()).toBe(sha256(Buffer.concat([Buffer.from("first"), late, late])));
+    expect(ranLoop).toBe(true);
+  } finally {
+    client.socket.destroy();
+  }
+});
+
+// The server is a process of its own with nothing else on its event loop: once the body has started,
+// the process lives only while the loop has work. A body parks when the transport holds 256 KiB, and
+// the deferred drain that flushes them resumes it. What the resumed script queues (the chunk of a
+// pull(), the code after an awaited write(), the end of the response) has to run in that turn of the
+// loop: nothing else wakes the loop for it, and nothing else keeps the process alive for it.
+// Linux only: the loopback socket has to take each 256 KiB flush whole. A kernel that takes a part
+// resumes the body from the socket's writable event, which these tests are not about.
+describe.skipIf(!isLinux)("Bun.serve http2 with nothing else on the event loop", () => {
+  const chunkSize = 64 * 1024;
+  // SETTINGS_INITIAL_WINDOW_SIZE and the connection window at 2^31-1: the client never has to send a WINDOW_UPDATE for the body.
+  const streamWindow = Buffer.from([0x00, 0x04, 0x7f, 0xff, 0xff, 0xff]);
+  const connectionWindow = Buffer.alloc(4);
+  connectionWindow.writeUInt32BE(0x7fffffff - 65535);
+
+  async function connect(port: number, path: string) {
+    const raw = await RawH2.connect(port, false, { settings: streamWindow });
+    raw.write(frame(T.WINDOW_UPDATE, 0, 0, connectionWindow));
+    raw.headers(1, baseHeaders(path));
+    return raw;
+  }
+
+  /** The response on stream 1, as far as it came before the server closed the connection. */
+  async function received(raw: RawH2, chunkTail = 0) {
+    await raw.waitForClose();
+    const data = raw.frames.filter(f => f.type === T.DATA && f.streamId === 1);
+    const reset = raw.frames.find(f => f.type === T.RST_STREAM && f.streamId === 1);
+    return {
+      bytes: data.reduce((sum, f) => sum + f.payload.length, 0),
+      endStream: data.some(f => (f.flags & F.END_STREAM) !== 0),
+      reset: reset ? reset.payload.readUInt32BE(0) : null,
+      // The body parked this often: each time, the transport cut the 16 KiB frame that crossed its mark in two.
+      parks: data.filter(f => ![0, 16384, chunkTail].includes(f.payload.length)).length / 2,
+    };
+  }
+
+  /** Starts the fixture, runs `client` against its port, and waits for the process to exit by itself. */
+  async function serveOnce<T>(args: string[], client: (port: number) => Promise<T>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "serve-http2-idle-loop-fixture.ts"), ...args],
+      // bun test does not kill the child of a concurrent test that times out.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const readLine = async () => {
+      while (!stdout.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("fixture exited early: " + stdout + (await proc.stderr.text()));
+        stdout += decoder.decode(value, { stream: true });
+      }
+      const line = stdout.slice(0, stdout.indexOf("\n"));
+      stdout = stdout.slice(line.length + 1);
+      return JSON.parse(line);
+    };
+    const { port } = await readLine();
+    const response = await client(port);
+    const { pulls, order } = (await readLine()) as { pulls: number; order: string[] };
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { response, pulls, order, stderr, exitCode };
+  }
+
+  describe.concurrent.each([
+    ["a byte stream", "bytes", 16, 16 * chunkSize, 0],
+    // The 4th chunk fills the transport and closes the stream: the resume has only the end of the response to run.
+    ["a stream that closes as the transport fills", "bytes", 4, 4 * chunkSize, 0],
+    ["a default stream", "default", 16, 16 * chunkSize, 0],
+    ["a direct stream that awaits each write()", "direct", 16, 16 * chunkSize, 0],
+    // Each chunk has one <b>, and the rewriter gives it an attribute of 6 bytes.
+    ["a stream that an HTMLRewriter transforms", "rewriter", 16, 16 * (chunkSize + 6), 6],
+  ] as const)("%s", (_name, body, chunks, bytes, chunkTail) => {
+    test("reaches the client whole", async () => {
+      const result = await serveOnce(["--body", body, "--chunks", String(chunks)], async port =>
+        received(await connect(port, "/"), chunkTail),
+      );
+      expect(result).toEqual({
+        response: { bytes, endStream: true, reset: null, parks: chunks / 4 },
+        pulls: chunks,
+        order: [],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  test.concurrent.each(["bytes", "default"])(
+    "the ticks and microtasks of a pull() run before a timer that it arms (%s)",
+    async body => {
+      const { response, order, stderr, exitCode } = await serveOnce(
+        ["--body", body, "--chunks", "16", "--probe"],
+        async port => received(await connect(port, "/")),
+      );
+      // What ran between a pull() and the later of its tick and its microtask.
+      const between = (n: number) =>
+        order.slice(order.indexOf("pull" + n) + 1, Math.max(order.indexOf("tick" + n), order.indexOf("microtask" + n)));
+      const timersFirst = Array.from({ length: 16 }, (_, i) => i + 1)
+        .map(n => ({ pull: n, timers: between(n).filter(entry => entry.startsWith("timer")) }))
+        .filter(({ timers }) => timers.length > 0);
+      expect({ timersFirst, entries: order.length, parks: response.parks, stderr, exitCode }).toEqual({
+        timersFirst: [],
+        entries: 16 * 4,
+        parks: 4,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The 5th pull() is the first that the drain resumes. It returns a promise that is rejected already,
+  // and the stream takes it one microtask later. That microtask has to run before the loop looks for
+  // unhandled rejections: the failure belongs to the response, not to the process. After a task of
+  // the thread pool, the loop looks for them in the same turn.
+  test.concurrent.each([
+    ["an immediate", "immediate"],
+    ["a task of the thread pool", "task"],
+  ])(
+    "a pull() that the drain resumes and that fails resets its response (body started from %s)",
+    async (_name, start) => {
+      const { response, pulls, stderr, exitCode } = await serveOnce(
+        ["--body", "rejects", "--reject-at", "5", "--start", start],
+        async port => received(await connect(port, "/")),
+      );
+      // The server prints the error of a body that fails. After an uncaught error, the version of Bun follows it.
+      const printed = { error: /^error: .*$/m.exec(stderr)?.[0], version: /^Bun v/m.test(stderr) };
+      expect({ response, pulls, printed, exitCode }).toEqual({
+        response: { bytes: 4 * chunkSize, endStream: false, reset: 2, parks: 1 },
+        pulls: 5,
+        printed: { error: "error: pull 5 failed", version: false },
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The drain keeps its place in the deferred queue for the other connection, and posts nothing new.
+  test.concurrent("a pull() that the drain resumes can write to a response on another connection", async () => {
+    const result = await serveOnce(["--body", "bytes", "--chunks", "16", "--cross"], async port => {
+      const other = await connect(port, "/other");
+      await other.waitFor(f => f.type === T.DATA && f.streamId === 1);
+      const body = await received(await connect(port, "/"));
+      const { bytes, endStream } = await received(other);
+      return { body, other: { bytes, endStream } };
+    });
+    expect(result).toEqual({
+      response: {
+        body: { bytes: 16 * chunkSize, endStream: true, reset: null, parks: 4 },
+        // "open", then 4 KiB from each pull().
+        other: { bytes: 4 + 16 * 4096, endStream: false },
+      },
+      pulls: 16,
+      order: [],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each flush posts the drain. The pass ends before it, or runs it in place of a flush that was posted earlier.
+  test.concurrent.each([1, 64])("one write to each open response reaches all of them (%d)", async streams => {
+    const ids = Array.from({ length: streams }, (_, i) => 2 * i + 1);
+    const { response, stderr, exitCode } = await serveOnce(["--body", "publish"], async port => {
+      const events = await connect(port, "/events");
+      for (const id of ids.slice(1)) events.headers(id, baseHeaders("/events"));
+      await Promise.all(ids.map(id => events.waitFor(f => f.type === T.DATA && f.streamId === id)));
+      await connect(port, "/");
+      await events.waitForClose();
+      const data = events.frames.filter(f => f.type === T.DATA);
+      return ids.map(id => Buffer.concat(data.filter(f => f.streamId === id).map(f => f.payload)).toString());
+    });
+    expect({ response, stderr, exitCode }).toEqual({ response: ids.map(() => "openevent"), stderr: "", exitCode: 137 });
+  });
+
+  const text = (raw: RawH2) =>
+    Buffer.concat(raw.frames.filter(f => f.type === T.DATA && f.streamId === 1).map(f => f.payload)).toString();
+
+  // The queue holds the Redis client, a session and the flush. The removal of the first moves the last into its place.
+  test.concurrent("a write leaves when script removes a deferred task that ran before it", async () => {
+    const redis = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write("%1\r\n+proto\r\n:3\r\n"));
+    });
+    await once(redis.listen(0, "127.0.0.1"), "listening");
+    try {
+      const args = ["--body", "publish", "--redis", String((redis.address() as net.AddressInfo).port)];
+      const { response, order, stderr, exitCode } = await serveOnce(args, async port => {
+        const events = await connect(port, "/events");
+        await events.waitFor(f => f.type === T.DATA);
+        await connect(port, "/");
+        await events.waitForClose();
+        return text(events);
+      });
+      expect({ response, order, stderr, exitCode }).toEqual({
+        response: "openevent",
+        order: ["ping", "close"],
+        stderr: "",
+        exitCode: 137,
+      });
+    } finally {
+      redis.close();
+    }
+  });
+
+  // This loop blocks in its poll, so a write that a pass left is late and not lost: each round then waits for the timer.
+  // Not concurrent: the client has to answer before that timer.
+  test("a write does not wait for a timer when the server keeps the loop alive", async () => {
+    const rounds = 16;
+    const args = ["--body", "publish", "--rounds", String(rounds)];
+    const { response, order, stderr, exitCode } = await serveOnce(args, async port => {
+      const events = await connect(port, "/events");
+      await events.waitFor(f => f.type === T.DATA);
+      const publisher = await connect(port, "/");
+      for (let round = 1; round <= rounds; round++) {
+        await events.waitFor(() => text(events).length === "open".length + round * "event".length);
+        publisher.headers(2 * round + 1, baseHeaders("/"));
+      }
+      return text(events);
+    });
+    expect({ response, stderr, exitCode }).toEqual({
+      response: "open" + Buffer.alloc(rounds * "event".length, "event").toString(),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(order.length).toBeLessThan(rounds / 2);
   });
 });

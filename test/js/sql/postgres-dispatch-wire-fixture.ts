@@ -2,6 +2,7 @@
 // prints, one line per scenario, the frontend messages that the client sent.
 // It is a subprocess because a broken build aborts in these scenarios.
 import { SQL } from "bun";
+import { runEventLoopUntil } from "bun:internal-for-testing";
 import type { Socket } from "node:net";
 import {
   loopbackFence,
@@ -99,10 +100,8 @@ async function run(options: { prepare?: boolean }, warmOuter: boolean, kind: Nes
 
 const connect = () => new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
 
-/** Bun.build() runs the event loop until an async setup() settles. */
 function runEventLoop(until: Promise<unknown> = loopbackFence()) {
-  const plugins = [{ name: "wait", setup: async () => void (await until) }];
-  Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+  runEventLoopUntil(until.then());
 }
 
 /** `act` runs at the third read of the hole: for the types, for the conversion, for the Bind. */

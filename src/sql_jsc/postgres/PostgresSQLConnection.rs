@@ -571,12 +571,14 @@ impl PostgresSQLConnection {
             return;
         }
 
-        let tls = self.socket.get().as_tls();
+        let socket = *self.socket.get();
         // SAFETY: `on_close` detaches the socket, and both checks last use `ssl` before user code runs.
-        let ssl = tls.and_then(|tls| unsafe { tls.ssl_mut() });
+        let ssl = socket.as_tls().and_then(|tls| unsafe { tls.ssl_mut() });
         if let Some(callback) = self.check_server_identity_callback() {
             let hostname = self.tls_config.server_name_bytes();
-            if let Err(reason) = server_identity::check(self.global(), callback, ssl, hostname) {
+            if let Err(reason) =
+                server_identity::check(self.global(), callback, socket, ssl, hostname)
+            {
                 self.fail_with_js_value(reason);
                 return;
             }
@@ -908,7 +910,6 @@ fn open(
                 None,
                 path_slice,
                 ptr,
-                false,
             )
         } else {
             uws::SocketTCP::connect_group(
@@ -918,7 +919,6 @@ fn open(
                 params.hostname,
                 params.port,
                 ptr,
-                false,
             )
         };
 

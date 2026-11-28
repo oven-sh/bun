@@ -58,6 +58,7 @@ pub(crate) struct HTTPParser {
     generation: Cell<u64>,
     has_flushed: Cell<bool>,
     is_head_complete: Cell<bool>,
+    has_begun_message: Cell<bool>,
     /// When the current message started, or 0 between messages.
     start_time: Cell<u64>,
 }
@@ -125,6 +126,7 @@ impl HTTPParser {
         )));
         self.has_flushed.set(false);
         self.is_head_complete.set(false);
+        self.has_begun_message.set(false);
 
         if connections.is_undefined_or_null() {
             return Ok(());
@@ -272,7 +274,7 @@ impl HTTPParser {
     }
 
     pub(crate) fn is_idle(&self) -> bool {
-        !self.is_closed() && self.start_time.get() == 0
+        !self.is_closed() && (self.start_time.get() == 0 || !self.has_begun_message.get())
     }
 
     pub(crate) fn is_expired(&self, headers_deadline: u64, request_deadline: u64) -> bool {
@@ -452,6 +454,7 @@ impl Driver<'_> {
     #[inline(never)]
     fn on_message_begin(&self) -> Result<(), Interrupt> {
         self.this.is_head_complete.set(false);
+        self.this.has_begun_message.set(true);
         self.this.start_time.set(uv_hrtime());
         self.this.update_connections(self.this_value, self.global)?;
         if let Some(callback) = self.callback(Callback::MessageBegin)? {

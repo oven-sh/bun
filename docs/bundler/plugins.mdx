@@ -149,6 +149,10 @@ In this example, Bun waits for both `onStart()` callbacks to complete: the 10-se
   `build.config`, do so directly in the `setup()` function.
 </Note>
 
+If `setup()` or `onStart()` returns a pending Promise, `Bun.build()` returns right away and continues once it settles. An error from then on rejects the Promise that `Bun.build()` returned. The options are read after the last `setup()`, so pass a new object to each call instead of changing one that a pending build still uses.
+
+Builds run one after the other. To use the output of one build in another, start it in `setup()` or `onStart()`, or before the build that needs it. A build started from `onLoad()` or `onResolve()` only runs once the process has nothing else left to wait for, so it can't be awaited there while a server, a watcher or a timer is active.
+
 ### onResolve
 
 ```ts

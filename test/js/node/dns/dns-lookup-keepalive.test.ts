@@ -198,10 +198,9 @@ describe("script does not run inside the resolver's client", () => {
       `);
 
     test.concurrent("can wait for another query in a nested turn of the loop", async () => {
-      // Bun.build() turns the loop until setup() settles.
       const continuation = `
-        const setup = () => dns.promises.resolve4("nested.test").then(([address]) => console.log(address));
-        await Bun.build({ entrypoints: ["/e.js"], files: { "/e.js": "" }, plugins: [{ name: "spin", setup }] });
+        const { runEventLoopUntil } = require("bun:internal-for-testing");
+        runEventLoopUntil(dns.promises.resolve4("nested.test").then(([address]) => console.log(address)));
         server.close();
       `;
       expect(await bunRun(["-e", lookup(continuation)])).toSpawn("dropped AAAA\n10.0.0.1");

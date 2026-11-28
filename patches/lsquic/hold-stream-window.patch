@@ -1,0 +1,69 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1758,6 +1758,20 @@ int
+ lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
+ 
+ /**
++ * bun: receive backpressure that leaves no data in the stream.  While the
++ * window is held, reads still credit the connection's window, but the stream's
++ * receive limit stays put and the peer gets no new MAX_STREAM_DATA.  An update
++ * queued before the hold still goes out, so the peer can send up to one window
++ * past the read offset.  Releasing the hold queues the update it held back,
++ * unless the stream was reset or read to its end.
++ *
++ * With lsquic_stream_wantread(s, 0) the unread data also uses up the
++ * connection's window, and it is dropped when the connection goes away.
++ */
++void
++lsquic_stream_hold_window (lsquic_stream_t *s, int hold);
++
++/**
+  * Read up to @param len bytes from stream into @param buf.  Returns number
+  * of bytes read or -1 on error, in which case errno is set.  Possible
+  * errno values:
+--- a/src/liblsquic/lsquic_sfcw.c
++++ b/src/liblsquic/lsquic_sfcw.c
+@@ -94,6 +94,10 @@ lsquic_sfcw_fc_offsets_changed (struct l
+ {
+     lsquic_time_t since_last_update, srtt, now;
+ 
++    /* bun: lsquic_stream_hold_window() */
++    if (fc->sf_hold)
++        return 0;
++
+     if (fc->sf_recv_off - fc->sf_read_off >= fc->sf_max_recv_win / 2)
+     {
+         LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
+--- a/src/liblsquic/lsquic_sfcw.h
++++ b/src/liblsquic/lsquic_sfcw.h
+@@ -20,6 +20,7 @@ typedef struct lsquic_sfcw {
+     struct lsquic_conn_public
+                        *sf_conn_pub;
+     unsigned            sf_max_recv_win;    /* Maximum receive window */
++    unsigned            sf_hold;            /* bun: keep sf_recv_off where it is */
+     lsquic_stream_id_t  sf_stream_id;       /* Used for logging */
+ } lsquic_sfcw_t;
+ 
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1530,6 +1530,20 @@ stream_consumed_bytes (struct lsquic_str
+ }
+ 
+ 
++/* bun: see lsquic.h */
++void
++lsquic_stream_hold_window (struct lsquic_stream *stream, int hold)
++{
++    if (stream->fc.sf_hold == (unsigned) !!hold)
++        return;
++    stream->fc.sf_hold = !!hold;
++    /* After a reset, sf_read_off is the final size, not read_offset.  An update
++     * would take the credit for the unread bytes back from the connection. */
++    if (!hold && !(stream->stream_flags & (STREAM_RST_RECVD|STREAM_U_READ_DONE)))
++        stream_consumed_bytes(stream);
++}
++
++
+ static ssize_t
+ read_data_frames (struct lsquic_stream *stream, int do_filtering,
+         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)

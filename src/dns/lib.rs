@@ -3,6 +3,7 @@
 use core::ffi::c_int;
 use core::net::SocketAddr;
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::ip_address::IpText;
 use bun_core::{String as BunString, ZStr};
@@ -173,6 +174,34 @@ pub fn getaddrinfo_error(status: c_int) -> Option<Error> {
         libuv::UV_EAI_SOCKTYPE => Error::ECONNREFUSED,
         _ => Error::ENOTFOUND,
     })
+}
+
+/// libuv's `UV_EAI_NONAME`, the `errno` Node reports with getaddrinfo's `ENOTFOUND`.
+pub const UV_EAI_NONAME: c_int = -3008;
+
+/// The `errno` Node reports for libc's getaddrinfo(3) `status`, libuv's `UV_EAI_*`: https://github.com/libuv/libuv/blob/v1.51.0/include/uv/errno.h#L33-L46
+#[cfg(unix)]
+pub fn getaddrinfo_uv_errno(status: c_int) -> Option<c_int> {
+    Some(match status {
+        eai::ADDRFAMILY => -3000,
+        eai::AGAIN => Error::EAI_AGAIN as c_int,
+        libc::EAI_BADFLAGS => -3002,
+        eai::FAIL => -3004,
+        libc::EAI_FAMILY => -3005,
+        libc::EAI_MEMORY => -3006,
+        eai::NODATA => -3007,
+        eai::NONAME => UV_EAI_NONAME,
+        libc::EAI_SERVICE => -3010,
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        libc::EAI_SOCKTYPE => -3011,
+        _ => return None,
+    })
+}
+
+/// `status` is Winsock's, which [`getaddrinfo_error`] turns into `ENOTFOUND` whatever it is.
+#[cfg(windows)]
+pub fn getaddrinfo_uv_errno(status: c_int) -> Option<c_int> {
+    (status != 0).then_some(UV_EAI_NONAME)
 }
 
 /// What [`getaddrinfo_error`] takes for the `EAI_*` called `name`.
@@ -473,7 +502,22 @@ impl Order {
             bun_core::Global::exit(1)
         })
     }
+
+    /// The address family `fetch()` and `Bun.connect()` dial first. Process-wide, like the DNS cache they share, and set only by the CLI flag and the main thread.
+    pub fn for_connect() -> Order {
+        match CONNECT_ORDER.load(Ordering::SeqCst) {
+            4 => Order::Ipv4first,
+            6 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        }
+    }
+
+    pub fn set_for_connect(order: Order) {
+        CONNECT_ORDER.store(order as u8, Ordering::SeqCst);
+    }
 }
+
+static CONNECT_ORDER: AtomicU8 = AtomicU8::new(Order::Verbatim as u8);
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
 /// `bun_dns_client` allows in one or of non-ASCII bytes (UTF-8 mDNS names).

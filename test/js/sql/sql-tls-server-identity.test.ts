@@ -36,7 +36,7 @@ const agent1 = {
 // The harness certificate: CN=server-bun, SAN localhost / 127.0.0.1 / ::1, self-signed.
 const localhost = { key: localhostTls.key, cert: localhostTls.cert, ca: localhostTls.cert };
 
-type ServerCert = { key: string; cert: string };
+type ServerCert = { key: string; cert: string; requestCert?: boolean; onSecure?: () => void };
 type MockServer = {
   url: string;
   /** Resolves when the first TLS connection closes, with the number of bytes the client sent inside TLS. */
@@ -51,6 +51,7 @@ function upgrade(rawSocket: net.Socket, cert: ServerCert, leftover: Buffer, clos
   const socket = new tls.TLSSocket(rawSocket, { isServer: true, ...cert });
   let bytes = 0;
   socket.on("data", (chunk: Buffer) => (bytes += chunk.length));
+  if (cert.onSecure) socket.on("secure", cert.onSecure);
   socket.on("close", () => closed(bytes));
   socket.on("error", () => {});
   return socket;
@@ -142,7 +143,6 @@ test.each([
   });
   try {
     let connected = 0;
-    let built: Promise<unknown> | undefined;
     await using sql = new SQL({
       url: `mysql://u:pw@127.0.0.1:${port}/db?sslmode=verify-full`,
       max: 1,
@@ -150,7 +150,7 @@ test.each([
       tls: {
         ca: agent1.ca,
         checkServerIdentity() {
-          built = runEventLoopUntil(async () => {
+          runEventLoopUntil(async () => {
             socket.write(packet);
             // After an OK: the session setup, its OK, the query.
             for (let i = 0; i < 4; i++) await loopbackFence();
@@ -163,7 +163,6 @@ test.each([
       .unsafe("SELECT 'secret'")
       .simple()
       .catch(err => err);
-    await built;
     expect({ code: err.code, connected, received }).toEqual({
       code: "ERR_MYSQL_UNEXPECTED_PACKET",
       connected: 0,
@@ -216,6 +215,16 @@ describe.concurrent.each([
       });
       expect(err).toBe(thrown);
       expect(await server.bytesInsideTls).toBe(0);
+    });
+  });
+
+  test("a TLS 1.3 server that it refuses does not get the client certificate", async () => {
+    let handshakes = 0;
+    await withServer({ ...localhost, requestCert: true, onSecure: () => handshakes++ }, async server => {
+      const pin = new Error("PIN_MISMATCH");
+      expect(await connect(server.url, { ...agent1, ca: localhost.ca, checkServerIdentity: () => pin })).toBe(pin);
+      await server.bytesInsideTls;
+      expect(handshakes).toBe(0);
     });
   });
 
@@ -365,7 +374,6 @@ test.each([
       secure = upgrade(rawSocket, cert, Buffer.alloc(0), bytesInsideTls.resolve);
     });
   });
-  let built: Promise<unknown> | undefined;
   try {
     await using sql = new SQL({
       url: `postgres://u:secret@127.0.0.1:${port}/db?sslmode=verify-full`,
@@ -374,9 +382,7 @@ test.each([
         ca: localhost.ca,
         checkServerIdentity() {
           secure.write(Buffer.concat(frames));
-          // Bun.build() runs the event loop until an async setup() settles.
-          const plugins = [{ name: "wait", setup: () => loopbackFence().then(loopbackFence) }];
-          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins });
+          runEventLoopUntil(() => loopbackFence().then(loopbackFence));
           return new Error("not the server");
         },
       },
@@ -386,7 +392,6 @@ test.each([
       code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
       bytesInsideTls: 0,
     });
-    await built;
   } finally {
     server.close();
   }

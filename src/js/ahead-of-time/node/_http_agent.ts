@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_agent.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 39e53369ca88ec763c8574bc1267100ae9c1483b8ec809e4d91e06323f75f5a5.
+// Written against that file with the SHA-256 27ba3e10b153bf5e63b90a610587e9ac7540813b2a96f0491ae2edebbe522302.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_agent.js
@@ -154,7 +154,7 @@ function Agent(this: $Node.Agent, options?: $Node.AgentOptions): void {
 
   const proxyEnv = this.options.proxyEnv;
   if (typeof proxyEnv === "object" && proxyEnv !== null) {
-    this[kProxyConfig] = parseProxyConfigFromEnv(proxyEnv, this.protocol, this.keepAlive);
+    this[kProxyConfig] = parseProxyConfigFromEnv(proxyEnv, this.protocol);
     $debug(`new ${this.protocol} agent with proxy config`, this[kProxyConfig]);
   }
 
@@ -181,7 +181,7 @@ function Agent(this: $Node.Agent, options?: $Node.AgentOptions): void {
     // Bytes a freed socket holds or receives have no request: the next request
     // would parse them as its response (https://hackerone.com/reports/3582376).
     // Destroy it here if they are buffered, in node:net if they arrive later.
-    if (socket.readableLength > 0) {
+    if (socket.readableLength > 0 || socket.readableEnded) {
       $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
       socket.destroy();
       return;

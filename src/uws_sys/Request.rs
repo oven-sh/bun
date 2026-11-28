@@ -5,6 +5,7 @@ use crate::h3::Request as H3Request;
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
 /// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
 /// `anytype` — `inline else` keeps dispatch monomorphic.
+#[derive(Clone, Copy)]
 pub enum AnyRequest {
     H1(*mut Request),
     H3(*mut H3Request),
@@ -36,6 +37,27 @@ impl AnyRequest {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
+        }
+    }
+    /// The HTTP/1 parser's verdict, not a header lookup. HTTP/2 and HTTP/3 have no transfer codings (RFC 9114 4.2).
+    pub fn has_transfer_encoding(&self) -> bool {
+        match self {
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).has_transfer_encoding(),
+            Self::H3(_) => false,
+        }
+    }
+    /// The number uWS parsed and frames the body by.
+    pub fn content_length(&self) -> Option<u64> {
+        match self {
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).content_length(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).content_length(),
+        }
+    }
+    /// The request as C++ takes it.
+    pub fn as_ptr(&self) -> *mut core::ffi::c_void {
+        match self {
+            Self::H1(r) => r.cast(),
+            Self::H3(r) => r.cast(),
         }
     }
 }
@@ -70,6 +92,9 @@ impl Request {
     /// "Transfer-Encoding: chunked".
     pub fn has_transfer_encoding(&self) -> bool {
         self.parsed().has_transfer_encoding()
+    }
+    pub fn content_length(&self) -> Option<u64> {
+        self.parsed().content_length()
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();

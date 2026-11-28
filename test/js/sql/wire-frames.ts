@@ -4,6 +4,7 @@
 // Fault-injection tests import from this module instead of inlining
 // Buffer.alloc / writeInt32BE sequences.
 
+import { runEventLoopUntil as runUntil } from "bun:internal-for-testing";
 import { createHash, createHmac, pbkdf2Sync, randomBytes, X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
@@ -38,13 +39,10 @@ export async function loopbackFence(): Promise<void> {
   server.close();
 }
 
-/** Bun.build() runs the event loop until an async setup() settles. Without a timer, that loop sleeps up to 1 s per fence. */
+/** Without a timer, the nested loop sleeps up to 1 s per fence. */
 export function runEventLoopUntil(settled: () => Promise<void>) {
-  const setup = () => {
-    const wake = setInterval(() => {}, 1);
-    return settled().finally(() => clearInterval(wake));
-  };
-  return Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+  const wake = setInterval(() => {}, 1);
+  runUntil(settled().finally(() => clearInterval(wake)));
 }
 
 /** Reserve and immediately release a port so connecting to it is refused. */

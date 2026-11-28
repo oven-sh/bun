@@ -1510,7 +1510,6 @@ pub mod formatter {
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
         pub(crate) map_node: ManuallyDrop<Option<Box<visited::PoolNode>>>,
-        pub(crate) hide_native: bool,
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
@@ -1546,7 +1545,6 @@ pub mod formatter {
                 remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
                 map_node: ManuallyDrop::new(None),
-                hide_native: false,
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
@@ -1584,7 +1582,6 @@ pub mod formatter {
                 remaining_values: self.remaining_values,
                 map: visited::Map::default(),
                 map_node: ManuallyDrop::new(None),
-                hide_native: self.hide_native,
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,

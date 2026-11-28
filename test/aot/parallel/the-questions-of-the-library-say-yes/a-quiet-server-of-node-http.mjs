@@ -2,7 +2,8 @@
 // The short roads of node:http stand behind questions that the library asks of its own objects: $isPlainInstanceOf, $isPlainHeirOf, $findsDeclaredMember, $findsNoMember.
 // A question that is compiled and says no is no fault: the long road answers the same, a third slower, and no test sees it. Under the word that checks the walk each yes is held to the object, and counted.
 // A hundred GETs and a hundred POSTs on one kept connection of a server that nobody has touched: the floor stands close under what they count. Whoever takes a yes away finds this test; whoever adds a question raises the floor.
-// COUNTER: LibraryFastPathChecksPassed >= 10900
+// The body of a POST goes through push(), and its end is a microtask behind the last chunk, as in Node: no short road of its own.
+// COUNTER: LibraryFastPathChecksPassed >= 10000
 // STATISTIC: MemberLookupChecksLeftGeneric <= 0
 import http from "node:http";
 import net from "node:net";

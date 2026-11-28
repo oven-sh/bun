@@ -111,6 +111,7 @@ impl AbortSignal {
             return Some(AbortReason::Common(match reason {
                 1 => CommonAbortReason::Timeout,
                 2 => CommonAbortReason::UserAbort,
+                4 => CommonAbortReason::RequestBodyTooLarge,
                 _ => CommonAbortReason::ConnectionClosed,
             }));
         }

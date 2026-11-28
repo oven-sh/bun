@@ -109,6 +109,8 @@ pub(crate) struct Route {
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
+    /// The chunk routes the last successful build appended to the server's static routes.
+    assets: JsCell<Vec<(Box<[u8]>, RefPtr<StaticRoute>)>>,
 }
 
 impl Served for RefPtr<Route> {
@@ -156,7 +158,17 @@ impl Route {
             server: Cell::new(None),
             state: JsCell::new(State::Pending),
             dev_server_id: Cell::new(None),
+            assets: JsCell::new(Vec::new()),
         })
+    }
+
+    /// Copies the chunk routes of `old`, the route `server.reload()` replaces, so pages that clients already loaded keep working.
+    pub(crate) fn adopt_assets(&self, old: &Route) -> Vec<(Box<[u8]>, RefPtr<StaticRoute>)> {
+        if self.bundle.as_ptr() != old.bundle.as_ptr() || !self.assets.get().is_empty() {
+            return Vec::new();
+        }
+        self.assets.set(old.assets.get().clone());
+        self.assets.get().clone()
     }
 
     pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
@@ -242,6 +254,7 @@ impl Route {
                     };
                     self.pending_responses.with_mut(|v| v.push(pending));
                     resp.on_aborted_ref(Self::on_pending_response_aborted, &self);
+                    resp.suspend_timeout();
                     req.set_yield(false);
                 }
                 State::Err(_log) => {
@@ -252,8 +265,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from bake/dev_server/failures.rs to render the error
-                    resp.end_without_body(true);
+                    Self::end_build_failed(resp);
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
@@ -298,12 +310,10 @@ impl Route {
         self.resume_pending_responses();
     }
 
-    /// Production keeps the reason to itself, see `resume_pending_responses`.
-    fn set_build_error(&self, server: AnyServer, log: Log) {
-        if server.config().is_development() {
-            let _ = log.print(bun_output::error_writer_buffered());
-            bun_output::flush();
-        }
+    /// Production only hides the reason from the client, see `end_build_failed`.
+    fn set_build_error(&self, log: Log) {
+        let _ = log.print(bun_output::error_writer_buffered());
+        bun_output::flush();
         self.state.set(State::Err(log));
     }
 
@@ -421,7 +431,7 @@ impl Route {
             started_at_ns: bun_core::util::Timespec::now_allow_mocked_time().ns(),
         };
         // The build is the server's: it continues the script that made the server.
-        JSBundleCompletionTask::schedule(config, &global, server.context_id(), owner);
+        JSBundleCompletionTask::schedule(config, &global, server.context_id(), owner, None);
         Ok(())
     }
 
@@ -450,7 +460,7 @@ impl Route {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
-                self.set_build_error(server, log);
+                self.set_build_error(log);
             }
             Ok(mut bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
@@ -485,7 +495,7 @@ impl Route {
                     output_file.output_kind == bundler_options::OutputKind::EntryPoint
                         && output_file.loader == Loader::Html
                 }) else {
-                    self.set_build_error(server, self.bundle.no_html_page_log());
+                    self.set_build_error(self.bundle.no_html_page_log());
                     break 'bundle;
                 };
 
@@ -493,6 +503,7 @@ impl Route {
                 // needs it by `&mut` before it is shared. Static routes are keyed
                 // by `dest_path`, so registration order is immaterial.
                 let mut this_html_route: Option<(StaticRoute, Box<[u8]>)> = None;
+                self.assets.set(Vec::new());
 
                 // Create static routes for each output file
                 // Index loop because the SourceMap branch reads a sibling entry.
@@ -561,27 +572,32 @@ impl Route {
                         continue;
                     }
 
-                    bun_core::handle_oom(server.append_static_route(
+                    let static_route = RefPtr::new(static_route);
+                    self.assets
+                        .with_mut(|assets| assets.push((route_path.into(), static_route.clone())));
+                    server.append_static_route(
                         route_path,
-                        AnyRoute::Static(RefPtr::new(static_route)),
+                        AnyRoute::Static(static_route),
                         MethodOptional::Any,
-                    ));
+                    );
                 }
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                bun_core::handle_oom(server.append_static_route(
-                    &html_route_path,
-                    AnyRoute::Static(RefPtr::new(html_route)),
-                    MethodOptional::Any,
-                ));
+                // This copy would replace an HTML route mounted at the same path, and the page would never build again.
+                if !server.config().static_routes.iter().any(|entry| {
+                    matches!(entry.route, AnyRoute::Html(_)) && *entry.path == *html_route_path
+                }) {
+                    server.append_static_route(
+                        &html_route_path,
+                        AnyRoute::Static(RefPtr::new(html_route)),
+                        MethodOptional::Any,
+                    );
+                }
                 self.state.set(State::Html(html_route_clone));
 
-                if !bun_core::handle_oom(server.reload_static_routes()) {
-                    // Server has shutdown, so it won't receive any new requests
-                    // TODO: handle this case
-                }
+                server.reload_static_routes();
             }
         }
 
@@ -611,32 +627,22 @@ impl Route {
                         html.clone().on(resp);
                     }
                 }
-                State::Err(_log) => {
-                    if self
-                        .server
-                        .get()
-                        .expect("server set")
-                        .config()
-                        .is_development()
-                    {
-                        // TODO: use the code from bake/dev_server/failures.rs to render the error
-                    } else {
-                        // To protect privacy, do not show errors to end users in production.
-                        // TODO: Show a generic error page.
-                    }
-                    // This runs from a JS event-loop task, not a uWS handler,
-                    // so `end_without_body(true)` alone cannot close the
-                    // socket; write Content-Length so the client has framing.
-                    resp.write_status(b"500 Build Failed");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
-                }
+                State::Err(_log) => Self::end_build_failed(resp),
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
                 }
             }
         }
+    }
+
+    // No body, so production doesn't leak the build error.
+    fn end_build_failed(resp: AnyResponse) {
+        resp.write_status(b"500 Build Failed");
+        resp.write_header_int(b"Content-Length", 0);
+        resp.end_without_body(true);
+        // `end_without_body` only marks the connection. Outside a uWS handler nothing else closes it.
+        resp.close_if_done_and_marked();
     }
 }
 

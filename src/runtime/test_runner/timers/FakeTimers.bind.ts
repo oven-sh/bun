@@ -24,6 +24,9 @@ export const viUseFakeTimers = b.fn({ ...useFakeTimers, export: "Bun__FakeTimers
 export const jestUseFakeTimers = b.fn({ ...useFakeTimers, export: "Bun__FakeTimers__jestUseFakeTimers" });
 export const vitestUseFakeTimers = b.fn({ ...useFakeTimers, export: "Bun__FakeTimers__vitestUseFakeTimers" });
 
+/** While on, fake timers also take what a built-in module schedules with `setTimeout()`, such as the timeout of a socket. */
+export const fakeLibraryTimers = b.fn({ args: { enabled: b.bool } });
+
 export const useRealTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__useRealTimers" });
 export const advanceTimersToNextTimer = b.fn({
   ...chainable,

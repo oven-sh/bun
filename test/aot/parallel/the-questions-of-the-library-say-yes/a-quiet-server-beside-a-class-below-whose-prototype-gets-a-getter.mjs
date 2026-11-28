@@ -2,7 +2,8 @@
 // The twin of a-quiet-server-of-node-http.mjs: the same server, the same two hundred requests. Beside it stands a second server whose requests are of a class below the library's; it has answered one request,
 // and then the program lays a getter on the prototype of that class. That ends a guard of that class, and of no other: each class that a door takes has its own count.
 // As long as one count answered for all the classes of a door, the plain server's requests heard no from then on, and ran a third slower: right in every answer, and seen by no test.
-// COUNTER: LibraryFastPathChecksPassed >= 11500
+// The body of a POST goes through push(), and its end is a microtask behind the last chunk, as in Node: no short road of its own.
+// COUNTER: LibraryFastPathChecksPassed >= 10600
 // STATISTIC: MemberLookupChecksLeftGeneric <= 0
 import http from "node:http";
 import net from "node:net";

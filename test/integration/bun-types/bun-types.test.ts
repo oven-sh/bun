@@ -657,6 +657,8 @@ describe("@types/bun integration test", () => {
       "DiffObject.bind.ts: arrays<T>(oldArray: readonly T[], newArray: readonly T[], options?: Options | undefined): Change<T[]>[] | undefined: oldArray takes any[], not readonly T[]",
       "DiffObject.bind.ts: hunks() is Hunk[] | undefined, not Hunk[]",
       "DiffObject.bind.ts: createPatch() is string | undefined, not string",
+      // Only bun:internal-for-testing hands it out.
+      "FakeTimers.bind.ts: fakeLibraryTimers is not published",
       // An S3File is a Blob with more members, which C++ adds and no schema describes.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",

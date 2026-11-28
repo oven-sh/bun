@@ -5082,6 +5082,51 @@ describe.concurrent.skipIf(isWindows)("BUN_TEST_INPUT_REUSE skips test files who
     },
   );
 
+  test.skipIf(isWindows)(
+    "an async node:fs read still under way when the file ends is no write in flight, and a write through a descriptor is",
+    async () => {
+      // r's readFile opens a named pipe nobody writes, so it waits in the open until the process ends.
+      // It and an unawaited stat only read, and r is reused. w writes more than a pipe holds through a
+      // descriptor of a pipe nobody reads, so its write waits until the process ends.
+      using dir = tempDir("input-reuse-node-fs-read-in-flight", {
+        "package.json": `{ "name": "node-fs-read-in-flight" }`,
+        "in/.keep": "",
+        "r.test.ts": `
+        import { expect, test } from "bun:test";
+        import { promises } from "node:fs";
+        test("fs.promises.readFile and stat not awaited", () => {
+          promises.readFile(import.meta.dir + "/in/r-pipe").catch(() => {});
+          promises.stat(import.meta.path);
+          expect(1).toBe(1);
+        });
+      `,
+        "w.test.ts": `
+        import { expect, test } from "bun:test";
+        import { openSync, write } from "node:fs";
+        test("fs.write through a descriptor not completed", () => {
+          const fd = openSync(import.meta.dir + "/in/w-pipe", "r+");
+          write(fd, Buffer.alloc(1 << 20), () => {});
+          expect(1).toBe(1);
+        });
+      `,
+      });
+      for (const name of ["r-pipe", "w-pipe"]) {
+        expect(Bun.spawnSync(["mkfifo", join(String(dir), "in", name)]).exitCode).toBe(0);
+      }
+      const both = ["./r.test.ts", "./w.test.ts"];
+      const first = await runTests(String(dir), ["--isolate"], both, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+      const marks = (name: string) =>
+        JSON.parse(fs.readFileSync(join(String(dir), "records", `${name}.json`), "utf8")).marks;
+      const again = await runTests(String(dir), ["--isolate"], both, reuse);
+      expect({
+        first: first.exitCode,
+        marks: [marks("r.test.ts"), marks("w.test.ts")],
+        again: [reusedFiles(again.stderr), again.exitCode],
+      }).toEqual({ first: 0, marks: [[], ["pending-write"]], again: [["r.test.ts"], 0] });
+      expect(again.stderr).toContain("reuse: w.test.ts runs: mark pending-write");
+    },
+  );
+
   test("a path a file in another worker changed after this file read it makes the record not hold", async () => {
     // b reads "old" and passes; a, in the other worker, writes "new", the same size, before b
     // ends. A record holding the bytes at b's end would pair b's pass with bytes it never saw, and

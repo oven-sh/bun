@@ -93,9 +93,9 @@ struct FileState {
     /// Writes whose call returned a promise that had not settled yet: their effects apply once it
     /// is fulfilled (see [`FileState::settle`]).
     pending: Vec<(crate::Strong, OwnWrites)>,
-    /// How many of the file's [`OwnWrites`] are alive: calls made but not completed yet, such as
-    /// an async `node:fs` call or a pending `Bun.write`. A call that completes after its file
-    /// counts down its own file's count, never the next one's.
+    /// How many of the file's [`OwnWrites`] that write are alive: writes made but not completed
+    /// yet, such as an async `node:fs` write or a pending `Bun.write`. A call that completes after
+    /// its file counts down its own file's count, never the next one's.
     in_flight: std::sync::Arc<core::sync::atomic::AtomicU32>,
 }
 
@@ -487,13 +487,16 @@ pub struct OwnWrites {
     /// The number of the file that made the call; 0 between files.
     file: u32,
     effects: Vec<OwnEffect>,
-    /// The making file's count of calls in flight, counted down when this is dropped.
+    /// The making file's count of writes in flight. A call counts up there at its first effect, so
+    /// a call that only reads, such as an unawaited `fs.promises.stat`, is never in flight, and
+    /// counts down when this is dropped.
     in_flight: Option<std::sync::Arc<core::sync::atomic::AtomicU32>>,
+    counted: bool,
 }
 
 impl Drop for OwnWrites {
     fn drop(&mut self) {
-        if let Some(count) = &self.in_flight {
+        if let (Some(count), true) = (&self.in_flight, self.counted) {
             count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
         }
     }
@@ -512,11 +515,10 @@ impl OwnWrites {
     /// `None` when not recording.
     pub fn new(vm: &VirtualMachine) -> Option<OwnWrites> {
         let state = recorder_of(vm)?.state.borrow();
-        let in_flight = state.file.as_ref().map(|file| {
-            file.in_flight
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            std::sync::Arc::clone(&file.in_flight)
-        });
+        let in_flight = state
+            .file
+            .as_ref()
+            .map(|file| std::sync::Arc::clone(&file.in_flight));
         Some(OwnWrites {
             file: if in_flight.is_some() {
                 state.file_number
@@ -525,7 +527,24 @@ impl OwnWrites {
             },
             effects: Vec::new(),
             in_flight,
+            counted: false,
         })
+    }
+
+    /// The call writes through a file descriptor: it has no effect of its own, since the `open`
+    /// that made the descriptor has, but it is a write in flight until it completes.
+    pub fn writes_through_descriptor(&mut self) {
+        if !self.counted
+            && let Some(count) = &self.in_flight
+        {
+            count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            self.counted = true;
+        }
+    }
+
+    fn push(&mut self, effect: OwnEffect) {
+        self.writes_through_descriptor();
+        self.effects.push(effect);
     }
 
     /// The call is about to write `path` as `wrote` says: what the file looked at there is observed
@@ -538,8 +557,7 @@ impl OwnWrites {
         if let Some(file) = recorder.state.borrow_mut().file.as_mut() {
             file.own.before_write(&recorder.root, &path);
         }
-        self.effects
-            .push(OwnEffect::Wrote(path.into_boxed_slice(), wrote));
+        self.push(OwnEffect::Wrote(path.into_boxed_slice(), wrote));
     }
 
     /// The call puts a tree at `path` (an archive extracted there): [`Self::write`] with
@@ -555,7 +573,7 @@ impl OwnWrites {
 
     /// The call is `fs.mkdtemp`: the directory it returns is the file's product.
     pub fn created(&mut self) {
-        self.effects.push(OwnEffect::Created);
+        self.push(OwnEffect::Created);
     }
 }
 
@@ -1183,7 +1201,7 @@ impl TestInputRecorder {
         };
         file.settle();
         // A write still under way when the file ends, a pending `Bun.write` or an async `node:fs`
-        // call not completed yet, may land before or after the looks below, and a reused file
+        // write not completed yet, may land before or after the looks below, and a reused file
         // would not make it: its record must not hold, whatever the timing.
         if file.in_flight.load(core::sync::atomic::Ordering::Relaxed) != 0 {
             file.mark(b"pending-write");

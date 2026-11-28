@@ -4715,10 +4715,13 @@ fn note_file_write(
 ) -> Option<bun_jsc::test_input_recorder::OwnWrites> {
     let vm = global_this.bun_vm();
     let mut own = bun_jsc::test_input_recorder::OwnWrites::new(vm)?;
-    if let store::Data::File(file) = &store.data
-        && let PathOrFileDescriptor::Path(path) = &file.pathlike
-    {
-        own.write(vm, path.slice(), bun_jsc::test_input_recorder::Wrote::File);
+    if let store::Data::File(file) = &store.data {
+        match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => {
+                own.write(vm, path.slice(), bun_jsc::test_input_recorder::Wrote::File)
+            }
+            PathOrFileDescriptor::Fd(_) => own.writes_through_descriptor(),
+        }
     }
     Some(own)
 }

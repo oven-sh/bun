@@ -197,19 +197,10 @@ fn note_own<A: FsArgument + 'static>(
             read(Look::Lstat, first);
             write(&mut own, first, Wrote::Meta);
         }
-        F::Statfs
-        | F::Close
-        | F::Fchmod
-        | F::Fchown
-        | F::Fdatasync
-        | F::Fstat
-        | F::Fsync
-        | F::Ftruncate
-        | F::Futimes
-        | F::Read
-        | F::Readv
-        | F::Write
-        | F::Writev => {}
+        F::Fchmod | F::Fchown | F::Ftruncate | F::Futimes | F::Write | F::Writev => {
+            own.writes_through_descriptor()
+        }
+        F::Statfs | F::Close | F::Fdatasync | F::Fstat | F::Fsync | F::Read | F::Readv => {}
     }
     Some(own)
 }

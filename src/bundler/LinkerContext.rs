@@ -606,6 +606,11 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             self.check_for_memory_corruption();
         }
 
+        crate::linker_context::merge_external_esm_imports::merge_external_esm_imports(
+            self,
+            &mut chunks,
+        );
+
         self.graph.symbols.follow_all();
 
         Ok(chunks)

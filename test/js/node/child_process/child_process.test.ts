@@ -1810,4 +1810,126 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // several seconds, and the fixtures give up on their markers after 15 s so
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
+
+  // The first 'data' call returns only when the next two blocks are in the pipe, and it calls read(0) between them.
+  // That read pulls the second block at once, nested in the push() of the first. The handler keeps every chunk and
+  // also copies it at once. A first block of 100 KiB does not fit the pull buffer, so the reader hands over its own.
+  it.concurrent.each([16, 100 * 1024])(
+    "does not write over a chunk that is kept or still buffered (first block of %d bytes)",
+    async first => {
+      const waitFor = `file => { const deadline = Date.now() + 15_000; while (!fs.existsSync(file)) { if (Date.now() > deadline) throw new Error("timed out waiting for " + file); Bun.sleepSync(1); } }`;
+      using dir = tempDir("child-stdout-nested-read", {
+        "producer.js": `
+          const fs = require("node:fs");
+          const waitFor = ${waitFor};
+          [${first}, 1024, 1024].forEach((size, i) => {
+            waitFor("go" + i);
+            const block = Buffer.alloc(size, 97 + i);
+            for (let off = 0; off < block.length; ) off += fs.writeSync(1, block, off);
+            fs.writeFileSync("done" + i, "");
+          });
+        `,
+        "reader.js": `
+          const { spawn } = require("node:child_process");
+          const fs = require("node:fs");
+          const waitFor = ${waitFor};
+          const { stdout } = spawn(process.execPath, ["producer.js"], { stdio: ["ignore", "pipe", "inherit"] });
+          // "a16 b1024 ...": each run of one letter and its length.
+          const runs = chunks => Buffer.concat(chunks).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim();
+          const kept = [], copied = [];
+          // 'resume' is emitted after the first read() found the pipe empty, so that read gets the whole first block.
+          stdout.once("resume", () => {
+            fs.writeFileSync("go0", "");
+            waitFor("done0");
+          });
+          stdout.on("data", chunk => {
+            kept.push(chunk);
+            copied.push(Buffer.from(chunk));
+            if (kept.length !== 1) return;
+            fs.writeFileSync("go1", "");
+            waitFor("done1");
+            stdout.read(0);
+            fs.writeFileSync("go2", "");
+            waitFor("done2");
+          });
+          stdout.on("end", () => console.log("kept [" + runs(kept) + "] copied [" + runs(copied) + "]"));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reader.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const blocks = `a${first} b1024 c1024`;
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `kept [${blocks}] copied [${blocks}]`,
+        stderr: "",
+        exitCode: 0,
+      });
+      // As above: the fixtures give up on their markers after 15 s, so their own error is what gets reported.
+    },
+    30_000,
+  );
 });
+
+it.concurrent("a child stdout chunk kept across text(child.stdout) keeps its bytes", async () => {
+  const writer = `let n = 0; process.stdin.on("data", () => { if (n++ === 0) process.stdout.write("version-7\\n"); else process.stdout.write("alpha\\nbeta\\n", () => process.exit(0)); });`;
+  const script = `
+    const { spawn } = require("node:child_process");
+    const { text } = require("node:stream/consumers");
+    const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+    child.stdout.once("data", async banner => {
+      const rest = text(child.stdout);
+      // After the ticks that start the read of the rest.
+      setImmediate(() => child.stdin.write("\\n"));
+      const list = (await rest).trim().split("\\n");
+      console.log("banner [" + banner.toString().trim() + "] list " + list.join(","));
+    });
+    // After the tick that starts the first read.
+    setImmediate(() => child.stdin.write("\\n"));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "banner [version-7] list alpha,beta",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The child writes block i (the letter a + i) when it gets a line on stdin, so the read that gets a block already
+// waits and push() runs in its reaction. The listener keeps every chunk.
+it.concurrent(
+  "a chunk that a child stdout 'data' listener keeps is not written over when the listener calls read(0)",
+  async () => {
+    const BLOCKS = 4;
+    const SIZE = 1024;
+    const writer = `let i = 0; const next = () => i < ${BLOCKS} ? process.stdout.write(Buffer.alloc(${SIZE}, 97 + i++)) : process.exit(0); next(); process.stdin.on("data", next);`;
+    const script = `
+    const { spawn } = require("node:child_process");
+    const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+    // The last line can reach a child that already exited.
+    child.stdin.on("error", () => {});
+    const kept = [];
+    child.stdout.on("data", chunk => {
+      kept.push(chunk);
+      child.stdin.write("\\n");
+      child.stdout.read(0);
+    });
+    child.stdout.on("end", () => {
+      // "a1024 b1024 ...": each run of one letter and its length.
+      console.log(Buffer.concat(kept).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim());
+    });
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: Array.from({ length: BLOCKS }, (_, i) => String.fromCharCode(97 + i) + SIZE).join(" "),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

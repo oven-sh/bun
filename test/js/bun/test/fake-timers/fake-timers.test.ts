@@ -1346,6 +1346,26 @@ describe.each([
     expect([Date.now(), performance.now()]).toEqual([5, 6]);
   });
 
+  test("so does a spy of another object that was assigned, once that object is garbage collected", () => {
+    const spy = (() => api.spyOn({ now: () => 5 }, "now"))();
+    Date.now = spy;
+    api.useFakeTimers({ now: 50_000 });
+    Bun.gc(true);
+    api.useRealTimers();
+    expect(Date.now).toBe(spy);
+  });
+
+  test("so is a spy put on through a Proxy, once the Proxy is garbage collected", () => {
+    const spy = (() => api.spyOn(new Proxy(Date, {}), "now"))();
+    expect(Date.now).toBe(spy);
+    Bun.gc(true);
+    api.useFakeTimers({ now: 50_000 });
+    api.useRealTimers();
+    expect(Date.now).toBe(spy);
+    spy.mockRestore();
+    expect(Date.now).toBe(builtins[0]);
+  });
+
   test("a spy stays if its clock isn't faked", () => {
     api.spyOn(Date, "now").mockReturnValue(1000);
     api.spyOn(performance, "now").mockReturnValue(7);

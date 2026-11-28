@@ -442,6 +442,7 @@ pub struct TestIsolationState {
     /// What the outgoing file gives back once its realm is retired. See
     /// [`VirtualMachine::release_at_retirement`].
     at_retirement: JsCell<Vec<Box<dyn FnOnce()>>>,
+    pub input_recorder: crate::test_input_recorder::InputRecorderCell,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1748,6 +1749,7 @@ impl VirtualMachine {
     }
 
     pub(crate) fn enable_macro_mode(&self) {
+        crate::test_input_recorder::mark(self, b"macro");
         if !self.has_enabled_macro_mode.get() {
             self.has_enabled_macro_mode.set(true);
             self.macro_event_loop
@@ -4854,6 +4856,7 @@ impl VirtualMachine {
             }
         };
 
+        crate::test_input_recorder::did_find(self, &result);
         if !self.macro_mode.get() {
             self.has_any_macro_remappings.set(
                 self.has_any_macro_remappings.get()
@@ -4926,6 +4929,13 @@ impl VirtualMachine {
         mut query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
+        let recording = crate::test_input_recorder::will_resolve(
+            global,
+            specifier,
+            source,
+            mode,
+            IS_A_FILE_PATH,
+        );
         if let Some(resolved) = Self::resolve_with_on_resolve::<IS_A_FILE_PATH>(
             global,
             specifier,
@@ -4934,16 +4944,17 @@ impl VirtualMachine {
             mode,
             false,
         )? {
-            return Ok(resolved);
+            return Ok(recording.did_resolve(resolved, true));
         }
-        Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+        let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
             global,
             specifier,
             source,
             query_string,
             mode,
             global.bun_vm().transpiler.get().resolver.opts.global_cache,
-        )
+        )?;
+        Ok(recording.did_resolve(resolved, false))
     }
 
     /// `None` when no `onResolve` claims `specifier`, or `same_is_no_answer` is set and it returns `specifier` unchanged.
@@ -5003,7 +5014,7 @@ impl VirtualMachine {
         Ok(Some(resolved))
     }
 
-    fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
+    pub(crate) fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,

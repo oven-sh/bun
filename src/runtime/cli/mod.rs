@@ -81,6 +81,10 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
+    /// `bun test --reuse`: skip test files whose input record still holds.
+    #[path = "InputReuse.rs"]
+    pub(crate) mod input_reuse;
+
     /// `bun test --aot --shard`: puts test files that import the same modules in the same shard.
     #[path = "ShardsByReach.rs"]
     pub(crate) mod shards_by_reach;

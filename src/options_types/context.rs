@@ -504,6 +504,9 @@ pub struct TestOptions {
     /// Otherwise the value is a git ref (commit, branch, tag) to diff
     /// against.
     pub changed: Option<Box<[u8]>>,
+    /// `bun test --reuse[=<mode>]` or `[test] reuse`: record what each test file reads, and skip a
+    /// file whose record still holds. Implies `isolate`.
+    pub reuse: Option<TestReuse>,
     /// `bun test --shard=M/N`. When set, test files are sorted by path
     /// and only every Nth file (starting from M-1) is run. index is
     /// 1-based; both are validated at parse time so `1 <= index <= count`.
@@ -550,6 +553,32 @@ impl TestEnvironment {
             Self::Node => "node",
             Self::Jsdom => "jsdom",
             Self::HappyDom => "happy-dom",
+        }
+    }
+}
+
+/// What `bun test --reuse` does with the files whose record holds.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum TestReuse {
+    /// Skip them, and count what their records say.
+    Reuse,
+    /// The same, and say why each other file runs.
+    Explain,
+    /// Run every file, and fail the run when one whose record held ends with other counts.
+    Check,
+    /// Say for each file whether it would run and why, and run none.
+    List,
+}
+
+impl TestReuse {
+    /// The value of `--reuse=<mode>` or of `[test] reuse`.
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"" | b"true" => Some(Self::Reuse),
+            b"explain" => Some(Self::Explain),
+            b"check" => Some(Self::Check),
+            b"list" => Some(Self::List),
+            _ => None,
         }
     }
 }
@@ -654,6 +683,7 @@ impl Default for TestOptions {
             parallel_delay_ms: None,
             test_worker: false,
             changed: None,
+            reuse: None,
             shard: None,
             timings_files: Vec::new(),
             update_timings: false,

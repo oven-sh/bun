@@ -1,0 +1,92 @@
+---
+title: "Reusing test results"
+description: "Skip test files whose inputs have not changed since they last passed with bun test --reuse"
+---
+
+`bun test --reuse` records what each test file depends on. On the next run, Bun skips every file whose inputs are unchanged since it last passed, and counts its recorded results in the summary.
+
+```sh terminal icon="terminal"
+bun test --reuse
+```
+
+```txt
+bun test v1.4.6
+src/math.test.ts: reused, 2 pass, 2 expect() calls
+
+ 3 pass
+ 0 fail
+ 1 file reused, not run
+ 3 expect() calls
+Ran 3 tests across 2 files. [40.00ms]
+```
+
+`--reuse` implies [`--isolate`](/test/parallel#--isolate), because a record describes one file run in a fresh global object. It works with `--parallel` and `--shard`.
+
+To turn it on for every run, set `reuse` in `bunfig.toml`. The `--reuse` flag overrides it.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reuse = true # or "explain", "check", "list"
+```
+
+## What a record holds
+
+Bun keeps the records in one store under `node_modules/.cache/bun-test-reuse`, in the record root. The record root is the nearest directory at or above the working directory that has `bun.lock`, `bun.lockb`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `yarn.lock` or `package-lock.json`. Without one, it is the working directory. Paths in a record are relative to the root, so records still hold in another checkout of the same repository.
+
+A file's record holds:
+
+- every question the file asked the module resolver, and its answer;
+- every module the file loaded, with a SHA-256 hash of its source;
+- what the file's own code read through `node:fs`, `Bun.file`, `Bun.Glob`, snapshots and `Bun.mmap`;
+- what each path the file wrote holds when the file ends;
+- the file's pass, fail, skip and todo counts.
+
+A record also has a fingerprint of the run. The fingerprint covers the Bun version and revision, the flags that change how tests run, the transpiler options, the `.env` files `bun test` loads, and the environment variables Bun itself reads. A run with another fingerprint reuses no record, and Bun prints one line that says how many it ignored. So after you upgrade Bun, every file runs once.
+
+## When a file always runs
+
+Bun runs a file, and records it again, when any of these is true:
+
+- The file failed, or an unhandled error happened during it.
+- A module it loaded or a file it read has other bytes.
+- A question it asked the resolver now gets another answer.
+- A path it wrote no longer holds what it left there.
+- It did something a record cannot replay. Examples are starting a process, calling `Bun.which`, loading a native addon, using `bun:ffi`, starting a `Worker`, opening a SQLite database, and using a macro or `import.meta.glob`.
+- A write it started was still under way when it ended.
+- A path it read changed while it ran, for example from a file in another `--parallel` worker.
+- A plugin answered one of its resolutions or served one of its sources.
+
+A run that collects coverage or uses `--aot` neither records nor reuses.
+
+## Modes
+
+| Flag              | What it does                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `--reuse`         | Skips the files whose record holds, and records the others.                                                   |
+| `--reuse=explain` | The same, and prints why each other file runs, such as `reuse: a.test.ts runs: changed src/a.ts`.             |
+| `--reuse=check`   | Runs every file. The run fails when a file whose record held ends with other pass, fail, skip or todo counts. |
+| `--reuse=list`    | Prints for each file whether it would be reused or why it runs, and runs no file.                             |
+
+`--reuse=check` tells you whether reuse would have skipped a file that now behaves differently. A different number of `expect()` calls alone gets one dimmed line, and the run does not fail.
+
+## Environment variables
+
+These variables work with or without `--reuse`. `BUN_TEST_INPUT_RECORD_DIR` and `BUN_TEST_INPUT_REUSE` override the store directory and the mode that `--reuse` and `bunfig.toml` set.
+
+| Variable                             | Effect                                                                                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BUN_TEST_INPUT_RECORD_DIR=<dir>`    | Records into `<dir>` instead of the default store. With `--isolate` and without `--reuse`, Bun records and skips no file.                         |
+| `BUN_TEST_INPUT_REUSE=<mode>`        | The mode: `1`, `true`, `explain`, `check` or `list`. `0`, `false`, `no` and `off` turn reuse off and keep recording. Any other value is an error. |
+| `BUN_TEST_INPUT_REUSE_REPORT=<file>` | Writes one JSON line per file that says whether its record held, and why not.                                                                     |
+| `BUN_TEST_INPUT_RECORD_SALT=<text>`  | Adds `<text>` to the fingerprint. Use it for what you know changes outcomes, such as the version of a database.                                   |
+| `BUN_TEST_INPUT_RECORD_ENV=<A,B>`    | Adds the values of these environment variables to the fingerprint.                                                                                |
+| `BUN_TEST_INPUT_RECORD_ROOT=<dir>`   | The record root, resolved against the working directory. It must be the working directory or a directory above it.                                |
+| `BUN_TEST_INPUT_RECORD_JSON=1`       | Also writes each record as a JSON file beside the store, so you can read it.                                                                      |
+
+## Limits
+
+- Reuse works on Linux, macOS and the other Unix systems. On Windows, `--reuse` prints that it is not available, and every file runs.
+- Reuse needs `--isolate`. `--reuse` turns it on, and `--reuse --no-isolate` is an error.
+- Bun sees a change to a path that a file read through the path's size and modification time while the file runs. Two writes of the same size within one timestamp tick can go unseen.
+- Bun does not record what a test reads from `process.env`. A variable such as a database port can differ on every run, and it would make every record stale. Name the variables that matter in `BUN_TEST_INPUT_RECORD_ENV`.
+- A file keeps its last four distinct records.

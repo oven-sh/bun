@@ -627,6 +627,13 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             };
 
             // ── import ──────────────────────────────────────────────────────
+            bun_jsc::test_input_recorder::did_resolve_directly(
+                vm,
+                "preload",
+                normalized,
+                top_level_dir,
+                &result,
+            );
             let path_text = result
                 .path()
                 .expect("resolver Success result has a primary path")
@@ -2113,6 +2120,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if !disable_transpilying {
                     maybe_watch_file(jsc_vm, &mut input_file, is_node_override, path, hash);
                 }
+                bun_jsc::test_input_recorder::did_read_source(
+                    jsc_vm,
+                    path.text,
+                    loader,
+                    &parse_result.source.contents,
+                    virtual_source.is_some(),
+                );
 
                 // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
                 if unsafe { (*(*transpiler).log).errors > 0 } {
@@ -2587,6 +2601,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     ..Default::default()
                 });
             }
+            // The bundle reads the scripts and styles the page names through the bundler's own
+            // resolver and file layer, which no record sees.
+            bun_jsc::test_input_recorder::mark(global_object.bun_vm(), b"html-bundle");
             let html_bundle = bun_removable_features::call_removable_or!(
                 Bundler,
                 Throw,
@@ -3708,6 +3725,7 @@ fn transpile_file<const DATA_ONLY: bool>(
     } else if is_commonjs_require && jsc_vm.has_mutated_built_in_extensions.get() > 0 {
         use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
         if let Some(entry) = find_longest_registered_extension(jsc_vm, _specifier.slice()) {
+            bun_jsc::test_input_recorder::mark(jsc_vm, b"require-extensions");
             match entry {
                 CustomLoader::Loader(loader) => lr.loader = Some(*loader),
                 CustomLoader::Custom(strong) => {
@@ -3846,6 +3864,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                     && jsc_vm.has_mutated_built_in_extensions.get() == 0
                 {
                     if let Some(entry) = find_longest_registered_extension(jsc_vm, lr.path.text) {
+                        bun_jsc::test_input_recorder::mark(jsc_vm, b"require-extensions");
                         match entry {
                             CustomLoader::Loader(loader) => break 'loader *loader,
                             CustomLoader::Custom(strong) => {

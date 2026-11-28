@@ -775,6 +775,9 @@ pub mod fs {
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
         }
+        pub(crate) fn forget_all(&mut self) {
+            self.inner().forget_all()
+        }
     }
 
     /// The active filesystem backend (always the real filesystem).
@@ -1076,6 +1079,12 @@ pub mod fs {
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)
+        }
+
+        /// [`Self::bust_entries_cache`] of every directory.
+        pub(crate) fn bust_all_entries_caches(&mut self) {
+            let _g = self.entries_mutex.lock_guard();
+            self.entries.forget_all()
         }
 
         /// lstat + (if symlink) open + fstat +

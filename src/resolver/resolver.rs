@@ -2736,6 +2736,13 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
+    /// [`Self::bust_dir_cache_in`] of every directory: what is on disk now is read again.
+    pub fn bust_all_dir_caches_in(fs: &mut Fs::file_system::RealFS) {
+        fs.bust_all_entries_caches();
+        // SAFETY: as in `bust_dir_cache_in`: `forget_all` takes the map's mutex first.
+        unsafe { (*DirInfo::hash_map_instance()).forget_all() };
+    }
+
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(

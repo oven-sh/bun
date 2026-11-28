@@ -348,6 +348,11 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
             return Ok(Source::Owned(out));
         }
         crate::node::types::Valid::path_null_bytes(s, global)?;
+        bun_jsc::test_input_recorder::own_read(
+            global.bun_vm(),
+            bun_jsc::test_own_reads::Look::Content,
+            s,
+        );
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }
     if let Some(ab) = value.as_array_buffer(global) {

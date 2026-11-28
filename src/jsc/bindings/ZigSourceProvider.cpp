@@ -73,6 +73,7 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
+extern "C" void Bun__TestInputRecorder__mark(void* bunVM, const char* name);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 
@@ -90,6 +91,9 @@ Ref<SourceProvider> SourceProvider::create(
         sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
     }
 
+    // What a macro or `import.meta.glob` put into the output is not in the source.
+    if (resolvedSource.depends_on_more_than_source)
+        Bun__TestInputRecorder__mark(globalObject->bunVM(), "macro-or-import-meta-glob");
     auto string = resolvedSource.source_code.transferToWTFString();
     auto sourceURLString = resolvedSource.source_url.transferToWTFString();
 

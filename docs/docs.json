@@ -322,7 +322,7 @@
           {
             "group": "Test Execution",
             "icon": "zap",
-            "pages": ["/test/runtime-behavior", "/test/discovery", "/test/parallel"]
+            "pages": ["/test/runtime-behavior", "/test/discovery", "/test/parallel", "/test/reuse"]
           },
           {
             "group": "Test Features",

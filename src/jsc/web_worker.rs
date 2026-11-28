@@ -411,6 +411,7 @@ impl WebWorker {
     ) -> Option<bun_ptr::RefPtr<WebWorker>> {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
+        crate::test_input_recorder::mark(parent, b"worker");
 
         let spec_slice = specifier_str.to_utf8();
         // The transpiler holds its address: it is neither moved nor named until the guard below has run.

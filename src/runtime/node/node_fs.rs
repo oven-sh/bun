@@ -259,7 +259,9 @@ pub(crate) fn note_found_on_disk() {
     }
 }
 
+/// Before `Bun.spawn`, `Bun.spawnSync` (and so `node:child_process`) or the shell starts a process.
 pub(crate) fn note_process_start() {
+    bun_jsc::test_input_recorder::mark_current(b"spawn");
     if let Some(graph) = compiled_program_graph() {
         graph.note_process_start();
     }
@@ -1223,13 +1225,15 @@ mod _async_tasks {
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        /// `callback`: as for [`AsyncFSTask::create`].
+        /// `callback`: as for [`AsyncFSTask::create`]. What the call writes is not applied on this
+        /// path, so later looks there stay inputs.
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
+            _own: Option<bun_jsc::test_input_recorder::OwnWrites>,
         ) -> JSValue {
             let mut task = Box::new(Self {
                 completion: FsCompletion::new(cx.global(), callback),
@@ -1695,6 +1699,11 @@ mod _async_tasks {
         fn bytes_read(&self) -> u64 {
             0
         }
+        /// The path the call returns, as `fs.mkdtemp` does.
+        #[inline]
+        fn returned_path(&self) -> Option<&[u8]> {
+            None
+        }
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1736,6 +1745,10 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.into_js(global)
+        }
+        #[inline]
+        fn returned_path(&self) -> Option<&[u8]> {
+            Some(self.slice())
         }
     }
     impl FsReturn for StringOrUndefined {
@@ -1923,6 +1936,8 @@ mod _async_tasks {
     pub(crate) struct AsyncFSJs {
         pub(crate) completion: FsCompletion,
         pub(crate) tracker: AsyncTaskTracker,
+        /// What the call writes, for the test input recorder once it succeeded.
+        pub(crate) own: Option<bun_jsc::test_input_recorder::OwnWrites>,
     }
 
     impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
@@ -1950,6 +1965,13 @@ mod _async_tasks {
             move_waiting_descriptors();
             if let Ok(result) = &result {
                 args.write_back(result.bytes_read());
+            }
+            if let (Ok(result), Some(own)) = (&result, js.own) {
+                bun_jsc::test_input_recorder::own_wrote(
+                    global_object.bun_vm(),
+                    own,
+                    result.returned_path(),
+                );
             }
             let success = result.is_ok();
             let completion = &js.completion;
@@ -1995,8 +2017,9 @@ mod _async_tasks {
             args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
+            own: Option<bun_jsc::test_input_recorder::OwnWrites>,
         ) -> JSValue {
-            Self::schedule(cx, args, vm, callback)
+            Self::schedule_with(cx, args, vm, callback, own)
         }
 
         /// [`Self::create`] for a caller that has no `Binding`.
@@ -2005,6 +2028,16 @@ mod _async_tasks {
             args: ThreadIsolated<A>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
+        ) -> JSValue {
+            Self::schedule_with(cx, args, vm, callback, None)
+        }
+
+        fn schedule_with(
+            cx: &bun_jsc::JsThread<'_>,
+            args: ThreadIsolated<A>,
+            vm: &VirtualMachine,
+            callback: Option<JSValue>,
+            own: Option<bun_jsc::test_input_recorder::OwnWrites>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
@@ -2021,6 +2054,7 @@ mod _async_tasks {
                 AsyncFSJs {
                     completion,
                     tracker,
+                    own,
                 },
             );
             value
@@ -2074,6 +2108,9 @@ mod _async_tasks {
         pub(crate) subtask_count: AtomicUsize,
         /// `Some` iff `IS_SHELL`, until the copy is reported to it.
         pub(crate) shelltask: Option<Box<ShellCpTask>>,
+        /// What `fs.cp` writes, for the test input recorder once it succeeded. Touched on the JS
+        /// thread only, when the task is made and when it completes.
+        own: core::cell::Cell<Option<bun_jsc::test_input_recorder::OwnWrites>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -2248,6 +2285,7 @@ mod _async_tasks {
             _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             vm: &VirtualMachine,
+            own: Option<bun_jsc::test_input_recorder::OwnWrites>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
@@ -2260,6 +2298,7 @@ mod _async_tasks {
                 tracker,
                 cx.context().id(),
                 None,
+                own,
             );
             value
         }
@@ -2280,6 +2319,7 @@ mod _async_tasks {
                 // As `ShellCpTask`, which is waiting for this.
                 bun_event_loop::ContextId::NONE,
                 Some(shelltask),
+                None,
             )
         }
 
@@ -2290,8 +2330,10 @@ mod _async_tasks {
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
             shelltask: Option<Box<ShellCpTask>>,
+            own: Option<bun_jsc::test_input_recorder::OwnWrites>,
         ) {
             let task = Box::new(Self {
+                own: core::cell::Cell::new(own),
                 promise,
                 context,
                 args: cp_args,
@@ -2408,6 +2450,9 @@ mod _async_tasks {
         ) -> JsResult<()> {
             self.note_written();
             let success = (*self.result.get_mut()).is_ok();
+            if let Some(own) = self.own.take().filter(|_| success) {
+                bun_jsc::test_input_recorder::own_wrote(global_object.bun_vm(), own, None);
+            }
             let promise_value = self.promise.value();
             let promise = self.promise.get();
             let result = match core::mem::replace(self.result.get_mut(), Ok(())) {
@@ -2887,6 +2932,7 @@ mod _async_tasks {
                 AsyncFSJs {
                     completion,
                     tracker,
+                    own: None,
                 },
             );
             value

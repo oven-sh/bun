@@ -1872,6 +1872,7 @@ pub(crate) mod js_bundler {
     /// `Bun.build(config)`
     pub(crate) fn build(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
+        bun_jsc::test_input_recorder::mark(global_this.bun_vm(), b"bundler");
         let config = config.to_js();
         if !config.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(

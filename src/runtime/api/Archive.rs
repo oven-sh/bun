@@ -310,6 +310,56 @@ impl Archive {
         data: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let own = Self::own_write(cx, path, bun_jsc::test_input_recorder::Wrote::File)?;
+        let written = Self::write_unrecorded(cx, path, data, options)?;
+        Self::own_wrote(cx, own, written);
+        Ok(written)
+    }
+
+    /// For the test input recorder: what the file looked at at `path` is observed now, and the
+    /// effect of the write or extract waits for its promise.
+    fn own_write(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        wrote: bun_jsc::test_input_recorder::Wrote,
+    ) -> JsResult<Option<bun_jsc::test_input_recorder::OwnWrites>> {
+        let global = cx.global();
+        let vm = global.bun_vm();
+        let Some(mut own) = bun_jsc::test_input_recorder::OwnWrites::new(vm) else {
+            return Ok(None);
+        };
+        let path = path.to_js();
+        if !path.is_string() {
+            return Ok(None);
+        }
+        let path = path.to_utf8(global)?;
+        match wrote {
+            bun_jsc::test_input_recorder::Wrote::Tree => own.write_tree(vm, path.slice()),
+            wrote => own.write(vm, path.slice(), wrote),
+        }
+        Ok(Some(own))
+    }
+
+    fn own_wrote(
+        cx: &mut JsScope<'_>,
+        own: Option<bun_jsc::test_input_recorder::OwnWrites>,
+        promise: JSValue,
+    ) {
+        if let Some(own) = own {
+            bun_jsc::test_input_recorder::own_wrote_when_fulfilled(
+                cx.global().bun_vm(),
+                own,
+                promise,
+            );
+        }
+    }
+
+    fn write_unrecorded(
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        data: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
         let (path_arg, data_arg) = (path.to_js(), data.to_js());
@@ -376,6 +426,18 @@ impl Archive {
     ///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
     /// Returns Promise<number> with count of extracted files
     pub(crate) fn extract(
+        &self,
+        cx: &mut JsScope<'_>,
+        path: JsLocal<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let own = Self::own_write(cx, path, bun_jsc::test_input_recorder::Wrote::Tree)?;
+        let extracted = self.extract_unrecorded(cx, path, options)?;
+        Self::own_wrote(cx, own, extracted);
+        Ok(extracted)
+    }
+
+    fn extract_unrecorded(
         &self,
         cx: &mut JsScope<'_>,
         path: JsLocal<'_>,

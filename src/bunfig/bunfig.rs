@@ -23,7 +23,7 @@ use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
     MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
-    TestEnvironment, TestGlobals,
+    TestEnvironment, TestGlobals, TestReuse,
 };
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
@@ -538,6 +538,31 @@ impl<'a> Parser<'a, '_> {
                     // --globals is parsed first and wins.
                     if self.ctx.test_options.globals.is_none() {
                         self.ctx.test_options.globals = Some(globals);
+                    }
+                }
+
+                if let Some(expr) = test.get(b"reuse") {
+                    let reuse = match &expr.data {
+                        ExprData::EBoolean(enabled) => enabled.value.then_some(TestReuse::Reuse),
+                        _ => {
+                            self.expect_string(&expr)?;
+                            let name = expr.as_string(self.bump).unwrap_or(b"");
+                            let reuse = TestReuse::from_name(name).filter(|_| !name.is_empty());
+                            if reuse.is_none() {
+                                return self.add_error_format(
+                                    expr.loc,
+                                    format_args!(
+                                        "expected \"reuse\" to be a boolean, \"explain\", \"check\" or \"list\" but received \"{}\"",
+                                        bstr::BStr::new(name)
+                                    ),
+                                );
+                            }
+                            reuse
+                        }
+                    };
+                    // --reuse is parsed first and wins.
+                    if self.ctx.test_options.reuse.is_none() {
+                        self.ctx.test_options.reuse = reuse;
                     }
                 }
 

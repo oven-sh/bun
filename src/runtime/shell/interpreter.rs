@@ -2282,6 +2282,8 @@ pub(crate) fn create_shell_interpreter<'a>(
     use crate::shell::parsed_shell_script::{self, ParsedShellScript};
 
     let global = cx.global();
+    // Builtins and redirections read and write files out of sight, and commands run elsewhere.
+    bun_jsc::test_input_recorder::mark(global.bun_vm(), b"shell");
     let parsed_shell_script_js = parsed_shell_script.to_js();
     let parsed_shell_script = parsed_shell_script_js
         .as_class_ref::<ParsedShellScript>()

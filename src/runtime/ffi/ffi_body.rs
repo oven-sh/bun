@@ -982,6 +982,7 @@ impl StringArray {
 impl FFI {
     pub(crate) fn cc<'a>(cx: &mut JsScope<'a>, options: JsLocal<'a>) -> JsResult<JSValue> {
         let global_this = cx.global();
+        bun_jsc::test_input_recorder::mark(global_this.bun_vm(), b"ffi");
         if !global_this.bun_vm().allow_ffi_cc() {
             return Err(global_this
                 .err(
@@ -1486,6 +1487,7 @@ impl FFI {
         let object_value = symbols.to_js();
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
+        bun_jsc::test_input_recorder::mark(global.bun_vm(), b"ffi");
 
         if object_value.is_empty_or_undefined_or_null() {
             return Ok(invalid_options_arg(global));

@@ -27,6 +27,8 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
 
 extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
 extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
+extern "C" void Bun__TestInputRecorder__didServeCachedSource(void* bunVM, const BunString* key);
+extern "C" bool Bun__TestInputRecorder__enabled;
 
 static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
@@ -47,7 +49,13 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
         return nullptr;
     ASSERT(it->value);
     auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
-    return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
+    if (provider->m_madeFromHash != madeFromHash(vm, key, pluginContents))
+        return nullptr;
+    if (Bun__TestInputRecorder__enabled) {
+        BunString borrowedKey = Bun::toString(key);
+        Bun__TestInputRecorder__didServeCachedSource(WebCore::clientData(vm)->bunVM, &borrowedKey);
+    }
+    return provider;
 }
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)

@@ -340,6 +340,8 @@ impl RuntimeTranspilerStore {
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
+                record_input: crate::test_input_recorder::recording_token(vm),
+                input_sha256: None,
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -399,6 +401,10 @@ pub struct TranspilerJob {
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
+    /// The test input recorder is on, with its token for the current file: the pool thread hashes the source it read into
+    /// `input_sha256`, with whether it was virtual.
+    record_input: Option<u32>,
+    input_sha256: Option<([u8; 32], bool)>,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -512,6 +518,18 @@ impl TranspilerJob {
             ),
             Some(e) => (String::clone_utf8(&self.path_text), Err(e)),
             None => {
+                if let (Some(token), Some((sha256, is_virtual))) =
+                    (self.record_input, self.input_sha256)
+                {
+                    crate::test_input_recorder::did_hash_source(
+                        vm,
+                        token,
+                        &self.path_text,
+                        loader,
+                        sha256,
+                        is_virtual,
+                    );
+                }
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
@@ -743,6 +761,7 @@ impl TranspilerJob {
         if let Some(own) = &this.aot_package_config {
             parse_options.apply_aot_package_config(own);
         }
+        let has_virtual_source = parse_options.virtual_source.is_some();
         let parse_result = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
@@ -759,6 +778,10 @@ impl TranspilerJob {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+        if this.record_input.is_some() {
+            let sha256 = crate::test_input_recorder::source_hash(&parse_result.source.contents);
+            this.input_sha256 = Some((sha256, has_virtual_source));
+        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming

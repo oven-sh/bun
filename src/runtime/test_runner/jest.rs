@@ -237,6 +237,8 @@ pub(crate) struct Summary {
     pub(crate) skipped_because_label: u32,
     /// Files reordered by `describe.shuffle`. The seed is printed if there are any.
     pub(crate) shuffled: u32,
+    /// Files not run because their input record held; `files` counts them too.
+    pub(crate) reused_files: u32,
 }
 
 impl Summary {

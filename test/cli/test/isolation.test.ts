@@ -3510,3 +3510,1768 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
   });
 });
+
+// The recorder's store relies on flock, so recording and reuse are Unix only: on Windows,
+// `--reuse` says it is unavailable and every file runs.
+describe.concurrent.skipIf(isWindows)("BUN_TEST_INPUT_RECORD_DIR writes one record of inputs per test file", () => {
+  const recorderFixtures = {
+    "package.json": `{ "name": "recorded" }`,
+    "shared.ts": `export const value = 1;\n`,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./shared";
+      test("a", () => {
+        expect(() => require("./missing")).toThrow();
+        expect(value).toBe(1);
+      });
+    `,
+    "b.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./shared";
+      test("b", () => expect(value).toBe(1));
+      test.skip("skipped", () => {});
+    `,
+  };
+  const sha256 = (dir: string, file: string) =>
+    new Bun.CryptoHasher("sha256").update(fs.readFileSync(join(dir, file))).digest("hex");
+
+  function readRecords(dir: string) {
+    const records = join(dir, "records");
+    const names = fs.existsSync(records)
+      ? fs
+          .readdirSync(records)
+          .filter(name => name.endsWith(".json"))
+          .sort()
+      : [];
+    return names.map(name => {
+      const record = JSON.parse(fs.readFileSync(join(records, name), "utf8"));
+      const local = (p: string) =>
+        p === record.root ? "." : p.startsWith(record.root + "/") ? p.slice(record.root.length + 1) : p;
+      return {
+        name,
+        file: record.file,
+        outcome: record.outcome,
+        resolutions: record.resolutions.map((r: any) => [r.kind, local(r.specifier), local(r.importer), r.answer]),
+        modules: record.modules,
+      };
+    });
+  }
+
+  function expected(dir: string, sharedCachedInB: boolean) {
+    const shared = { path: "shared.ts", sha256: sha256(dir, "shared.ts"), loader: "ts" };
+    return [
+      {
+        name: "a.test.ts.json",
+        file: "a.test.ts",
+        outcome: { pass: 1, fail: 0, skip: 0, todo: 0, expectations: 2, unhandledErrors: 0 },
+        resolutions: [
+          ["entry", "a.test.ts", ".", "a.test.ts"],
+          ["import", "a.test.ts", "", "a.test.ts"],
+          ["import", "./shared", "a.test.ts", "shared.ts"],
+          ["require", "./missing", "a.test.ts", null],
+        ],
+        modules: [{ path: "a.test.ts", sha256: sha256(dir, "a.test.ts"), loader: "ts" }, shared],
+      },
+      {
+        name: "b.test.ts.json",
+        file: "b.test.ts",
+        outcome: { pass: 1, fail: 0, skip: 1, todo: 0, expectations: 1, unhandledErrors: 0 },
+        resolutions: [
+          ["entry", "b.test.ts", ".", "b.test.ts"],
+          ["import", "b.test.ts", "", "b.test.ts"],
+          ["import", "./shared", "b.test.ts", "shared.ts"],
+        ],
+        modules: [
+          { path: "b.test.ts", sha256: sha256(dir, "b.test.ts"), loader: "ts" },
+          sharedCachedInB ? { ...shared, cached: true } : shared,
+        ],
+      },
+    ];
+  }
+
+  test("--isolate records resolutions, hashed sources and outcomes, including sources served from the cache", async () => {
+    using dir = tempDir("input-record", recorderFixtures);
+    const env = { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records", BUN_TEST_INPUT_RECORD_JSON: "1" };
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"], env);
+    expect({ records: readRecords(String(dir)), exitCode }).toEqual({
+      records: expected(String(dir), true),
+      exitCode: 0,
+    });
+    expect(stderr).toContain("2 pass");
+  });
+
+  test("--parallel=2 records the same questions and sources from every worker", async () => {
+    using dir = tempDir("input-record-parallel", recorderFixtures);
+    const env = { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records", BUN_TEST_INPUT_RECORD_JSON: "1" };
+    const { exitCode } = await runTests(String(dir), ["--parallel=2"], ["./a.test.ts", "./b.test.ts"], env);
+    const records = readRecords(String(dir)).map(r => ({ ...r, modules: r.modules.map(({ cached, ...m }: any) => m) }));
+    expect({ records, exitCode }).toEqual({ records: expected(String(dir), false), exitCode: 0 });
+  });
+
+  test("a module that a finished file is still loading is not credited to the next file", async () => {
+    using dir = tempDir("input-record-leftover", {
+      "late.ts": `export const late = 1;\n`,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("a", () => {
+          import("./late");
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("b", async () => {
+          await Bun.sleep(1);
+        });
+      `,
+    });
+    const env = { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records", BUN_TEST_INPUT_RECORD_JSON: "1" };
+    const { exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"], env);
+    const records = readRecords(String(dir));
+    expect({
+      files: records.map(r => r.file),
+      modulesOfB: records[1]?.modules.map((m: any) => m.path),
+      exitCode,
+    }).toEqual({ files: ["a.test.ts", "b.test.ts"], modulesOfB: ["b.test.ts"], exitCode: 0 });
+  });
+
+  test("without --isolate nothing is recorded", async () => {
+    using dir = tempDir("input-record-off", recorderFixtures);
+    const env = { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records", BUN_TEST_INPUT_RECORD_JSON: "1" };
+    const { exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"], env);
+    expect({ exists: fs.existsSync(join(String(dir), "records")), exitCode }).toEqual({ exists: false, exitCode: 0 });
+  });
+});
+
+// The recorder's store relies on flock, so recording and reuse are Unix only: on Windows,
+// `--reuse` says it is unavailable and every file runs.
+describe.concurrent.skipIf(isWindows)("BUN_TEST_INPUT_REUSE skips test files whose record still holds", () => {
+  const files = {
+    "package.json": `{ "name": "reused" }`,
+    "shared.ts": `export const value = 1;\n`,
+    "only-c.ts": `export const c = 1;\n`,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./shared";
+      test("a", () => expect(value).toBe(1));
+    `,
+    "b.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./shared";
+      test("b", () => expect(value).toBe(1));
+      test.skip("skipped", () => {});
+    `,
+    "c.test.ts": `
+      import { expect, test } from "bun:test";
+      import { c } from "./only-c";
+      test("c", () => expect(c).toBe(1));
+    `,
+    "spawns.test.ts": `
+      import { expect, test } from "bun:test";
+      test("spawns", () => expect(Bun.spawnSync({ cmd: [process.execPath, "--version"] }).exitCode).toBe(0));
+    `,
+  };
+  const names = ["./a.test.ts", "./b.test.ts", "./c.test.ts", "./spawns.test.ts"];
+  const record = { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records" };
+  const reuse = { ...record, BUN_TEST_INPUT_REUSE: "explain" };
+  const reusedFiles = (stderr: string) => [...stderr.matchAll(/^(\S+): reused, /gm)].map(m => m[1]).sort();
+
+  test("a file whose modules and answers are unchanged is reused, one whose module changed runs", async () => {
+    using dir = tempDir("input-reuse", files);
+    const first = await runTests(String(dir), ["--isolate"], names, record);
+    fs.writeFileSync(join(String(dir), "only-c.ts"), `export const c = 2;\n`);
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], names, reuse);
+    expect({ first: first.exitCode, reused: reusedFiles(stderr), exitCode }).toEqual({
+      first: 0,
+      reused: ["a.test.ts", "b.test.ts"],
+      exitCode: 1,
+    });
+    expect(stderr).toContain("reuse: spawns.test.ts runs: mark spawn");
+    expect(stderr).toContain("2 files reused, not run");
+    expect(stderr).toMatch(/3 pass\s+1 skip\s+1 fail/);
+  });
+
+  test("a file whose import now resolves to another file runs", async () => {
+    using dir = tempDir("input-reuse-shadow", files);
+    await runTests(String(dir), ["--isolate"], names, record);
+    fs.writeFileSync(join(String(dir), "shared.tsx"), `export const value = 1;\n`);
+    fs.rmSync(join(String(dir), "shared.ts"));
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], names, reuse);
+    expect({ reused: reusedFiles(stderr), exitCode }).toEqual({ reused: ["c.test.ts"], exitCode: 0 });
+  });
+
+  test("a record holds in another checkout of the same files", async () => {
+    using dir = tempDir("input-reuse-moved", { here: files });
+    const here = join(String(dir), "here");
+    await runTests(here, ["--isolate"], names, record);
+    fs.cpSync(here, join(String(dir), "there"), { recursive: true });
+    const { stderr, exitCode } = await runTests(join(String(dir), "there"), ["--isolate"], names, reuse);
+    expect({ reused: reusedFiles(stderr), exitCode }).toEqual({
+      reused: ["a.test.ts", "b.test.ts", "c.test.ts"],
+      exitCode: 0,
+    });
+  });
+
+  test("--shard deals the files before reuse, so shards with their own stores each reuse and report only their own", async () => {
+    const four = Object.fromEntries(
+      ["a", "b", "c", "d"].map(name => [
+        `${name}.test.ts`,
+        `import { expect, test } from "bun:test";\ntest("${name}", () => expect(1).toBe(1));\n`,
+      ]),
+    );
+    using dir = tempDir("input-reuse-shard", { "package.json": `{ "name": "sharded" }`, ...four });
+    const all = ["./a.test.ts", "./b.test.ts", "./c.test.ts", "./d.test.ts"];
+    const shard = (n: number, mode?: string) =>
+      runTests(String(dir), ["--isolate", `--shard=${n}/2`], all, {
+        ...bunEnv,
+        BUN_TEST_INPUT_RECORD_DIR: `records-${n}`,
+        BUN_TEST_INPUT_REUSE: mode,
+      });
+    await shard(1);
+    await shard(2);
+    const [one, two] = [await shard(1, "explain"), await shard(2, "explain")];
+    const runs = (stderr: string) => [...stderr.matchAll(/^reuse: (\S+) runs: /gm)].map(m => m[1]);
+    expect({
+      one: reusedFiles(one.stderr),
+      oneRuns: runs(one.stderr),
+      two: reusedFiles(two.stderr),
+      twoRuns: runs(two.stderr),
+    }).toEqual({ one: ["a.test.ts", "c.test.ts"], oneRuns: [], two: ["b.test.ts", "d.test.ts"], twoRuns: [] });
+    expect(one.stderr).toMatch(/2 pass/);
+    expect(two.stderr).toMatch(/2 pass/);
+  });
+
+  test("a write that fails leaves what is there an input", async () => {
+    using dir = tempDir("input-reuse-failed-write", {
+      "package.json": `{ "name": "failed-write" }`,
+      "fixtures/data.json": `{ "v": 1 }`,
+      "fixtures/mod.ts": `export const m = 1;\n`,
+      "w.test.ts": `
+        import { expect, test } from "bun:test";
+        import { mkdirSync, readFileSync, rmdirSync, symlinkSync, linkSync, promises } from "node:fs";
+        test("ensure the directory, then use it", async () => {
+          const dir = import.meta.dir + "/fixtures";
+          try { mkdirSync(dir); } catch {}
+          try { rmdirSync(dir); } catch {}
+          try { symlinkSync("elsewhere", dir + "/data.json"); } catch {}
+          try { linkSync(dir + "/mod.ts", dir + "/data.json"); } catch {}
+          await promises.mkdir(dir).catch(() => {});
+          expect(JSON.parse(readFileSync(dir + "/data.json", "utf8")).v).toBe(1);
+          const { m } = await import("./fixtures/mod.ts");
+          expect(m).toBe(1);
+        });
+      `,
+    });
+    const one = ["./w.test.ts"];
+    await runTests(String(dir), ["--isolate"], one, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.writeFileSync(join(String(dir), "fixtures", "data.json"), `{ "v": 2 }`);
+    const data = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.writeFileSync(join(String(dir), "fixtures", "data.json"), `{ "v": 1 }`);
+    await runTests(String(dir), ["--isolate"], one, record);
+    fs.writeFileSync(join(String(dir), "fixtures", "mod.ts"), `export const m = 2;\n`);
+    const mod = await runTests(String(dir), ["--isolate"], one, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      data: reusedFiles(data.stderr),
+      mod: reusedFiles(mod.stderr),
+    }).toEqual({ unchanged: ["w.test.ts"], data: [], mod: [] });
+    expect(data.stderr).toContain("reuse: w.test.ts runs: own-read content fixtures/data.json");
+    expect(mod.stderr).toContain("reuse: w.test.ts runs: changed fixtures/mod.ts");
+  });
+
+  test("what a link, a rename or a merging copy brings into the file's own paths is still an input", async () => {
+    const body = (name: string, code: string) => `
+      import { expect, test } from "bun:test";
+      import * as fs from "node:fs";
+      import { tmpdir } from "node:os";
+      import { join, relative } from "node:path";
+      test("${name}", async () => {
+        const fixtures = join(import.meta.dir, "fixtures");
+        ${code}
+      });
+    `;
+    using dir = tempDir("input-reuse-links", {
+      "package.json": `{ "name": "links" }`,
+      "fixtures/sym.txt": "sym-v1",
+      "fixtures/hard.txt": "hard-v1",
+      "fixtures/moved.txt": "moved-v1",
+      "fixtures/merge/pre.txt": "pre-v1",
+      "fixtures/copied/other.txt": "other",
+      "fixtures/linked-dir/inner.txt": "inner-v1",
+      "fixtures/into/pre.txt": "into-v1",
+      "sym.test.ts": body(
+        "symlink into a temp directory",
+        `const tmp = fs.mkdtempSync(join(tmpdir(), "sym-"));
+        fs.symlinkSync(join(fixtures, "sym.txt"), join(tmp, "data.txt"));
+        fs.symlinkSync(relative(tmp, join(fixtures, "linked-dir")), join(tmp, "dir"));
+        expect(fs.readFileSync(join(tmp, "data.txt"), "utf8")).toBe("sym-v1");
+        expect(fs.readFileSync(join(tmp, "dir", "inner.txt"), "utf8")).toBe("inner-v1");`,
+      ),
+      "hard.test.ts": body(
+        "hard link into a temp directory",
+        `const tmp = fs.mkdtempSync(join(tmpdir(), "hard-"));
+        fs.linkSync(join(fixtures, "hard.txt"), join(tmp, "x"));
+        expect(fs.readFileSync(join(tmp, "x"), "utf8")).toBe("hard-v1");`,
+      ),
+      "rename.test.ts": body(
+        "rename there and back",
+        `fs.renameSync(join(fixtures, "moved.txt"), join(fixtures, "moved2.txt"));
+        const text = fs.readFileSync(join(fixtures, "moved2.txt"), "utf8");
+        fs.renameSync(join(fixtures, "moved2.txt"), join(fixtures, "moved.txt"));
+        expect(text).toBe("moved-v1");`,
+      ),
+      "cp.test.ts": body(
+        "copy into a directory that is there",
+        `await fs.promises.cp(join(fixtures, "copied"), join(fixtures, "merge"), { recursive: true });
+        fs.cpSync(join(fixtures, "copied"), join(fixtures, "merge"), { recursive: true });
+        expect(fs.readFileSync(join(fixtures, "merge", "pre.txt"), "utf8")).toBe("pre-v1");
+        fs.rmSync(join(fixtures, "merge", "other.txt"));`,
+      ),
+      "extract.test.ts": body(
+        "extract into a directory that is there",
+        `await new Bun.Archive({ "new.txt": "new" }).extract(join(fixtures, "into"));
+        expect(fs.readFileSync(join(fixtures, "into", "pre.txt"), "utf8")).toBe("into-v1");
+        fs.rmSync(join(fixtures, "into", "new.txt"));`,
+      ),
+    });
+    const five = ["./sym.test.ts", "./hard.test.ts", "./rename.test.ts", "./cp.test.ts", "./extract.test.ts"];
+    await runTests(String(dir), ["--isolate"], five, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], five, reuse);
+    const edit = (file: string, text: string) => fs.writeFileSync(join(String(dir), "fixtures", file), text);
+    edit("sym.txt", "sym-v2");
+    edit("hard.txt", "hard-v2");
+    edit("moved.txt", "moved-v2");
+    edit("merge/pre.txt", "pre-v2");
+    edit("into/pre.txt", "into-v2");
+    const edited = await runTests(String(dir), ["--isolate"], five, reuse);
+    edit("sym.txt", "sym-v1");
+    edit("hard.txt", "hard-v1");
+    edit("moved.txt", "moved-v1");
+    edit("merge/pre.txt", "pre-v1");
+    edit("into/pre.txt", "into-v1");
+    await runTests(String(dir), ["--isolate"], five, record);
+    edit("linked-dir/inner.txt", "inner-v2");
+    const inner = await runTests(String(dir), ["--isolate"], five, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      edited: reusedFiles(edited.stderr),
+      inner: reusedFiles(inner.stderr),
+    }).toEqual({
+      // What an extract writes into a directory that was there stays an input too, so that file
+      // runs every time; it must not be reused when what was there changed.
+      unchanged: ["cp.test.ts", "hard.test.ts", "rename.test.ts", "sym.test.ts"],
+      edited: [],
+      inner: ["cp.test.ts", "hard.test.ts", "rename.test.ts"],
+    });
+  });
+
+  test("mkdtemp marks the directory it made, not every path that starts with its prefix", async () => {
+    using dir = tempDir("input-reuse-mkdtemp", {
+      "package.json": `{ "name": "mkdtemp" }`,
+      "late.ts": `export const late = 1;\n`,
+      "run-old/data.txt": "old-v1",
+      "t.test.ts": `
+        import { expect, test } from "bun:test";
+        import { mkdtempSync, readFileSync } from "node:fs";
+        import { dirname, sep } from "node:path";
+        test("a prefix that is a directory, and a prefix of siblings", async () => {
+          mkdtempSync(dirname(import.meta.dir) + sep);
+          mkdtempSync(import.meta.dir + sep + "run-");
+          expect(readFileSync(import.meta.dir + "/run-old/data.txt", "utf8")).toBe("old-v1");
+          const { late } = await import("./late.ts");
+          expect(late).toBe(1);
+        });
+      `,
+    });
+    const one = ["./t.test.ts"];
+    await runTests(String(dir), ["--isolate"], one, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.writeFileSync(join(String(dir), "late.ts"), `export const late = 2;\n`);
+    const late = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.writeFileSync(join(String(dir), "late.ts"), `export const late = 1;\n`);
+    await runTests(String(dir), ["--isolate"], one, record);
+    fs.writeFileSync(join(String(dir), "run-old", "data.txt"), "old-v2");
+    const sibling = await runTests(String(dir), ["--isolate"], one, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      late: reusedFiles(late.stderr),
+      sibling: reusedFiles(sibling.stderr),
+    }).toEqual({ unchanged: ["t.test.ts"], late: [], sibling: [] });
+  });
+
+  test("a content look at a device is its kind: nothing is read from it", async () => {
+    using dir = tempDir("input-reuse-devices", {
+      "package.json": `{ "name": "devices" }`,
+      "dev.test.ts": `
+        import { expect, test } from "bun:test";
+        import { appendFileSync } from "node:fs";
+        test("devices", async () => {
+          // Not /dev/stdout or /dev/stderr: on Linux they do not open when the descriptor is a
+          // socket, as it is for a child spawned with piped stdio.
+          await Bun.write(Bun.file("/dev/null"), "to null\\n");
+          appendFileSync("/dev/null", "to null\\n");
+          expect(Bun.file("/dev/urandom").name).toBe("/dev/urandom");
+          expect(Bun.file("/dev/zero").name).toBe("/dev/zero");
+        });
+      `,
+    });
+    const one = ["./dev.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], one, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const again = await runTests(String(dir), ["--isolate"], one, reuse);
+    const json = JSON.parse(fs.readFileSync(join(String(dir), "records", "dev.test.ts.json"), "utf8"));
+    expect({
+      first: first.exitCode,
+      reused: reusedFiles(again.stderr),
+      reads: json.reads
+        .filter((it: any) => it.look === "content" && !it.extra)
+        .map((it: any) => [it.path, it.value])
+        .sort(),
+    }).toEqual({
+      first: 0,
+      reused: ["dev.test.ts"],
+      reads: [
+        ["/dev/null", "not a file"],
+        ["/dev/urandom", "not a file"],
+        ["/dev/zero", "not a file"],
+      ],
+    });
+  });
+
+  test("an HTML import, a module with no file and a resolution that throws make the record not reusable", async () => {
+    using dir = tempDir("input-reuse-unseen", {
+      "package.json": `{ "name": "unseen" }`,
+      "index.html": `<!doctype html><html><head><script type="module" src="./app.ts"></script></head></html>`,
+      "app.ts": `console.log("app");\n`,
+      "html.test.ts": `
+        import { expect, test } from "bun:test";
+        import page from "./index.html";
+        test("html", () => expect(page).toBeDefined());
+      `,
+      "ns.test.ts": `
+        import { expect, test } from "bun:test";
+        Bun.plugin({
+          name: "virtual namespace",
+          setup(build) {
+            build.onLoad({ filter: /.*/, namespace: "virt" }, () => ({ contents: "export default 1;", loader: "js" }));
+          },
+        });
+        test("namespace", async () => expect((await import("virt:thing")).default).toBe(1));
+      `,
+      "throws.test.ts": `
+        import { expect, test } from "bun:test";
+        Bun.plugin({
+          name: "throws",
+          setup(build) {
+            build.onResolve({ filter: /^boom$/ }, () => { throw new Error("boom"); });
+          },
+        });
+        test("throws", async () => expect(import("boom")).rejects.toThrow("boom"));
+      `,
+    });
+    const three = ["./html.test.ts", "./ns.test.ts", "./throws.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], three, record);
+    const again = await runTests(String(dir), ["--isolate"], three, reuse);
+    expect({ first: first.exitCode, reused: reusedFiles(again.stderr) }).toEqual({ first: 0, reused: [] });
+    expect(again.stderr).toContain("reuse: html.test.ts runs: mark html-bundle");
+    expect(again.stderr).toContain("reuse: ns.test.ts runs: mark module-without-file");
+    expect(again.stderr).toContain("reuse: throws.test.ts runs: mark resolve-threw");
+  });
+
+  test("the owner's permission bits and access() with a mode are inputs", async () => {
+    using dir = tempDir("input-reuse-mode", {
+      "package.json": `{ "name": "mode" }`,
+      "bin/cli.sh": "#!/bin/sh\n",
+      "stat.test.ts": `
+        import { expect, test } from "bun:test";
+        import { statSync } from "node:fs";
+        test("executable by mode", () => expect(statSync(import.meta.dir + "/bin/cli.sh").mode & 0o100).toBe(0o100));
+      `,
+      "access.test.ts": `
+        import { expect, test } from "bun:test";
+        import { accessSync, constants } from "node:fs";
+        test("executable by access", () => expect(() => accessSync(import.meta.dir + "/bin/cli.sh", constants.X_OK)).not.toThrow());
+      `,
+    });
+    const cli = join(String(dir), "bin", "cli.sh");
+    fs.chmodSync(cli, 0o755);
+    const two = ["./access.test.ts", "./stat.test.ts"];
+    await runTests(String(dir), ["--isolate"], two, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], two, reuse);
+    fs.chmodSync(cli, 0o644);
+    const dropped = await runTests(String(dir), ["--isolate"], two, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      dropped: [reusedFiles(dropped.stderr), dropped.exitCode],
+    }).toEqual({ unchanged: ["access.test.ts", "stat.test.ts"], dropped: [[], 1] });
+    expect(dropped.stderr).toContain("reuse: stat.test.ts runs: own-read stat bin/cli.sh");
+    expect(dropped.stderr).toContain("reuse: access.test.ts runs: own-read access bin/cli.sh");
+  });
+
+  test("BUN_TEST_INPUT_REUSE off values reuse nothing, and an unknown value is an error", async () => {
+    using dir = tempDir("input-reuse-switch", files);
+    await runTests(String(dir), ["--isolate"], names, record);
+    const off = await Promise.all(
+      ["0", "false", "no", "off"].map(async value => {
+        const { stderr } = await runTests(String(dir), ["--isolate"], names, {
+          ...record,
+          BUN_TEST_INPUT_REUSE: value,
+        });
+        return reusedFiles(stderr).length;
+      }),
+    );
+    const on = await runTests(String(dir), ["--isolate"], names, { ...record, BUN_TEST_INPUT_REUSE: "true" });
+    const typo = await runTests(String(dir), ["--isolate"], names, { ...record, BUN_TEST_INPUT_REUSE: "flase" });
+    expect({
+      off,
+      on: reusedFiles(on.stderr),
+      typo: typo.exitCode,
+    }).toEqual({ off: [0, 0, 0, 0], on: ["a.test.ts", "b.test.ts", "c.test.ts"], typo: 1 });
+    expect(typo.stderr).toContain("BUN_TEST_INPUT_REUSE=flase is not one of");
+  });
+
+  test("paths are kept from the repository root, so imports and reads outside the package hold in another checkout", async () => {
+    using dir = tempDir("input-reuse-repo", {
+      here: {
+        "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+        "config.txt": "v1",
+        "node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+        "node_modules/dep/index.js": `module.exports = "dep";\n`,
+        "packages/lib/index.ts": `export const lib = "lib-v1";\n`,
+        "packages/app/package.json": `{ "name": "app" }`,
+        "packages/app/local.ts": `export const local = 1;\n`,
+        "packages/app/a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { readFileSync } from "node:fs";
+          import { lib } from "../lib/index.ts";
+          import dep from "dep";
+          test("a", () => expect([lib, dep, readFileSync(import.meta.dir + "/../../config.txt", "utf8")]).toEqual(["lib-v1", "dep", "v1"]));
+        `,
+        "packages/app/b.test.ts": `
+          import { expect, test } from "bun:test";
+          import { local } from "./local";
+          test("b", () => expect(local).toBe(1));
+        `,
+      },
+    });
+    const pair = ["./a.test.ts", "./b.test.ts"];
+    await runTests(join(String(dir), "here", "packages", "app"), ["--isolate"], pair, record);
+    fs.cpSync(join(String(dir), "here"), join(String(dir), "there"), { recursive: true });
+    const there = join(String(dir), "there", "packages", "app");
+    const moved = await runTests(there, ["--isolate"], pair, reuse);
+    fs.writeFileSync(join(String(dir), "there", "config.txt"), "v2");
+    const edited = await runTests(there, ["--isolate"], pair, reuse);
+    expect({ moved: reusedFiles(moved.stderr), edited: reusedFiles(edited.stderr) }).toEqual({
+      moved: ["a.test.ts", "b.test.ts"],
+      edited: ["b.test.ts"],
+    });
+    expect(edited.stderr).toContain("reuse: a.test.ts runs: own-read content ");
+  });
+
+  test("with every file reused the run passes, and a failed file is never reused", async () => {
+    using dir = tempDir("input-reuse-fail", {
+      ...files,
+      "fails.test.ts": `
+        import { expect, test } from "bun:test";
+        test("fails", () => expect(1).toBe(2));
+      `,
+    });
+    await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./fails.test.ts"], record);
+    const onlyA = await runTests(String(dir), ["--isolate"], ["./a.test.ts"], reuse);
+    const both = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./fails.test.ts"], reuse);
+    expect({
+      onlyA: [reusedFiles(onlyA.stderr), onlyA.exitCode],
+      both: [reusedFiles(both.stderr), both.exitCode],
+    }).toEqual({ onlyA: [["a.test.ts"], 0], both: [["a.test.ts"], 1] });
+    expect(both.stderr).toContain("reuse: fails.test.ts runs: failed");
+  });
+
+  test("check runs every file and fails when one whose record held now has other counts", async () => {
+    using dir = tempDir("input-reuse-check", {
+      ...files,
+      "flavor.test.ts": `
+        import { expect, test } from "bun:test";
+        test("flavor", () => expect(process.env.FLAVOR).toBe("a"));
+      `,
+    });
+    const these = ["./a.test.ts", "./flavor.test.ts", "./spawns.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, { ...record, FLAVOR: "a" });
+    const report = join(String(dir), "report.jsonl");
+    const check = { ...record, BUN_TEST_INPUT_REUSE: "check", BUN_TEST_INPUT_REUSE_REPORT: report };
+    const same = await runTests(String(dir), ["--isolate"], these, { ...check, FLAVOR: "a" });
+    const differs = await runTests(String(dir), ["--isolate"], these, { ...check, FLAVOR: "b" });
+    const lines = fs
+      .readFileSync(report, "utf8")
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line));
+    expect({
+      same: [same.exitCode, same.stderr.includes("reuse check: would reuse 2, mismatches 0")],
+      differs: [differs.exitCode, differs.stderr.includes("reuse check: would reuse 2, mismatches 1")],
+      ran: differs.stderr.match(/(\d+) pass/)?.[1],
+      lines,
+    }).toEqual({
+      same: [0, true],
+      differs: [1, true],
+      ran: "2",
+      lines: [
+        { file: "a.test.ts", held: true },
+        { file: "flavor.test.ts", held: true },
+        { file: "spawns.test.ts", held: false, why: "mark", detail: "spawn" },
+        { file: "a.test.ts", check: "same" },
+        {
+          file: "flavor.test.ts",
+          check: "differs",
+          recorded: { pass: 1, fail: 0, skip: 0, todo: 0, expectations: 1, unhandledErrors: 0 },
+          thisRun: { pass: 0, fail: 1, skip: 0, todo: 0, expectations: 1, unhandledErrors: 0 },
+        },
+      ],
+    });
+    expect(differs.stderr).toContain("flavor.test.ts would have been reused, but its outcome differs");
+    expect(differs.stderr).not.toContain("<red>");
+  });
+
+  test("a file runs again when what its own code read changed, not when it only read what it wrote", async () => {
+    using dir = tempDir("input-reuse-own-reads", {
+      ...files,
+      "data.txt": "v1",
+      "listed/one": "",
+      "reads.test.ts": `
+        import { expect, test } from "bun:test";
+        import * as fs from "node:fs";
+        test("reads", async () => {
+          expect(fs.readFileSync(import.meta.dir + "/data.txt", "utf8")).toBe("v1");
+          expect(await fs.promises.readdir(import.meta.dir + "/listed")).toEqual(["one"]);
+        });
+      `,
+      "writes.test.ts": `
+        import { expect, test } from "bun:test";
+        import * as fs from "node:fs";
+        test("writes", async () => {
+          fs.mkdirSync(import.meta.dir + "/out", { recursive: true });
+          fs.writeFileSync(import.meta.dir + "/out/w.txt", String(Date.now()));
+          expect(fs.readFileSync(import.meta.dir + "/out/w.txt", "utf8").length).toBeGreaterThan(0);
+          await Bun.write(import.meta.dir + "/out/b.txt", String(Math.random()));
+          expect((await Bun.file(import.meta.dir + "/out/b.txt").text()).length).toBeGreaterThan(0);
+        });
+      `,
+    });
+    const these = ["./a.test.ts", "./reads.test.ts", "./writes.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "data.txt"), "v2");
+    const content = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "data.txt"), "v1");
+    await runTests(String(dir), ["--isolate"], these, record);
+    fs.writeFileSync(join(String(dir), "listed/two"), "");
+    const listing = await runTests(String(dir), ["--isolate"], these, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      content: [reusedFiles(content.stderr), content.exitCode],
+      listing: [reusedFiles(listing.stderr), listing.exitCode],
+    }).toEqual({
+      unchanged: ["a.test.ts", "reads.test.ts", "writes.test.ts"],
+      content: [["a.test.ts", "writes.test.ts"], 1],
+      listing: [["a.test.ts", "writes.test.ts"], 1],
+    });
+    expect(content.stderr).toContain("reuse: reads.test.ts runs: own-read content data.txt");
+    expect(listing.stderr).toContain("reuse: reads.test.ts runs: own-read list listed");
+  });
+
+  test("a file with module mocks is reused, and runs again when its manual mock changes or appears", async () => {
+    using dir = tempDir("input-reuse-mocks", {
+      ...files,
+      "dep.ts": `export const dep = "real";\n`,
+      "user.ts": `import { dep } from "./dep";\nexport const use = () => "user:" + dep;\n`,
+      "auto.ts": `export const auto = "real";\n`,
+      "plain.ts": `export const plain = "real";\n`,
+      "__mocks__/auto.ts": `export const auto = "manual";\n`,
+      "factory.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        test("factory", async () => {
+          mock.module("./dep", () => ({ dep: "mocked" }));
+          expect((await import("./user")).use()).toBe("user:mocked");
+        });
+      `,
+      "manual.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("manual", async () => {
+          vi.mock("./auto");
+          vi.mock("./plain");
+          expect([(await import("./auto")).auto, (await import("./plain")).plain]).toEqual(["manual", "real"]);
+        });
+      `,
+    });
+    const these = ["./factory.test.ts", "./manual.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "__mocks__/plain.ts"), `export const plain = "manual";\n`);
+    const appeared = await runTests(String(dir), ["--isolate"], these, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      appeared: [reusedFiles(appeared.stderr), appeared.exitCode],
+    }).toEqual({ unchanged: ["factory.test.ts", "manual.test.ts"], appeared: [["factory.test.ts"], 1] });
+  });
+
+  test("a store of another format or records of another fingerprint are ignored, and the run says so once without explain", async () => {
+    using dir = tempDir("input-reuse-ignored", files);
+    const two = ["./a.test.ts", "./c.test.ts"];
+    const plain = { ...record, BUN_TEST_INPUT_REUSE: "1" };
+    await runTests(String(dir), ["--isolate"], two, record);
+    const storeFile = join(String(dir), "records", "store.btis");
+    const bytes = fs.readFileSync(storeFile);
+    bytes.writeUInt32LE(0, 4);
+    fs.writeFileSync(storeFile, bytes);
+    const format = await runTests(String(dir), ["--isolate"], two, plain);
+    const replaced = await runTests(String(dir), ["--isolate"], two, plain);
+    const salted = await runTests(String(dir), ["--isolate"], two, { ...plain, BUN_TEST_INPUT_RECORD_SALT: "other" });
+    expect({
+      format: reusedFiles(format.stderr),
+      replaced: reusedFiles(replaced.stderr),
+      salted: reusedFiles(salted.stderr),
+    }).toEqual({
+      format: [],
+      replaced: ["a.test.ts", "c.test.ts"],
+      salted: [],
+    });
+    expect(format.stderr).toContain(
+      "reuse: 1 file of another record store format ignored; this run's records replace it",
+    );
+    expect(replaced.stderr).not.toContain("ignored");
+    expect(salted.stderr).toContain("2 records ignored: written by another build or with other settings");
+  });
+
+  test("an addon that Bun refuses to load is no mark, and its file is an input", async () => {
+    using dir = tempDir("input-reuse-refused-addon", {
+      ...files,
+      "build/better_sqlite3.node": "not an addon v1",
+      "refused.test.ts": `
+        import { expect, test } from "bun:test";
+        test("falls back", () => {
+          expect(() => require("./build/better_sqlite3.node")).toThrow("not yet supported in Bun");
+        });
+      `,
+    });
+    const these = ["./a.test.ts", "./refused.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "build/better_sqlite3.node"), "not an addon v2");
+    const edited = await runTests(String(dir), ["--isolate"], these, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      edited: [reusedFiles(edited.stderr), edited.exitCode],
+    }).toEqual({ unchanged: ["a.test.ts", "refused.test.ts"], edited: [["a.test.ts"], 0] });
+    expect(edited.stderr).toContain("reuse: refused.test.ts runs: changed build/better_sqlite3.node");
+  });
+
+  test("a module the file wrote before importing it is no input, and what it imports still is", async () => {
+    using dir = tempDir("input-reuse-generated", {
+      ...files,
+      "dep.ts": `export const dep = "v1";\n`,
+      "late.ts": `export const late = "late-v1";\n`,
+      "temp.test.ts": `
+        import { expect, test } from "bun:test";
+        import { mkdtempSync, writeFileSync } from "node:fs";
+        import { tmpdir } from "node:os";
+        import { join } from "node:path";
+        test("temp", async () => {
+          const file = join(mkdtempSync(join(tmpdir(), "generated-")), "m.mjs");
+          writeFileSync(file, "export { dep } from " + JSON.stringify(join(import.meta.dir, "dep.ts")) + ";");
+          expect((await import(file)).dep).toBe("v1");
+        });
+      `,
+      "inside.test.ts": `
+        import { expect, test } from "bun:test";
+        import { mkdirSync, writeFileSync } from "node:fs";
+        test("inside", async () => {
+          mkdirSync(import.meta.dir + "/gen", { recursive: true });
+          const file = import.meta.dir + "/gen/m" + Math.random().toString(36).slice(2) + ".mjs";
+          writeFileSync(file, "export { dep } from '../dep.ts';");
+          expect((await import(file)).dep).toBe("v1");
+        });
+      `,
+      "late.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync, writeFileSync } from "node:fs";
+        import { late } from "./late";
+        test("late", () => {
+          writeFileSync(import.meta.dir + "/late.ts", readFileSync(import.meta.dir + "/late.ts", "utf8"));
+          expect(late).toBe("late-v1");
+        });
+      `,
+    });
+    const these = ["./a.test.ts", "./temp.test.ts", "./inside.test.ts", "./late.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, record);
+    const first = await runTests(String(dir), ["--isolate"], these, reuse);
+    const second = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "dep.ts"), `export const dep = "v2";\n`);
+    const dep = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "dep.ts"), `export const dep = "v1";\n`);
+    fs.writeFileSync(join(String(dir), "late.ts"), `export const late = "late-v2";\n`);
+    const late = await runTests(String(dir), ["--isolate"], these, reuse);
+    const all = ["a.test.ts", "inside.test.ts", "late.test.ts", "temp.test.ts"];
+    expect({
+      first: reusedFiles(first.stderr),
+      second: reusedFiles(second.stderr),
+      dep: [reusedFiles(dep.stderr), dep.exitCode],
+      late: [reusedFiles(late.stderr), late.exitCode],
+    }).toEqual({
+      first: all,
+      second: all,
+      dep: [["a.test.ts", "late.test.ts"], 1],
+      late: [["a.test.ts", "inside.test.ts", "temp.test.ts"], 1],
+    });
+    expect(dep.stderr).toContain("reuse: temp.test.ts runs: changed dep.ts");
+    expect(dep.stderr).toContain("reuse: inside.test.ts runs: changed dep.ts");
+  });
+
+  test("check says a different number of expect() calls alone, without failing the run", async () => {
+    using dir = tempDir("input-reuse-check-expectations", {
+      ...files,
+      "varies.test.ts": `
+        import { expect, test } from "bun:test";
+        test("varies", () => {
+          for (let i = 0; i < Number(process.env.EXPECTS ?? 1); i++) expect(i).toBe(i);
+        });
+      `,
+    });
+    const these = ["./a.test.ts", "./varies.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, { ...record, EXPECTS: "1" });
+    const check = await runTests(String(dir), ["--isolate"], these, {
+      ...record,
+      BUN_TEST_INPUT_REUSE: "check",
+      EXPECTS: "3",
+    });
+    expect(check.exitCode).toBe(0);
+    expect(check.stderr).toContain(
+      "reuse check: varies.test.ts has the recorded outcome, with 3 expect() calls where the record has 1",
+    );
+    expect(check.stderr).toContain("reuse check: would reuse 2, mismatches 0, other expect() counts 1");
+    expect(check.stderr).not.toContain("would have been reused, but its outcome differs");
+  });
+
+  test("a text file imported with ?raw by several files, some from the cache, is reused and reruns them when edited", async () => {
+    const raw = `
+      import { expect, test } from "bun:test";
+      import changelog from "./CHANGELOG.md?raw";
+      test("raw", () => expect(String(changelog)).toContain("v1"));
+    `;
+    using dir = tempDir("input-reuse-raw", {
+      ...files,
+      "CHANGELOG.md": "# Changelog\n\nv1\n",
+      "r1.test.ts": raw,
+      "r2.test.ts": raw,
+      "r3.test.ts": raw,
+    });
+    const these = ["./r1.test.ts", "./r2.test.ts", "./r3.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "CHANGELOG.md"), "# Changelog\n\nv2\n");
+    const edited = await runTests(String(dir), ["--isolate"], these, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      edited: [reusedFiles(edited.stderr), edited.exitCode],
+    }).toEqual({ unchanged: ["r1.test.ts", "r2.test.ts", "r3.test.ts"], edited: [[], 1] });
+    expect(edited.stderr).toContain("reuse: r2.test.ts runs: changed CHANGELOG.md");
+  });
+
+  test("going to a failing state and back reuses the pass recorded before", async () => {
+    using dir = tempDir("input-reuse-back", files);
+    const three = ["./a.test.ts", "./b.test.ts", "./c.test.ts"];
+    await runTests(String(dir), ["--isolate"], three, record);
+    fs.writeFileSync(join(String(dir), "shared.ts"), `export const value = 2;\n`);
+    const failing = await runTests(String(dir), ["--isolate"], three, reuse);
+    const failingAgain = await runTests(String(dir), ["--isolate"], three, reuse);
+    fs.writeFileSync(join(String(dir), "shared.ts"), `export const value = 1;\n`);
+    const back = await runTests(String(dir), ["--isolate"], three, reuse);
+    expect({
+      failing: [reusedFiles(failing.stderr), failing.exitCode],
+      failingAgain: [reusedFiles(failingAgain.stderr), failingAgain.exitCode],
+      back: [reusedFiles(back.stderr), back.exitCode],
+    }).toEqual({
+      failing: [["c.test.ts"], 1],
+      failingAgain: [["c.test.ts"], 1],
+      back: [["a.test.ts", "b.test.ts", "c.test.ts"], 0],
+    });
+    expect(failing.stderr).toContain("reuse: a.test.ts runs: changed shared.ts");
+    expect(failingAgain.stderr).toContain("reuse: a.test.ts runs: failed");
+  });
+
+  test("list says which files would run and why, and runs none", async () => {
+    using dir = tempDir("input-reuse-list", {
+      ...files,
+      "preload.ts": `require("node:fs").writeFileSync(import.meta.dir + "/preloaded", "");\n`,
+    });
+    const flags = ["--isolate", "--preload", "./preload.ts"];
+    await runTests(String(dir), flags, names, record);
+    fs.rmSync(join(String(dir), "preloaded"));
+    fs.writeFileSync(join(String(dir), "only-c.ts"), `export const c = 2;\n`);
+    const store = fs.readFileSync(join(String(dir), "records", "store.btis"));
+    const list = await runTests(String(dir), flags, names, { ...record, BUN_TEST_INPUT_REUSE: "list" });
+    expect({
+      exitCode: list.exitCode,
+      lines: list.stdout
+        .trim()
+        .split("\n")
+        .filter(line => !line.startsWith("bun test"))
+        .sort(),
+      ran: /\d+ pass/.test(list.stderr) || fs.existsSync(join(String(dir), "preloaded")),
+      storeKept: fs.readFileSync(join(String(dir), "records", "store.btis")).equals(store),
+      segments: fs.readdirSync(join(String(dir), "records", "segments")),
+    }).toEqual({
+      exitCode: 0,
+      // The preload's write is gone, and each file's run made it.
+      lines: [
+        "a.test.ts: runs: own-write content preloaded",
+        "b.test.ts: runs: own-write content preloaded",
+        "c.test.ts: runs: changed only-c.ts",
+        "spawns.test.ts: runs: mark spawn",
+      ],
+      ran: false,
+      storeKept: true,
+      segments: [],
+    });
+    expect(list.stderr).toMatch(/reuse list: store of 4 states, \d+ entries and \d+ strings/);
+  });
+
+  test("two runs at once in one record directory, one with --parallel workers, lose no records", async () => {
+    using dir = tempDir("input-reuse-concurrent", files);
+    const [both, alone] = await Promise.all([
+      runTests(String(dir), ["--parallel=2"], ["./a.test.ts", "./b.test.ts"], record),
+      runTests(String(dir), ["--isolate"], ["./c.test.ts"], record),
+    ]);
+    const later = await runTests(String(dir), ["--isolate"], names, reuse);
+    expect({
+      exits: [both.exitCode, alone.exitCode],
+      reused: reusedFiles(later.stderr),
+      segments: fs.readdirSync(join(String(dir), "records", "segments")),
+    }).toEqual({ exits: [0, 0], reused: ["a.test.ts", "b.test.ts", "c.test.ts"], segments: [] });
+  });
+
+  test("the original of a mocked module, served from the cache, is the same input as its file", async () => {
+    const mocking = `
+      import { expect, mock, test } from "bun:test";
+      mock.module("./dep", async (importOriginal) => ({ ...(await importOriginal<any>()), extra: 1 }));
+      test("original", async () => {
+        const m: any = await import("./dep");
+        expect([m.dep, m.extra]).toEqual(["real", 1]);
+      });
+    `;
+    using dir = tempDir("input-reuse-actual", {
+      ...files,
+      "dep.ts": `export const dep = "real";\n`,
+      "first.test.ts": mocking,
+      "second.test.ts": mocking,
+    });
+    const these = ["./first.test.ts", "./second.test.ts"];
+    await runTests(String(dir), ["--isolate"], these, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const second = JSON.parse(fs.readFileSync(join(String(dir), "records", "second.test.ts.json"), "utf8"));
+    const unchanged = await runTests(String(dir), ["--isolate"], these, reuse);
+    fs.writeFileSync(join(String(dir), "dep.ts"), `export const dep = "edited";\n`);
+    const edited = await runTests(String(dir), ["--isolate"], these, reuse);
+    expect({
+      modules: second.modules.map((m: any) => [m.path, typeof m.sha256, !!m.cached]),
+      unchanged: reusedFiles(unchanged.stderr),
+      edited: [reusedFiles(edited.stderr), edited.exitCode],
+    }).toEqual({
+      modules: [
+        ["second.test.ts", "string", false],
+        ["dep.ts", "string", true],
+      ],
+      unchanged: ["first.test.ts", "second.test.ts"],
+      edited: [[], 1],
+    });
+  });
+
+  test("a changed .env file or listed variable runs every file, an unlisted variable does not", async () => {
+    using dir = tempDir("input-reuse-env", files);
+    const two = ["./a.test.ts", "./c.test.ts"];
+    const listed = { ...reuse, BUN_TEST_INPUT_RECORD_ENV: "DB_NAME", DB_NAME: "one" };
+    await runTests(String(dir), ["--isolate"], two, {
+      ...record,
+      BUN_TEST_INPUT_RECORD_ENV: "DB_NAME",
+      DB_NAME: "one",
+    });
+    const unlisted = await runTests(String(dir), ["--isolate"], two, { ...listed, DB_PORT: "5433" });
+    const variable = await runTests(String(dir), ["--isolate"], two, { ...listed, DB_NAME: "two" });
+    const again = await runTests(String(dir), ["--isolate"], two, { ...listed, DB_NAME: "two" });
+    fs.writeFileSync(join(String(dir), ".env"), "X=1\n");
+    const envFile = await runTests(String(dir), ["--isolate"], two, { ...listed, DB_NAME: "two" });
+    expect({
+      unlisted: reusedFiles(unlisted.stderr),
+      variable: reusedFiles(variable.stderr),
+      again: reusedFiles(again.stderr),
+      envFile: reusedFiles(envFile.stderr),
+    }).toEqual({ unlisted: ["a.test.ts", "c.test.ts"], variable: [], again: ["a.test.ts", "c.test.ts"], envFile: [] });
+  });
+
+  // Records leave out the JSX and decorator settings a resolver result carries per module, because
+  // `bun test` transpiles every module with the root tsconfig.json's settings, which are in the
+  // fingerprint. If a nested tsconfig.json starts to count here, reuse can keep a stale outcome.
+  test("a nested tsconfig.json changes neither JSX nor decorators at run time", async () => {
+    const runtime = (flavor: string) => ({
+      "package.json": `{ "name": "jsx-${flavor}", "exports": { "./jsx-runtime": "./rt.js", "./jsx-dev-runtime": "./rt.js" } }`,
+      "rt.js": `export const jsx = () => "${flavor}", jsxs = jsx, jsxDEV = jsx, Fragment = null;\n`,
+    });
+    using dir = tempDir("input-reuse-nested-tsconfig", {
+      "package.json": `{ "name": "nested" }`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "jsx-a", experimentalDecorators: true },
+      }),
+      "node_modules/jsx-a": runtime("a"),
+      "node_modules/jsx-b": runtime("b"),
+      "nest/tsconfig.json": JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "jsx-b", experimentalDecorators: false },
+      }),
+      "nest/nested.test.tsx": `
+        import { expect, test } from "bun:test";
+        let args = 0;
+        const count = (...rest: unknown[]) => { args = rest.length; };
+        class C { @count method() {} }
+        test("nested", () => expect({ flavor: <div />, args }).toEqual({ flavor: "a", args: 3 }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./nest/nested.test.tsx"], bunEnv);
+    expect({ exitCode, stderr: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, stderr: "" });
+  });
+
+  test("a name a call needs free is looked at as lstat sees it, so a dangling link left there reruns the file", async () => {
+    const body = (code: string) => `
+      import { expect, test } from "bun:test";
+      import * as fs from "node:fs";
+      import { join } from "node:path";
+      test("make a name, then remove it", () => {
+        const fixtures = join(import.meta.dir, "fixtures");
+        ${code}
+      });
+    `;
+    using dir = tempDir("input-reuse-free-name", {
+      "package.json": `{ "name": "free-name" }`,
+      "fixtures/src.txt": "src",
+      "sym.test.ts": body(`fs.symlinkSync("anything", join(fixtures, "sym-name"));
+        fs.unlinkSync(join(fixtures, "sym-name"));`),
+      "link.test.ts": body(`fs.linkSync(join(fixtures, "src.txt"), join(fixtures, "link-name"));
+        fs.unlinkSync(join(fixtures, "link-name"));`),
+      "mkdir.test.ts": body(`fs.mkdirSync(join(fixtures, "mkdir-name"));
+        fs.rmdirSync(join(fixtures, "mkdir-name"));`),
+      "excl.test.ts": body(`fs.writeFileSync(join(fixtures, "excl-name"), "x", { flag: "wx" });
+        fs.unlinkSync(join(fixtures, "excl-name"));`),
+      "copy.test.ts":
+        body(`fs.copyFileSync(join(fixtures, "src.txt"), join(fixtures, "copy-name"), fs.constants.COPYFILE_EXCL);
+        fs.unlinkSync(join(fixtures, "copy-name"));`),
+    });
+    const names = ["./sym.test.ts", "./link.test.ts", "./mkdir.test.ts", "./excl.test.ts", "./copy.test.ts"];
+    await runTests(String(dir), ["--isolate"], names, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], names, reuse);
+    for (const name of ["sym-name", "link-name", "mkdir-name", "excl-name", "copy-name"]) {
+      fs.symlinkSync("missing-target", join(String(dir), "fixtures", name));
+    }
+    const dangling = await runTests(String(dir), ["--isolate"], names, reuse);
+    expect({
+      unchanged: reusedFiles(unchanged.stderr),
+      dangling: [reusedFiles(dangling.stderr), dangling.exitCode],
+    }).toEqual({
+      unchanged: ["copy.test.ts", "excl.test.ts", "link.test.ts", "mkdir.test.ts", "sym.test.ts"],
+      dangling: [[], 1],
+    });
+    expect(dangling.stderr).toContain("reuse: sym.test.ts runs: own-read lstat fixtures/sym-name");
+  });
+
+  test("a Bun.write, an Archive write or extract, or a Blob unlink that fails leaves what is there an input", async () => {
+    const body = (code: string) => `
+      import { expect, test } from "bun:test";
+      import { join } from "node:path";
+      test("a write that fails, then a read", async () => {
+        const fixtures = join(import.meta.dir, "fixtures");
+        ${code}
+      });
+    `;
+    using dir = tempDir("input-reuse-failed-bun-write", {
+      "package.json": `{ "name": "failed-bun-write" }`,
+      "fixtures/write.txt": "v1",
+      "fixtures/archive.tar": "v1",
+      "fixtures/extract.txt": "v1",
+      "fixtures/locked/unlink.txt": "v1",
+      "fixtures/done.txt": "old",
+      "write.test.ts": body(`try { await Bun.write(join(fixtures, "write.txt"), "new"); } catch {}
+        expect(await Bun.file(join(fixtures, "write.txt")).text()).toBe("v1");`),
+      "archive.test.ts":
+        body(`try { await Bun.Archive.write(join(fixtures, "archive.tar"), { "a.txt": "a" }); } catch {}
+        expect(await Bun.file(join(fixtures, "archive.tar")).text()).toBe("v1");`),
+      "extract.test.ts":
+        body(`try { await new Bun.Archive({ "a.txt": "a" }).extract(join(fixtures, "extract.txt")); } catch {}
+        expect(await Bun.file(join(fixtures, "extract.txt")).text()).toBe("v1");`),
+      "unlink.test.ts": body(`try { await Bun.file(join(fixtures, "locked", "unlink.txt")).unlink(); } catch {}
+        expect(await Bun.file(join(fixtures, "locked", "unlink.txt")).text()).toBe("v1");`),
+      "done.test.ts": body(`await Bun.write(join(fixtures, "done.txt"), "fresh");
+        expect(await Bun.file(join(fixtures, "done.txt")).text()).toBe("fresh");`),
+    });
+    const fixtures = join(String(dir), "fixtures");
+    fs.chmodSync(join(fixtures, "write.txt"), 0o444);
+    fs.chmodSync(join(fixtures, "archive.tar"), 0o444);
+    fs.chmodSync(join(fixtures, "locked"), 0o555);
+    try {
+      const names = ["./write.test.ts", "./archive.test.ts", "./extract.test.ts", "./unlink.test.ts", "./done.test.ts"];
+      const first = await runTests(String(dir), ["--isolate"], names, record);
+      const unchanged = await runTests(String(dir), ["--isolate"], names, reuse);
+      for (const name of ["write.txt", "archive.tar", "extract.txt", "locked/unlink.txt", "done.txt"]) {
+        const path = join(fixtures, name);
+        const mode = fs.statSync(path).mode & 0o777;
+        fs.chmodSync(path, 0o644);
+        fs.writeFileSync(path, "v2");
+        fs.chmodSync(path, mode);
+      }
+      const edited = await runTests(String(dir), ["--isolate"], names, reuse);
+      expect({
+        first: first.exitCode,
+        unchanged: reusedFiles(unchanged.stderr),
+        edited: [reusedFiles(edited.stderr), edited.exitCode],
+      }).toEqual({
+        first: 0,
+        unchanged: ["archive.test.ts", "done.test.ts", "extract.test.ts", "unlink.test.ts", "write.test.ts"],
+        edited: [[], 1],
+      });
+      // What a write that succeeded left is the file's own product, not an input: done.test.ts
+      // runs because what it wrote is gone, not because it read an edited file.
+      expect(edited.stderr).toContain("reuse: done.test.ts runs: own-write content fixtures/done.txt");
+    } finally {
+      fs.chmodSync(join(fixtures, "locked"), 0o755);
+    }
+  });
+
+  test("a look through a symbolic link the file made lands where the kernel takes it", async () => {
+    const body = (code: string) => `
+      import { expect, test } from "bun:test";
+      import * as fs from "node:fs";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+      test("read through own links", () => {
+        const fixtures = join(import.meta.dir, "fixtures");
+        ${code}
+      });
+    `;
+    using dir = tempDir("input-reuse-land", {
+      "package.json": `{ "name": "land" }`,
+      "fixtures/renamed.txt": "renamed-v1",
+      "fixtures/data.txt": "lexical",
+      "fixtures/real/data.txt": "physical-v1",
+      "fixtures/real/deep/.keep": "",
+      "fixtures/chain.txt": "chain-v1",
+      "fixtures/one/file.txt": "one",
+      "fixtures/two/file.txt": "two",
+      "renamed.test.ts": body(`const tmp = fs.mkdtempSync(join(tmpdir(), "renamed-"));
+        fs.symlinkSync(join(fixtures, "renamed.txt"), join(tmp, "a"));
+        fs.renameSync(join(tmp, "a"), join(tmp, "b"));
+        expect(fs.readFileSync(join(tmp, "b"), "utf8")).toBe("renamed-v1");`),
+      "updir.test.ts": body(`fs.symlinkSync("../data.txt", join(fixtures, "linkdir", "l"));
+        const text = fs.readFileSync(join(fixtures, "linkdir", "l"), "utf8");
+        fs.unlinkSync(join(fixtures, "linkdir", "l"));
+        expect(text).toBe("physical-v1");`),
+      "chain.test.ts": body(`const tmp = fs.mkdtempSync(join(tmpdir(), "chain-"));
+        for (let i = 0; i < 12; i++) fs.symlinkSync(i === 11 ? join(fixtures, "chain.txt") : join(tmp, "l" + (i + 1)), join(tmp, "l" + i));
+        expect(fs.readFileSync(join(tmp, "l0"), "utf8")).toBe("chain-v1");`),
+      "via.test.ts": body(`const tmp = fs.mkdtempSync(join(tmpdir(), "via-"));
+        fs.symlinkSync(join(fixtures, "via", "file.txt"), join(tmp, "x"));
+        expect(fs.readFileSync(join(tmp, "x"), "utf8")).toBe("one");`),
+    });
+    const fixtures = join(String(dir), "fixtures");
+    fs.symlinkSync("real/deep", join(fixtures, "linkdir"));
+    fs.symlinkSync("one", join(fixtures, "via"));
+    const names = ["./renamed.test.ts", "./updir.test.ts", "./chain.test.ts", "./via.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], names, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], names, reuse);
+    fs.writeFileSync(join(fixtures, "renamed.txt"), "renamed-v2");
+    fs.writeFileSync(join(fixtures, "real", "data.txt"), "physical-v2");
+    fs.writeFileSync(join(fixtures, "chain.txt"), "chain-v2");
+    fs.unlinkSync(join(fixtures, "via"));
+    fs.symlinkSync("two", join(fixtures, "via"));
+    const edited = await runTests(String(dir), ["--isolate"], names, reuse);
+    expect({
+      first: first.exitCode,
+      unchanged: reusedFiles(unchanged.stderr),
+      edited: [reusedFiles(edited.stderr), edited.exitCode],
+    }).toEqual({
+      first: 0,
+      unchanged: ["chain.test.ts", "renamed.test.ts", "updir.test.ts", "via.test.ts"],
+      edited: [[], 1],
+    });
+    expect(edited.stderr).toContain("reuse: via.test.ts runs: own-read readlink fixtures/via");
+  });
+
+  for (const parallel of [[], ["--parallel=2"]]) {
+    test(`a reused file whose inputs a file that ran has changed runs after it ${parallel.join(" ") || "(serial)"}`, async () => {
+      const flags = ["--isolate", ...parallel];
+      using dir = tempDir("input-reuse-after", {
+        "package.json": `{ "name": "after" }`,
+        "src.txt": "hello",
+        "out/gen.txt": "hello",
+        "out/gen2.txt": "hello",
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import { readFileSync, writeFileSync } from "node:fs";
+          test("writes gen from src", () => writeFileSync("out/gen.txt", readFileSync("src.txt", "utf8")));
+        `,
+        "b1.test.ts": `
+          import { test } from "bun:test";
+          import { readFileSync, writeFileSync } from "node:fs";
+          test("writes gen2 from gen", () => writeFileSync("out/gen2.txt", readFileSync("out/gen.txt", "utf8")));
+        `,
+        "b2.test.ts": `
+          import { expect, test } from "bun:test";
+          import { readFileSync } from "node:fs";
+          test("reads gen", () => expect(readFileSync("out/gen.txt", "utf8")).toBe("hello"));
+        `,
+        "e.test.ts": `
+          import { expect, test } from "bun:test";
+          import { readFileSync } from "node:fs";
+          test("reads gen2", () => expect(readFileSync("out/gen2.txt", "utf8")).toBe("hello"));
+        `,
+        "c.test.ts": `
+          import { expect, test } from "bun:test";
+          test("always runs", () => expect(Bun.spawnSync({ cmd: [process.execPath, "--version"] }).exitCode).toBe(0));
+        `,
+      });
+      const names = ["./a.test.ts", "./b1.test.ts", "./b2.test.ts", "./c.test.ts", "./e.test.ts"];
+      await runTests(String(dir), flags, names, record);
+      const unchanged = await runTests(String(dir), flags, names, reuse);
+      fs.writeFileSync(join(String(dir), "src.txt"), "bye");
+      const changed = await runTests(String(dir), flags, names, reuse);
+      expect({
+        unchanged: [reusedFiles(unchanged.stderr), unchanged.exitCode],
+        changed: [reusedFiles(changed.stderr), changed.exitCode],
+      }).toEqual({
+        unchanged: [["a.test.ts", "b1.test.ts", "b2.test.ts", "e.test.ts"], 0],
+        changed: [[], 1],
+      });
+      expect(changed.stderr).toContain("reuse: b2.test.ts runs after the others: own-read content out/gen.txt");
+      expect(changed.stderr).toContain("reuse: e.test.ts runs after the others: own-read content out/gen2.txt");
+      expect(changed.stderr).toContain("2 fail");
+      expect(changed.stderr).toContain("Ran 5 tests across 5 files");
+    });
+  }
+
+  test("a record root that is not the project directory or above it is an error", async () => {
+    using dir = tempDir("input-reuse-root-elsewhere", {
+      "package.json": `{ "name": "root-elsewhere" }`,
+      "app/a.test.ts": `
+        import { expect, test } from "bun:test";
+        test("a", () => expect(1).toBe(1));
+      `,
+      "elsewhere/.keep": "",
+    });
+    const app = join(String(dir), "app");
+    const above = await runTests(app, ["--isolate"], ["./a.test.ts"], { ...record, BUN_TEST_INPUT_RECORD_ROOT: ".." });
+    const elsewhere = await runTests(app, ["--isolate"], ["./a.test.ts"], {
+      ...record,
+      BUN_TEST_INPUT_RECORD_ROOT: "../elsewhere",
+    });
+    expect({ above: above.exitCode, elsewhere: elsewhere.exitCode }).toEqual({ above: 0, elsewhere: 1 });
+    expect(elsewhere.stderr).toContain(
+      "error: BUN_TEST_INPUT_RECORD_ROOT=../elsewhere is not the project directory or a directory above it",
+    );
+  });
+
+  test("the check after the run sees a module a worker wrote, not the coordinator's cached directory", async () => {
+    using dir = tempDir("input-reuse-dir-cache", {
+      "package.json": `{ "name": "dir-cache" }`,
+      "src.txt": "skip",
+      "gen.js": `export const v = "js";\n`,
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync, rmSync, writeFileSync } from "node:fs";
+        test("makes gen.ts when src.txt says so", () => {
+          if (readFileSync(import.meta.dir + "/src.txt", "utf8").trim() === "make") {
+            writeFileSync(import.meta.dir + "/gen.ts", 'export const v = "ts";');
+          } else {
+            rmSync(import.meta.dir + "/gen.ts", { force: true });
+          }
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { v } from "./gen";
+        test("imports ./gen", () => expect(v).toBe("js"));
+      `,
+      "c.test.ts": `
+        import { expect, test } from "bun:test";
+        test("always runs", () => expect(Bun.spawnSync({ cmd: [process.execPath, "--version"] }).exitCode).toBe(0));
+      `,
+    });
+    const names = ["./a.test.ts", "./b.test.ts", "./c.test.ts"];
+    const flags = ["--isolate", "--parallel=2"];
+    await runTests(String(dir), flags, names, record);
+    fs.writeFileSync(join(String(dir), "src.txt"), "make");
+    const made = await runTests(String(dir), flags, names, reuse);
+    expect({ reused: reusedFiles(made.stderr), exitCode: made.exitCode }).toEqual({ reused: [], exitCode: 1 });
+    expect(made.stderr).toContain("reuse: b.test.ts runs after the others: answer import ./gen from b.test.ts");
+  });
+
+  // Serial only: under --parallel the writer and the reader run at once, in a plain run too.
+  test("a reused file whose writes are gone runs, so a file that reads them sees them again", async () => {
+    const flags = ["--isolate"];
+    using dir = tempDir("input-reuse-left", {
+      "package.json": `{ "name": "left" }`,
+      "src.txt": "hello",
+      "out/gen.txt": "hello",
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync, writeFileSync } from "node:fs";
+        test("writes gen from src", () => {
+          const text = readFileSync(import.meta.dir + "/src.txt", "utf8");
+          writeFileSync(import.meta.dir + "/out/gen.txt", text);
+          expect(text).toBe("hello");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync } from "node:fs";
+        test("reads gen", () => expect(readFileSync(import.meta.dir + "/out/gen.txt", "utf8")).toBe("hello"));
+      `,
+      "c.test.ts": `
+        import { expect, test } from "bun:test";
+        test("always runs", () => expect(Bun.spawnSync({ cmd: [process.execPath, "--version"] }).exitCode).toBe(0));
+      `,
+    });
+    const names = ["./a.test.ts", "./b.test.ts", "./c.test.ts"];
+    await runTests(String(dir), flags, names, record);
+    fs.writeFileSync(join(String(dir), "src.txt"), "bye");
+    const bye = await runTests(String(dir), flags, names, reuse);
+    fs.writeFileSync(join(String(dir), "src.txt"), "hello");
+    const back = await runTests(String(dir), flags, names, reuse);
+    const again = await runTests(String(dir), flags, names, reuse);
+    fs.rmSync(join(String(dir), "out", "gen.txt"));
+    const gone = await runTests(String(dir), flags, names, reuse);
+    expect({
+      bye: bye.exitCode,
+      back: [reusedFiles(back.stderr), back.exitCode],
+      again: [reusedFiles(again.stderr), again.exitCode],
+      gone: [reusedFiles(gone.stderr), gone.exitCode],
+    }).toEqual({
+      bye: 1,
+      back: [[], 0],
+      again: [["a.test.ts", "b.test.ts"], 0],
+      gone: [[], 0],
+    });
+    expect(gone.stderr).toContain("reuse: a.test.ts runs: own-write content out/gen.txt");
+  });
+
+  test("a write that failed leaves only an lstat look, not a tree of what was there", async () => {
+    using dir = tempDir("input-reuse-failed-mkdir", {
+      "package.json": `{ "name": "failed-mkdir" }`,
+      "shared/x.txt": "v1",
+      "m.test.ts": `
+        import { expect, test } from "bun:test";
+        import { mkdirSync } from "node:fs";
+        test("a mkdir that fails on a directory that is there", () => {
+          let code = "";
+          try {
+            mkdirSync(import.meta.dir + "/shared");
+          } catch (error) {
+            code = (error as NodeJS.ErrnoException).code ?? "";
+          }
+          expect(code).toBe("EEXIST");
+        });
+      `,
+    });
+    const one = ["./m.test.ts"];
+    await runTests(String(dir), ["--isolate"], one, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const json = JSON.parse(fs.readFileSync(join(String(dir), "records", "m.test.ts.json"), "utf8"));
+    fs.writeFileSync(join(String(dir), "shared", "x.txt"), "v2, another file wrote here");
+    const edited = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.rmSync(join(String(dir), "shared"), { recursive: true });
+    const removed = await runTests(String(dir), ["--isolate"], one, reuse);
+    expect({
+      after: json.reads.filter((it: any) => it.extra === "after").map((it: any) => [it.look, it.path]),
+      edited: [reusedFiles(edited.stderr), edited.exitCode],
+      removed: [reusedFiles(removed.stderr), removed.exitCode],
+    }).toEqual({ after: [["lstat", "shared"]], edited: [["m.test.ts"], 0], removed: [[], 1] });
+  });
+
+  test("a path the test passes with .. after a symbolic link is looked at where the kernel goes", async () => {
+    using dir = tempDir("input-reuse-dotdot", {
+      "package.json": `{ "name": "dotdot" }`,
+      "data.txt": "lexical",
+      "real/data.txt": "physical-v1",
+      "real/deep/.keep": "",
+      "dd.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync } from "node:fs";
+        test("a literal .. after a symlinked directory", () => {
+          expect(readFileSync("linkdir/../data.txt", "utf8")).toBe("physical-v1");
+        });
+      `,
+    });
+    fs.symlinkSync("real/deep", join(String(dir), "linkdir"));
+    const one = ["./dd.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], one, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.writeFileSync(join(String(dir), "real", "data.txt"), "physical-v2");
+    const edited = await runTests(String(dir), ["--isolate"], one, reuse);
+    expect({
+      first: first.exitCode,
+      unchanged: reusedFiles(unchanged.stderr),
+      edited: [reusedFiles(edited.stderr), edited.exitCode],
+    }).toEqual({ first: 0, unchanged: ["dd.test.ts"], edited: [[], 1] });
+    expect(edited.stderr).toContain("reuse: dd.test.ts runs: own-read content real/data.txt");
+  });
+
+  test("a write the test makes with .. after a symbolic link is left where the kernel put it", async () => {
+    using dir = tempDir("input-reuse-dotdot-write", {
+      "package.json": `{ "name": "dotdot-write" }`,
+      "real/deep/.keep": "",
+      "w.test.ts": `
+        import { expect, test } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        test("a write through a literal .. after a symlinked directory", () => {
+          writeFileSync("linkdir/../out.txt", "made");
+          expect(1).toBe(1);
+        });
+      `,
+    });
+    fs.symlinkSync("real/deep", join(String(dir), "linkdir"));
+    const one = ["./w.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], one, record);
+    const unchanged = await runTests(String(dir), ["--isolate"], one, reuse);
+    fs.rmSync(join(String(dir), "real", "out.txt"));
+    const gone = await runTests(String(dir), ["--isolate"], one, reuse);
+    expect({
+      first: first.exitCode,
+      folded: fs.existsSync(join(String(dir), "out.txt")),
+      unchanged: reusedFiles(unchanged.stderr),
+      gone: [reusedFiles(gone.stderr), gone.exitCode],
+      again: fs.readFileSync(join(String(dir), "real", "out.txt"), "utf8"),
+    }).toEqual({ first: 0, folded: false, unchanged: ["w.test.ts"], gone: [[], 0], again: "made" });
+    expect(gone.stderr).toContain("reuse: w.test.ts runs: own-write content real/out.txt");
+  });
+
+  test("after --bail, a reused file whose record no longer holds is said not to have run", async () => {
+    using dir = tempDir("input-reuse-bail", {
+      "package.json": `{ "name": "bail" }`,
+      "src.txt": "hello",
+      "out/gen.txt": "hello",
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync, writeFileSync } from "node:fs";
+        test("writes gen from src", () => {
+          const text = readFileSync(import.meta.dir + "/src.txt", "utf8");
+          writeFileSync(import.meta.dir + "/out/gen.txt", text);
+          expect(text).toBe("hello");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync } from "node:fs";
+        test("reads gen", () => expect(readFileSync(import.meta.dir + "/out/gen.txt", "utf8")).toBe("hello"));
+      `,
+      "c.test.ts": `
+        import { expect, test } from "bun:test";
+        test("always runs", () => expect(Bun.spawnSync({ cmd: [process.execPath, "--version"] }).exitCode).toBe(0));
+      `,
+    });
+    const names = ["./a.test.ts", "./b.test.ts", "./c.test.ts"];
+    const flags = ["--isolate", "--parallel=2", "--bail=1"];
+    await runTests(String(dir), flags, names, record);
+    fs.writeFileSync(join(String(dir), "src.txt"), "bye");
+    const bailed = await runTests(String(dir), flags, names, reuse);
+    expect({ reused: reusedFiles(bailed.stderr), exitCode: bailed.exitCode }).toEqual({ reused: [], exitCode: 1 });
+    expect(bailed.stderr).toContain("b.test.ts: not run after --bail: own-read content out/gen.txt");
+  });
+
+  test("a Bun.write still pending at a look applies when a later look finds it fulfilled", async () => {
+    using dir = tempDir("input-reuse-pending-write", {
+      "package.json": `{ "name": "pending-write" }`,
+      "fixtures/other.txt": "other",
+      "p.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync } from "node:fs";
+        test("a large write, a look while it is pending, then a read after it", async () => {
+          const path = import.meta.dir + "/fixtures/out.bin";
+          const written = Bun.write(path, new Uint8Array(64 * 1024 * 1024).fill(7));
+          expect(Bun.peek.status(written)).toBe("pending");
+          readFileSync(import.meta.dir + "/fixtures/other.txt");
+          await written;
+          expect(readFileSync(path).length).toBe(64 * 1024 * 1024);
+        });
+      `,
+    });
+    const one = ["./p.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], one, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const json = JSON.parse(fs.readFileSync(join(String(dir), "records", "p.test.ts.json"), "utf8"));
+    expect({
+      first: first.exitCode,
+      inputs: json.reads
+        .filter((it: any) => !it.extra)
+        .map((it: any) => [it.look, it.path])
+        .sort(),
+    }).toEqual({ first: 0, inputs: [["content", "fixtures/other.txt"]] });
+  });
+
+  test("a Bun.write still pending when the file ends makes the record not hold", async () => {
+    // The source is a stream that never closes, so the write is pending when the file ends on any
+    // machine, however fast its disk: what it leaves can't be known when the record is written.
+    using dir = tempDir("input-reuse-pending-at-end", {
+      "package.json": `{ "name": "pending-at-end" }`,
+      "fixtures/.keep": "",
+      "p.test.ts": `
+        import { expect, test } from "bun:test";
+        test("a write from a stream that never closes", async () => {
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(64 * 1024).fill(7));
+            },
+          });
+          const written = Bun.write(import.meta.dir + "/fixtures/out.bin", new Response(stream));
+          await Bun.sleep(10);
+          expect(Bun.peek.status(written)).toBe("pending");
+        });
+      `,
+    });
+    const one = ["./p.test.ts"];
+    const first = await runTests(String(dir), ["--isolate"], one, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const json = JSON.parse(fs.readFileSync(join(String(dir), "records", "p.test.ts.json"), "utf8"));
+    const again = await runTests(String(dir), ["--isolate"], one, reuse);
+    expect({
+      first: first.exitCode,
+      marks: json.marks,
+      reads: json.reads.filter((it: any) => !it.extra).map((it: any) => [it.look, it.path]),
+      again: [reusedFiles(again.stderr), again.exitCode],
+    }).toEqual({ first: 0, marks: ["pending-write"], reads: [], again: [[], 0] });
+    expect(again.stderr).toContain("reuse: p.test.ts runs: mark pending-write");
+  });
+
+  test.skipIf(isWindows)(
+    "an async node:fs write still under way when the file ends makes the record not hold",
+    async () => {
+      // Each call opens a named pipe nobody reads, so it waits in the open until the process ends, on
+      // any machine: when the file ends its effect is not applied and what it leaves is not known.
+      using dir = tempDir("input-reuse-node-fs-in-flight", {
+        "package.json": `{ "name": "node-fs-in-flight" }`,
+        "out/.keep": "",
+        "p.test.ts": `
+        import { expect, test } from "bun:test";
+        import { promises } from "node:fs";
+        test("fs.promises.writeFile not awaited", () => {
+          promises.writeFile(import.meta.dir + "/out/p-pipe", "x");
+          expect(1).toBe(1);
+        });
+      `,
+        "s.test.ts": `
+        import { expect, test } from "bun:test";
+        import { createWriteStream } from "node:fs";
+        test("a write stream not ended", () => {
+          createWriteStream(import.meta.dir + "/out/s-pipe").write("x");
+          expect(1).toBe(1);
+        });
+      `,
+      });
+      for (const name of ["p-pipe", "s-pipe"]) {
+        expect(Bun.spawnSync(["mkfifo", join(String(dir), "out", name)]).exitCode).toBe(0);
+      }
+      const both = ["./p.test.ts", "./s.test.ts"];
+      const first = await runTests(String(dir), ["--isolate"], both, { ...record, BUN_TEST_INPUT_RECORD_JSON: "1" });
+      const marks = (name: string) =>
+        JSON.parse(fs.readFileSync(join(String(dir), "records", `${name}.json`), "utf8")).marks;
+      const again = await runTests(String(dir), ["--isolate"], both, reuse);
+      expect({
+        first: first.exitCode,
+        marks: [marks("p.test.ts"), marks("s.test.ts")],
+        again: [reusedFiles(again.stderr), again.exitCode],
+      }).toEqual({ first: 0, marks: [["pending-write"], ["pending-write"]], again: [[], 0] });
+      expect(again.stderr).toContain("reuse: p.test.ts runs: mark pending-write");
+      expect(again.stderr).toContain("reuse: s.test.ts runs: mark pending-write");
+    },
+  );
+
+  test("a path a file in another worker changed after this file read it makes the record not hold", async () => {
+    // b reads "old" and passes; a, in the other worker, writes "new", the same size, before b
+    // ends. A record holding the bytes at b's end would pair b's pass with bytes it never saw, and
+    // b would be reused where running it fails. Each waits for the other, so the order is fixed.
+    using dir = tempDir("input-reuse-changed-during-run", {
+      "package.json": `{ "name": "changed-during-run" }`,
+      "gen.txt": "old",
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        test("writes gen.txt once b has read it", async () => {
+          while (!existsSync(import.meta.dir + "/b-read")) await Bun.sleep(5);
+          writeFileSync(import.meta.dir + "/gen.txt", "new");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { readFileSync, writeFileSync } from "node:fs";
+        test("reads gen.txt as old", async () => {
+          const path = import.meta.dir + "/gen.txt";
+          const seen = readFileSync(path, "utf8");
+          expect(seen).toBe("old");
+          writeFileSync(import.meta.dir + "/b-read", "");
+          while (readFileSync(path, "utf8") === seen) await Bun.sleep(5);
+        });
+      `,
+    });
+    const both = ["./a.test.ts", "./b.test.ts"];
+    const flags = ["--parallel=2"];
+    const scale = { BUN_TEST_PARALLEL_SCALE_MS: "0" };
+    const first = await runTests(String(dir), flags, both, { ...record, ...scale, BUN_TEST_INPUT_RECORD_JSON: "1" });
+    const json = JSON.parse(fs.readFileSync(join(String(dir), "records", "b.test.ts.json"), "utf8"));
+    const again = await runTests(String(dir), flags, both, { ...reuse, ...scale });
+    expect({
+      first: first.exitCode,
+      marks: json.marks,
+      bReused: reusedFiles(again.stderr).includes("b.test.ts"),
+      again: again.exitCode,
+    }).toEqual({ first: 0, marks: ["changed-during-run"], bReused: false, again: 1 });
+    expect(again.stderr).toContain("reuse: b.test.ts runs: mark changed-during-run");
+  });
+});
+
+// The recorder's store relies on flock, so recording and reuse are Unix only: on Windows,
+// `--reuse` says it is unavailable and every file runs.
+describe.concurrent.skipIf(isWindows)("bun test --reuse", () => {
+  const files = {
+    "package.json": `{ "name": "reuse-flag" }`,
+    "shared.ts": `export const value = 1;\n`,
+    "only-c.ts": `export const c = 1;\n`,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./shared";
+      test("a", () => expect(value).toBe(1));
+    `,
+    "b.test.ts": `
+      import { expect, test } from "bun:test";
+      import { value } from "./shared";
+      test("b", () => expect(value).toBe(1));
+    `,
+    "c.test.ts": `
+      import { expect, test } from "bun:test";
+      import { c } from "./only-c";
+      test("c", () => expect(c).toBe(1));
+    `,
+  };
+  const names = ["./a.test.ts", "./b.test.ts", "./c.test.ts"];
+  const reusedFiles = (stderr: string) => [...stderr.matchAll(/^(\S+): reused, /gm)].map(m => m[1]).sort();
+  const store = (dir: string) => join(dir, "node_modules", ".cache", "bun-test-reuse");
+  const listed = (stdout: string) =>
+    stdout
+      .split(/\r?\n/)
+      .filter(line => / (would be reused|runs: .*)$/.test(line))
+      .sort();
+
+  test("records into node_modules/.cache/bun-test-reuse without --isolate, and skips the files whose inputs are unchanged", async () => {
+    using dir = tempDir("reuse-flag", files);
+    const first = await runTests(String(dir), ["--reuse"], names);
+    const recorded = fs.existsSync(store(String(dir)));
+    fs.writeFileSync(join(String(dir), "only-c.ts"), `export const c = 1; // edited\n`);
+    const explain = await runTests(String(dir), ["--reuse=explain"], names);
+    const again = await runTests(String(dir), ["--reuse"], names);
+    expect({
+      first: [reusedFiles(first.stderr), first.exitCode],
+      recorded,
+      explain: [reusedFiles(explain.stderr), explain.exitCode],
+      again: [reusedFiles(again.stderr), again.exitCode],
+    }).toEqual({
+      first: [[], 0],
+      recorded: true,
+      explain: [["a.test.ts", "b.test.ts"], 0],
+      again: [["a.test.ts", "b.test.ts", "c.test.ts"], 0],
+    });
+    expect(explain.stderr).toContain("reuse: c.test.ts runs: changed only-c.ts");
+    expect(again.stderr).toContain("3 files reused, not run");
+  });
+
+  test("--reuse=list names what would run and runs nothing, and --reuse=check runs every file", async () => {
+    using dir = tempDir("reuse-flag-modes", files);
+    await runTests(String(dir), ["--reuse"], names);
+    fs.writeFileSync(join(String(dir), "only-c.ts"), `export const c = 1; // edited\n`);
+    const list = await runTests(String(dir), ["--reuse=list"], names);
+    const check = await runTests(String(dir), ["--reuse=check"], names);
+    expect({
+      list: [listed(list.stdout), list.exitCode],
+      check: [reusedFiles(check.stderr), check.exitCode],
+    }).toEqual({
+      list: [["a.test.ts: would be reused", "b.test.ts: would be reused", "c.test.ts: runs: changed only-c.ts"], 0],
+      check: [[], 0],
+    });
+    expect(check.stderr).toMatch(/3 pass/);
+  });
+
+  test("--reuse with --parallel records in every worker and reuses in the coordinator", async () => {
+    using dir = tempDir("reuse-flag-parallel", files);
+    const first = await runTests(String(dir), ["--reuse", "--parallel=2"], names);
+    const again = await runTests(String(dir), ["--reuse", "--parallel=2"], names);
+    expect({ first: first.exitCode, reused: reusedFiles(again.stderr), again: again.exitCode }).toEqual({
+      first: 0,
+      reused: ["a.test.ts", "b.test.ts", "c.test.ts"],
+      again: 0,
+    });
+  });
+
+  test("the variables override the store directory and the mode of --reuse", async () => {
+    using dir = tempDir("reuse-flag-variables", files);
+    await runTests(String(dir), ["--reuse"], names, { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records" });
+    const off = await runTests(String(dir), ["--reuse"], names, {
+      ...bunEnv,
+      BUN_TEST_INPUT_RECORD_DIR: "records",
+      BUN_TEST_INPUT_REUSE: "0",
+    });
+    const on = await runTests(String(dir), ["--reuse"], names, { ...bunEnv, BUN_TEST_INPUT_RECORD_DIR: "records" });
+    expect({
+      records: fs.existsSync(join(String(dir), "records")),
+      defaultStore: fs.existsSync(store(String(dir))),
+      off: [reusedFiles(off.stderr), off.exitCode],
+      on: [reusedFiles(on.stderr), on.exitCode],
+    }).toEqual({
+      records: true,
+      defaultStore: false,
+      off: [[], 0],
+      on: [["a.test.ts", "b.test.ts", "c.test.ts"], 0],
+    });
+  });
+
+  test("an unknown mode and --no-isolate are errors", async () => {
+    using dir = tempDir("reuse-flag-errors", files);
+    const [mode, noIsolate] = await Promise.all([
+      runTests(String(dir), ["--reuse=sometimes"], names),
+      runTests(String(dir), ["--reuse", "--parallel=2", "--no-isolate"], names),
+    ]);
+    expect({
+      mode: [mode.stderr.trim(), mode.exitCode],
+      noIsolate: [noIsolate.stderr.trim(), noIsolate.exitCode],
+      stored: fs.existsSync(store(String(dir))),
+    }).toEqual({
+      mode: ['error: --reuse expects "explain", "check" or "list", received "sometimes"', 1],
+      noIsolate: ["error: --reuse needs --isolate and cannot be used with --no-isolate", 1],
+      stored: false,
+    });
+  });
+
+  test("[test] reuse in bunfig.toml turns it on, takes a mode, and --reuse overrides it", async () => {
+    using dir = tempDir("reuse-bunfig", { ...files, "bunfig.toml": `[test]\nreuse = true\n` });
+    const first = await runTests(String(dir), [], names);
+    fs.writeFileSync(join(String(dir), "only-c.ts"), `export const c = 1; // edited\n`);
+    fs.writeFileSync(join(String(dir), "bunfig.toml"), `[test]\nreuse = "explain"\n`);
+    const explain = await runTests(String(dir), [], names);
+    const list = await runTests(String(dir), ["--reuse=list"], names);
+    fs.writeFileSync(join(String(dir), "bunfig.toml"), `[test]\nreuse = false\n`);
+    const off = await runTests(String(dir), [], names);
+    fs.writeFileSync(join(String(dir), "bunfig.toml"), `[test]\nreuse = "sometimes"\n`);
+    const invalid = await runTests(String(dir), [], names);
+    expect({
+      first: [fs.existsSync(store(String(dir))), first.exitCode],
+      explain: [reusedFiles(explain.stderr), explain.exitCode],
+      list: [listed(list.stdout), list.exitCode],
+      off: [reusedFiles(off.stderr), off.exitCode],
+      invalid: invalid.exitCode,
+    }).toEqual({
+      first: [true, 0],
+      explain: [["a.test.ts", "b.test.ts"], 0],
+      list: [["a.test.ts: would be reused", "b.test.ts: would be reused", "c.test.ts: would be reused"], 0],
+      off: [[], 0],
+      invalid: 1,
+    });
+    expect(explain.stderr).toContain("reuse: c.test.ts runs: changed only-c.ts");
+    expect(invalid.stderr).toContain(
+      'expected "reuse" to be a boolean, "explain", "check" or "list" but received "sometimes"',
+    );
+  });
+});

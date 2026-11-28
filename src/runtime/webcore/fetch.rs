@@ -1286,7 +1286,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 crate::webcore::node_types::PathLike::owned(temp_file_path.to_vec()),
             );
 
-            break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
+            break 'blob Blob::find_or_create_file_from_path(
+                &mut pathlike,
+                global_this,
+                true,
+                true,
+            );
         };
 
         let response = RefPtr::new(Response::init(

@@ -321,6 +321,13 @@ impl Snapshots {
         self.write_snapshot_file()?;
 
         let path: &[u8] = &snapshot_file_path(test_file);
+        if let Some(vm) = VirtualMachine::get_or_null() {
+            bun_jsc::test_input_recorder::own_read(
+                vm,
+                bun_jsc::test_own_reads::Look::Content,
+                path,
+            );
+        }
         let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
             Ok(contents) => contents,
             Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => Vec::new(),
@@ -612,6 +619,13 @@ impl Snapshots {
             return FileOutcome::IsSnapshotFile;
         }
 
+        if let Some(vm) = VirtualMachine::get_or_null() {
+            bun_jsc::test_input_recorder::own_read(
+                vm,
+                bun_jsc::test_own_reads::Look::Content,
+                path,
+            );
+        }
         let saved = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
             Ok(saved) => Some(saved),
             Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => None,
@@ -639,9 +653,11 @@ impl Snapshots {
             None => {}
         }
 
+        let own = own_write(path);
         let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
         match bun_sys::File::make_open(path, flags, 0o644).and_then(|file| file.write_all(received)) {
             Ok(()) => {
+                own_wrote(own);
                 self.added += 1;
                 FileOutcome::Written
             }
@@ -674,6 +690,17 @@ impl Snapshots {
     #[optimize(size)]
     fn write_sorted(&self, file: &File) -> Result<(), Error> {
         let path: &ZStr = &snapshot_file_path(file.test_file);
+        let own = own_write(path.as_bytes());
+        let written = self.write_sorted_to(file, path);
+        if written.is_ok() {
+            own_wrote(own);
+        }
+        written
+    }
+
+    #[cold]
+    #[optimize(size)]
+    fn write_sorted_to(&self, file: &File, path: &ZStr) -> Result<(), Error> {
         if self.values.is_empty() {
             return match bun_sys::unlink(path) {
                 Err(err) if err.get_errno() != bun_sys::Errno::ENOENT => Err(Error::FailedToWriteSnapshotFile),
@@ -1155,10 +1182,27 @@ impl Snapshots {
             }
         }
 
+        let own = own_write(path.as_bytes());
         // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
         let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
         let fd = bun_sys::open(&path, flags, 0o644)?;
+        own_wrote(own);
         current.file = Some(bun_sys::File::from_fd(fd));
         Ok(())
+    }
+}
+
+/// For the test input recorder: the runner is about to write the snapshot file at `path`. What the
+/// test file looked at there is observed now; [`own_wrote`] applies the write once it succeeded.
+fn own_write(path: &[u8]) -> Option<bun_jsc::test_input_recorder::OwnWrites> {
+    let vm = VirtualMachine::get_or_null()?;
+    let mut own = bun_jsc::test_input_recorder::OwnWrites::new(vm)?;
+    own.write(vm, path, bun_jsc::test_input_recorder::Wrote::File);
+    Some(own)
+}
+
+fn own_wrote(own: Option<bun_jsc::test_input_recorder::OwnWrites>) {
+    if let (Some(own), Some(vm)) = (own, VirtualMachine::get_or_null()) {
+        bun_jsc::test_input_recorder::own_wrote(vm, own, None);
     }
 }

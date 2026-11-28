@@ -5,6 +5,7 @@ use bun_io::Write as _;
 use crate::cli::Command;
 use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
+use crate::cli::test::input_reuse as InputReuse;
 use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
@@ -2057,6 +2058,19 @@ impl CommandLineReporter {
         self.jest.summary.get()
     }
 
+    fn input_record_counts(&self) -> jsc::test_input_recorder::Counts {
+        let summary = self.summary();
+        let unhandled_errors = self.jest.unhandled_errors_between_tests.get();
+        [
+            ("pass", summary.pass),
+            ("fail", summary.fail),
+            ("skip", summary.skip),
+            ("todo", summary.todo),
+            ("expectations", summary.expectations),
+            ("unhandledErrors", unhandled_errors),
+        ]
+    }
+
     pub(crate) fn update_summary(&self, update: impl FnOnce(&mut Summary)) {
         self.jest.summary.with_taken(update);
     }
@@ -2819,6 +2833,41 @@ impl TestCommand {
         if ctx.test_options.isolate {
             vm.test_isolation_enabled.set(true);
             vm.auto_killer.enabled.set(true);
+            // The fingerprint is made only when recording, so a plain `--isolate` run pays nothing.
+            // Recording needs `flock` for its store, so it is Unix only. Code compiled with
+            // `--aot` loads its modules from the compiled graph, which no hook sees, so such a run
+            // neither records nor reuses.
+            let compiled = ctx.bundler_options.aot.is_some() || run_compiled::runs_compiled_code();
+            let record_dir = InputReuse::record_dir(ctx, vm);
+            if compiled && !run_compiled::is_second_process() && record_dir.is_some() {
+                pretty_error!(
+                    "<r><yellow>warn<r><d>:<r> --reuse is not available with --aot; nothing is recorded or reused\n"
+                );
+            }
+            if cfg!(unix)
+                && !compiled
+                && let Some(record_dir) = record_dir
+            {
+                // A root that is not above the project ties no record to the repository: refused,
+                // like an unknown reuse setting.
+                if !jsc::test_input_recorder::root_holds_project(vm) {
+                    pretty_error!(
+                        "<r><red>error<r><d>:<r> BUN_TEST_INPUT_RECORD_ROOT={} is not the project directory or a directory above it\n",
+                        bstr::BStr::new(
+                            env_var::BUN_TEST_INPUT_RECORD_ROOT
+                                .get_not_empty()
+                                .unwrap_or_default()
+                        )
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+                let fingerprint = match env_var::BUN_TEST_INPUT_RECORD_FINGERPRINT.get_not_empty() {
+                    Some(given) if ctx.test_options.test_worker => given.to_vec(),
+                    _ => InputReuse::fingerprint(ctx, vm),
+                };
+                jsc::test_input_recorder::enable(vm, &fingerprint, record_dir.into_boxed_slice());
+            }
         }
         vm.test_isolation_state
             .shares_global
@@ -3093,6 +3142,21 @@ impl TestCommand {
             }
         }
 
+        // `--reuse`: files whose record holds are not run. Under --parallel this is the
+        // coordinator; workers never see them. Coverage would miss them. After --shard, so every
+        // shard deals the same list whatever its store holds, and reports only its own. They are
+        // counted after the run, when their records are checked again (see below).
+        let reuse_mode = InputReuse::mode(ctx);
+        let mut reused: Vec<InputReuse::Reused> = Vec::new();
+        if !ctx.test_options.coverage.enabled
+            && let Some((kept, held)) = InputReuse::take_reusable(vm, reuse_mode, test_files)
+        {
+            if kept == 0 && !held.is_empty() {
+                pass_with_no_tests_from_filter = true;
+            }
+            test_files = &mut test_files[..kept];
+            reused = held;
+        }
         // Normally the watcher is only enabled when there are test files to
         // run; `bun test --watch` with nothing matching should still exit.
         // With --changed we always want to keep watching as long as any test
@@ -3192,6 +3256,68 @@ impl TestCommand {
                 Self::run_all_tests(reporter, vm, test_files);
             }
         }
+
+        // A file that ran may have written what a reused file looks at: a reused file is one whose
+        // record holds after the run too. Those that no longer hold run now, which can change what
+        // the others look at, until none changes. Under --parallel the coordinator does it.
+        let mut ran_here = !test_files.is_empty() && !ran_parallel;
+        let mut ran_since = !test_files.is_empty();
+        while ran_since && !reused.is_empty() {
+            // After --bail nothing more runs, and a file whose record no longer holds is not
+            // reused either: it is said not to have run.
+            let bail = reporter.jest.bail;
+            let bailed = bail > 0 && reporter.summary().fail >= bail;
+            let runs = InputReuse::validate_again(vm, reuse_mode, &mut reused, bailed);
+            if bailed {
+                break;
+            }
+            ran_since = !runs.is_empty();
+            if !ran_since {
+                break;
+            }
+            let mut ran = false;
+            if ctx.test_options.parallel > 0 {
+                ran = ParallelRunner::run_as_coordinator(
+                    reporter,
+                    vm,
+                    &runs,
+                    &mut *ctx,
+                    &mut coverage_options,
+                )?;
+                ran_parallel |= ran;
+            }
+            if !ran {
+                if ran_here {
+                    Self::start_next_file(reporter, vm);
+                }
+                Self::run_all_tests(reporter, vm, &runs);
+                ran_here = true;
+            }
+        }
+        for it in &reused {
+            let title = Path::relative(FileSystem::get().top_level_dir(), it.file.as_bytes());
+            pretty_error!(
+                "<r><d>{}: reused, {} pass",
+                bstr::BStr::new(&title[..]),
+                it.pass
+            );
+            if it.skip > 0 {
+                pretty_error!(", {} skip", it.skip);
+            }
+            if it.todo > 0 {
+                pretty_error!(", {} todo", it.todo);
+            }
+            pretty_error!(", {} expect() calls<r>\n", it.expectations);
+            reporter.update_summary(|summary| {
+                summary.pass += it.pass;
+                summary.skip += it.skip;
+                summary.todo += it.todo;
+                summary.expectations += it.expectations;
+                summary.files += 1;
+                summary.reused_files += 1;
+            });
+        }
+        Output::flush();
 
         // With --changed, only a subset of test files (possibly none) runs,
         // so the module loader won't naturally add every source file to the
@@ -3395,6 +3521,14 @@ impl TestCommand {
                 }
 
                 pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
+                if summary.reused_files > 0 {
+                    pretty_error!(
+                        "{}<r><d>{:5>} file{} reused, not run<r>\n",
+                        &indenter,
+                        summary.reused_files,
+                        if summary.reused_files == 1 { "" } else { "s" }
+                    );
+                }
                 if unhandled_errors > 0 {
                     pretty_error!(
                         "{}<r><red>{:5>} error{}<r>\n",
@@ -3596,6 +3730,11 @@ impl TestCommand {
         if vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch {
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
+        // This run's records go into the store. `--reuse=check`: a file whose record held
+        // but whose outcome now differs fails the run.
+        if InputReuse::finish_run(vm).is_some_and(|mismatches| mismatches > 0) {
+            vm.exit_handler.exit_code.set(1);
+        }
         let summary = reporter.summary();
 
         let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
@@ -3639,6 +3778,24 @@ impl TestCommand {
 
             vm.event_loop().tick_possibly_forever();
         }
+    }
+
+    /// Before more files run in this process after [`Self::run_all_tests`] returned: what it does
+    /// between two files, which it did not do after its last one.
+    fn start_next_file(reporter: &'static CommandLineReporter, vm: &VirtualMachine) {
+        reporter.jest.default_timeout_override.set(u32::MAX);
+        if !vm.test_isolation_enabled.get() {
+            return;
+        }
+        vm.run_with_api_lock(|| {
+            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+            vm.swap_global_for_test_isolation();
+            reporter
+                .jest
+                .bun_test_root
+                .reset_preload_for_test_isolation();
+            crate::test_runner::Expect::reset_for_test_isolation(vm.global());
+        });
     }
 
     pub(crate) fn run_all_tests(
@@ -3724,6 +3881,13 @@ impl TestCommand {
         let resolution = vm
             .transpiler
             .with_mut(|t| t.resolve_entry_point(file_name, &dot_slash))?;
+        jsc::test_input_recorder::did_resolve_directly(
+            vm,
+            "entry",
+            file_name,
+            vm.top_level_dir(),
+            &resolution,
+        );
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
         Ok(FileSystem::get()
@@ -3816,6 +3980,8 @@ impl TestCommand {
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
         let _print_log = PrintLogAfterFile(vm.log.get());
+        let recording =
+            jsc::test_input_recorder::will_run_file(vm, file_name, &reporter.input_record_counts());
 
         let file_path = Self::resolve_test_file(vm, file_name)?;
         vm.clear_entry_point()?;
@@ -4076,6 +4242,7 @@ impl TestCommand {
                 environment.teardown(vm);
             }
         }
+        recording.did_run_file(file_path, &reporter.input_record_counts());
         reporter.with_junit(|junit| {
             let _ = junit.end_file(Some(junit_file_name(file_path)), None);
         });

@@ -83,6 +83,18 @@ pub(crate) fn run_as_coordinator(
     // env map once per worker after .put() — appending after the fact would
     // create duplicate entries when the parent already has the variable set,
     // and POSIX getenv() returns the first match.
+    // Workers are started with other arguments than this process (an explicit preload, JSX and
+    // env-file flags, no `--reuse`), so they record into the coordinator's record directory with
+    // the fingerprint of the run that it computed.
+    if let (Some(fingerprint), Some(dir)) = (
+        bun_jsc::test_input_recorder::fingerprint_text(vm),
+        bun_jsc::test_input_recorder::record_dir(vm),
+    ) {
+        let _ = env
+            .map
+            .put(b"BUN_TEST_INPUT_RECORD_FINGERPRINT", fingerprint);
+        let _ = env.map.put(b"BUN_TEST_INPUT_RECORD_DIR", dir);
+    }
     let mut envps: Vec<bun_core::CStringList> = Vec::with_capacity(k as usize);
     for i in 0..k {
         let mut id = Vec::new();

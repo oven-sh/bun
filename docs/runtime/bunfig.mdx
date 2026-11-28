@@ -387,6 +387,17 @@ retry = 3
 
 The `--retry` CLI flag overrides this setting.
 
+### `test.reuse`
+
+Skip test files whose recorded inputs are unchanged since they last passed, and record the others. Set it to `true`, or to a mode: `"explain"`, `"check"` or `"list"`. Default `false`. It implies `--isolate`. See [Reusing test results](/test/reuse).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reuse = true
+```
+
+The `--reuse` CLI flag overrides this setting.
+
 ### `test.clearMocks`
 
 Clear every mock function's calls and results before each test. Default `false`, or `true` for tests that use `test` from `"vitest"`.

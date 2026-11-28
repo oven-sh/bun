@@ -915,6 +915,28 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     }
     return false;
   }
+  /// `sql.stats`: counted when it is read, nothing keeps a count for it.
+  stats(): Bun.SQL.PoolStats {
+    const connections = this.connections;
+    let open = 0;
+    let opening = 0;
+    let idle = 0;
+    let leased = 0;
+    for (let i = 0; i < connections.length; i++) {
+      const connection = connections[i];
+      if (connection.state === PooledConnectionState.connecting) {
+        opening++;
+      } else if (connection.state === PooledConnectionState.open) {
+        open++;
+        if (connection.flags & PooledConnectionFlags.reserved) {
+          leased++;
+        } else if (connection.queryCount === 0 && !(connection.flags & PooledConnectionFlags.retiring)) {
+          idle++;
+        }
+      }
+    }
+    return { connections: open, opening, idle, leased, waiting: this.queue.length };
+  }
   flush() {
     const connections = this.connections;
     for (let i = 0; i < connections.length; i++) {

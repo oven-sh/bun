@@ -1394,6 +1394,32 @@ await Promise.all([
 - When Bun cannot open a new connection, callers wait for the connections that are open. They reject with the error of that attempt only when the pool has no connection left. A caller that finds every open connection reserved makes Bun try again at once. While an open connection can still take queries, Bun adds at most one connection at a time for the queries that wait, and after each failed attempt it pauses before the next: a few tens of milliseconds at first, then twice as long each time, up to 1 second.
 - Bun closes a connection that goes back to the pool inside a transaction, and the server rolls that transaction back. That covers a reserved connection that you release after a manual `BEGIN`, and a query that leaves a transaction open or failed, such as `SELECT 1; BEGIN`. Queries of other callers that Bun already sent behind such a query are rolled back with it. With `max: 1`, where a manual `BEGIN` is allowed, a query can leave its transaction open.
 
+### Pool stats
+
+`sql.stats` tells what the pool is doing right now. Bun counts when you read it, and each read returns a new object.
+
+```ts
+sql.stats;
+// { connections: 3, opening: 0, idle: 1, leased: 1, waiting: 0 }
+```
+
+| Field         | What it counts                                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `connections` | Open connections.                                                                                                                          |
+| `opening`     | Connections that are not open yet. This includes a connection that waits to connect again after the server closed it during the handshake. |
+| `idle`        | Open connections that run no query and that no caller holds.                                                                               |
+| `leased`      | Open connections that one caller holds: a connection from `sql.reserve()`, or the connection of a transaction.                             |
+| `waiting`     | Callers that wait for a connection: queries, `sql.reserve()` and `sql.begin()`.                                                            |
+
+- The limit of the pool is `sql.options.max`.
+- Queries share connections, so `waiting` can be 0 while every connection is busy. Read `idle` too: the pool has no free connection when `idle` is 0 and `connections` equals `sql.options.max`.
+- A query waits while no connection is open, and when the connections that take queries already run their share. A leased connection takes no query of another caller. Neither does a connection that is past `maxLifetime` and finishes its work: Bun still counts it in `connections`, and never as `idle`.
+- Bun opens up to `max` connections when a caller finds no connection ready, so `opening` can be higher than `waiting`.
+- All counts are 0 before the first query, after every connection has closed (for example at `idleTimeout`), and after `sql.close()`.
+- The connection of [`sql.listen()`](#listen--notify-postgresql) is not in the pool, so Bun does not count it. `onconnect` and `onclose` do run for it.
+- Only the client that owns a PostgreSQL or MySQL pool has `stats`. A reserved connection, the client of a transaction or savepoint, and a SQLite client have none.
+- `Bun.sql.stats` is `undefined` until the first use of `Bun.sql` creates the default client. A read opens nothing.
+
 ### Hot reloading
 
 With `bun --hot`, a `new SQL()` with the same connection settings takes over the open connections of the previous load. A reload opens no new connection, and the database sees the same sessions.

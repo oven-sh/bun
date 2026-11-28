@@ -619,6 +619,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   attachConnectionCloseHandler(connection: Connection, handler: (err: Error) => void): void;
   detachConnectionCloseHandler(connection: Connection, handler: (err: Error) => void): void;
   isInTransaction?(connection: Connection): boolean;
+  /** `sql.stats`. `undefined`, as an own property: the adapter has no pool. */
+  readonly stats: (() => Bun.SQL.PoolStats) | undefined;
   copyStream?(query: QueryType<any, any>, writable: boolean): ReadableStream<Uint8Array> | WritableStream<unknown>;
 
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;

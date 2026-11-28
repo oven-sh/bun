@@ -1,5 +1,8 @@
 // this file is compatible with jest to test node.js' util.inspect as well as bun's
 
+const assert = require("assert");
+const { Console } = require("console");
+const { Writable } = require("stream");
 const util = require("util");
 
 test("util.inspect.custom exists", () => {
@@ -7,6 +10,146 @@ test("util.inspect.custom exists", () => {
 });
 
 const customSymbol = util.inspect.custom;
+
+const nothingThrown = Symbol("nothing thrown");
+
+function thrownBy(fn) {
+  try {
+    fn();
+  } catch (thrown) {
+    return thrown;
+  }
+  return nothingThrown;
+}
+
+// Node.js rethrows what a nested value throws (https://github.com/nodejs/node/pull/55544).
+describe("util.inspect of a nested value that throws", () => {
+  const boom = new RangeError("boom");
+  const throwing = {
+    [customSymbol]() {
+      throw boom;
+    },
+  };
+
+  test("rethrows what a getter for inspect.custom throws", () => {
+    const obj = {
+      get [customSymbol]() {
+        throw boom;
+      },
+    };
+
+    expect(thrownBy(() => util.inspect([obj]))).toBe(boom);
+  });
+
+  test("rethrows what a `sorted` comparator throws", () => {
+    const sorted = () => {
+      throw boom;
+    };
+
+    expect(thrownBy(() => util.inspect({ a: { b: 1, c: 2 } }, { sorted }))).toBe(boom);
+  });
+
+  test("rethrows it through util.format, util.formatWithOptions and Console", () => {
+    expect(thrownBy(() => util.format("%o", [throwing]))).toBe(boom);
+    expect(thrownBy(() => util.formatWithOptions({ colors: true }, [throwing]))).toBe(boom);
+
+    const sink = new Writable({
+      write(chunk, encoding, callback) {
+        callback();
+      },
+    });
+    expect(thrownBy(() => new Console(sink).log([throwing]))).toBe(boom);
+  });
+
+  // `getters: true` prints what the value of a getter throws, so that value reaches one more `catch`.
+  describe.each([
+    [
+      "the getter",
+      thrown => ({
+        get a() {
+          throw thrown;
+        },
+      }),
+    ],
+    [
+      "a member of the getter's value",
+      thrown => ({
+        get a() {
+          return [
+            {
+              [customSymbol]() {
+                throw thrown;
+              },
+            },
+          ];
+        },
+      }),
+    ],
+  ])("with `getters: true`, when %s throws", (_, make) => {
+    const print = thrown => util.inspect(make(thrown), { getters: true });
+    const printed = text => `{ a: [Getter: <Inspection threw (${text})>] }`;
+
+    test("prints a primitive", () => {
+      expect(print(null)).toBe(printed("null"));
+      expect(print(undefined)).toBe(printed("undefined"));
+      expect(print(42)).toBe(printed("42"));
+      expect(print("boom")).toBe(printed("'boom'"));
+    });
+
+    // Node.js prints an object that is thrown. Bun prints its message.
+    test("prints the message of an error", () => {
+      if (process.versions.bun) expect(print(boom)).toBe(printed("boom"));
+      else expect(print(boom)).toContain("a: [Getter: <Inspection threw (RangeError: boom");
+    });
+
+    test("prints an object with no readable message", () => {
+      const unreadable = Object.defineProperty(new Error("unreadable"), "message", {
+        get() {
+          throw boom;
+        },
+      });
+
+      for (const thrown of [unreadable, { message: Symbol("not a string") }]) {
+        if (process.versions.bun) expect(print(thrown)).toBe(printed("undefined"));
+        else expect(print(thrown)).toContain("a: [Getter: <Inspection threw (");
+      }
+    });
+  });
+
+  test("node:assert reports the failed assertion", () => {
+    // node:assert prints its operands with `getters: true` and without inspect.custom.
+    const unnamed = Object.defineProperty(function () {}, "name", {
+      get() {
+        throw null;
+      },
+    });
+    const operands = [
+      {
+        get a() {
+          throw null;
+        },
+      },
+      {
+        get a() {
+          return [unnamed];
+        },
+      },
+    ];
+    const limit = Error.stackTraceLimit;
+
+    try {
+      for (const operand of operands) {
+        const failed = thrownBy(() => assert.strictEqual(operand, 1));
+
+        expect(failed).toBeInstanceOf(assert.AssertionError);
+        expect(failed.message).toContain("a: [Getter: <Inspection threw (null)>]");
+      }
+    } finally {
+      // node:assert sets the limit to 0 while it prints. A print that throws leaves it there.
+      Error.stackTraceLimit = limit;
+    }
+  });
+});
 
 for (const [name, inspect] of process.versions.bun
   ? [
@@ -135,6 +278,35 @@ for (const [name, inspect] of process.versions.bun
     const expected = isBunInspect ? "{prop:[2,3],}" : "{prop:[2,3]}";
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
   });
+
+  const containers = [
+    ["an object", member => ({ member })],
+    ["an array", member => [member]],
+    ["a Map key", member => new Map([[member, 1]])],
+    ["a Map value", member => new Map([[1, member]])],
+    ["a Set", member => new Set([member])],
+    ["an array inside two objects", member => ({ a: { b: [member] } })],
+  ];
+
+  test.each(containers)(name + " rethrows what inspect.custom throws inside %s", (_, contain) => {
+    for (const thrown of [new RangeError("boom"), 42, null, undefined]) {
+      const obj = {
+        [customSymbol]() {
+          throw thrown;
+        },
+      };
+      // Bun.inspect and util.inspect both hand util.inspect to the hook.
+      const printedByHook = {
+        [customSymbol](depth, options, inspect) {
+          return inspect(contain(obj), options);
+        },
+      };
+
+      expect(thrownBy(() => inspect(contain(obj)))).toBe(thrown);
+      expect(thrownBy(() => inspect(printedByHook))).toBe(thrown);
+    }
+  });
+
   test(name + " non-callable does not get called", () => {
     const obj = {
       [customSymbol]: 512,

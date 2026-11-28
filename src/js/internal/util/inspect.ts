@@ -182,14 +182,14 @@ class AssertionError extends Error {
   declare actual: unknown;
   declare expected: unknown;
 
-  constructor(message?: string, isForced = false) {
+  constructor(message?: string) {
     super(message);
     this.name = "AssertionError";
     this.code = "ERR_ASSERTION";
     this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
 }
 function assert(p: unknown, message?: string) {
@@ -1597,7 +1597,8 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    // Like Node.js, this leaves `ctx.seen` and `ctx.indentationLvl` as they are (nodejs/node#55544).
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -2532,7 +2533,17 @@ function formatProperty(
         }
         ctx.indentationLvl -= 2;
       } catch (err) {
-        const message = `<Inspection threw (${(err as Error).message})>`;
+        let thrown: string | undefined;
+        try {
+          // Node.js prints the thrown value. This prints a primitive as Node.js does, and the message of an object.
+          thrown =
+            (typeof err === "object" && err !== null) || typeof err === "function"
+              ? `${(err as Error).message}`
+              : formatValue(ctx, err, recurseTimes);
+        } catch {
+          // The message can throw when read, or not convert to a string.
+        }
+        const message = `<Inspection threw (${thrown})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
     } else {

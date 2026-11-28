@@ -1,8 +1,12 @@
 //! eslint-plugin-import's `settings["import/.."]`, as `ignore.js`, `getParserPath`, `importType.js` and the `ExportMap`
 //! read them. A value whose type makes upstream throw is treated as missing.
+//!
+//! With an oxlint config, a setting that isn't set has the built-in config's value ([`import_defaults`]).
 
+use crate::oxlint;
 use bun_core::strings;
 use bun_lint::language::Parser;
+use bun_lint::modules::import_defaults;
 use bun_lint::paths;
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
@@ -11,9 +15,16 @@ use std::cell::OnceCell;
 /// The JavaScript extensions used if `import/extensions` isn't set.
 const EXTENSIONS: [&[u8]; 3] = [b".js", b".mjs", b".cjs"];
 
+/// `import/core-modules` with an oxlint config: true if `name` is one of Bun's own modules.
+pub(crate) fn is_bun_module(name: &[u8]) -> bool {
+    import_defaults::CORE_MODULES.contains(&name)
+}
+
 /// A file's settings.
 pub(crate) struct Settings<'s> {
     settings: &'s Json,
+    /// True if the file is linted with an oxlint config.
+    is_oxlint: bool,
     /// `cachedSet`
     extensions: OnceCell<SmallVec<[&'s [u8]; 8]>>,
     /// `import/ignore`
@@ -72,9 +83,16 @@ fn parser_named(name: &[u8]) -> Parser {
 }
 
 impl<'s> Settings<'s> {
-    pub(crate) fn new(settings: &'s Json) -> Settings<'s> {
+    /// The file's settings.
+    pub(crate) fn of(file: &File<'s>) -> Settings<'s> {
+        Settings::of_settings(file.settings(), oxlint::is_followed(file))
+    }
+
+    /// [`Settings::of`] with the settings alone. `is_oxlint` says whether the file is linted with an oxlint config.
+    pub(crate) fn of_settings(settings: &'s Json, is_oxlint: bool) -> Settings<'s> {
         Settings {
             settings,
+            is_oxlint,
             extensions: OnceCell::new(),
             ignore: OnceCell::new(),
             internal_regex: OnceCell::new(),
@@ -83,9 +101,10 @@ impl<'s> Settings<'s> {
 
     fn make_valid_extension_set(&self) -> SmallVec<[&'s [u8]; 8]> {
         let own = truthy(self.settings.get(b"import/extensions"));
-        let mut exts: SmallVec<[&'s [u8]; 8]> = match own {
-            Some(_) => SmallVec::new(),
-            None => SmallVec::from_slice(&EXTENSIONS),
+        let mut exts: SmallVec<[&'s [u8]; 8]> = match (own, self.is_oxlint) {
+            (Some(_), _) => SmallVec::new(),
+            (None, true) => SmallVec::from_slice(&import_defaults::EXTENSIONS),
+            (None, false) => SmallVec::from_slice(&EXTENSIONS),
         };
         let parsers = self.settings.get(b"import/parsers");
         let parsers = parsers.and_then(Json::as_object).unwrap_or_default();
@@ -128,7 +147,10 @@ impl<'s> Settings<'s> {
 
     /// `extras.indexOf(name) > -1` in `isBuiltIn`
     pub(crate) fn is_core_module(&self, name: &[u8]) -> bool {
-        strings_in(self.settings.get(b"import/core-modules")).any(|it| it == name)
+        match truthy(self.settings.get(b"import/core-modules")) {
+            None if self.is_oxlint => is_bun_module(name),
+            listed => strings_in(listed).any(|it| it == name),
+        }
     }
 
     pub(crate) fn is_internal_regex_match(&self, name: &[u8]) -> bool {
@@ -143,6 +165,9 @@ impl<'s> Settings<'s> {
     pub(crate) fn external_module_folders(&self) -> SmallVec<[&'s [u8]; 2]> {
         match truthy(self.settings.get(b"import/external-module-folders")) {
             Some(folders) => strings_in(Some(folders)).collect(),
+            None if self.is_oxlint => {
+                SmallVec::from_slice(&import_defaults::EXTERNAL_MODULE_FOLDERS)
+            }
             None => SmallVec::from_slice(&[&b"node_modules"[..]]),
         }
     }

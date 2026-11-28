@@ -3,7 +3,7 @@
 //! Scripts are found the way oxlint finds them, by searching the text. Only the scripts themselves are parsed. Each one
 //! is a separate program that can't see the file's other scripts or its template.
 
-use crate::lint::{Context, RuleFilter};
+use crate::lint::{Context, EmbeddedScript, RuleFilter};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::fix::Fix;
@@ -180,6 +180,30 @@ fn vue_script(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     until_end(text, at + tag + 1, kind)
 }
 
+/// True if a Vue file has a `<script setup>`. Unlike [`vue_script`], this finds a tag that a line break follows, as
+/// `bun fmt` writes a long one, and one in a language that isn't linted: the template sees their bindings all the same.
+fn vue_has_setup(text: &[u8]) -> bool {
+    let mut at = 0;
+    while let Some(after_name) = script_start(text, at) {
+        at = after_name;
+        if !text.get(at).is_some_and(|&it| is_space(it) || it == b'>') {
+            continue;
+        }
+        let Some(tag) = closing_angle(text, at) else {
+            return false;
+        };
+        if attribute(&text[at..at + tag], b"setup").is_some() {
+            return true;
+        }
+        // Past the script, whose text can mention a tag.
+        let Some((_, after)) = until_end(text, at + tag + 1, ScriptKind::Js) else {
+            return false;
+        };
+        at = after;
+    }
+    false
+}
+
 /// `SveltePartialLoader::parse_script`
 fn svelte_script(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     loop {
@@ -293,19 +317,18 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// The `should_run` of the oxlint 1.80 rules that check for these file extensions. There's no way to tell what the
-/// template uses or assigns to, and `$:` is Svelte syntax. Each rule was tried.
+/// The rules oxlint 1.87 turns off for these files, because the template isn't parsed. In Vue and Svelte files,
+/// `no-unused-vars`, `prefer-const` and `no-unassigned-vars` run and skip the template's bindings themselves. Astro's
+/// template reads the frontmatter and can't assign to it, so Astro keeps oxlint's rules. `$:` is Svelte syntax.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;
     };
     let is_off = match (meta.plugin, meta.name) {
-        (Plugin::Eslint | Plugin::TypeScript, "no-unused-vars")
-        | (Plugin::TypeScript, "consistent-type-imports") => true,
+        (Plugin::Eslint | Plugin::TypeScript, "no-unused-vars") => framework == Framework::Astro,
+        (Plugin::TypeScript, "consistent-type-imports") => true,
         (Plugin::Eslint, "no-unused-labels") => framework == Framework::Svelte,
-        (Plugin::Eslint, "prefer-const") | (Plugin::ReactHooks, "rules-of-hooks") => {
-            framework != Framework::Astro
-        }
+        (Plugin::ReactHooks, "rules-of-hooks") => framework != Framework::Astro,
         _ => false,
     };
     !is_off && oxlint_runs_on(meta, is_typescript)
@@ -400,6 +423,12 @@ impl Context<'_, '_> {
     ) -> LintResult {
         let mut all = LintResult::default();
         let scripts = scripts_of(framework, text);
+        // Vue's template sees every script's top level if the file has a `<script setup>`. Svelte's always does.
+        let is_template_reachable = match framework {
+            Framework::Vue => vue_has_setup(text),
+            Framework::Svelte => true,
+            Framework::Astro => false,
+        };
         for (index, &script) in scripts.iter().enumerate() {
             let is_typescript = matches!(script.kind, ScriptKind::Ts | ScriptKind::Tsx);
             let filter = |rule: &RuleId, severity: Severity| {
@@ -407,7 +436,11 @@ impl Context<'_, '_> {
                     && outer.is_none_or(|outer| outer(rule, severity))
             };
             let code = &text[script.start..script.end];
-            let how = (script.kind, index > 0);
+            let how = EmbeddedScript {
+                kind: script.kind,
+                is_later_script: index > 0,
+                is_template_reachable,
+            };
             let mut result = self.verify_script(path, code, config, how, &filter);
             if result.thrown.is_some() {
                 return result;

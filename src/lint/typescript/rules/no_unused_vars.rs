@@ -2064,6 +2064,7 @@ impl NoUnusedVars {
         let is_added = |it: &Variable<'a>| {
             !analysis.is_unused(it.symbol())
                 && !analysis.is_eslint_used(*it)
+                && !it.symbol().is_template_reachable()
                 && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types, &walks)
                 && !is_exported(*it)
         };

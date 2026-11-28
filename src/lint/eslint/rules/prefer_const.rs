@@ -304,6 +304,10 @@ impl PreferConst {
         if scope.kind() == ScopeKind::Global && variable.is_marked_used() {
             return None;
         }
+        // The template can assign it.
+        if variable.is_template_reachable() {
+            return None;
+        }
         let mut writer: Option<Reference<'a>> = None;
         let mut is_read_before_init = false;
         for reference in variable.references() {

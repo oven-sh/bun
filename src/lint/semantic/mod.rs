@@ -370,6 +370,12 @@ impl<'a> Symbol<'a> {
             .is_some_and(|it| it.flags & variables::VALUE != 0)
     }
 
+    /// True if the file's template, which isn't parsed, can use this variable: it's declared at the top level of a
+    /// script that [`File::is_template_reachable`] describes. A template in TypeScript can use a type too.
+    pub fn is_template_reachable(self) -> bool {
+        self.file.is_template_reachable() && self.scope() == self.file.top_level_scope()
+    }
+
     /// typescript-eslint's `variable.isTypeVariable`: an interface, a type alias, a type
     /// parameter, a class, an enum and its members, a namespace, an import.
     pub fn is_type_variable(self) -> bool {

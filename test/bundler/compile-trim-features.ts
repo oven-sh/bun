@@ -64,7 +64,7 @@ const table: TrimTable | undefined = readTableOfThisBun();
 export const canTrim: boolean = table !== undefined;
 
 /** What a build with --trim says. */
-export function probeTrim(): { stderr: string; exitCode: number } {
+export function probeTrim(): { stderr: string; exitCode: number | null } {
   using probe = tempDir("compile-trim-probe", { "hello.ts": 'console.log("hello world");' });
   const probed = Bun.spawnSync({
     cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],

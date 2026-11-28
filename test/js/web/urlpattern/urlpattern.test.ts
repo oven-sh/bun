@@ -161,6 +161,31 @@ describe("URLPattern", () => {
       // Should not throw
       new URLPattern(undefined, undefined);
     });
+
+    // https://urlpattern.spec.whatwg.org/#canonicalize-a-port parses a port in the port state of the URL parser. The
+    // parser removes tab and newline first, and the parse fails when no digit is left. Chrome gives these results too.
+    // Node.js and Deno take such a port as the empty string.
+    test("a port piece of only tab or newline is not a port", () => {
+      const portOf = (input: string | { port: string }, baseURL?: string) => {
+        try {
+          return (baseURL === undefined ? new URLPattern(input) : new URLPattern(input, baseURL)).port;
+        } catch (error) {
+          return String(error);
+        }
+      };
+      const refused = [{ port: "\t\n" }, { port: "*\n" }, { port: "\t:id" }, "http://localhost:*\r", "https://h:\n/p"];
+      expect(refused.map(input => portOf(input))).toEqual(
+        refused.map(() => "TypeError: Invalid input to canonicalize a URL port string."),
+      );
+      expect(new URLPattern({ port: "*" }).test({ port: "\r" })).toBe(false);
+      expect(new URLPattern({ port: "" }).test({ port: "\t" })).toBe(false);
+
+      // Digits with tab or newline around them are a port. A URL string is parsed whole, and there an empty port is no port.
+      expect(portOf("http://localhost:3000\r\n")).toBe("3000");
+      expect(portOf({ port: "8\t0" })).toBe("80");
+      expect(portOf("/p", "https://h:\n/")).toBe("");
+      expect(new URLPattern({ port: "" }).test("https://h:\t/")).toBe(true);
+    });
   });
 
   describe("bindings", () => {

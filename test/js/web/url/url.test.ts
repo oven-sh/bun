@@ -442,6 +442,31 @@ describe("url", () => {
     });
   });
 
+  // Each expected href is what the port setter of the URL Standard gives (https://url.spec.whatwg.org/#dom-url-port).
+  // Node gives the same value for every row.
+  describe("port setter", () => {
+    const cases = [
+      // The parser removes tab and newline first. With no digit left, the parse fails and the port stays.
+      ["http://example.net:123/", "\t\n", "http://example.net:123/"],
+      ["https://example.net:3000", "\n\n\t\t", "https://example.net:3000/"],
+      ["http://example.net/path", "8\t0\n81", "http://example.net:8081/path"],
+      // The empty string, and the default port of the scheme, clear the port.
+      ["http://example.net:8080", "", "http://example.net/"],
+      ["http://example.net:8080", "80", "http://example.net/"],
+      // The number ends at the first character that is not a digit. No digit, or a number above 65535, is a failure.
+      ["http://example.net/path", "8080stuff2", "http://example.net:8080/path"],
+      ["http://example.net:8080/path", "randomstring", "http://example.net:8080/path"],
+      ["http://example.net/path", "65535", "http://example.net:65535/path"],
+      ["http://example.net:8080/path", "65536", "http://example.net:8080/path"],
+    ] as const;
+
+    it.each(cases)("new URL(%j).port = %j", (href, value, expected) => {
+      const url = new URL(href);
+      url.port = value;
+      expect(url.href).toBe(expected);
+    });
+  });
+
   // Web IDL record conversion interleaves Get with value conversion: mutations made by a
   // value's toString() are observed by the keys that follow it. Node agrees.
   it("URLSearchParams constructed from an object interleaves Get with value conversion", () => {

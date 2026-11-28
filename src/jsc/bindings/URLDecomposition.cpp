@@ -174,8 +174,7 @@ String URLDecomposition::port() const
     return String::number(*port);
 }
 
-// Outer optional is whether we could parse at all. Inner optional is "no port specified".
-std::optional<std::optional<uint16_t>> URLDecomposition::parsePort(StringView string, StringView protocol)
+std::optional<uint16_t> URLDecomposition::parsePort(StringView string)
 {
     // https://url.spec.whatwg.org/#port-state with state override given.
     uint32_t port { 0 };
@@ -185,20 +184,16 @@ std::optional<std::optional<uint16_t>> URLDecomposition::parsePort(StringView st
         // https://infra.spec.whatwg.org/#ascii-tab-or-newline
         if (c == 0x0009 || c == 0x000A || c == 0x000D)
             continue;
-        if (isASCIIDigit(c)) {
-            port = port * 10 + c - '0';
-            foundDigit = true;
-            if (port > std::numeric_limits<uint16_t>::max())
-                return std::nullopt;
-            continue;
-        }
-        if (!foundDigit)
-            return std::nullopt;
-        break;
+        if (!isASCIIDigit(c))
+            break;
+        port = port * 10 + c - '0';
+        foundDigit = true;
+        if (port > std::numeric_limits<uint16_t>::max())
+            return {};
     }
-    if (!foundDigit || WTF::isDefaultPortForProtocol(static_cast<uint16_t>(port), protocol))
-        return std::optional<uint16_t> { std::nullopt };
-    return { { static_cast<uint16_t>(port) } };
+    if (!foundDigit)
+        return {};
+    return static_cast<uint16_t>(port);
 }
 
 void URLDecomposition::setPort(StringView value)
@@ -206,10 +201,18 @@ void URLDecomposition::setPort(StringView value)
     auto fullURL = this->fullURL();
     if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
         return;
-    auto port = parsePort(value, fullURL.protocol());
+    if (value.isEmpty()) {
+        fullURL.setPort(std::nullopt);
+        setFullURL(fullURL);
+        return;
+    }
+    auto port = URLDecomposition::parsePort(value);
     if (!port)
         return;
-    fullURL.setPort(*port);
+    if (WTF::isDefaultPortForProtocol(*port, fullURL.protocol()))
+        fullURL.setPort(std::nullopt);
+    else
+        fullURL.setPort(*port);
     setFullURL(fullURL);
 }
 

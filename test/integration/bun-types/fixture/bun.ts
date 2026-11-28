@@ -103,3 +103,27 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+{
+  const cookie = new Bun.Cookie("name", "value");
+  new Bun.Cookie("name", "value", { path: "/", httpOnly: true });
+  new Bun.Cookie("name=value; Path=/");
+  new Bun.Cookie({ name: "name", value: "value" });
+  new Bun.Cookie(cookie);
+  new Bun.Cookie(cookie.toJSON());
+
+  // A value annotated `Bun.CookieInit` is a valid only argument, although `name` is optional in that type.
+  const init: Bun.CookieInit = { name: "name", value: "value" };
+  new Bun.Cookie(init);
+
+  const cookies = new Bun.CookieMap();
+  cookies.set("name", "value", { path: "/" });
+  cookies.set(init);
+  cookies.set(cookie);
+  cookies.set(cookie.toJSON());
+
+  // @ts-expect-error - throws "Not enough arguments" at runtime
+  new Bun.Cookie();
+  // @ts-expect-error - throws "Not enough arguments" at runtime
+  new Bun.Cookie(undefined);
+}

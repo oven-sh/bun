@@ -1,0 +1,50 @@
+---
+title: Use ClickHouse Managed Postgres with Bun
+sidebarTitle: ClickHouse Managed Postgres
+mode: center
+---
+
+[ClickHouse Managed Postgres](https://clickhouse.com/cloud/postgres) is a managed PostgreSQL service. Connect using Bun's built-in [SQL client](/runtime/sql).
+
+## Get your connection details
+
+In the ClickHouse Cloud console, open the **Connect** view for your instance and leave the **via PgBouncer** toggle off to connect directly to PostgreSQL. Copy the connection URL, then download the instance's CA certificate bundle from the **Settings** tab.
+
+Create a project directory and add the connection URL to a `.env` file. Append `sslmode=verify-full` and the absolute path to the CA bundle so that Bun verifies the server's certificate and hostname:
+
+```ini .env icon="settings"
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=verify-full&sslrootcert=/absolute/path/to/ca-certificate.pem"
+```
+
+Bun's SQL client does not use TLS unless the URL or the `tls` option asks for it, so keep `sslmode` in the URL. Keep `.env` out of version control. See the [connection documentation](https://clickhouse.com/docs/products/managed-postgres/connection) for details.
+
+## Query the database
+
+Create `index.ts` with a SQL client and a query that returns the database name:
+
+```ts index.ts icon="/icons/typescript.svg"
+import { SQL } from "bun";
+
+const databaseUrl = Bun.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error("Set DATABASE_URL before running this script.");
+}
+
+const sql = new SQL(databaseUrl);
+
+try {
+  const rows = await sql`SELECT current_database() AS database`;
+  console.log(rows[0].database);
+} finally {
+  await sql.close();
+}
+```
+
+Run the script with your environment file:
+
+```bash terminal icon="terminal"
+bun --env-file=.env run index.ts
+```
+
+The output is the name of the database in your connection URL, such as `postgres`.

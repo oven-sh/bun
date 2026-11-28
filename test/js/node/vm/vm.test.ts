@@ -3472,12 +3472,19 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
       // Runs that finish well inside their timeout: nothing they armed may hit later runs or the caller,
       // which stays busy — in script and idle — for far longer than that timeout afterwards.
       const ctx = vm.createContext({});
-      for (let i = 0; i < 50; i++) vm.runInContext("1 + 1", ctx, { timeout: 100 });
+      // The timeout is wall-clock: when a busy machine keeps a run off the CPU for its whole 100ms, its own
+      // deadline cuts it short. That run shows nothing here. A run that is cut short sooner fails the test.
+      const quick = src => {
+        const start = performance.now();
+        try { vm.runInContext(src, ctx, { timeout: 100 }); }
+        catch (e) { if (e.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT" || performance.now() - start < 100) throw e; }
+      };
+      for (let i = 0; i < 50; i++) quick("1 + 1");
       const t = performance.now();
       let s = 0;
       while (performance.now() - t < 500) s += Math.sqrt(s + 1);   // 5x the timeout, in script
       await new Promise(r => setTimeout(r, 200));                    // and idle in the loop
-      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 100 });
+      for (let i = 0; i < 20; i++) quick("2 + 2");
       console.log("ok");
       `,
     ],
@@ -3500,11 +3507,26 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
 test.concurrent("microtasks left on an afterEvaluate context by a timed-out script stay bounded", async () => {
   const code = `
     const vm = require("node:vm");
-    const ctx = vm.createContext({ log: console.log }, { microtaskMode: "afterEvaluate" });
+    let marked, ctx;
+    const fresh = () => vm.createContext({ log: console.log, mark: () => { marked = true; } }, { microtaskMode: "afterEvaluate" });
     const run = (src, timeout) => { try { return String(vm.runInContext(src, ctx, { timeout })); } catch (e) { return e.code; } };
-    console.log(run("Promise.resolve().then(() => log('leftover ran')); for (;;) {}", 20));
+    // The timeout is wall-clock, so on a busy machine it can cut a run short before its script has queued the
+    // microtask, or before the checkpoint has started it: the run timed out and mark() was not called. Such a
+    // run shows nothing. It is made again with twice the time, and on a new context, because the old one can
+    // hold a microtask of that run. What the other runs printed stays. A timed run takes 1.26 s at most.
+    function timed(src) {
+      for (let timeout = 20; ; timeout *= 2) {
+        marked = false;
+        const result = run(src, timeout);
+        if (result !== "ERR_SCRIPT_EXECUTION_TIMEOUT" || marked) return result;
+        if (timeout === 640) return "timed out before mark() with each timeout up to 640";
+        ctx = fresh();
+      }
+    }
+    ctx = fresh();
+    console.log(timed("Promise.resolve().then(() => log('leftover ran')); mark(); for (;;) {}"));
     console.log(run("1 + 1", 1000));
-    console.log(run("Promise.resolve().then(() => { for (;;) {} }); 2", 20));
+    console.log(timed("Promise.resolve().then(() => { mark(); for (;;) {} }); 2"));
     console.log(run("3", 1000));
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });

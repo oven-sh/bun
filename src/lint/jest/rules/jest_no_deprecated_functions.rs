@@ -1,4 +1,5 @@
 use bun_lint_oxlint::ast_util::static_property_name;
+use crate::jest;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -21,6 +22,11 @@ const DEPRECATED_FUNCTIONS: [(&str, usize, &str, &str); 6] = [
     ("runTimersToTime", 22, "jest", "jest.advanceTimersByTime"),
     ("genMockFromModule", 26, "jest", "jest.createMockFromModule"),
 ];
+
+/// Returns the `jest` in `jest.resetModules`: the name that the fix writes.
+fn written(replacement: &str) -> &[u8] {
+    strings::split(replacement.as_bytes(), b".").next().unwrap_or_default()
+}
 
 /// Returns the `29` in `29.1.0`.
 fn major(version: &[u8]) -> Option<usize> {
@@ -51,13 +57,13 @@ impl Rule for NoDeprecatedFunctions {
             && let Some(property) = static_property_name(node)
             && let Some((property, base_version, object, replacement)) =
                 DEPRECATED_FUNCTIONS.iter().find(|it| property.is(it.0))
-            && node.object().is_some_and(|it| it.is_ident(object) && !it.is_parenthesized())
+            && let Some(receiver) = node.object().filter(|it| it.is_ident(object) && !it.is_parenthesized())
             && !node.is_jsx_tag_name()
             && !node.is_in_type_query()
             && jest_version(cx.file()).unwrap_or(self.version) >= *base_version
         {
             (cx.report(node, DEPRECATED_FUNCTION).data("deprecated", format!("{object}.{property}")).data("new", *replacement))
-                .fix(|fixer| fixer.replace(node, *replacement));
+                .fix_where_safe(|| jest::has_value(written(replacement), receiver), |fixer| fixer.replace(node, *replacement));
         }
     }
 }

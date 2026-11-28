@@ -4,7 +4,12 @@ use crate::jest::{
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::oxlint::source_type;
-use bun_lint_oxlint::import::{ImportImportName, import_entries, import_entries_of};
+use bun_lint::utils::text::is_identifier_name;
+use bun_lint_oxlint::import::{
+    ImportEntry, ImportImportName, import_entries, import_entries_of, is_require_call,
+};
+use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::collections::BTreeSet;
 
 /// Prefer importing Jest globals from `@jest/globals` rather than relying on ambient globals.
@@ -88,9 +93,14 @@ impl PreferImportingJestGlobals {
         else {
             return;
         };
+        let target = OnceCell::new();
+        let target = || *target.get_or_init(|| Target::of(file));
         (cx.report(span, PREFER_IMPORTING_JEST_GLOBALS)
             .data("globals", join(&functions_to_import)))
-        .fix(|fixer| build_fix(file, fixer, functions_to_import));
+        .fix_where_safe(
+            || is_safe(file, &functions_to_import, target()),
+            |fixer| build_fix(file, fixer, &functions_to_import, target()),
+        );
     }
 }
 
@@ -116,41 +126,18 @@ fn create_import_text(is_module: bool, functions: &Names) -> Vec<u8> {
     [start.as_bytes(), &join(functions), end.as_bytes()].concat()
 }
 
-fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: Names) -> Fix {
-    let is_module = is_module(file);
-    // Merge into the first `import .. from "@jest/globals"`.
-    if let Some(first) =
-        import_entries(file).find(|it| it.declaration.spec().is(IMPORT_SOURCE) && !it.is_type())
-    {
-        for entry in import_entries_of(first.declaration).filter(|it| !it.is_type()) {
-            let local = entry.local_name().bytes();
-            match entry.import_name {
-                ImportImportName::Name(specifier) => {
-                    let imported = file.slice(specifier.imported().span());
-                    functions_to_import.insert(match imported == local {
-                        true => local.to_vec(),
-                        false => [imported, b" as ".as_slice(), local].concat(),
-                    });
-                }
-                ImportImportName::Default(_) => {
-                    functions_to_import.insert(local.to_vec());
-                }
-                ImportImportName::NamespaceObject(_) => {}
-            }
-        }
-        return fixer.replace(
-            first.declaration.stmt(),
-            create_import_text(true, &functions_to_import),
-        );
-    }
-    // Merge into the first `const { .. } = require("@jest/globals")`.
-    for reference in file
+/// The first `import .. from "@jest/globals"` that isn't a type import.
+fn jest_import<'a>(file: &'a File<'a>) -> Option<ImportEntry<'a>> {
+    import_entries(file).find(|it| it.declaration.spec().is(IMPORT_SOURCE) && !it.is_type())
+}
+
+/// The declarator of the first `.. = require("@jest/globals")`.
+fn jest_require<'a>(file: &'a File<'a>) -> Option<VarDecl<'a>> {
+    let mut requires = file
         .unresolved_references_to(b"require")
-        .filter_map(Reference::expr)
-    {
-        let Some(call_node) = parent_expression(reference) else {
-            continue;
-        };
+        .filter_map(Reference::expr);
+    requires.find_map(|reference| {
+        let call_node = parent_expression(reference)?;
         let arguments = call_node.as_call().map(Call::args);
         let is_jest_require = arguments
             .filter(|it| it.len() == 1)
@@ -170,39 +157,156 @@ fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: 
             Node::VarDecl(declarator) => Some(declarator),
             _ => None,
         });
-        let Some(declarator) = declarator.filter(|_| is_jest_require) else {
-            continue;
-        };
-        if let PatKind::Object(properties) = declarator.pat().kind() {
-            for prop in properties
-                .iter()
-                .filter(|it| !it.is_rest() && it.default().is_none())
-            {
-                if let Some(key_name) = prop
-                    .key()
-                    .filter(|it| !it.is_computed())
-                    .and_then(|it| it.name())
-                    && let Some(value_name) = prop.value().as_ident()
+        declarator.filter(|_| is_jest_require)
+    })
+}
+
+/// The properties of `const { .. } = require("@jest/globals")` that the fix keeps: the key, the name that it binds, the pattern.
+fn kept_properties<'a>(
+    declarator: VarDecl<'a>,
+) -> impl Iterator<Item = (Name<'a>, Name<'a>, Pat<'a>)> {
+    let properties = match declarator.pat().kind() {
+        PatKind::Object(properties) => Some(properties),
+        _ => None,
+    };
+    let kept = properties.into_iter().flat_map(|it| it.iter());
+    kept.filter(|it| !it.is_rest() && it.default().is_none())
+        .filter_map(|it| {
+            let key = it.key().filter(|it| !it.is_computed())?.name()?;
+            Some((key, it.value().as_ident()?, it.value()))
+        })
+}
+
+/// Where the fix writes the names. It reprints the statement that it finds there.
+#[derive(Copy, Clone)]
+enum Target<'a> {
+    /// [`jest_import`]
+    Import(ImportEntry<'a>),
+    /// [`jest_require`]. In a module the statement becomes an `import`.
+    Require(VarDecl<'a>),
+    /// A new first statement.
+    Insert,
+}
+
+impl<'a> Target<'a> {
+    fn of(file: &'a File<'a>) -> Self {
+        match jest_import(file) {
+            Some(first) => Target::Import(first),
+            None => jest_require(file).map_or(Target::Insert, Target::Require),
+        }
+    }
+
+    /// True if the new text has all that the statement has: an `import` of named values only, or a top-level `const` of only `{ key, key: name }` from the `require()` call itself. No attributes, no type, no comment.
+    fn keeps_statement(self, file: &'a File<'a>) -> bool {
+        let statement = match self {
+            Target::Import(first) => {
+                let import = first.declaration;
+                let is_named = |it: ImportEntry<'a>| {
+                    matches!(it.import_name, ImportImportName::Name(_)) && !it.is_type()
+                };
+                if !import_entries_of(import).all(is_named) || import.attributes().is_some() {
+                    return false;
+                }
+                import.stmt()
+            }
+            Target::Require(declarator) => {
+                let Node::Stmt(statement) = Node::VarDecl(declarator).parent() else {
+                    return false;
+                };
+                let PatKind::Object(properties) = declarator.pat().kind() else {
+                    return false;
+                };
+                let is_only_const = declarator.var_kind() == VarKind::Const
+                    && statement.as_var().is_some_and(|it| it.len() == 1)
+                    && !statement.is_exported()
+                    && matches!(statement.parent(), Node::File(_));
+                let is_module_itself = (declarator.init().and_then(Expr::as_call))
+                    .is_some_and(|it| is_require_call(it) && !it.callee().is_parenthesized());
+                let kept = kept_properties(declarator).filter(|it| is_identifier_name(it.0.bytes()));
+                if !is_only_const
+                    || !is_module_itself
+                    || declarator.ty().is_some()
+                    || kept.count() != properties.len()
                 {
-                    let alias_sep = if is_module { " as " } else { ": " };
-                    functions_to_import.insert(match key_name == value_name {
-                        true => key_name.bytes().to_vec(),
-                        false => {
-                            [key_name.bytes(), alias_sep.as_bytes(), value_name.bytes()].concat()
-                        }
-                    });
+                    return false;
+                }
+                statement
+            }
+            Target::Insert => return true,
+        };
+        file.comments_in(statement.span()).next().is_none()
+    }
+}
+
+/// False if the fix can change what the file does: the new text drops something, the file assigns to one of the names, or code of the file can run before the names have their values.
+#[cold]
+fn is_safe<'a>(file: &'a File<'a>, functions_to_import: &Names, target: Target<'a>) -> bool {
+    let assigns = jest::assigns_to_global(file, functions_to_import.iter().map(Vec::as_slice));
+    if assigns || !target.keeps_statement(file) {
+        return false;
+    }
+    match target {
+        // A `require()` line of a script gets the names when it runs.
+        Target::Require(declarator) if !is_module(file) => jest::takes_names(file, declarator),
+        // A new first `import` has its names before all other code of the file.
+        Target::Insert if is_module(file) => true,
+        // A new first `require()` line has them when it has run.
+        Target::Insert => !jest::opens_early(file),
+        // An `import` below another one has its names once its module has run.
+        Target::Import(_) | Target::Require(_) => !jest::exports_value(file),
+    }
+}
+
+fn build_fix<'a>(
+    file: &'a File<'a>,
+    fixer: Fixer<'a>,
+    functions_to_import: &Names,
+    target: Target<'a>,
+) -> Fix {
+    let mut functions_to_import = Cow::Borrowed(functions_to_import);
+    let is_module = is_module(file);
+    match target {
+        Target::Import(first) => {
+            for entry in import_entries_of(first.declaration).filter(|it| !it.is_type()) {
+                let local = entry.local_name().bytes();
+                match entry.import_name {
+                    ImportImportName::Name(specifier) => {
+                        let imported = file.slice(specifier.imported().span());
+                        functions_to_import.to_mut().insert(match imported == local {
+                            true => local.to_vec(),
+                            false => [imported, b" as ".as_slice(), local].concat(),
+                        });
+                    }
+                    ImportImportName::Default(_) => {
+                        functions_to_import.to_mut().insert(local.to_vec());
+                    }
+                    ImportImportName::NamespaceObject(_) => {}
                 }
             }
+            fixer.replace(
+                first.declaration.stmt(),
+                create_import_text(true, &functions_to_import),
+            )
         }
-        let declaration = match Node::VarDecl(declarator).parent() {
-            Node::Stmt(statement) => statement.span_without_export(),
-            parent => parent.span(),
-        };
-        return fixer.replace(
-            declaration,
-            create_import_text(is_module, &functions_to_import),
-        );
+        Target::Require(declarator) => {
+            let alias_sep = if is_module { " as " } else { ": " };
+            for (key_name, value_name, _) in kept_properties(declarator) {
+                functions_to_import.to_mut().insert(match key_name == value_name {
+                    true => key_name.bytes().to_vec(),
+                    false => [key_name.bytes(), alias_sep.as_bytes(), value_name.bytes()].concat(),
+                });
+            }
+            let declaration = match Node::VarDecl(declarator).parent() {
+                Node::Stmt(statement) => statement.span_without_export(),
+                parent => parent.span(),
+            };
+            fixer.replace(
+                declaration,
+                create_import_text(is_module, &functions_to_import),
+            )
+        }
+        // oxlint only skips the `#!` line and the directives, so it inserts the import above `// @ts-nocheck`.
+        Target::Insert => fixer
+            .insert_first_statement(&create_import_text(is_module, &functions_to_import)),
     }
-    // oxlint only skips the `#!` line and the directives, so it inserts the import above `// @ts-nocheck`.
-    fixer.insert_first_statement(&create_import_text(is_module, &functions_to_import))
 }

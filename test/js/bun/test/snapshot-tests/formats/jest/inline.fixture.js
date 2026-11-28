@@ -85,6 +85,14 @@ message`);
 message"
 `);
   });
+  test("thrown with a cause that inherits Error.prototype", () => {
+    expect(() => {
+  throw new Error("outer", { cause: Object.assign(Object.create(Error.prototype), { message: "inner" }) });
+}).toThrowErrorMatchingInlineSnapshot(`
+"outer
+Cause: inner"
+`);
+  });
   test("rejects", async () => {
     await expect(Promise.reject(new Error("rejected"))).rejects.toThrowErrorMatchingInlineSnapshot(`"rejected"`);
   });

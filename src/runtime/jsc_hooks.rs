@@ -4142,7 +4142,9 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
 /// file instead of leaking a copy per call (#29585). Returns `None` when the
-/// input is empty, absent from the graph, or a filesystem step fails.
+/// input is empty or absent from the graph. Where a filesystem step fails it
+/// is the path in the executable, which nothing can open: the file that the
+/// disk has at `input_path` is not the one that is meant.
 pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option<bun_paths::Path> {
     if input_path.is_empty() {
         return None;
@@ -4152,8 +4154,11 @@ pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option
         return Some(bun_paths::Path::from(&path));
     }
     let file = bun_standalone_graph::Graph::get_ref()?.find_library(input_path)?;
-    let file_contents: &[u8] = file.contents.as_bytes();
+    let extracted = extract_embedded_file(file.contents.as_bytes(), extname);
+    Some(extracted.unwrap_or_else(|| bun_paths::Path::from(file.name)))
+}
 
+fn extract_embedded_file(file_contents: &[u8], extname: &[u8]) -> Option<bun_paths::Path> {
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
     // users on a shared `/tmp` from colliding.
     let content_hash = bun_wyhash::hash(file_contents);

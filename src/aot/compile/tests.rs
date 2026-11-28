@@ -726,14 +726,21 @@ impl SourceProvider for CollidingPluginModule {
 }
 
 #[test]
-fn colliding_module_paths_fail_internally() {
+fn plugin_module_takes_no_path_of_built_in_module() {
     let files = [("a.js", "import \"plugin-fs\";\nimport \"node:fs\";")];
     let project = TestProject::new(&files, &default_settings());
     let (result, log) = link_project(&project, &CollidingPluginModule);
+    expect_success(result, &log);
+}
+
+#[test]
+fn colliding_module_paths_fail_internally() {
+    let main = "import text from './a.js' with { type: 'text' };\nimport { a } from './a.js';\nimport { a as copy } from './a.js?text';\nconsole.log(text, a, copy);";
+    let (result, log) = link_files(&[("main.js", main), ("a.js", "export const a = 1;")]);
     let failed = expect_failure(result);
     assert_eq!(failed.stage, Stage::Load);
     assert!(failed.is_internal_error);
-    let message = "internal compiler error (Load): two modules have the path node:fs: ";
+    let message = "internal compiler error (Load): two modules have the path ";
     assert!(has_message(&log, Kind::Err, message));
 }
 

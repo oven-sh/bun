@@ -38,6 +38,26 @@ buildBothWays("compile/aot/aliases and odd names from the plugins of Bun.build",
     ],
     prints: "picked inner picked deep\n",
   },
+  "a module in the namespace of the built-in modules": {
+    files: {
+      "main.ts": `// @ts-nocheck\nimport { name } from "virtual:path"; import { join } from "node:path"; console.log(name, typeof join);`,
+    },
+    plugins: [
+      `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "node" }));
+build.onLoad({ filter: /.*/, namespace: "node" }, () => ({ contents: "export const name = 'plugin';", loader: "js" }));`,
+    ],
+    prints: "plugin function\n",
+  },
+  "a module in the namespace of Bun's internal modules": {
+    files: {
+      "main.ts": `// @ts-nocheck\nimport { name } from "virtual:util/inspect"; import { inspect } from "node:util"; console.log(name, inspect({ a: 1 }));`,
+    },
+    plugins: [
+      `build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "internal" }));
+build.onLoad({ filter: /.*/, namespace: "internal" }, () => ({ contents: "export const name = 'plugin';", loader: "js" }));`,
+    ],
+    prints: "plugin { a: 1 }\n",
+  },
   "a query string that a plugin takes": {
     files: {
       "main.ts": `// @ts-nocheck\nimport raw from "./code.ts?raw"; import { value } from "./code.ts"; import again from "./code.ts?raw"; console.log(JSON.stringify(raw), value, raw === again);`,

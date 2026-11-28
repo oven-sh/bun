@@ -1042,7 +1042,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Before the visit: each leaf is an identifier, a string literal or an untagged template.
-    /// A folded concatenation takes the position of its left operand, so it is not a leaf here.
     #[inline(never)]
     pub(crate) fn specifier_is_written_as_identifier(&self, specifier: &Expr) -> bool {
         if !self.options.bundle || !self.options.features.inlining {
@@ -1061,6 +1060,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     leaf = &branches.no;
                 }
+                // A folded concatenation takes the position of its left operand.
                 _ => return false,
             }
         }

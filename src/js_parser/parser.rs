@@ -717,8 +717,7 @@ pub struct TransposeState {
 }
 
 impl TransposeState {
-    /// A string that the minifier inlined from a variable keeps the position of the initializer,
-    /// which is before the call. That leaf gets no import record, as when inlining is off.
+    /// An inlined value keeps the position of its initializer, which is before the call.
     #[inline]
     pub(crate) fn is_inlined_const(&self, leaf: &Expr) -> bool {
         self.specifier_written_as_identifier

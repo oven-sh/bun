@@ -1282,6 +1282,10 @@ imports/comments-around-the-colon-of-an-import-attribute.js
 148 161 T Identifier 143 147 -
 164 177 L StringLiteral 178 184 -
 230 240 T Identifier 227 228 -
+insert-pragma/one-code-unit-after-a-pragma.js
+0 22 L ExpressionStatement 23 24 -
+insert-pragma/two-code-units-after-a-pragma.js
+0 24 L ExpressionStatement 25 26 -
 jsdoc/comments-that-follow-each-other-directly.js
 14 168 L ClassMethod 173 193 -
 197 376 L FunctionDeclaration 377 393 -

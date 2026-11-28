@@ -377,15 +377,20 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
                 second_start + strings::index_of_char_usize(&text[second_start..], b'\n')?;
             let second = &text[second_start..second_end];
             let second = strings::trim_left(second, b" ");
-            if second.len() < 2
-                || strings::js_whitespace_len(second) != 0
+            // `[^\s@][^\n\r@]+?` is two UTF-16 code units or more, as Node decodes the file.
+            let (character, len) = crate::text::first_char(second)?;
+            let least = match character.len_utf16() {
+                2 => len,
+                _ => len + crate::text::first_char(second.get(len..)?)?.1,
+            };
+            if strings::js_whitespace_len(second) != 0
                 || strings::contains_char(second, b'@')
                 || strings::contains(second, b"//")
             {
                 return None;
             }
-            // The lazy `+?` matches at least one character, even a space.
-            let second = &second[..strings::trim_right(second, b" ").len().max(2)];
+            // The lazy `+?` matches at least one code unit, even a space.
+            let second = &second[..strings::trim_right(second, b" ").len().max(least)];
             Some((first, second, second_end + 1))
         })();
         match matched {

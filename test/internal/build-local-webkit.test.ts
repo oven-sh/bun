@@ -73,10 +73,22 @@ function mockToolchain(): Toolchain {
   };
 }
 
-/** A Linux glibc x64 target; linuxSysroot stubbed so resolveConfig never throws on another host. */
+/**
+ * A Linux glibc x64 target; linuxSysroot stubbed so resolveConfig never throws on another host. The cache is no
+ * directory of the machine: a build may have unpacked the prebuilt WebKit in that one, and what a tarball holds decides
+ * the graph.
+ */
 const linux = (partial: PartialConfig): Config =>
   resolveConfig(
-    { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", linuxSysroot: "/fake/linux-sysroot", ...partial },
+    {
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      buildType: "Debug",
+      linuxSysroot: "/fake/linux-sysroot",
+      cacheDir: "/fake/build-cache",
+      ...partial,
+    },
     mockToolchain(),
   );
 

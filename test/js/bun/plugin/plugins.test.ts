@@ -402,6 +402,14 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  // The types of Bun.plugin() reject `target: undefined` with exactOptionalPropertyTypes for this reason.
+  it("handles a 'target' that is present and undefined, and a 'name' that is", () => {
+    expect(() => plugin({ setup() {}, target: undefined })).toThrow(
+      "plugin target must be one of 'node', 'bun' or 'browser'",
+    );
+    expect(() => plugin({ setup() {}, name: undefined })).not.toThrow();
+  });
+
   it("handles 'target' that throws while being coerced to a string", () => {
     let called = false;
     const opts = {
@@ -817,6 +825,94 @@ it("builder methods return the builder only when called as methods", () => {
       ];
       expect(bare()).toEqual([undefined, undefined, undefined]);
     },
+  });
+});
+
+it("the builders and the callback arguments have the members that the types declare", async () => {
+  using dir = tempDir("plugin-builder-types", {
+    "entry.ts": `export {};`,
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        target: "esnext",
+        module: "esnext",
+        moduleResolution: "bundler",
+        lib: ["esnext"],
+        typeRoots: [resolve(import.meta.dir, "..", "..", "..", "..", "packages")],
+        types: ["bun-types"],
+        skipLibCheck: true,
+      },
+      files: ["members.ts", "runtime.ts"],
+    }),
+    "runtime.ts": `Bun.plugin({
+  name: "runtime",
+  setup(build) {
+    console.log(build.config.target);
+  },
+});
+`,
+  });
+
+  const seen = {
+    runtime: [] as string[],
+    onLoadArgs: [] as string[],
+    onResolveArgs: [] as string[],
+    bundler: [] as string[],
+  };
+  plugin({
+    name: "members of the builder of Bun.plugin()",
+    setup(builder) {
+      seen.runtime = Object.keys(builder).sort();
+      builder.onResolve({ filter: /.*/, namespace: "members-of-callback-args" }, args => {
+        seen.onResolveArgs = Object.keys(args).sort();
+        return { path: args.path, namespace: "members-of-callback-args" };
+      });
+      builder.onLoad({ filter: /.*/, namespace: "members-of-callback-args" }, args => {
+        seen.onLoadArgs = Object.keys(args).sort();
+        return { exports: {}, loader: "object" };
+      });
+    },
+  });
+  require("members-of-callback-args:module");
+  await Bun.build({
+    entrypoints: [resolve(String(dir), "entry.ts")],
+    plugins: [
+      { name: "members of the builder of Bun.build()", setup: builder => void (seen.bundler = Object.keys(builder)) },
+    ],
+  });
+  expect({ runtime: seen.runtime, onLoadArgs: seen.onLoadArgs, onResolveArgs: seen.onResolveArgs }).toEqual({
+    runtime: ["module", "onLoad", "onResolve", "target"],
+    onLoadArgs: ["path"],
+    onResolveArgs: ["importer", "kind", "namespace", "path", "resolveDir"],
+  });
+
+  const literal = (names: string[]) => JSON.stringify(Object.fromEntries(names.map(name => [name, true])));
+  // An object literal for `Record<Set<T>, true>` must have each member that T says is set, and no other.
+  // The builder of Bun.build() also has members that the types leave out, so it only must have each declared one.
+  await Bun.write(
+    resolve(String(dir), "members.ts"),
+    `import type { OnResolveArgs, PluginBuilder, RuntimeOnLoadArgs, RuntimePluginBuilder } from "bun";
+type Set<T> = { [K in keyof T]-?: undefined extends T[K] ? never : K }[keyof T];
+export const runtime: Record<Set<RuntimePluginBuilder>, true> = ${literal(seen.runtime)};
+export const onLoadArgs: Record<Set<RuntimeOnLoadArgs>, true> = ${literal(seen.onLoadArgs)};
+export const onResolveArgs: Record<keyof OnResolveArgs, true> = ${literal(seen.onResolveArgs)};
+const has = ${literal(seen.bundler)} as const;
+export const bundler: Record<keyof PluginBuilder, true> = has;
+`,
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: ["runtime.ts(4,17): error TS18048: 'build.config' is possibly 'undefined'."],
+    stderr: expect.stringContaining("Found 1 error in 1 file"),
+    exitCode: 1,
   });
 });
 

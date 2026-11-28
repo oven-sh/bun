@@ -14,7 +14,7 @@ use super::surrounding_nodes::{
     AttachContext, SurroundingNodes, function_of, has_parameters, union_members,
 };
 use super::{Attachment, CommentContext, Marker, Owner};
-use crate::js::ast_nodes::{AsAstNodes, AstNodes as N, ExpressionStatement};
+use crate::js::ast_nodes::{AsAstNodes, AstNodes as N, ExpressionStatement, statement_after};
 use crate::js::comments::CommentExt;
 use crate::js::print::flow::{
     as_declared_predicate, is_declared_class, is_flow_declare_export, is_flow_opaque_type,
@@ -89,25 +89,6 @@ fn member_access_or_is_name(e: Expr<'_>) -> Result<Expr<'_>, bool> {
         Node::Type(ty) => Err(matches!(ty.kind(), TypeKind::Typeof { .. })),
         _ => Err(false),
     }
-}
-
-/// Returns the statement after `statement` in its program, block or namespace, skipping empty statements.
-fn statement_after(statement: Stmt<'_>) -> Option<Stmt<'_>> {
-    let statements = match statement.parent() {
-        Node::File(file) => file.body(),
-        Node::Func(func) => func.body_statements()?,
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Block(statements) => statements,
-            StmtKind::Module(module) => module.innermost().body(),
-            _ => return None,
-        },
-        _ => return None,
-    };
-    let mut next = statements.after(statement.span().start)?;
-    while next.tag() == StmtTag::Empty {
-        next = statements.after(next.span().start)?;
-    }
-    Some(next)
 }
 
 /// True for a function parameter other than `this`.

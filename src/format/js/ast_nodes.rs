@@ -546,6 +546,27 @@ impl<'a> AsAstNodes<'a> for VarDecl<'a> {
     }
 }
 
+/// Returns the statement after `statement` in its program, function body, block, namespace or switch case, skipping
+/// empty statements.
+pub(crate) fn statement_after(statement: Stmt<'_>) -> Option<Stmt<'_>> {
+    let statements = match statement.parent() {
+        Node::File(file) => file.body(),
+        Node::Func(func) => func.body_statements()?,
+        Node::Case(case) => case.body(),
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::Block(statements) => statements,
+            StmtKind::Module(module) => module.innermost().body(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut next = statements.after(statement.span().start)?;
+    while next.tag() == StmtTag::Empty {
+        next = statements.after(next.span().start)?;
+    }
+    Some(next)
+}
+
 /// Returns the statement without its `export` wrapper.
 pub(crate) fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     use AstNodes as N;

@@ -15,6 +15,11 @@
 
 const inspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 
+const threwWhilePrinting = "[threw while printing]";
+
+// The values that print now. A console call from page code that one of them runs shares the list.
+const printing: any[] = [];
+
 export interface InspectOptions {
   showHidden?: boolean;
   depth?: number;
@@ -55,7 +60,7 @@ const defaultOptions: InspectOptions = {
 export function inspect(obj: any, options: InspectOptions = {}) {
   // Set up context with merged options
   const ctx: InspectContext = {
-    seen: [],
+    seen: printing,
     currentDepth: 0,
     ...defaultOptions,
     ...options,
@@ -76,40 +81,49 @@ function formatValue(ctx: InspectContext, value: any, recurseTimes: number) {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
 
-  // Check for custom inspect implementation
-  if (
-    ctx.customInspect !== false &&
-    value !== null &&
-    typeof value === "object" &&
-    typeof value[inspectSymbol] === "function" &&
-    value[inspectSymbol] !== inspect
-  ) {
-    return String(value[inspectSymbol](recurseTimes, { ...ctx }));
-  }
+  // Reading a page value can throw: a revoked Proxy, a cross-origin Window, a custom inspect function.
+  const seenLength = ctx.seen.length;
+  try {
+    // Check for custom inspect implementation
+    if (
+      ctx.customInspect !== false &&
+      value !== null &&
+      typeof value === "object" &&
+      typeof value[inspectSymbol] === "function" &&
+      value[inspectSymbol] !== inspect
+    ) {
+      // A copy of `seen`: every call shares the list, and this function is page code.
+      return String(value[inspectSymbol](recurseTimes, { ...ctx, seen: ctx.seen.slice() }));
+    }
 
-  // Check for circular references
-  if (ctx.seen.includes(value)) {
-    return "[Circular]";
-  }
+    // Check for circular references. A loop and not `includes`: a page can replace that method, and Svelte 5 does in development.
+    for (let i = 0; i < ctx.seen.length; i++) {
+      if (ctx.seen[i] === value) return "[Circular]";
+    }
 
-  // Format based on type
-  switch (typeof value) {
-    case "string":
-      return formatString(ctx, value);
-    case "number":
-      return formatNumber(value, ctx.numericSeparator!);
-    case "bigint":
-      return `${value}n`;
-    case "boolean":
-      return `${value}`;
-    case "symbol":
-      return formatSymbol(value);
-    case "function":
-      return formatFunction(value);
-    case "object":
-      return formatObject(ctx, value, recurseTimes);
-    default:
-      return String(value);
+    // Format based on type
+    switch (typeof value) {
+      case "string":
+        return formatString(ctx, value);
+      case "number":
+        return formatNumber(value, ctx.numericSeparator!);
+      case "bigint":
+        return `${value}n`;
+      case "boolean":
+        return `${value}`;
+      case "symbol":
+        return formatSymbol(value);
+      case "function":
+        return formatFunction(value);
+      case "object":
+        return formatObject(ctx, value, recurseTimes);
+      default:
+        return String(value);
+    }
+  } catch {
+    // formatObject did not remove the value from `seen`
+    ctx.seen.length = seenLength;
+    return threwWhilePrinting;
   }
 }
 
@@ -262,10 +276,14 @@ function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
   const output: string[] = [];
 
   for (let i = 0; i < maxLength; i++) {
-    if (Object.prototype.hasOwnProperty.call(value, i)) {
-      output.push(formatValue(ctx, value[i], recurseTimes));
-    } else {
-      output.push("empty");
+    try {
+      if (Object.prototype.hasOwnProperty.call(value, i)) {
+        output.push(formatValue(ctx, value[i], recurseTimes));
+      } else {
+        output.push("empty");
+      }
+    } catch {
+      output.push(threwWhilePrinting);
     }
   }
 
@@ -281,7 +299,11 @@ function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
 
   if (keys.length > 0) {
     for (const key of keys) {
-      output.push(`${key}: ${formatValue(ctx, value[key], recurseTimes)}`);
+      try {
+        output.push(`${key}: ${formatValue(ctx, value[key], recurseTimes)}`);
+      } catch {
+        output.push(`${key}: ${threwWhilePrinting}`);
+      }
     }
   }
 
@@ -331,7 +353,7 @@ function formatPlainObject(ctx: InspectContext, value: any, recurseTimes: number
         }
       }
     } catch (err) {
-      output.push(`${formatPropertyKey(key)}: undefined`);
+      output.push(`${formatPropertyKey(key)}: ${threwWhilePrinting}`);
     }
   }
 
@@ -375,7 +397,7 @@ function formatWithPrototype(ctx: InspectContext, value: any, recurseTimes: numb
       // Add prototype prefix to distinguish from own properties
       output.push(`${formatPropertyKey(key)}: ${formatValue(ctx, value[key], recurseTimes)}`);
     } catch (err) {
-      output.push(`${formatPropertyKey(key)}: undefined`);
+      output.push(`${formatPropertyKey(key)}: ${threwWhilePrinting}`);
     }
   }
 
@@ -499,7 +521,8 @@ function formatRegExp(value) {
  * @returns {string} Formatted error
  */
 function formatError(value: Error) {
-  return value?.stack || value + "";
+  // `stack` can be any value
+  return String(value?.stack || value + "");
 }
 
 /**

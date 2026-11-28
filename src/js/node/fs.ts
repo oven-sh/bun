@@ -43,6 +43,16 @@ function ensureCallback(callback) {
   return wrapFsCallback(callback);
 }
 
+// Node checks fd and buffers before the callback: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L753-L756
+function throwInvalidVectorCallback(fd, buffers, callback): never {
+  validateInteger(fd, "fd", 0, 2147483647);
+  if (!$isArray(buffers)) throw $ERR_INVALID_ARG_TYPE("buffers", ["ArrayBufferView[]"], buffers);
+  for (let i = 0; i < buffers.length; i++) {
+    if (!types.isArrayBufferView(buffers[i])) throw $ERR_INVALID_ARG_TYPE("buffers", ["ArrayBufferView[]"], buffers);
+  }
+  throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+}
+
 // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
 function settleCallback(promise, callback) {
   promise.then(
@@ -581,12 +591,9 @@ var access = function access(path, mode, callback?) {
     return fs.rmdirSync(path, options);
   },
   writev = function writev(fd, buffers, position, callback?) {
-    if (typeof position === "function") {
-      callback = position;
-      position = null;
-    }
-
-    callback = ensureCallback(callback);
+    callback ||= position;
+    if (!$isCallable(callback)) throwInvalidVectorCallback(fd, buffers, callback);
+    callback = wrapFsCallback(callback);
 
     fs.writevCb(
       (err, bytesWritten) => (err ? callback(err, 0, buffers) : callback(null, bytesWritten, buffers)),
@@ -597,12 +604,9 @@ var access = function access(path, mode, callback?) {
   },
   writevSync = fs.writevSync.bind(fs),
   readv = function readv(fd, buffers, position, callback?) {
-    if (typeof position === "function") {
-      callback = position;
-      position = null;
-    }
-
-    callback = ensureCallback(callback);
+    callback ||= position;
+    if (!$isCallable(callback)) throwInvalidVectorCallback(fd, buffers, callback);
+    callback = wrapFsCallback(callback);
 
     fs.readvCb(
       (err, bytesRead) => (err ? callback(err, 0, buffers) : callback(null, bytesRead, buffers)),

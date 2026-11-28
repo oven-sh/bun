@@ -4018,6 +4018,49 @@ describe.concurrent("an exception thrown by an EventTarget listener from a vm co
   });
 });
 
+// The native setter behind Module.prototype.require keeps the override on the realm it is given: the realm of the context
+// loses it.
+describe.concurrent("a store through a Proxy made in a context runs the native setter of the holder", () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const Module = require("node:module");
+
+    const stores = {
+      "an assignment to the Proxy"(holder, key, value) {
+        vm.runInNewContext("new Proxy(holder, {})", { holder })[key] = value;
+      },
+      "Reflect.set() with the Proxy as the receiver"(holder, key, value) {
+        Reflect.set({}, key, value, vm.runInNewContext("new Proxy(holder, {})", { holder }));
+      },
+    };
+
+    const calls = [];
+    const original = Module.prototype.require;
+    function override(id) {
+      calls.push(id);
+      return original.call(this, id);
+    }
+    stores[process.argv.at(-1)](Module.prototype, "require", override);
+    require("node:path");
+    console.log(JSON.stringify([Module.prototype.require === override, calls]));
+  `;
+
+  test.each(["an assignment to the Proxy", "Reflect.set() with the Proxy as the receiver"])(
+    "Module.prototype.require, %s",
+    async store => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture, store],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // What Node.js v26.3.0 prints.
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: `[true,["node:path"]]\n`, stderr: "", exitCode: 0 });
+    },
+  );
+});
+
 describe("import attributes with an array-index key", () => {
   test("SourceTextModule.moduleRequests[].attributes includes the key", () => {
     const mod = new SourceTextModule('import x from "./y" with { "0": "a", type: "json" };');

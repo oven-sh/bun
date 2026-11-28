@@ -52,6 +52,19 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #endif
 }
 
+/// Length of the filesystem path in a legacy `<path>?query` module key.
+ALWAYS_INLINE unsigned moduleKeyPathLength(const WTF::String& key)
+{
+    unsigned devicePrefixLength = 0;
+#if OS(WINDOWS)
+    // `\\?\C:\...` and `\\.\...` are paths, not queries.
+    if (key.length() >= 4 && IS_SLASH(key[0]) && IS_SLASH(key[1]) && (key[2] == '?' || key[2] == '.') && IS_SLASH(key[3]))
+        devicePrefixLength = 4;
+#endif
+    size_t queryStart = key.find('?', devicePrefixLength);
+    return queryStart == WTF::notFound ? key.length() : static_cast<unsigned>(queryStart);
+}
+
 #undef IS_LETTER
 #undef IS_SLASH
 

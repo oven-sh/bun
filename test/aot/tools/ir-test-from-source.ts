@@ -12,7 +12,12 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { testaot, toolEnv } from "../shell/tools";
+import { findTool, withoutLeakReports } from "../shell/find-tools";
+
+// As ../shell/tools has them. That file also asks the Bun under test, in a process of its own, whether it has the compiler, and this tool is
+// started for every file of two folders.
+export const testaot = process.env.TESTAOT ?? findTool(bunExe(), "testaot");
+export const toolEnv = withoutLeakReports(bunEnv);
 
 /** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
 function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
@@ -140,7 +145,11 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
   }
 
   const letters = [...new Set([...byID.keys()].map(id => id[0]))].join("");
-  const ids = new RegExp(`(?<![A-Za-z0-9_#$.])[${letters}]\\d+\\b`, "g");
+  // Split by it, a record has at its odd places what stands in quotes and the ids outside of them. What is in quotes ends on its line.
+  // One split of a record, not a few of each line: a test that holds much of the library has 180,000 lines.
+  const quotedOrID = new RegExp(`("(?:[^"\\\\\\n]|\\\\.)*"|(?<![A-Za-z0-9_#$.])[${letters}]\\d+\\b)`);
+  const partsOf = (lines: string[]) => lines.join("\n").split(quotedOrID);
+  const isID = (part: string, index: number) => index % 2 === 1 && part[0] !== '"';
   const texts = new Map<IRRecord, string[]>();
   const unknownIDs = new Set<string>();
   const queue = records.filter(
@@ -148,29 +157,26 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
   );
   for (const record of queue) texts.set(record, []);
   for (const record of queue) {
-    const text = stripped(record);
-    texts.set(record, text);
-    for (const line of text)
-      outsideQuotes(line, part => {
-        for (const id of part.match(ids) ?? []) {
-          const named = byID.get(id);
-          if (!named) unknownIDs.add(id);
-          else if (!texts.has(named)) {
-            texts.set(named, []);
-            queue.push(named);
-          }
-        }
-        return part;
-      });
+    const parts = partsOf(stripped(record));
+    texts.set(record, parts);
+    for (const id of parts.filter(isID)) {
+      const named = byID.get(id);
+      if (!named) unknownIDs.add(id);
+      else if (!texts.has(named)) {
+        texts.set(named, []);
+        queue.push(named);
+      }
+    }
   }
-  for (const record of runtimeFunctions) texts.set(record, record.lines);
+  for (const record of runtimeFunctions) texts.set(record, partsOf(record.lines));
 
   const newIDs = new Map<string, string>();
   const counts: Record<string, number> = {};
   for (const record of records)
     if (record.id && texts.has(record))
       newIDs.set(record.id, record.id[0] + (counts[record.id[0]] = (counts[record.id[0]] ?? -1) + 1));
-  const renumber = (line: string) => outsideQuotes(line, part => part.replace(ids, id => newIDs.get(id) ?? `${id}?`));
+  const renumbered = (parts: string[]) =>
+    parts.map((part, index) => (isID(part, index) ? (newIDs.get(part) ?? `${part}?`) : part)).join("");
 
   const kinds = [
     "module",
@@ -188,7 +194,11 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
   const text = kinds.flatMap(kind =>
     records
       .filter(record => record.kind === kind && texts.has(record))
-      .flatMap(record => texts.get(record)!.map(line => renumber(line).replace(/\|L\d+\?/g, ""))),
+      .flatMap(record =>
+        renumbered(texts.get(record)!)
+          .replace(/\|L\d+\?/g, "")
+          .split("\n"),
+      ),
   );
   for (const id of unknownIDs) if (!text.some(line => line.includes(`${id}?`))) unknownIDs.delete(id);
   return { text, unknownIDs };

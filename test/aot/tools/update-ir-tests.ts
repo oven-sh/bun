@@ -30,9 +30,8 @@ import { tempDir } from "harness";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
-import { testaot, toolEnv } from "../shell/tools";
 import { numberedByLegend, withoutInheritedFieldsAlone } from "./answers-test-from-source";
-import { recordsOfSource } from "./ir-test-from-source";
+import { recordsOfSource, testaot, toolEnv } from "./ir-test-from-source";
 
 const sourceMark = /^# -- source: (\S+)$/;
 const endOfSource = "# -- end of source";

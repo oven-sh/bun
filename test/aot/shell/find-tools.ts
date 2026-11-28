@@ -1,4 +1,4 @@
-// Where the compiler's own tools are looked for. tools.ts and ../engine/testaot.ts go by it. The head of tools.ts says what is looked for where.
+// Where the compiler's own tools are looked for. tools.ts, ../engine/testaot.ts and ../tools/ir-test-from-source.ts go by it. The head of tools.ts says what is looked for where.
 // CI unpacks the tools for the tests that import this file: ../harness/tests-that-start-tools-of-the-engine.ts. Look for them through it alone.
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +12,10 @@ export const findTool = (bun: string, name: string) =>
   [dirname(bun), join(repository, "build", "release-local"), join(repository, "build", "release")]
     .map(folder => join(folder, name + suffix))
     .find(existsSync);
+
+/** The environment for `testaot` and `jsc`, which exit without destroying their VM: LeakSanitizer would report that. The rule of shell_environment in toolchain.py. */
+export const withoutLeakReports = <Env extends Record<string, string | undefined>>(env: Env): Env =>
+  env.ASAN_OPTIONS ? { ...env, ASAN_OPTIONS: `${env.ASAN_OPTIONS}:detect_leaks=0` } : env;
 
 /** Whether that Bun is a front end: `bun compile --aot-out=<file>` writes the program. */
 export function canWriteProgram(bun: string, env: Record<string, string | undefined>) {

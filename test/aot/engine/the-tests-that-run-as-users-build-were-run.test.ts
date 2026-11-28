@@ -29,13 +29,14 @@ else
     for (const file of files) {
       await using child = Bun.spawn({
         cmd: [bunExe(), join(folder, "tools", "update-ir-tests.ts"), "--print-anew", join(folder, file)],
-        env: { ...bunEnv, FRONT_END: bunExe() },
+        env: bunEnv,
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
       const [text, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      const isMade = exitCode === 0 && text.includes("\nmodule ");
+      // As ./answers.ts holds it: a tool that writes to stderr has made no test.
+      const isMade = exitCode === 0 && !stderr && text.includes("\nmodule ");
       expect({ file, isMade, stderr: isMade ? "" : stderr.slice(-600) }).toEqual({ file, isMade: true, stderr: "" });
       mkdirSync(dirname(join(String(made), file)), { recursive: true });
       writeFileSync(join(String(made), file), text);

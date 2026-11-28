@@ -51,16 +51,16 @@ function testsMadeOf(folderName: string, tool: string[], isTest: RegExp, title: 
         slot(async () => {
           await using child = Bun.spawn({
             cmd: [bunExe(), join(import.meta.dir, "..", "tools", tool[0]), tool[1], join(folder, name)],
-            // Without a front end named, ../shell/tools builds a program and writes an executable to learn whether this Bun is one.
-            // The tool builds with this Bun whatever the answer, and a Bun that writes no program is a test that could not be made.
-            env: { ...bunEnv, FRONT_END: bunExe() },
+            env: bunEnv,
             stdin: "ignore",
             stdout: "pipe",
             stderr: "pipe",
           });
           const [text, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-          if (exitCode !== 0 || !text.includes("\nmodule ")) {
-            notMade.push(`${name}: ended with ${exitCode}: ${stderr.slice(-600)}`);
+          // The tool says on stderr what stood in the way. It also says there that an id in the text names no record, and ends with 0:
+          // `testaot run` does not read such a text.
+          if (exitCode !== 0 || stderr || !text.includes("\nmodule ")) {
+            notMade.push(`${name}: ended with ${child.signalCode ?? exitCode}: ${stderr.slice(-600)}`);
             return [];
           }
           const path = name.replace(/\.\w+$/, ".ir");

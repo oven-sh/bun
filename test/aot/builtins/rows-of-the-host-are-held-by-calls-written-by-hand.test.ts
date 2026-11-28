@@ -633,7 +633,44 @@ const casesOfFFI: Case[] = [
   },
 ];
 
+async function seeStdin(member: "stdin" | "writable"): Promise<Seen[]> {
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1));
+        controller.close();
+      },
+    });
+  async function* chunks() {
+    yield new Uint8Array(1);
+  }
+  const descriptor = openSync("/dev/null", "r");
+  const children: Bun.Subprocess[] = [];
+  try {
+    for (const stdin of ["pipe", "ignore", descriptor, stream(), new Response(stream()), chunks()] as const)
+      children.push(
+        Bun.spawn(["cat"], { stdin: stdin as Bun.SpawnOptions.Writable, stdout: "ignore", stderr: "ignore" }),
+      );
+    children.push(Bun.spawn(["cat"], { terminal: {} }));
+    return children.map(child => ({ value: Reflect.get(child, member) }));
+  } finally {
+    for (const child of children) {
+      child.kill();
+      child.terminal?.close();
+    }
+    await Promise.all(children.map(child => child.exited));
+    closeSync(descriptor);
+  }
+}
+
 const cases: Case[] = [
+  ...(["stdin", "writable"] as const).map((member): Case => ({
+    row: `%Subprocess%.prototype.${member}`,
+    mode: "Get",
+    place: "the result",
+    typesIn: result,
+    see: () => seeStdin(member),
+  })),
   ...casesOfCookies,
   ...casesOfFFI,
   ...casesOfFormData,

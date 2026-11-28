@@ -482,9 +482,12 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
     }
 }
 
+/// The executable is named after it, so a separator of any platform and a colon end the scope: the name is no path.
 fn strip_scope(package_name: &[u8]) -> &[u8] {
-    let after_last_slash = package_name.rsplit(|&byte| byte == b'/').next();
-    after_last_slash.unwrap_or(package_name)
+    let after_last_separator = package_name
+        .rsplit(|&byte| matches!(byte, b'/' | b'\\' | b':'))
+        .next();
+    after_last_separator.unwrap_or(package_name)
 }
 
 fn find_index_file(directory: &[u8]) -> Option<Box<[u8]>> {

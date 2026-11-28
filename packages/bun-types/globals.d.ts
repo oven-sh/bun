@@ -68,6 +68,44 @@ declare module "bun" {
       : import("node:stream/web").ReadableStreamBYOBRequest;
 
     /**
+     * True when lib.dom.d.ts or lib.webworker.d.ts is loaded. Each of them
+     * declares the web stream globals, with a `getReader()` that returns the
+     * global `ReadableStreamDefaultReader`. `onlanguagechange` is a global that
+     * both of them declare and that Bun does not have.
+     */
+    type LibDomOrWebWorkerIsLoaded = typeof globalThis extends { onlanguagechange: any } ? true : LibDomIsLoaded;
+
+    type LibEmptyOrReadableStreamDefaultReader<R> = LibDomOrWebWorkerIsLoaded extends true
+      ? {}
+      : import("node:stream/web").ReadableStreamDefaultReader<R>;
+
+    /**
+     * The methods Bun adds to `ReadableStreamDefaultReader`. The global
+     * interface and the one that `node:stream/web` exports (see overrides.d.ts)
+     * both extend this, so a reader has them whichever of the two `getReader()`
+     * returns.
+     */
+    interface BunReadableStreamDefaultReaderMethods<R> {
+      /**
+       * Only available in Bun. If there are multiple chunks in the queue, returns all of them at once.
+       * Returns a promise only if the data is not immediately available.
+       */
+      readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
+    }
+
+    /**
+     * The result of `read()` on the global `ReadableStreamDefaultReader`. When
+     * a lib declares that reader, it is Bun's result type: that `read()` is an
+     * overload in front of the one the lib declares. Otherwise the global
+     * reader extends the `node:stream/web` reader, and this is what `read()`
+     * of that reader gives. Any other type there would make the two readers
+     * different types.
+     */
+    type BunOrNodeReadableStreamReadResult<R> = LibDomOrWebWorkerIsLoaded extends true
+      ? Bun.ReadableStreamDefaultReadResult<R>
+      : Awaited<ReturnType<import("node:stream/web").ReadableStreamDefaultReader<R>["read"]>>;
+
+    /**
      * The Node.js-flavored members of the global `Event`. The global interface
      * picks them up only when lib.dom.d.ts is not loaded: lib.dom declares
      * `composedPath(): EventTarget[]`, which is incompatible with the tuple
@@ -774,20 +812,21 @@ declare var ReadableStreamDefaultController: {
   new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
-  read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
-  /**
-   * Only available in Bun. If there are multiple chunks in the queue, returns all of them at once.
-   * Returns a promise only if the data is not immediately available.
-   */
-  readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
-  releaseLock(): void;
+interface ReadableStreamDefaultReader<R = any>
+  extends
+    Bun.__internal.LibEmptyOrReadableStreamDefaultReader<R>,
+    Bun.__internal.BunReadableStreamDefaultReaderMethods<R> {
+  read(): Promise<Bun.__internal.BunOrNodeReadableStreamReadResult<R>>;
 }
 
-declare var ReadableStreamDefaultReader: {
-  prototype: ReadableStreamDefaultReader;
-  new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
-};
+// Without a lib that declares it, this is the constructor of node:stream/web. A `prototype` of the
+// global interface would make `instanceof` turn a `getReader()` result into a reader of `any`.
+declare var ReadableStreamDefaultReader: Bun.__internal.LibDomOrWebWorkerIsLoaded extends true
+  ? {
+      prototype: ReadableStreamDefaultReader;
+      new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
+    }
+  : typeof import("node:stream/web").ReadableStreamDefaultReader;
 
 interface ReadableStreamGenericReader {
   readonly closed: Promise<void>;

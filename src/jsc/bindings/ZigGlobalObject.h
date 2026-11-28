@@ -749,6 +749,9 @@ public:
     static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
 };
 
+// The name of a private native function (`$requireCommonJS`) in a CPU profile. Null for any other function.
+WTF::String profileNameOfPrivateFunction(JSC::VM&, JSC::TaggedNativeFunction);
+
 } // namespace Zig
 
 namespace Bun {

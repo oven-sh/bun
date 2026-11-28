@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+import { createRequire } from "node:module";
 
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
@@ -403,6 +404,21 @@ describe("node:inspector", () => {
       // Both profiles should be valid
       expect(result1.profile.nodes.length).toBeGreaterThanOrEqual(1);
       expect(result2.profile.nodes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test("Profiler.stop names the private native function that loads a built-in module", () => {
+      const require = createRequire(import.meta.url);
+      const names = new Set<string>();
+      session.post("Profiler.enable");
+      // The function is the leaf of a part of the samples only, so profile until one sample has it.
+      for (let round = 0; round < 40 && !names.has("requireBuiltinModule"); round++) {
+        session.post("Profiler.start");
+        const end = performance.now() + 50;
+        while (performance.now() < end) require("node:fs");
+        const { profile }: any = session.post("Profiler.stop");
+        for (const node of profile.nodes) names.add(node.callFrame.functionName);
+      }
+      expect([...names]).toContain("requireBuiltinModule");
     });
 
     test("disconnect() stops running profiler", () => {

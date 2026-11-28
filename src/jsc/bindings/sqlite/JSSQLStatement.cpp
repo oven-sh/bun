@@ -755,9 +755,10 @@ private:
     {
         Base::finishCreation(vm);
         Bun::reifyStaticPropertyTable(vm, JSSQLStatementPrototype::info(), JSSQLStatementPrototypeTableValues, *this);
-        // Only builtin modules can name these: statement.native is public.
-        putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).setColumnNameTransformPrivateName(), 1, jsSQLStatementSetColumnNameTransformFunction, ImplementationVisibility::Private, NoIntrinsic, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
-        putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).runTailPrivateName(), 1, jsSQLStatementRunTailFunction, ImplementationVisibility::Private, NoIntrinsic, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+        // Only builtin modules can name these: statement.native is public. putDirectNativeFunction would name the functions "anonymous".
+        auto& names = WebCore::builtinNames(vm);
+        putDirect(vm, names.setColumnNameTransformPrivateName(), JSFunction::create(vm, globalObject, 1, names.setColumnNameTransformPublicName().string(), jsSQLStatementSetColumnNameTransformFunction, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+        putDirect(vm, names.runTailPrivateName(), JSFunction::create(vm, globalObject, 1, names.runTailPublicName().string(), jsSQLStatementRunTailFunction, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     }
 };
 

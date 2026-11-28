@@ -99,4 +99,63 @@ describe.skipIf(!hasPrebuild)("@datadog/pprof", () => {
 
     expect(exitCode).toBe(0);
   }, 120_000);
+
+  // The native function that loads a CommonJS module has no name of its own. The profiler names its frame.
+  test("the frame of the native CommonJS loader has the name requireCommonJS", async () => {
+    using dir = tempDir("datadog-pprof-native-frame", {
+      "package.json": JSON.stringify({
+        name: "datadog-pprof-fixture",
+        version: "0.0.0",
+        dependencies: {
+          "@datadog/pprof": "5.17.0",
+        },
+        trustedDependencies: ["@datadog/pprof"],
+      }),
+      // .cjs: with the name loaded.js Bun loads this file as an ES module, and requireCommonJS does not call it.
+      "loaded.cjs": /* js */ `
+        const start = Date.now();
+        while (Date.now() - start < 300) {}
+      `,
+      "index.js": /* js */ `
+        const { time } = require("@datadog/pprof");
+
+        time.start({ intervalMicros: 1000, durationMillis: 60000 });
+        require("./loaded.cjs");
+        const { function: functions, stringTable } = time.stop();
+
+        const names = functions.map(fn => stringTable.strings[Number(fn.name)]);
+        process.stdout.write(JSON.stringify({ hasRequireCommonJS: names.includes("requireCommonJS") }));
+      `,
+    });
+
+    {
+      await using install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      if (exitCode !== 0) {
+        throw new Error(`bun install failed (exit ${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+      }
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "index.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: `{"hasRequireCommonJS":true}`, stderr: "" });
+    expect(exitCode).toBe(0);
+  }, 120_000);
 });

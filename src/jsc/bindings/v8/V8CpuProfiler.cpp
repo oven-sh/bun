@@ -2,6 +2,7 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
 #include "shim/CpuProfiler.h"
+#include "BunCPUProfiler.h"
 
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
@@ -158,7 +159,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
                 continue;
             }
 
-            WTF::String functionName = frame.displayName(vm);
+            WTF::String functionName = Bun::functionName(vm, frame);
             WTF::String url;
             int scriptId = 0;
             int line = CpuProfileNode::kNoLineNumberInfo;

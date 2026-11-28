@@ -9,6 +9,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/FunctionExecutable.h>
+#include <JavaScriptCore/NativeExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/StringPrintStream.h>
@@ -45,6 +46,16 @@ void setSamplingInterval(int intervalMicroseconds)
 bool isCPUProfilerRunning()
 {
     return s_isProfilerRunning;
+}
+
+WTF::String functionName(JSC::VM& vm, JSC::SamplingProfiler::StackFrame& frame)
+{
+    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable && frame.executable->isHostFunction()) {
+        auto name = Zig::profileNameOfPrivateFunction(vm, uncheckedDowncast<JSC::NativeExecutable>(frame.executable)->function());
+        if (!name.isNull())
+            return name;
+    }
+    return frame.displayName(vm);
 }
 
 void startCPUProfiler(JSC::VM& vm)
@@ -400,7 +411,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String functionName = frame.displayName(vm);
+                WTF::String functionName = Bun::functionName(vm, frame);
                 WTF::String url;
                 int scriptId = 0;
                 // Function-definition line/column (0-indexed) for callFrame.
@@ -654,7 +665,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String rawFunctionName = frame.displayName(vm);
+                WTF::String rawFunctionName = Bun::functionName(vm, frame);
                 WTF::String functionName = formatFunctionName(rawFunctionName, frame);
                 WTF::String url;
                 int lineNumber = -1;

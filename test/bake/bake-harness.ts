@@ -72,6 +72,40 @@ function imageFixture(relative: string) {
   return buf;
 }
 
+/**
+ * Files of a `[serve.static]` plugin with two `onResolve` callbacks. One declines an import of a file
+ * named "declined.*". The other answers an import of "answered.*" with the absolute path of the file.
+ * Each callback prints "onResolve <specifier>".
+ */
+export const onResolvePluginFiles = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    import path from "node:path";
+    export default {
+      name: "resolve-some",
+      setup(build) {
+        build.onResolve({ filter: /declined\\.\\w+$/ }, args => {
+          console.log("onResolve " + args.path);
+        });
+        build.onResolve({ filter: /answered\\.\\w+$/ }, args => {
+          console.log("onResolve " + args.path);
+          return { path: path.resolve(path.dirname(args.importer), args.path) };
+        });
+      },
+    };
+  `,
+};
+
+/** The specifiers of the next `count` calls that the plugin of `onResolvePluginFiles` printed, sorted. */
+export async function onResolveCalls(dev: Dev, count: number): Promise<string[]> {
+  const calls: string[] = [];
+  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
+  return calls.sort();
+}
+
 export function emptyHtmlFile({
   styles = [],
   scripts = [],
@@ -134,7 +168,8 @@ export interface DevServerTest {
    */
   cwd?: string;
 
-  skip?: ("win32" | "darwin" | "linux" | "ci")[];
+  /** Register the test as `test.todo` on these platforms, in CI, or on a debug build of bun. */
+  skip?: ("win32" | "darwin" | "linux" | "ci" | "debug")[];
   /**
    * Only run this test.
    */
@@ -1929,7 +1964,7 @@ export function indexHtmlScript(htmlFiles: string[]) {
   ].join("\n");
 }
 
-const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
+const skipTargets = [process.platform, isCI ? "ci" : null, isDebugBuild ? "debug" : null].filter(Boolean);
 
 function testImpl<T extends DevServerTest>(
   description: string,

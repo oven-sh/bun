@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, onResolveCalls, onResolvePluginFiles } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,118 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+devTest("stylesheet that a script imports through an onResolve plugin comes back after a failed first build", {
+  files: {
+    ...onResolvePluginFiles,
+    "index.html": emptyHtmlFile({
+      scripts: ["./app.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "app.ts": `
+      import "./declined.css";
+      import "./answered.css";
+      console.log("app");
+    `,
+    "declined.css": `
+      h1 {
+        color: red;
+      }}
+    `,
+    "answered.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.css", "./declined.css"]);
+    await dev.write("declined.css", `h1 { color: red; }`, { errors: null });
+    await dev.write("answered.css", `body { color: blue; }`);
+    // previously: the page had no stylesheet
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+devTest("stylesheet imported through an onResolve plugin follows its edits", {
+  files: {
+    ...onResolvePluginFiles,
+    "index.html": emptyHtmlFile({
+      styles: ["./main.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.css": `
+      @import "./declined.css";
+      @import "./answered.css";
+    `,
+    "declined.css": `
+      h1 {
+        color: red;
+      }
+    `,
+    "answered.css": `
+      body {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("red");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.css", "./declined.css"]);
+    // previously: the edit did not reach the page
+    await dev.write("declined.css", `h1 { color: blue; }`);
+    await c.style("h1").color.expect.toBe("#00f");
+    await dev.write("answered.css", `body { color: blue; }`);
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+// The dev server makes the stylesheets of a plugin whose name has "tailwind" in it entry points of every
+// bundle. The plugin has the shape of bun-plugin-tailwind: one onLoad for css files, and no onResolve.
+devTest("stylesheet of a tailwind plugin keeps its build error and comes back once fixed", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./tailwind-like.ts"]
+    `,
+    "tailwind-like.ts": `
+      export default {
+        name: "tailwind-like",
+        setup(build) {
+          build.onLoad({ filter: /\\.css$/ }, async args => ({
+            contents: "/*! tailwindcss */\\n" + (await Bun.file(args.path).text()),
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["./styles.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "styles.css": `
+      h1 {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    // The dev server takes a stylesheet for a tailwind file when the first bytes of its output have "tailwind" in them.
+    const href = (await dev.fetch("/").text()).match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+    expect(href).toBeString();
+    await dev.fetch(href!).expect.toInclude("tailwindcss");
+    await dev.write("styles.css", `h1 { color: red; }}`);
+    expect((await dev.fetch("/")).status).toBe(500);
+    // previously: 200, and the page had no stylesheet from here on
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `h1 { color: blue; }`);
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
   },
 });
 

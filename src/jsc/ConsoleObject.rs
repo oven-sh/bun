@@ -93,13 +93,6 @@ pub struct ConsoleObject {
     counts: JsCell<Counter>,
 }
 
-impl core::fmt::Display for ConsoleObject {
-    fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Intentionally prints nothing.
-        Ok(())
-    }
-}
-
 impl ConsoleObject {
     pub(crate) fn new(error_writer: Output::StreamType, writer: Output::StreamType) -> Box<Self> {
         Box::write(

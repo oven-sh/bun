@@ -7,8 +7,6 @@ struct PercentEncoding;
 pub enum EncodeError {
     #[error("InvalidCharacter")]
     InvalidCharacter,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 /// Error set of [`DataURL::parse`] / [`DataURL::parse_without_check`].
@@ -30,8 +28,6 @@ impl ParseDataURLError {
 pub enum DecodeDataError {
     #[error("InvalidCharacter")]
     InvalidCharacter,
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("Base64DecodeError")]
     Base64DecodeError,
 }
@@ -47,7 +43,6 @@ impl From<EncodeError> for DecodeDataError {
     fn from(e: EncodeError) -> Self {
         match e {
             EncodeError::InvalidCharacter => Self::InvalidCharacter,
-            EncodeError::OutOfMemory => Self::OutOfMemory,
         }
     }
 }

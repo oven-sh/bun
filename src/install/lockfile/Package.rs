@@ -3700,5 +3700,3 @@ pub mod serializer {
         Ok(())
     }
 }
-
-pub use serializer as Serializer;

@@ -62,7 +62,6 @@ bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeSh
 pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
-pub use crate::linker_context::metafile_builder as MetafileBuilder;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
@@ -4644,7 +4643,6 @@ impl StmtList {
             StmtListWhich::InsideWrapperSuffix => {
                 self.inside_wrapper_suffix.extend_from_slice(stmts)
             }
-            StmtListWhich::AllStmts => self.all_stmts.extend_from_slice(stmts),
         }
     }
 
@@ -4652,7 +4650,6 @@ impl StmtList {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),
-            StmtListWhich::AllStmts => self.all_stmts.push(stmt),
         }
     }
 }
@@ -4661,5 +4658,4 @@ impl StmtList {
 pub enum StmtListWhich {
     OutsideWrapperPrefix,
     InsideWrapperSuffix,
-    AllStmts,
 }

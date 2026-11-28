@@ -2,10 +2,6 @@
 pub enum Error {
     #[error("ModuleNotFound")]
     ModuleNotFound,
-    #[error("InvalidDataURL")]
-    InvalidDataURL,
-    #[error("InvalidURL")]
-    InvalidURL,
     #[error("ParserError")]
     ParserError,
     #[error("StaleCache")]
@@ -40,18 +36,12 @@ pub enum Error {
     ParseError,
     #[error("JSError")]
     JSError,
-    #[error("TarballFailedToExtract")]
-    TarballFailedToExtract,
     #[error("ServerEntryPointGenerate")]
     ServerEntryPointGenerate,
     #[error("WorkerTerminated")]
     WorkerTerminated,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
-    #[error("MissingDebugInfo")]
-    MissingDebugInfo,
-    #[error("EndOfFile")]
-    EndOfFile,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
     #[error(transparent)]
@@ -67,13 +57,7 @@ pub enum Error {
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
-    Watcher(#[from] bun_watcher::Error),
-    #[error(transparent)]
     Install(#[from] bun_install::Error),
-    #[error(transparent)]
-    Ast(#[from] bun_ast::Error),
-    #[error(transparent)]
-    Patch(#[from] bun_patch::Error),
     #[error(transparent)]
     ToJS(#[from] bun_ast::ToJSError),
     #[error(transparent)]
@@ -87,8 +71,6 @@ impl Error {
     pub fn name(&self) -> &'static str {
         match self {
             Self::ModuleNotFound => "ModuleNotFound",
-            Self::InvalidDataURL => "InvalidDataURL",
-            Self::InvalidURL => "InvalidURL",
             Self::ParserError => "ParserError",
             Self::StaleCache => "StaleCache",
             Self::InvalidModuleType => "InvalidModuleType",
@@ -106,12 +88,9 @@ impl Error {
             Self::TranspilerJobGenerationMismatch => "TranspilerJobGenerationMismatch",
             Self::ParseError => "ParseError",
             Self::JSError => "JSError",
-            Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::WorkerTerminated => "WorkerTerminated",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
-            Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
@@ -119,10 +98,7 @@ impl Error {
             Self::Resolver(e) => e.name(),
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Bundler(e) => e.name(),
-            Self::Watcher(e) => e.name(),
             Self::Install(e) => e.name(),
-            Self::Ast(e) => e.name(),
-            Self::Patch(e) => e.name(),
             Self::ToJS(e) => <&'static str>::from(e),
             Self::Url(e) => e.name(),
             Self::ErrorCode(e) => <&'static str>::from(*e),

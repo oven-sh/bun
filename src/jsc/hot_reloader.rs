@@ -20,8 +20,6 @@ use bun_watcher::{Op as WatchOp, OwnedWatcher, Watcher};
 use crate::virtual_machine::{HotReload, VirtualMachine};
 use bun_event_loop::task_tag;
 
-bun_core::declare_scope!(hot_reloader, visible);
-
 use bun_core::env::IS_KQUEUE;
 
 /// `bun run` and `bun test` with `--hot` or `--watch`.

@@ -70,8 +70,6 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
-    #[error("InvalidDependencyName")]
-    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
     #[error("$BUN_INSTALL is not an absolute path")]
@@ -200,8 +198,6 @@ pub enum Error {
     Unexpected,
     #[error("NotSameFileSystem")]
     NotSameFileSystem,
-    #[error("FailedToCopyFile")]
-    FailedToCopyFile,
     #[error("InvalidBinCount")]
     InvalidBinCount,
     #[error("InvalidBinContent")]
@@ -270,7 +266,6 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
-            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
             Self::RelativeBunInstall => "$BUN_INSTALL is not an absolute path",
             Self::InvalidPackageID => "InvalidPackageID",
@@ -357,7 +352,6 @@ impl Error {
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
-            Self::FailedToCopyFile => "FailedToCopyFile",
             Self::InvalidBinCount => "InvalidBinCount",
             Self::InvalidBinContent => "InvalidBinContent",
             Self::Sys(e) => <&'static str>::from(e),

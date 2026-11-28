@@ -529,12 +529,6 @@ impl<T> RwLock<T> {
     }
 }
 
-impl<T: Default> Default for RwLock<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 // ─── Path primitives (from bun_paths) ─────────────────────────────────────
 pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
     1024
@@ -2184,13 +2178,6 @@ impl<T> Drop for Once<T> {
             // SAFETY: DONE ⇒ cell holds a valid `T`; we have `&mut self`.
             unsafe { self.cell.get_mut().assume_init_drop() };
         }
-    }
-}
-
-impl<T> Default for Once<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -409,7 +409,6 @@ dependencies = [
  "bun_resolver",
  "bun_standalone_graph",
  "bun_sys",
- "enum-map",
  "thiserror",
 ]
 
@@ -504,7 +503,6 @@ dependencies = [
  "bun_zlib",
  "const_format",
  "libc",
- "scopeguard",
  "thiserror",
 ]
 
@@ -560,7 +558,6 @@ dependencies = [
 name = "bun_css_jsc"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_ast",
  "bun_core",
@@ -790,7 +787,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1073,10 +1069,8 @@ dependencies = [
  "bun_options_types",
  "bun_sourcemap",
  "bun_wyhash",
- "const_format",
  "enum-map",
  "enumset",
- "scopeguard",
  "thiserror",
 ]
 
@@ -1110,7 +1104,6 @@ dependencies = [
  "bun_jsc_macros",
  "bun_opaque",
  "bun_options_types",
- "bun_patch",
  "bun_paths",
  "bun_ptr",
  "bun_removable_features",

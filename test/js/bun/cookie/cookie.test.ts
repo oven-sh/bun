@@ -97,6 +97,51 @@ describe("Bun.Cookie validation tests", () => {
       });
       expect(cookie.expires).toEqual(new Date(futureTimestamp * 1000));
     });
+
+    // null is not in the declared type of CookieInit, but CookieMap.get() returns it for a cookie that does not exist.
+    describe.each([undefined, null] as any[])("a name or value of %p is not given", notGiven => {
+      test("value: same cookie as { name } alone", () => {
+        const cookie = new Bun.Cookie({ name: "a", value: notGiven });
+        expect(cookie.serialize()).toBe("a=; Path=/; SameSite=Lax");
+        expect(cookie.toJSON()).toEqual(new Bun.Cookie({ name: "a" }).toJSON());
+      });
+
+      test("name: same error as { value } alone, thrown before the value is read", () => {
+        let error: unknown;
+        let readValue = false;
+        try {
+          new Bun.Cookie({
+            name: notGiven,
+            get value() {
+              readValue = true;
+              return "b";
+            },
+          });
+        } catch (e) {
+          error = e;
+        }
+        expect(error).toEqual(new TypeError("name is required"));
+        expect(readValue).toBe(false);
+      });
+    });
+
+    test.each([
+      [{ name: "a", value: "" }, "a=; Path=/; SameSite=Lax"],
+      [{ name: "a", value: 0 }, "a=0; Path=/; SameSite=Lax"],
+      [{ name: "a", value: false }, "a=false; Path=/; SameSite=Lax"],
+      [{ name: "a", value: "undefined" }, "a=undefined; Path=/; SameSite=Lax"],
+      [{ name: "a", value: "null" }, "a=null; Path=/; SameSite=Lax"],
+      [{ name: 0, value: "b" }, "0=b; Path=/; SameSite=Lax"],
+      [{ name: "undefined", value: "b" }, "undefined=b; Path=/; SameSite=Lax"],
+      [{ name: "null", value: "b" }, "null=b; Path=/; SameSite=Lax"],
+    ] as [any, string][])("a name or value that is given is converted to a string: %j", (init, expected) => {
+      expect(new Bun.Cookie(init).serialize()).toBe(expected);
+    });
+
+    test("new Bun.Cookie(name, value, options) does not read a name or value from the options", () => {
+      const cookie = new Bun.Cookie("a", "b", { name: "x", value: undefined });
+      expect(cookie.serialize()).toBe("a=b; Path=/; SameSite=Lax");
+    });
   });
 });
 
@@ -306,6 +351,11 @@ describe("Bun.serve() cookies 2", () => {
         req.cookies.set("redirected", "true");
         return Response.redirect("/redirect-target");
       },
+      "/no-session": req => {
+        const session: { id?: string } = {};
+        req.cookies.set({ name: "session", value: session.id });
+        return new Response("Hello");
+      },
     },
   });
   afterAll(() => {
@@ -338,6 +388,10 @@ describe("Bun.serve() cookies 2", () => {
         "redirected=true; Path=/; SameSite=Lax",
       ]
     `);
+  });
+  test("server sends an empty cookie value when the value of a CookieInit is undefined", async () => {
+    const response = await fetch(server.url + "/no-session");
+    expect(response.headers.getAll("Set-Cookie")).toEqual(["session=; Path=/; SameSite=Lax"]);
   });
 });
 

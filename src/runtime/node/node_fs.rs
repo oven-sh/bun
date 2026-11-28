@@ -5077,10 +5077,39 @@ impl NodeFS {
         Ok(())
     }
 
+    #[cfg(not(windows))]
+    pub(crate) fn copy_file_using_read_write_loop(
+        src: &ZStr,
+        dest: &ZStr,
+        src_fd: FD,
+        dest_fd: FD,
+        stat_size: usize,
+        wrote: &mut u64,
+    ) -> Maybe<ret::CopyFile> {
+        Self::copy_file_using_read_write_loop_impl::<false>(
+            src, dest, src_fd, dest_fd, stat_size, wrote,
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn copy_file_using_pread_write_loop(
+        src: &ZStr,
+        dest: &ZStr,
+        src_fd: FD,
+        dest_fd: FD,
+        stat_size: usize,
+        wrote: &mut u64,
+    ) -> Maybe<ret::CopyFile> {
+        // Opening /dev/fd/N shares the caller's offset; path copies must not consume it.
+        Self::copy_file_using_read_write_loop_impl::<true>(
+            src, dest, src_fd, dest_fd, stat_size, wrote,
+        )
+    }
+
     // since we use a 64 KB stack buffer, we should not let this function get inlined
     #[inline(never)]
     #[cfg(not(windows))]
-    pub(crate) fn copy_file_using_read_write_loop(
+    fn copy_file_using_read_write_loop_impl<const POSITIONAL: bool>(
         src: &ZStr,
         dest: &ZStr,
         src_fd: FD,
@@ -5116,7 +5145,12 @@ impl NodeFS {
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
             let mut read = BorrowedBuf::from(&mut buf[..read_len]);
-            let amt = match Syscall::read_buf(src_fd, read.unfilled()) {
+            let read_result = if POSITIONAL {
+                Syscall::pread_buf(src_fd, read.unfilled(), *wrote as i64)
+            } else {
+                Syscall::read_buf(src_fd, read.unfilled())
+            };
+            let amt = match read_result {
                 Ok(result) => result,
                 Err(err) => {
                     return Err(if !src.is_empty() {
@@ -5156,7 +5190,12 @@ impl NodeFS {
         if !broke {
             'outer: loop {
                 let mut read = BorrowedBuf::from(&mut *buf);
-                let amt = match Syscall::read_buf(src_fd, read.unfilled()) {
+                let read_result = if POSITIONAL {
+                    Syscall::pread_buf(src_fd, read.unfilled(), *wrote as i64)
+                } else {
+                    Syscall::read_buf(src_fd, read.unfilled())
+                };
+                let amt = match read_result {
                     Ok(result) => result,
                     Err(err) => {
                         return Err(if !src.is_empty() {
@@ -5286,6 +5325,16 @@ impl NodeFS {
         })
     }
 
+    #[cfg(target_os = "macos")]
+    fn is_devfs_path(path: &ZStr) -> bool {
+        // Darwin copyfile rejects /dev/fd paths because stat and fstat report different device IDs.
+        sys::statfs(path).is_ok_and(|fs| {
+            fs.f_fstypename
+                .map(|byte| byte as u8)
+                .starts_with(b"devfs\0")
+        })
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
@@ -5323,7 +5372,8 @@ impl NodeFS {
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
                 // at least, on an M1 with an NVME SSD.
-                if stat_.st_size > 128 * 1024 {
+                let mut use_read_write = stat_.st_size <= 128 * 1024;
+                if !use_read_write {
                     if !args.mode.shouldnt_overwrite() {
                         // clonefile() will fail if it already exists
                         let _ = Syscall::unlink(dest);
@@ -5338,7 +5388,9 @@ impl NodeFS {
                         let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                         return Ok(());
                     }
-                } else {
+                    use_read_write = Self::is_devfs_path(src);
+                }
+                if use_read_write {
                     let src_file = match Syscall::open(src, sys::O::RDONLY, 0o644) {
                         Ok(result) => sys::File::from_fd(result),
                         Err(err) => return Err(err.with_path(args.src.slice())),
@@ -5356,7 +5408,7 @@ impl NodeFS {
                     };
                     let mut out = CopyDest::new(dest_file, stat_.st_mode as Mode);
 
-                    return Self::copy_file_using_read_write_loop(
+                    return Self::copy_file_using_pread_write_loop(
                         src,
                         dest,
                         src_fd,

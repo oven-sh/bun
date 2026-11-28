@@ -10663,6 +10663,14 @@ declare module "bun" {
      * are dropped before JSON parsing (no overhead for domains you
      * enabled but don't fully listen to).
      *
+     * A `"Page.javascriptDialogOpening"` listener takes over dialog
+     * handling for the view. Without one, Bun dismisses `alert`,
+     * `confirm`, and `prompt`, and accepts `beforeunload`. With one,
+     * the listener must answer each dialog with
+     * `cdp("Page.handleJavaScriptDialog", { accept, promptText })`.
+     * That `cdp()` call throws `ERR_INVALID_STATE` if another `cdp()`
+     * call is pending on the view, and the dialog then stays open.
+     *
      * @example
      * ```ts
      * await view.navigate("about:blank");

@@ -1289,7 +1289,16 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // an alloc per unwanted event. The listener was added via
     // view.addEventListener("Network.responseReceived", e => e.data.response).
     auto methodAtom = AtomString::fromUTF8(method);
-    if (!view->wrapped().hasEventListeners(methodAtom)) return;
+    if (!view->wrapped().hasEventListeners(methodAtom)) {
+        // An unanswered dialog blocks the page. Answer as the WebKit backend does: dismiss, accept beforeunload.
+        if (method.size() == 28 && memcmp(method.data(), "Page.javascriptDialogOpening", 28) == 0) {
+            auto type = jsonString(jsonField(params, { "type", 4 }));
+            bool accept = type.size() == 12 && memcmp(type.data(), "beforeunload", 12) == 0;
+            uint32_t id = nextId();
+            send(0, Command(id, "Page.handleJavaScriptDialog"_s, sidSpan(view->m_sessionId)).boolean("accept"_s, accept));
+        }
+        return;
+    }
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue data = JSONParse(g, WTF::String::fromUTF8(params));

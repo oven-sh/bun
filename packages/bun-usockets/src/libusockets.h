@@ -483,12 +483,14 @@ struct us_bun_socket_context_options_t {
     const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage;
+    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
+    int allow_partial_trust_chain;
     const char * const *key;
-    unsigned int key_count;
+    size_t key_count;
     const char * const *cert;
-    unsigned int cert_count;
+    size_t cert_count;
     const char * const *ca;
-    unsigned int ca_count;
+    size_t ca_count;
     unsigned int secure_options;
     // Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
     int ssl_min_version;
@@ -501,9 +503,7 @@ struct us_bun_socket_context_options_t {
     int session_timeout;
     /* PEM-encoded CRLs added to the context's X509_STORE (enables CRL checking). */
     const char * const *crl;
-    unsigned int crl_count;
-    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
-    int allow_partial_trust_chain;
+    size_t crl_count;
     /* Colon-separated signature algorithm list applied via
      * SSL_CTX_set1_sigalgs_list. */
     const char *sigalgs;

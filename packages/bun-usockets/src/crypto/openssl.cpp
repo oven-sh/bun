@@ -1014,14 +1014,14 @@ static us_ssl_credential_ptr us_ssl_ctx_copy_legacy_identity(SSL_CTX *ctx) {
 }
 
 /* One identity per key type, as in OpenSSL: the last certificate of a type wins, with whichever key fits it. */
-static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsigned int cert_count,
-                                     const char *const *key, unsigned int key_count) {
+static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, size_t cert_count,
+                                     const char *const *key, size_t key_count) {
   /* In OpenSSL's order of preference: BoringSSL serves the first usable credential. */
   enum { TYPE_ECDSA, TYPE_EDDSA, TYPE_RSA, KEY_TYPES };
   const char *leaf[KEY_TYPES] = {NULL};
   us_ssl_credential_ptr identity[KEY_TYPES];
   int ok = 1;
-  for (unsigned int i = 0; i < cert_count; i++) {
+  for (size_t i = 0; i < cert_count; i++) {
     if (us_ssl_ctx_use_certificate_chain(ctx, cert[i]) != 1) return 0;
     int id = EVP_PKEY_id(X509_get0_pubkey(SSL_CTX_get0_certificate(ctx)));
     leaf[id == EVP_PKEY_EC ? TYPE_ECDSA : id == EVP_PKEY_ED25519 ? TYPE_EDDSA : TYPE_RSA] = cert[i];
@@ -1031,7 +1031,7 @@ static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsi
     if (leaf[type] == NULL) continue;
     ok = us_ssl_ctx_use_certificate_chain(ctx, leaf[type]) == 1;
     int has_key = 0, mismatched = 0;
-    for (unsigned int i = 0; ok && i < key_count; i++) {
+    for (size_t i = 0; ok && i < key_count; i++) {
       if (us_ssl_ctx_use_privatekey_content(ctx, key[i], SSL_FILETYPE_PEM) == 1) {
         has_key = 1;
         continue;
@@ -1328,7 +1328,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         return NULL;
       }
     } else if (options.cert && options.cert_count > 0) {
-      for (unsigned int i = 0; i < options.cert_count; i++) {
+      for (size_t i = 0; i < options.cert_count; i++) {
         if (us_ssl_ctx_use_certificate_chain(ssl_context.get(), options.cert[i]) != 1) {
           return NULL;
         }
@@ -1340,7 +1340,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         return NULL;
       }
     } else if (options.key && options.key_count > 0) {
-      for (unsigned int i = 0; i < options.key_count; i++) {
+      for (size_t i = 0; i < options.key_count; i++) {
         if (us_ssl_ctx_use_privatekey_content(ssl_context.get(), options.key[i], SSL_FILETYPE_PEM) != 1) {
           return NULL;
         }
@@ -1373,7 +1373,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * any client certificate that chains to a public root. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context.get());
     us_crypto_buffer_stack_ptr ca_certs{sk_CRYPTO_BUFFER_new_null()};
-    for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
+    for (size_t i = 0; ca_certs != NULL && i < options.ca_count; i++) {
       if (us_collect_ca_pem(ssl_context.get(), options.ca[i], ca_certs.get()) < 0) ca_certs = NULL;
     }
     if (ca_certs == NULL || !us_install_ca_buffers(ssl_context.get(), cert_store, ca_certs.get())) {
@@ -1447,7 +1447,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
       return NULL;
     }
-    for (unsigned int i = 0; i < options.crl_count; i++) {
+    for (size_t i = 0; i < options.crl_count; i++) {
       us_bio_ptr crl_bio{BIO_new_mem_buf(options.crl[i], -1)};
       if (!crl_bio) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;

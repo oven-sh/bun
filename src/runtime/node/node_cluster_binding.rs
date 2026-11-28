@@ -347,13 +347,9 @@ pub(crate) fn cluster_raw_bind<'a>(
             BindAddressType::Family(_) | BindAddressType::Ignored(_) => {}
         }
 
-        let (host_owned, fallback_host): (Vec<u8>, Option<&[u8]>) = match address {
-            BindAddress::Text(host) => {
-                let mut v = host.to_vec();
-                v.push(0);
-                (v, None)
-            }
-            BindAddress::Ignored(_) => (b"::\0".to_vec(), Some(b"0.0.0.0\0")),
+        let (host_owned, fallback_host) = match address {
+            BindAddress::Text(host) => (bun_core::ZBox::from_bytes(host), None),
+            BindAddress::Ignored(_) => (bun_core::ZBox::from_bytes(b"::"), Some(c"0.0.0.0")),
         };
 
         let options: core::ffi::c_int = if flags & 1 != 0 {
@@ -364,30 +360,24 @@ pub(crate) fn cluster_raw_bind<'a>(
 
         let mut out_port: core::ffi::c_int = 0;
         let mut err: core::ffi::c_int = 0;
-        // SAFETY: `host_owned` is NUL-terminated; out params are live locals.
-        let mut fd = unsafe {
-            bun_uws::socket_transfer::bsd_create_bound_socket(
-                host_owned.as_ptr().cast(),
-                if port >= 0 { port } else { 0 },
-                options,
-                &mut out_port,
-                &mut err,
-            )
-        };
+        let mut fd = bun_uws::socket_transfer::bsd_create_bound_socket(
+            host_owned.as_zstr().into(),
+            if port >= 0 { port } else { 0 },
+            options,
+            &mut out_port,
+            &mut err,
+        );
         const WSAEADDRINUSE: core::ffi::c_int = 10048;
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX && err != WSAEADDRINUSE {
             if let Some(v4) = fallback_host {
                 let mut err2: core::ffi::c_int = 0;
-                // SAFETY: as above.
-                let retry = unsafe {
-                    bun_uws::socket_transfer::bsd_create_bound_socket(
-                        v4.as_ptr().cast(),
-                        if port >= 0 { port } else { 0 },
-                        options,
-                        &mut out_port,
-                        &mut err2,
-                    )
-                };
+                let retry = bun_uws::socket_transfer::bsd_create_bound_socket(
+                    v4.into(),
+                    if port >= 0 { port } else { 0 },
+                    options,
+                    &mut out_port,
+                    &mut err2,
+                );
                 if retry != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
                     err = 0;
                     fd = retry;

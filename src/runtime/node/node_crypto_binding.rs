@@ -800,16 +800,11 @@ impl JobContext for ScryptJob {
         if let Some(err) = this.err {
             let exception = if err != 0 {
                 let mut buf = [0u8; 256];
-                // SAFETY: buf is a valid writable buffer of the given length.
-                unsafe {
-                    boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
-                };
-                // SAFETY: ERR_error_string_n always NUL-terminates within `buf`.
-                let msg = unsafe { bun_core::ffi::cstr(buf.as_ptr().cast()) };
+                let msg = boringssl::c::error_string(err, &mut buf);
                 global
                     .err(
                         ErrorCode::CRYPTO_OPERATION_FAILED,
-                        format_args!("Scrypt failed: {}", bstr::BStr::new(msg.to_bytes())),
+                        format_args!("Scrypt failed: {}", bstr::BStr::new(msg)),
                     )
                     .to_js()
             } else {

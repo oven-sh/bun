@@ -205,7 +205,6 @@ impl Request {
     /// Sets the headers of the request. This will take ownership of the headers.
     /// it will deref the previous headers if they exist.
     pub(crate) fn set_fetch_headers(&self, headers: Option<HeadersRef>) {
-        // old_headers.deref() → handled by HeadersRef::Drop on assignment
         self.headers.set(headers);
     }
 
@@ -1031,13 +1030,11 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
+                        if let Some(headers) = response.get_init_headers() {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
-                            let h = headers.clone_this(cx.global())?;
-                            // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                            req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                            req.headers.set(headers.clone_this(cx.global())?);
                             fields.insert(Fields::Headers);
                         }
                     }
@@ -1149,7 +1146,7 @@ impl Request {
                                 req.headers.set(Some(headers));
                                 fields.insert(Fields::Headers);
                             } else {
-                                drop(headers); // headers.deref()
+                                drop(headers);
                             }
                         }
                     }

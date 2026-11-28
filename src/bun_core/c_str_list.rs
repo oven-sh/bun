@@ -4,7 +4,7 @@ use core::ffi::{CStr, c_char};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use crate::ZStr;
+use crate::{SensitiveCString, ZStr};
 
 /// A `&'a CStr` that is one pointer wide.
 #[repr(transparent)]
@@ -29,8 +29,9 @@ impl<'a> CStrRef<'a> {
     /// Calls `strlen`.
     #[inline]
     pub fn to_cstr(self) -> &'a CStr {
-        // SAFETY: a `CStr` and a `ZStr` end with a NUL, and the other constructors check or write
-        // it. The bytes are borrowed for `'a`, which `CStringList` shortens to a borrow of itself.
+        // SAFETY: a `CStr`, a `ZStr` and a `SensitiveCString` end with a NUL, and the other
+        // constructors check or write it. The bytes are borrowed for `'a`, which `CStringList`
+        // shortens to a borrow of itself. An `extern` signature vouches for those that C passes.
         unsafe { CStr::from_ptr(self.as_ptr()) }
     }
 }
@@ -49,6 +50,12 @@ impl<'a> From<&'a ZStr> for CStrRef<'a> {
             NonNull::from(string.as_bytes_with_nul()).cast(),
             PhantomData,
         )
+    }
+}
+
+impl<'a> From<&'a SensitiveCString> for CStrRef<'a> {
+    fn from(string: &'a SensitiveCString) -> Self {
+        Self(string.as_non_null(), PhantomData)
     }
 }
 

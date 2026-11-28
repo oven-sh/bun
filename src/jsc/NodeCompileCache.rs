@@ -184,10 +184,10 @@ fn cache_key(filename: &[u8], is_cjs: bool) -> u64 {
     let type_byte: [u8; 1] = [is_cjs as u8];
     let mut ctx = core::mem::MaybeUninit::<boring::SHA256_CTX>::uninit();
     let mut out = [0u8; HASH_SIZE];
+    boring::SHA256_Init(&mut ctx);
     // SAFETY: `SHA256_Init` fully initializes the context; updates/final only
     // read the given byte ranges and write the 32-byte digest.
     unsafe {
-        boring::SHA256_Init(ctx.as_mut_ptr());
         boring::SHA256_Update(ctx.as_mut_ptr(), type_byte.as_ptr().cast(), 1);
         boring::SHA256_Update(ctx.as_mut_ptr(), filename.as_ptr().cast(), filename.len());
         boring::SHA256_Final(out.as_mut_ptr(), ctx.as_mut_ptr());

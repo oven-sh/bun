@@ -362,11 +362,7 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         // The dev-mode idle-timeout warning ignores both args; the user-data
         // pointer is an opaque sentinel (any non-null value satisfies uWS).
-        uws_sys::NewAppResponse::<SSL>::on_timeout(
-            self,
-            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
-            ud,
-        );
+        uws_sys::NewAppResponse::<SSL>::on_timeout(self, |_, _| on_timeout_for_idle_warn(), ud);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -405,11 +401,7 @@ impl RespLike for uws_sys::h3::Response {
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
-        uws_sys::h3::Response::on_timeout(
-            self,
-            |_: *mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
-            ud,
-        );
+        uws_sys::h3::Response::on_timeout(self, |_, _| on_timeout_for_idle_warn(), ud);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -436,11 +428,7 @@ impl RespLike for uws_sys::h2::Response {
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
-        uws_sys::h2::Response::on_timeout(
-            self,
-            |_: *mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
-            ud,
-        );
+        uws_sys::h2::Response::on_timeout(self, |_, _| on_timeout_for_idle_warn(), ud);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -1287,17 +1275,14 @@ where
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
+        res: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         context: &WebSocketUpgradeContext,
         id: usize,
     ) {
-        // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
-        unsafe {
-            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
-        };
+        unsafe { Self::on_web_socket_upgrade(this, res, req, context, id) };
     }
 }
 
@@ -1702,7 +1687,8 @@ where
                 options.data,
                 signal,
                 super::server_web_socket::Flags::default(),
-            );
+            )
+            .payload_guard();
             options.data.ensure_still_alive();
 
             resp.clear_aborted();
@@ -1717,14 +1703,13 @@ where
             drop(detached);
 
             if !resp.upgrade(
-                ws,
+                ws.as_ptr(),
                 sec_websocket_key.slice(),
                 sec_websocket_protocol,
                 sec_websocket_extensions.slice(),
                 &upgrade_ctx,
             ) {
-                // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive. uWS never stored it.
-                unsafe { &*ws }.discard_unopened();
+                ws.discard_unopened();
                 return;
             }
             upgraded = Ok(true);
@@ -1969,10 +1954,8 @@ where
                     if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
-                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                            .clone_this(global)?
-                            // SAFETY: `clone_this` returns a +1 ref.
-                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                        headers =
+                            FetchHeaders::opaque_ref(headers__.as_ptr()).clone_this(global)?;
                     } else {
                         headers = HeadersRef::create_from_js(global, headers_)?;
                     }
@@ -2525,12 +2508,9 @@ where
         // eagerly so the rest of the pipeline never needs to know which
         // transport delivered the bytes.
         if Ctx::IS_MUX {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
-            }));
+            request_object.set_fetch_headers(Some(HeadersRef::create_from_h3(
+                std::ptr::from_mut(req).cast::<c_void>(),
+            )));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the

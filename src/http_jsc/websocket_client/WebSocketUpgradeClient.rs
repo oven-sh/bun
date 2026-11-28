@@ -686,8 +686,9 @@ where
             // `tls.checkServerIdentity` may close the WebSocket.
             // That close clears `hostname`, so the name is moved out while the verdict borrows it.
             let hostname = self.hostname.take();
-            let ssl = socket.ssl_mut();
-            let name = identity_name(hostname.as_bytes(), ssl.as_deref());
+            // SAFETY: the socket that reports its handshake is open, and `ssl` is done with before that callback runs.
+            let mut ssl = unsafe { socket.ssl_mut() };
+            let name = identity_name(hostname.as_bytes(), ssl.as_deref_mut());
             let handshake = TlsHandshake::First {
                 context: self.context,
                 peer: self.tls_peer(),
@@ -776,13 +777,14 @@ where
         if SSL {
             let hostname = self.hostname.get();
             if !hostname.is_empty() {
-                if let Some(ssl) = socket.ssl_mut() {
+                // SAFETY: the socket has just opened, and `ssl` is used for this one call.
+                if let Some(ssl) = unsafe { socket.ssl_mut() } {
                     bun_http::configure_http_client_with_alpn(
                         ssl,
                         if bun_core::ip_address::is_ip_host(hostname.as_bytes()) {
-                            core::ptr::null()
+                            None
                         } else {
-                            hostname.as_ptr()
+                            Some(hostname.as_zstr().into())
                         },
                         bun_http::AlpnOffer::H1,
                     );
@@ -1732,7 +1734,7 @@ fn parse_deflate_response(response: &[u8]) -> Option<WebSocketDeflate::Params> {
 /// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.
 fn identity_name<'a>(
     hostname: &'a [u8],
-    ssl: Option<&boringssl::c::SSL>,
+    ssl: Option<&mut boringssl::c::SSL>,
 ) -> std::borrow::Cow<'a, [u8]> {
     if !hostname.is_empty() {
         hostname.into()

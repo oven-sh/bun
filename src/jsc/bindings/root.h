@@ -110,6 +110,7 @@ void putDirectNamed(JSC::VM&, JSC::JSObject*, WTF::ASCIILiteral name, JSC::JSVal
 
 // can be nothrow | zero_is_throw | check_slow
 #define ZIG_EXPORT(...)
+// Borrowed for the call only. cppbind.ts emits a safe fn, so every argument value must be accepted.
 #define ZIG_NONNULL
 
 #endif

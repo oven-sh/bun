@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
@@ -214,28 +213,18 @@ pub struct LibdeflateState {
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
-// Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
-// caller-owned config, not heap we free. The `Vec` itself
-// deep-clones its slot list.
 #[derive(Clone)]
 pub struct InitOpts {
-    // NUL-terminated C strings borrowed from caller config; the pointers are
-    // copied into the spawned thread and only read there (see the Send SAFETY note).
-    pub ca: Vec<*const c_void>, // *const [*:0]const u8
+    pub ca: &'static [bun_core::SensitiveCString],
     pub abs_ca_file_name: &'static bun_core::ZStr,
 
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
 
-// SAFETY: `ca` holds borrowed NUL-terminated C-string pointers from caller
-// config. They are copied into the spawned HTTP thread and
-// only read there; no shared mutable state crosses the thread boundary.
-unsafe impl Send for InitOpts {}
-
 impl Default for InitOpts {
     fn default() -> Self {
         Self {
-            ca: Vec::new(),
+            ca: &[],
             abs_ca_file_name: bun_core::ZStr::EMPTY,
             on_init_error: on_init_error_noop,
         }

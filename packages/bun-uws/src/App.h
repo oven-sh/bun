@@ -42,13 +42,14 @@ namespace uWS {
         const char *ca_file_name = nullptr;
         const char *ssl_ciphers = nullptr;
         int ssl_prefer_low_memory_usage = 0;
+        int allow_partial_trust_chain = 0;
 
         const char **key = nullptr;
-        unsigned int key_count = 0;
+        size_t key_count = 0;
         const char **cert = nullptr;
-        unsigned int cert_count = 0;
+        size_t cert_count = 0;
         const char **ca = nullptr;
-        unsigned int ca_count = 0;
+        size_t ca_count = 0;
         unsigned int secure_options = 0;
         int ssl_min_version = 0;
         int ssl_max_version = 0;
@@ -58,8 +59,7 @@ namespace uWS {
         unsigned int client_renegotiation_window = 600;
         int session_timeout = 0;
         const char **crl = nullptr;
-        unsigned int crl_count = 0;
-        int allow_partial_trust_chain = 0;
+        size_t crl_count = 0;
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
 
@@ -72,6 +72,7 @@ namespace uWS {
     };
 
     static_assert(sizeof(struct us_bun_socket_context_options_t) == sizeof(SocketContextOptions), "Mismatching uSockets/uWebSockets ABI");
+    static_assert(sizeof(SocketContextOptions) == 168 && offsetof(us_bun_socket_context_options_t, allow_partial_trust_chain) == 52 && offsetof(us_bun_socket_context_options_t, secure_options) == 104 && offsetof(us_bun_socket_context_options_t, crl) == 136, "Mismatching uSockets/Rust ABI");
 
 template <bool SSL>
 struct TemplatedApp {

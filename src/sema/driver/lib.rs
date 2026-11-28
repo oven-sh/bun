@@ -962,6 +962,8 @@ pub struct PlanOptions {
     /// and JSON files that aren't. The project's own declaration files, which aren't in the default library or in
     /// `node_modules`, count as checked even with `skipLibCheck`, which still means that nothing is reported for them.
     pub after_file_only_for_checked_files: bool,
+    /// In a project that is only built for another to read, `Request::after_file` is called for what `Reach` allows.
+    pub after_file_only_for_reached_files: bool,
     /// Only the files of a program that are in `Request::paths` are checked, not what they import. The types of their
     /// imports are computed on demand, as in an editor.
     pub checks_only_requested_paths: bool,
@@ -1552,6 +1554,8 @@ pub struct Report {
     pub not_installed: Vec<NotInstalled>,
     /// The scripts of pages that checked files import, which aren't in those files' program.
     scripts_elsewhere: Vec<Vec<u8>>,
+    /// `Reach::Sought`: what `reached_in_references` found.
+    reached_in_references: Vec<(usize, Vec<u8>)>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
     /// `--quiet`, which only a command line can set. No diagnostic is printed.
@@ -3004,6 +3008,7 @@ fn check_project_of(
             report,
             started,
             named,
+            Reach::Unlimited,
             (is_elsewhere.as_ref()).map(|it| it as &dyn Fn(&[u8]) -> bool),
             None,
             target.run,
@@ -3288,9 +3293,37 @@ struct WithOutputs<'h> {
     built_now: Option<&'h AtomicUsize>,
     /// See `Host::ends_the_process`.
     is_last_program: bool,
+    /// `Reach::Sought`
+    assumed: Option<AssumedOutputs<'h>>,
+}
+
+/// `Reach::Sought`: each declaration file that a referenced project emits exists and is empty, whatever is on disk.
+#[derive(Clone, Copy)]
+struct AssumedOutputs<'h> {
+    files: &'h ProjectFiles,
+    /// The directories of `ProjectFiles::outputs`, and all their ancestors.
+    directories: &'h FxHashSet<Vec<u8>>,
+    /// `Host::origin` of the empty files.
+    origin: usize,
 }
 
 impl WithOutputs<'_> {
+    fn is_assumed(&self, name: &[u8]) -> bool {
+        self.assumed.is_some_and(|assumed| {
+            let mut buffer = path_buffer_pool::get();
+            let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
+            assumed.files.outputs.contains_key(&*path)
+        })
+    }
+
+    fn is_assumed_directory(&self, name: &[u8]) -> bool {
+        self.assumed.is_some_and(|assumed| {
+            let mut buffer = path_buffer_pool::get();
+            let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
+            assumed.directories.contains(&*path)
+        })
+    }
+
     /// The threads are divided equally among the projects being built. With a project for every thread, each project is
     /// one thread's work, and that thread waits for no other. Rounded up, because the threads of one project do wait
     /// for each other.
@@ -3355,6 +3388,9 @@ impl WithOutputs<'_> {
 
 impl Host for WithOutputs<'_> {
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        if self.is_assumed(path) {
+            return Some(Cow::Borrowed(b""));
+        }
         match self.emitted_file(path) {
             Some((_, emitted_text)) => Some(Cow::Owned((*emitted_text).clone())),
             None => self.disk.read(path),
@@ -3367,16 +3403,20 @@ impl Host for WithOutputs<'_> {
         })
     }
     fn origin(&self, path: &[u8]) -> usize {
+        if let Some(assumed) = self.assumed.filter(|_| self.is_assumed(path)) {
+            return assumed.origin;
+        }
         (self.emitted_file(path)).map_or(0, |(project, _)| self.first_origin + project)
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
     }
     fn is_file(&self, path: &[u8]) -> bool {
-        self.disk.is_file(path) || self.emitted_file(path).is_some()
+        self.is_assumed(path) || self.disk.is_file(path) || self.emitted_file(path).is_some()
     }
     fn is_dir(&self, path: &[u8]) -> bool {
-        self.disk.is_dir(path)
+        self.is_assumed_directory(path)
+            || self.disk.is_dir(path)
             || self.has_directory(path)
             || (self.resolve_links_in_prefix(path)).is_some_and(|real| self.has_directory(&real))
     }
@@ -3656,6 +3696,9 @@ fn check_with_references(
     // Same as in `build` below.
     let is_solution =
         |index: usize| roots[index].is_empty() && projects[index].project.has_references;
+    // A project that's only read, with no file in the directory that was passed, isn't reported.
+    let is_reported =
+        |index: usize| reports_references && has_named[index] || Some(index) == root_index;
     let loaded = || (0..count).filter(|&index| !is_excluded[index] && !is_solution(index));
     // The programs read the same declaration files: the libraries, what's in `node_modules`, and what one emits for the
     // others. Each is parsed once and freed at the end.
@@ -3664,9 +3707,10 @@ fn check_with_references(
         Run::new(&build_session.session, provided).sharing_only_declaration_files()
     });
     let request_run = run.filter(|_| !reads_sources);
+    // One for each project, and one for `AssumedOutputs`.
     let first_origin = match &build_run {
-        Some(run) => run.origins(count),
-        None => request_run.map_or(1, |run| run.origins(count)),
+        Some(run) => run.origins(count + 1),
+        None => request_run.map_or(1, |run| run.origins(count + 1)),
     };
     let is_read_by_a_program = |index: usize| {
         (0..count)
@@ -3747,6 +3791,21 @@ fn check_with_references(
         }
     }
     let project_files = Arc::new(project_files);
+    let assumed_directories: OnceLock<FxHashSet<Vec<u8>>> = OnceLock::new();
+    let assumed_outputs = || AssumedOutputs {
+        files: &project_files,
+        directories: assumed_directories.get_or_init(|| {
+            let mut directories: FxHashSet<Vec<u8>> = FxHashSet::default();
+            for output in project_files.outputs.keys() {
+                let mut directory = parent_directory(output);
+                while directory.len() > 1 && directories.insert(directory.to_vec()) {
+                    directory = parent_directory(directory);
+                }
+            }
+            directories
+        }),
+        origin: first_origin + count,
+    };
     let inputs: Vec<(config::Project, Vec<ConfigError>)> = (projects.into_iter())
         .zip(about_references)
         .map(|(referenced, about)| (referenced.project, about))
@@ -3759,11 +3818,14 @@ fn check_with_references(
         .clamp(1, host.threads().max(1))
         .min(count.max(1));
     let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
+    // `Reach::From` of each project. Set before anything is built.
+    let reached: OnceLock<Vec<Arc<Vec<Vec<u8>>>>> = OnceLock::new();
     // `built_before`: the number of projects built so far. `is_last`: every other project is already built. Returns
     // `Err` with the projects that have to be built first, besides the ones it references.
-    let build = |index: usize,
-                 built_before: usize,
-                 is_last: bool|
+    let load_or_build = |index: usize,
+                         built_before: usize,
+                         is_last: bool,
+                         reaching_from: Option<&[Vec<u8>]>|
      -> Result<Option<Report>, Vec<usize>> {
         let (mut project, mut about_references) = inputs[index].clone();
         if project.files.is_empty() && project.has_references {
@@ -3809,6 +3871,7 @@ fn check_with_references(
             unreadable: Guarded::new(Vec::new()),
             built_now: built_now.as_ref(),
             is_last_program: is_last && ends_the_process,
+            assumed: reaching_from.map(|_| assumed_outputs()),
         };
         project.options.referenced_options = referenced
             .iter()
@@ -3836,7 +3899,34 @@ fn check_with_references(
         project.options.build_info_file_name = project.get_build_info_file_name();
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
+        // `Reach::Sought`: its root files are those of `from` that no referenced project has.
+        let (mut reached_at_once, mut own_of_reaching) = (Vec::new(), Vec::new());
+        if let Some(from) = reaching_from {
+            let options = &project.options;
+            let elsewhere = |file: &&Vec<u8>| options.parse_file_redirect(file).is_some();
+            let (elsewhere, own): (Vec<_>, Vec<_>) = from.iter().partition(elsewhere);
+            let project_of = |file: &Vec<u8>| options.project_of_referenced_source(file);
+            let found = elsewhere.into_iter();
+            reached_at_once
+                .extend(found.filter_map(|file| Some((project_of(file)? as usize, file.clone()))));
+            if own.is_empty() {
+                return Ok(Some(Report {
+                    reached_in_references: reached_at_once,
+                    ..Default::default()
+                }));
+            }
+            own_of_reaching = own.into_iter().cloned().collect();
+            project.files.clone_from(&own_of_reaching);
+            project.options.files.clone_from(&own_of_reaching);
+            project.options.own_roots = None;
+        }
+        let reach = match (reaching_from, reached.get()) {
+            (Some(_), _) => Reach::Sought,
+            (None, Some(reached)) if !is_reported(index) => Reach::From(&reached[index]),
+            _ => Reach::Unlimited,
+        };
         let named = match named {
+            _ if reaching_from.is_some() => Some(&own_of_reaching[..]),
             Some((Extent::Project, files)) if is_root => Some(files),
             // A project that another program reads is built in full. A solution has no program.
             Some((Extent::Graph, files)) if !is_read_by_a_program(index) => {
@@ -3853,6 +3943,7 @@ fn check_with_references(
                 Report::default(),
                 Instant::now(),
                 named,
+                reach,
                 Some(&is_owned_elsewhere),
                 Some(&|| !host.awaited.lock().is_empty()),
                 run,
@@ -3864,6 +3955,10 @@ fn check_with_references(
             Some(run) => check(Some(run), None),
             None => check(request_run, None),
         };
+        if reaching_from.is_some() {
+            checked.reached_in_references.append(&mut reached_at_once);
+            return Ok(Some(checked));
+        }
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
             awaited.shared_sort_unstable();
@@ -3891,6 +3986,56 @@ fn check_with_references(
         }
         Ok(Some(checked))
     };
+    let build = |index: usize, built_before: usize, is_last: bool| {
+        load_or_build(index, built_before, is_last, None)
+    };
+    // The last in build order first: only later projects read a project, so all that reach into it have said where.
+    let named_of_root = match named {
+        Some((Extent::Project, files)) if !reports_references && !reads_sources => Some(files),
+        _ => None,
+    };
+    if let (Some(named), Some(root), true) = (
+        named_of_root,
+        root_index,
+        request.after_file.is_some() && request.plan_options.after_file_only_for_reached_files,
+    ) {
+        let find_reached = || {
+            let mut reached: Vec<BTreeSet<Vec<u8>>> = vec![BTreeSet::new(); count];
+            let mut to_load = BTreeSet::from([root]);
+            while let Some(index) = to_load.pop_last() {
+                let from: Vec<Vec<u8>> = match index == root {
+                    true => named.to_vec(),
+                    false => reached[index].iter().cloned().collect(),
+                };
+                let loaded = load_or_build(index, 0, false, Some(&from)).ok().flatten();
+                let found = loaded.map_or_else(Vec::new, |it| it.reached_in_references);
+                for (project, source) in found.into_iter().filter(|it| it.0 != root) {
+                    // One that references nothing reaches into nothing.
+                    if reached[project].insert(source) && !references[project].is_empty() {
+                        to_load.insert(project);
+                    }
+                }
+            }
+            let sorted = reached.into_iter().map(|it| Arc::new(Vec::from_iter(it)));
+            sorted.collect::<Vec<_>>()
+        };
+        // Like a thread that builds, this one loads, so it needs a worker's stack.
+        let found = std::thread::scope(|scope| {
+            let loader = std::thread::Builder::new()
+                .stack_size(WORKER_STACK_SIZE as usize)
+                .spawn_scoped(scope, || {
+                    bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
+                    find_reached()
+                });
+            match loader {
+                Ok(loader) => loader
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+                Err(_) => find_reached(),
+            }
+        });
+        _ = reached.set(found);
+    }
     // `buildOrClean`: a project is built as soon as the projects it references are.
     struct Builds {
         /// The projects that can be built now.
@@ -4017,8 +4162,7 @@ fn check_with_references(
             }
         }
         if let Some(mut checked) = checked.get_mut().take()
-            // A project that's only read, with no file in the directory that was passed, isn't reported.
-            && (reports_references && has_named[index] || Some(index) == root_index)
+            && is_reported(index)
         {
             for d in &mut checked.diagnostics {
                 d.project = index as u32;
@@ -4214,7 +4358,17 @@ pub fn check_project(
     started: Instant,
 ) -> Report {
     check_named_files(
-        host, project, request, report, started, None, None, None, None, None,
+        host,
+        project,
+        request,
+        report,
+        started,
+        None,
+        Reach::Unlimited,
+        None,
+        None,
+        None,
+        None,
     )
 }
 
@@ -4587,6 +4741,90 @@ fn find_files_others_cannot_see(
     unseen.map(|(file, _)| file.clone()).collect()
 }
 
+/// `PlanOptions::after_file_only_for_reached_files`: the files that `Request::after_file` is called for.
+#[derive(Clone, Copy)]
+enum Reach<'a> {
+    /// Every file that is checked.
+    Unlimited,
+    /// The program is loaded with `AssumedOutputs` and not checked. The report has `reached_in_references`.
+    Sought,
+    /// In a project that isn't reported: it's only called for these files, which are sorted, and what they reach.
+    From(&'a [Vec<u8>]),
+}
+
+/// What the files `from` reach through `/// <reference>`s, imports and pages, whose scripts may be elsewhere.
+fn reached_from(
+    host: &dyn Host,
+    request: &Request,
+    files: &Files<'_>,
+    mut to_follow: Vec<usize>,
+    scripts_elsewhere: &mut Vec<Vec<u8>>,
+) -> Vec<bool> {
+    let modules = &files.modules;
+    let mut is_reached = vec![false; modules.len()];
+    for &i in &to_follow {
+        is_reached[i] = true;
+    }
+    while let Some(i) = to_follow.pop() {
+        // A page represents its scripts.
+        let specifiers = files.bound(FileId(i as u32)).specifiers.iter();
+        let specifiers = specifiers.map(|&it| files.atoms.bytes(it));
+        let pages = specifiers.filter(|it| {
+            !request.plan_options.reports_only_requested_paths
+                && it.ends_with(b".html")
+                && is_relative(it)
+        });
+        let directory = parent_directory(modules[i].file_name());
+        let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
+        let scripts = scripts.filter_map(|script| {
+            let here = files.by_path.get(&script);
+            if here.is_none() {
+                scripts_elsewhere.push(script);
+            }
+            here
+        });
+        let follows = !request.plan_options.checks_only_requested_paths
+            && !request.plan_options.reports_only_requested_paths;
+        let edges = if follows { modules[i].edges } else { &[] };
+        for edge in edges.iter().copied().chain(scripts) {
+            if !std::mem::replace(&mut is_reached[edge.idx()], true) {
+                to_follow.push(edge.idx());
+            }
+        }
+    }
+    is_reached
+}
+
+/// `Reach::Sought`: the files of referenced projects that `named` reach outside packages, each with its project.
+fn reached_in_references(
+    host: &dyn Host,
+    request: &Request,
+    files: &Files<'_>,
+    named: &[Vec<u8>],
+) -> Vec<(usize, Vec<u8>)> {
+    let modules = &files.modules;
+    let is_named = |&i: &usize| is_among(named, modules[i].path.text);
+    let from: Vec<usize> = (0..modules.len()).filter(is_named).collect();
+    let is_reached = reached_from(host, request, files, from, &mut Vec::new());
+    let reached = modules.iter().zip(&is_reached).filter(|it| *it.1);
+    let emitted_from = |output: &[u8]| {
+        let sources = files.options.project_files.as_ref()?.outputs.get(output)?;
+        Some(sources.iter().map(Vec::as_slice))
+    };
+    let mut found = Vec::new();
+    for (module, _) in reached.filter(|it| !it.0.is_from_external_library) {
+        let path = module.path.text;
+        // An emitted file stands for its sources. A file with no output, like a declaration file, is here itself.
+        let sources = emitted_from(path).into_iter().flatten();
+        for source in sources.chain([path]) {
+            if let Some(project) = files.options.project_of_referenced_source(source) {
+                found.push((project as usize, source.to_vec()));
+            }
+        }
+    }
+    found
+}
+
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they refer to are checked.
 /// `is_owned_elsewhere`: true for a file of a referenced project, which is loaded but not checked. Both identify a file
 /// by its `tspath.Path`.
@@ -4597,6 +4835,7 @@ fn check_named_files(
     mut report: Report,
     started: Instant,
     named: Option<&[Vec<u8>]>,
+    reach: Reach<'_>,
     is_owned_elsewhere: Option<&dyn Fn(&[u8]) -> bool>,
     // Called once the program is loaded. True if it shouldn't be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
@@ -4769,6 +5008,10 @@ fn check_named_files(
         &files_are_found,
     );
     host.loaded();
+    if let (Reach::Sought, Some(named)) = (reach, named) {
+        report.reached_in_references = reached_in_references(host, request, &files, named);
+        return report;
+    }
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
     }
@@ -4861,44 +5104,29 @@ fn check_named_files(
         .map(|i| FileId(i as u32))
         .collect();
     let mut scripts_elsewhere = Vec::new();
-    let is_reached = named.map(|named| {
+    let named_modules = |named: &[Vec<u8>]| {
         let modules = &program.files.modules;
-        let mut is_reached = vec![false; modules.len()];
-        let mut to_follow: Vec<usize> = (0..modules.len())
-            .filter(|&i| is_among(named, modules[i].path.text))
-            .collect();
-        for &i in &to_follow {
-            is_reached[i] = true;
-        }
-        while let Some(i) = to_follow.pop() {
-            // A page represents its scripts.
-            let specifiers = program.files.bound(FileId(i as u32)).specifiers.iter();
-            let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
-            let pages = specifiers.filter(|it| {
-                !request.plan_options.reports_only_requested_paths
-                    && it.ends_with(b".html")
-                    && is_relative(it)
-            });
-            let directory = parent_directory(modules[i].file_name());
-            let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
-            let scripts = scripts.filter_map(|script| {
-                let here = program.files.by_path.get(&script);
-                if here.is_none() {
-                    scripts_elsewhere.push(script);
-                }
-                here
-            });
-            let follows = !request.plan_options.checks_only_requested_paths
-                && !request.plan_options.reports_only_requested_paths;
-            let edges = if follows { modules[i].edges } else { &[] };
-            for edge in edges.iter().copied().chain(scripts) {
-                if !std::mem::replace(&mut is_reached[edge.idx()], true) {
-                    to_follow.push(edge.idx());
-                }
-            }
-        }
-        is_reached
+        let is_named = |&i: &usize| is_among(named, modules[i].path.text);
+        (0..modules.len()).filter(is_named).collect::<Vec<usize>>()
+    };
+    let is_reached = named.map(|named| {
+        let from = named_modules(named);
+        reached_from(host, request, program.files, from, &mut scripts_elsewhere)
     });
+    // As in any program that isn't reported, nothing follows the scripts of its pages into another program.
+    let is_owed = match reach {
+        Reach::From(files) if request.after_file.is_some() => {
+            let from = named_modules(files);
+            Some(reached_from(
+                host,
+                request,
+                program.files,
+                from,
+                &mut Vec::new(),
+            ))
+        }
+        _ => None,
+    };
     if request.plan_options.reports_only_requested_paths
         && let Some(named) = named
         && !config_path.is_empty()
@@ -4951,6 +5179,7 @@ fn check_named_files(
         threads,
         in_room,
         is_reached,
+        is_owed,
         explains_files,
         explain_files: &explain_files,
         lists_files_only,
@@ -4976,6 +5205,8 @@ struct LoadedFiles<'a, 's> {
     threads: usize,
     in_room: Option<&'a RoomSlot<'a>>,
     is_reached: Option<Vec<bool>>,
+    /// `Reach::From`: the files that `Request::after_file` is called for. `None`: every file.
+    is_owed: Option<Vec<bool>>,
     explains_files: bool,
     explain_files: &'a dyn Fn(bool) -> Vec<Vec<u8>>,
     lists_files_only: bool,
@@ -4998,6 +5229,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         threads,
         in_room,
         is_reached,
+        is_owed,
         explains_files,
         explain_files,
         lists_files_only,
@@ -5007,6 +5239,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         file_work,
         files_left_to_loader,
     } = loaded;
+    let is_owed = |file: FileId| is_owed.as_ref().is_none_or(|is_owed| is_owed[file.idx()]);
     let session = program.session;
     let first_round = file_work.map_or(0, |work| work.first_round);
     let size = |f: FileId| program.files.modules[f.idx()].facts.source_len;
@@ -5197,6 +5430,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             note_time(file, check_began);
             if let Some(after_file) = request.after_file
                 && expected == wanted
+                && is_owed(file)
             {
                 after_file(&mut checker, file);
             }
@@ -5759,6 +5993,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 if let Some(after_file) = request.after_file
                     && expected == wanted
                     && !checker.was_discarded()
+                    && is_owed(file)
                 {
                     after_file(&mut checker, file);
                 }
@@ -6322,7 +6557,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     true => !options.lib_replacement,
                     false => !matches!(module.facts.kind, FileKind::Declaration | FileKind::Json),
                 };
-                if is_excluded || is_checked[i] {
+                if is_excluded || is_checked[i] || !is_owed(file) {
                     continue;
                 }
                 let mut checker = boxed_checker(None);

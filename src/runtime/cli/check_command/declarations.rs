@@ -4,12 +4,12 @@ use bstr::BStr;
 use bun_bundler::options::TypeChecked;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Provided, check_entry_point_dirs, from_native, to_native};
-use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
+use bun_sema_driver::typed_files::{ModuleTypes, module_types, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
 
-use super::typed_files::NotedModuleTypes;
 use super::{
     Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
     script_kinds_by_extension, with_pages,
@@ -79,18 +79,16 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         conditions,
     });
 
-    let emitted: Guarded<BTreeMap<Vec<u8>, Vec<u8>>> = Guarded::new(BTreeMap::new());
-    // A task of the checker can run again: the last time counts.
-    let module_types = NotedModuleTypes::default();
+    // By source. Two programs can check one file: the last that has a declaration file or types for it counts.
+    let noted: Guarded<BTreeMap<Vec<u8>, (u32, Option<Vec<u8>>, Option<ModuleTypes>)>> =
+        Guarded::new(BTreeMap::new());
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
-        module_types.note(checker, file);
+        let types = module_types(checker, file);
         let text = checker.emit_declaration_file(file);
-        let source = checker.p.files.module(file).file_name();
-        let mut emitted = emitted.lock();
-        match text {
-            Some(text) => emitted.insert(source.to_vec(), text),
-            None => emitted.remove(source),
-        };
+        if text.is_some() || types.is_some() {
+            let source = checker.p.files.module(file).file_name().to_vec();
+            noted.lock().insert(source, (file.0, text, types));
+        }
     };
     let has_configuration = tsconfig.is_some()
         || entry_paths.iter().any(|path| {
@@ -107,6 +105,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     let request = Request {
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
+            after_file_only_for_reached_files: true,
             stays_inside_package: true,
             ..Default::default()
         },
@@ -126,21 +125,24 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     if !report.is_ok() {
         return false;
     }
-    let emitted = std::mem::take(&mut *emitted.lock());
-    let mut module_types = module_types.take();
-    for module in &mut module_types {
-        if let Some(text) = emitted.get(&module.path[..]) {
-            module.emitted_declarations = text[..].into();
+    let noted = std::mem::take(&mut *noted.lock());
+    let (mut module_types, mut emitted) = (Vec::new(), Vec::new());
+    for (source, (file, text, types)) in noted {
+        if let Some(mut types) = types {
+            if let Some(text) = &text {
+                types.emitted_declarations = text[..].into();
+            }
+            module_types.push((file, types));
         }
-    }
-    *MODULE_TYPES.lock() = module_types;
-    *EMITTED_FILES.lock() = emitted
-        .into_iter()
-        .map(|(source, text)| DeclarationFile {
+        emitted.extend(text.map(|text| DeclarationFile {
             source: bundler_path(&source),
             text,
-        })
-        .collect();
+        }));
+    }
+    // In program order. A `FileId` repeats across programs, and those stay in path order.
+    module_types.shared_sort_by_key(|module| module.0);
+    *MODULE_TYPES.lock() = module_types.into_iter().map(|it| it.1).collect();
+    *EMITTED_FILES.lock() = emitted;
     true
 }
 

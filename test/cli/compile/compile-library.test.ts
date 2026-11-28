@@ -367,6 +367,27 @@ describe.concurrent("bun compile --library", () => {
     expect(existsSync(join(String(dir), "dist/shared/value.d.ts"))).toBe(true);
   });
 
+  test("a project that tsconfig.json references gets no declaration file when nothing imports it", async () => {
+    const project = (references: object[]) =>
+      JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, composite: true, rootDir: "src" },
+        include: ["src"],
+        references,
+      });
+    using dir = tempDir("library-references", {
+      "a/tsconfig.json": project([]),
+      "a/src/index.ts": `export const x = 1;\n`,
+      "b/tsconfig.json": project([{ path: "../a" }]),
+      "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "b/src/index.ts": `export const z = 2;\n`,
+    });
+    const built = await bun(join(String(dir), "b"), "compile", "--library", "src/index.ts");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    expect(filesIn(join(String(dir), "b/dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(json(join(String(dir), "b/dist/package.json")).exports["."]).toEqual(conditions("index"));
+  });
+
   test("dependencies and peerDependencies stay imports, devDependencies are bundled", async () => {
     using dir = tempDir("library-externals", {
       "tsconfig.json": tsconfig,

@@ -1,16 +1,21 @@
 use super::super::load::default_project;
-use super::support::{TestProgram, check_whole_files, disk, with_program};
-use crate::{Diagnostic, host};
+use super::support::{
+    PROJECT, TestProgram, check_request, check_whole_files, disk, project_disk, with_program,
+};
+use crate::{Diagnostic, PlanOptions, Request, host};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_sema::atom::Interner;
+use bun_sema::check::Checker;
 use bun_sema::config::{self, ConfigError, Project};
 use bun_sema::hir;
 use bun_sema::json::Json;
+use bun_sema::program::FileId;
 use bun_sema::resolve::{
     CodeOptions, Host, JsxEmit, ModuleKind, Options, ParseOptions, ScriptKind,
 };
 use bun_sema::session::{Arena, Session};
+use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -152,6 +157,354 @@ fn referenced_project_that_has_a_file_governs_it_under_references_alone() {
         assert!(governing_options(program, "other/o.ts").is_none());
         assert!(diagnostics_of(program).iter().all(|it| it.code != 7006));
     });
+}
+
+/// The configuration of a project in a directory of its own. `circular`: each reference may close a cycle.
+fn project_config_of(files: &[&str], references: &[&str], circular: bool) -> String {
+    let files: Vec<String> = (files.iter().chain(&["../globals.d.ts"]))
+        .map(|file| format!("\"{file}\""))
+        .collect();
+    let references: Vec<String> = (references.iter())
+        .map(|path| format!("{{ \"path\": \"{path}\", \"circular\": {circular} }}"))
+        .collect();
+    format!(
+        r#"{{ "extends": "../tsconfig.json", "compilerOptions": {{ "composite": true }}, "files": [{}], "references": [{}] }}"#,
+        files.join(", "),
+        references.join(", ")
+    )
+}
+
+fn project_config(files: &[&str], references: &[&str]) -> String {
+    project_config_of(files, references, false)
+}
+
+/// What `Request::after_file` is called for and how many programs are checked, the same with 1 thread and with 4.
+fn all_given_to_after_file(files: &[(&str, &str)], request: &Request) -> (Vec<String>, usize) {
+    let given_with = |threads: usize| {
+        let disk = project_disk(files, threads);
+        let given = Guarded::new(Vec::new());
+        let note = |checker: &mut Checker<'_, '_>, file: FileId| {
+            let name = checker.p.files.module(file).file_name();
+            let name = name.strip_prefix(PROJECT).unwrap_or(name);
+            given.lock().push(name.to_str_lossy().into_owned());
+        };
+        let programs = AtomicUsize::new(0);
+        let loaded: &(dyn Fn(&crate::Program) + Sync) = &|_| {
+            programs.fetch_add(1, Ordering::Relaxed);
+        };
+        let report = crate::check_request(
+            &disk,
+            &Request {
+                threads,
+                after_file: Some(&note),
+                loaded: Some(loaded),
+                ..*request
+            },
+        );
+        let texts: Vec<&bstr::BStr> = (report.diagnostics.iter())
+            .map(|it| it.text.as_bstr())
+            .collect();
+        assert!(texts.is_empty(), "{texts:?}");
+        let mut given = std::mem::take(&mut *given.lock());
+        given.sort();
+        given.dedup();
+        (given, programs.load(Ordering::Relaxed))
+    };
+    let given = given_with(1);
+    assert_eq!(given, given_with(4));
+    given
+}
+
+/// `all_given_to_after_file`, for the source files that are checked.
+fn given_to_after_file(files: &[(&str, &str)], request: &Request) -> (Vec<String>, usize) {
+    let plan_options = PlanOptions {
+        after_file_only_for_checked_files: true,
+        ..request.plan_options
+    };
+    let request = Request {
+        plan_options,
+        ..*request
+    };
+    let (mut given, programs) = all_given_to_after_file(files, &request);
+    given.retain(|name| !name.ends_with(".d.ts"));
+    (given, programs)
+}
+
+fn entry_points(paths: &[Vec<u8>], only_reached: bool) -> Request<'_> {
+    Request {
+        paths,
+        are_entry_points: true,
+        plan_options: PlanOptions {
+            after_file_only_for_reached_files: only_reached,
+            ..Default::default()
+        },
+        ..check_request()
+    }
+}
+
+/// `b` references `a` and imports `a/used.ts`. `c` references `b` and imports `b/b.ts`.
+fn chain_of_projects() -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "a/tsconfig.json",
+            project_config(&["used.ts", "unused.ts"], &[]),
+        ),
+        ("a/used.ts", "export const used = 1;".into()),
+        ("a/unused.ts", "export const unused = 1;".into()),
+        (
+            "b/tsconfig.json",
+            project_config(&["b.ts", "alone.ts"], &["../a"]),
+        ),
+        (
+            "b/b.ts",
+            "import { used } from '../a/used'; export const b = used;".into(),
+        ),
+        ("b/alone.ts", "export const alone = 1;".into()),
+        ("c/tsconfig.json", project_config(&["c.ts"], &["../b"])),
+        (
+            "c/c.ts",
+            "import { b } from '../b/b'; export const c = b;".into(),
+        ),
+    ]
+}
+
+/// What an earlier build of `a` and `b` left beside their sources, for sources that have changed since.
+const STALE_OUTPUTS: [TestFile; 3] = [
+    (
+        "a/used.d.ts",
+        "import './unused'; export declare const used: string;",
+    ),
+    ("a/unused.d.ts", "export declare const unused: string;"),
+    (
+        "b/b.d.ts",
+        "import './alone'; export declare const b: string;",
+    ),
+];
+
+fn given_in_chain_beside(
+    outputs: &[TestFile],
+    paths: &[&str],
+    only_reached: bool,
+) -> (Vec<String>, usize) {
+    let files = chain_of_projects();
+    let files = files.iter().map(|(path, text)| (*path, &text[..]));
+    let files: Vec<(&str, &str)> = files.chain(outputs.iter().copied()).collect();
+    let paths: Vec<Vec<u8>> = paths.iter().map(|path| project_path(path)).collect();
+    given_to_after_file(&files, &entry_points(&paths, only_reached))
+}
+
+fn given_in_chain(paths: &[&str], only_reached: bool) -> (Vec<String>, usize) {
+    given_in_chain_beside(&[], paths, only_reached)
+}
+
+#[test]
+fn after_file_is_called_for_every_file_of_a_referenced_project() {
+    let all = ["/a/unused.ts", "/a/used.ts", "/b/alone.ts"];
+    assert_eq!(
+        given_in_chain(&["b/alone.ts"], false),
+        (all.map(String::from).to_vec(), 2)
+    );
+    let all = [
+        "/a/unused.ts",
+        "/a/used.ts",
+        "/b/alone.ts",
+        "/b/b.ts",
+        "/c/c.ts",
+    ];
+    assert_eq!(
+        given_in_chain(&["c/c.ts"], false),
+        (all.map(String::from).to_vec(), 3)
+    );
+}
+
+#[test]
+fn after_file_is_only_called_for_what_an_entry_point_reaches_in_a_referenced_project() {
+    let given = |paths: &[&str]| given_in_chain(paths, true);
+    let of = |files: &[&str], programs: usize| {
+        (files.iter().map(|it| it.to_string()).collect(), programs)
+    };
+    // Each project is checked once. Nothing of `a` is given, which is built for `b` to read.
+    assert_eq!(given(&["b/alone.ts"]), of(&["/b/alone.ts"], 2));
+    assert_eq!(given(&["b/b.ts"]), of(&["/a/used.ts", "/b/b.ts"], 2));
+    // Through `b`, which `c` reaches into, and then `a`, which `b` reaches into.
+    assert_eq!(
+        given(&["c/c.ts"]),
+        of(&["/a/used.ts", "/b/b.ts", "/c/c.ts"], 3)
+    );
+    // Each entry point is checked in its own project, and `a/used.ts` is reached from `b` as well.
+    assert_eq!(
+        given(&["a/unused.ts", "b/b.ts"]),
+        of(&["/a/unused.ts", "/a/used.ts", "/b/b.ts"], 3)
+    );
+}
+
+#[test]
+fn after_file_is_not_called_for_an_unchecked_file_that_no_entry_point_reaches() {
+    let with_ambient = r#"{
+        "extends": "../tsconfig.json",
+        "compilerOptions": { "composite": true, "skipLibCheck": true },
+        "files": ["used.ts", "unused.ts", "ambient.d.ts", "../globals.d.ts"]
+    }"#;
+    let mut files = chain_of_projects();
+    files.push(("a/tsconfig.json", with_ambient.into()));
+    files.push(("a/ambient.d.ts", "declare const ambient: number;".into()));
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (*path, &text[..]))
+        .collect();
+    let paths = [project_path("b/b.ts")];
+    let given_of_a = |only_reached: bool| {
+        let given = all_given_to_after_file(&files, &entry_points(&paths, only_reached)).0;
+        let of_a = given.into_iter().filter(|name| name.starts_with("/a/"));
+        of_a.collect::<Vec<String>>()
+    };
+    // `used.d.ts` is what `a` emits, in the program of `b`.
+    let all = [
+        "/a/ambient.d.ts",
+        "/a/unused.ts",
+        "/a/used.d.ts",
+        "/a/used.ts",
+    ];
+    assert_eq!(given_of_a(false), all);
+    assert_eq!(given_of_a(true), ["/a/used.d.ts", "/a/used.ts"]);
+}
+
+/// The files of `a`, which `b` references and which emits into `a/dist`, that are given when `b/b.ts` is `entry`.
+fn given_of_referenced_project(entry: &str) -> Vec<String> {
+    let config_of_a = r#"{
+        "extends": "../tsconfig.json",
+        "compilerOptions": { "composite": true, "rootDir": ".", "outDir": "dist" },
+        "files": ["used.ts", "unused.ts", "types.d.ts", "../globals.d.ts"]
+    }"#;
+    let files = [
+        ("a/tsconfig.json", config_of_a),
+        ("a/package.json", r#"{ "types": "dist/used.d.ts" }"#),
+        ("a/used.ts", "export const used = 1;"),
+        ("a/unused.ts", "export const unused = 1;"),
+        ("a/types.d.ts", "export interface T { t: number }"),
+        ("b/tsconfig.json", &project_config(&["b.ts"], &["../a"])),
+        ("b/b.ts", entry),
+    ];
+    let paths = [project_path("b/b.ts")];
+    let mut request = entry_points(&paths, true);
+    request.plan_options.after_file_only_for_checked_files = true;
+    let given = all_given_to_after_file(&files, &request).0;
+    let of_a = given.into_iter().filter(|name| name.starts_with("/a/"));
+    of_a.filter(|name| !name.starts_with("/a/dist/")).collect()
+}
+
+#[test]
+fn a_file_is_reached_through_what_its_project_emits_for_it() {
+    for specifier in ["../a/dist/used", "../a/dist/used.js", "../a"] {
+        let entry = format!("import {{ used }} from '{specifier}'; export const b = used;");
+        assert_eq!(given_of_referenced_project(&entry), ["/a/used.ts"]);
+    }
+}
+
+#[test]
+fn a_declaration_file_of_a_referenced_project_is_reached() {
+    let entry = "import type { T } from '../a/types'; export const b: T = { t: 1 };";
+    assert_eq!(given_of_referenced_project(entry), ["/a/types.d.ts"]);
+}
+
+#[test]
+fn what_an_entry_point_reaches_does_not_depend_on_what_an_earlier_build_emitted() {
+    for paths in [&["b/b.ts"], &["c/c.ts"]] {
+        assert_eq!(
+            given_in_chain_beside(&STALE_OUTPUTS, paths, true),
+            given_in_chain(paths, true)
+        );
+    }
+}
+
+#[test]
+fn after_file_is_only_called_for_what_is_reached_through_projects_that_reference_each_other() {
+    let files = [
+        (
+            "a/tsconfig.json",
+            project_config_of(&["x.ts", "z.ts", "unused.ts"], &["../b"], true),
+        ),
+        (
+            "a/x.ts",
+            "import { y } from '../b/y'; export const x = y;".into(),
+        ),
+        ("a/z.ts", "export const z = 1;".into()),
+        ("a/unused.ts", "export const unused = 1;".into()),
+        (
+            "b/tsconfig.json",
+            project_config_of(&["y.ts"], &["../a"], true),
+        ),
+        (
+            "b/y.ts",
+            "import { z } from '../a/z'; export const y: number = z;".into(),
+        ),
+        ("r/tsconfig.json", project_config(&["r.ts"], &["../a"])),
+        (
+            "r/r.ts",
+            "import { x } from '../a/x'; export const r: number = x;".into(),
+        ),
+    ];
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (*path, &text[..]))
+        .collect();
+    let paths = [project_path("r/r.ts")];
+    let given = given_to_after_file(&files, &entry_points(&paths, true));
+    assert_eq!(given.0, ["/a/x.ts", "/a/z.ts", "/b/y.ts", "/r/r.ts"]);
+}
+
+#[test]
+fn after_file_is_called_for_an_entry_point_that_a_referenced_project_has() {
+    let files = [
+        (
+            CONFIG,
+            r#"{ "extends": "./base.json", "include": ["src", "test"], "references": [{ "path": "./tsconfig.build.json" }] }"#,
+        ),
+        (
+            "tsconfig.build.json",
+            r#"{ "extends": "./base.json", "compilerOptions": { "composite": true }, "include": ["src"] }"#,
+        ),
+        (
+            "base.json",
+            r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": [], "module": "preserve", "moduleResolution": "bundler" }, "files": ["./globals.d.ts"] }"#,
+        ),
+        (
+            "src/index.ts",
+            "import { helper } from './helper'; export const index = helper;",
+        ),
+        ("src/helper.ts", "export const helper = 1;"),
+        ("src/unused.ts", "export const unused = 1;"),
+        ("test/index.test.ts", "export const test = 1;"),
+    ];
+    let paths = [project_path("src/index.ts")];
+    let given = given_to_after_file(&files, &entry_points(&paths, true));
+    assert_eq!(
+        given,
+        (vec!["/src/helper.ts".into(), "/src/index.ts".into()], 2)
+    );
+}
+
+#[test]
+fn after_file_is_called_for_every_project_of_a_build() {
+    let files = chain_of_projects();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (*path, &text[..]))
+        .collect();
+    let build = Request {
+        project: Some(b"b"),
+        build: true,
+        plan_options: PlanOptions {
+            after_file_only_for_reached_files: true,
+            ..Default::default()
+        },
+        ..check_request()
+    };
+    let all = ["/a/unused.ts", "/a/used.ts", "/b/alone.ts", "/b/b.ts"];
+    assert_eq!(
+        given_to_after_file(&files, &build),
+        (all.map(String::from).to_vec(), 2)
+    );
 }
 
 #[test]

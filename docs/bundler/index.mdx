@@ -1339,7 +1339,7 @@ Writes the types of a library beside its JavaScript, without running `tsc`. Bun 
 | `index.d.ts`   | The types of what the source file exports          | One for each source file | Editors, `tsc`, `bun check`    |
 | `index.aot.ts` | `index.js` with the types of your sources put back | One for each entry point | [`bun compile`](/compiler/aot) |
 
-Each `.d.ts` file is where its source file is relative to [`root`](#root). Where one imports another, Bun writes the file name that Node.js would need, so `"./area"` becomes `"./area.js"`. TypeScript finds `area.d.ts` under that name with every `moduleResolution`. Files in `node_modules` get no `.d.ts` file.
+Each `.d.ts` file is where its source file is relative to [`root`](#root). Where one imports another, Bun writes the file name that Node.js would need, so `"./area"` becomes `"./area.js"`. TypeScript finds `area.d.ts` under that name with every `moduleResolution`. Files in `node_modules` get no `.d.ts` file. [`references`](https://www.typescriptlang.org/docs/handbook/project-references.html) in your `tsconfig.json` add no `.d.ts` files. A file of a referenced project gets one only if an entry point imports it, directly or through other files.
 
 Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` condition of `"exports"` at `index.aot.ts`: see [Publish a library](/compiler/libraries). [`bun compile --library`](/compiler/libraries) runs the same build and writes the `package.json` too.
 

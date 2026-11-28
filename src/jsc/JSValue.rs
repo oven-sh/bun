@@ -2409,6 +2409,7 @@ for_each_property_methods! {
     #[inline(always)]
     pub fn for_each_property_ordered_calling_getters = JSC__JSValue__forEachPropertyOrderedCallingGetters -> bool;
     /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
+    /// They printed an accessor under an index key as null, so this passes null for one.
     #[inline(always)]
     pub fn for_each_property_ordered_with_non_enumerable = JSC__JSValue__forEachPropertyOrderedWithNonEnumerable -> ();
 }

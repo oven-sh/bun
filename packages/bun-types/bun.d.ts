@@ -1662,6 +1662,12 @@ declare module "bun" {
        * Configure heading IDs and autolink headings. Pass `true` to enable both
        * heading IDs and autolink headings, or an object to configure individually.
        *
+       * `autolink` wraps the content of each heading in `<a href="#id">`, a link
+       * to the ID of that heading, so it requires `ids: true` to have an effect.
+       * Only `html()` writes the link. `render()` and `react()` ignore
+       * `autolink`: with `ids: true`, they pass the `id` to your heading callback
+       * or component. To link a heading to its own ID, write the link there.
+       *
        * @example
        * ```ts
        * // Enable both heading IDs and autolink headings

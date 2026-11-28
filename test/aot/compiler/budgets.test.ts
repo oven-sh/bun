@@ -13,6 +13,8 @@
 //
 // The same build retires a different number of instructions with musl than with glibc, so each stage has one number per libc, both for Linux x64.
 //
+// Two more checks hold each build to what the limits take for granted: it has read every line of the application, and it has printed every number that a check reads.
+//
 //   bun test test/aot/compiler/budgets.test.ts
 //   AOT_BUDGETS=lower bun test test/aot/compiler/budgets.test.ts     lowers each limit to 10% above the worse of the two builds, where that is below the limit;
 //                                                                    a touch never goes below 1
@@ -99,12 +101,22 @@ const nameOfCheck = (name: string, measured: string | undefined, bound: string) 
   measured ? `${name}: ${measured} ${bound}` : name;
 const budgetOf = (parts: BudgetedStage[]) => parts.map(part => `${limitOf(part)} per ${unitOfStage[part]}`).join(" + ");
 
-async function buildApplication(dress: Dress) {
-  using program = application(lines, dress);
-  return await build(program);
+// A check that is marked as not yet met passes when it throws, whatever throws: a number that the build no longer prints would pass it.
+// So each build is asked for every number that a check reads, in a check of its own.
+const countersRead = [...new Set<string>([...Object.values(unitOfStage), ...touches, ...Object.values(unitOfTouch)])];
+const stagesCounted = whyNotCounted ? [] : (Object.keys(budgetedPartsOf) as StageName[]);
+
+interface Built extends Build {
+  /** Of the application as it was written for this build. */
+  linesWritten: number;
 }
 
-const builds = new Map<Dress, Promise<Build>>();
+async function buildApplication(dress: Dress): Promise<Built> {
+  using program = application(lines, dress);
+  return { ...(await build(program)), linesWritten: program.lines };
+}
+
+const builds = new Map<Dress, Promise<Built>>();
 function built(dress: Dress) {
   let building = builds.get(dress);
   if (!building) builds.set(dress, (building = buildApplication(dress)));
@@ -154,6 +166,34 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
       touches: Object.fromEntries(touches.map(touch => [touch, "number"])),
     });
   });
+
+  // A build that left a part of the application out would be held to the limits for the rest.
+  // These two checks stand in front of every other, one of each build beside the other. The first check of a build starts it and waits for it, so both builds run at once.
+  // Behind the checks of one build, the other build would begin when the first has ended: a check that waits keeps one of the places that `--max-concurrency` gives,
+  // and a check that is not yet met runs alone.
+  for (const dress of dresses)
+    test.concurrent(
+      `${dress}: the build reads every line of the application`,
+      async () => {
+        const { counts, linesWritten } = await built(dress);
+        expect(counts.SourceLines).toBe(linesWritten);
+      },
+      timeout,
+    );
+
+  for (const dress of dresses)
+    test.concurrent(
+      `${dress}: the build prints every number that a check reads`,
+      async () => {
+        const finished = await built(dress);
+        const stages = stagesOf(finished);
+        expect({
+          counters: countersRead.filter(name => finished.counts[name] > 0),
+          instructions: stagesCounted.filter(stage => stages[stage].instructions! > 0),
+        }).toEqual({ counters: countersRead, instructions: stagesCounted });
+      },
+      timeout,
+    );
 
   for (const dress of dresses) {
     // `concurrent` comes first: with a sanitizer `test` is concurrent already, and only its own `concurrent` allows for that.

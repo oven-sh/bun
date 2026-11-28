@@ -3,7 +3,8 @@ import type { ContentKind, Log, Origin } from "./log";
 import { isObject, type OperandName } from "./table-description";
 
 export type ValueKind = "Primitive" | "Pristine" | "Customized" | "Instrumented";
-export type CreationContext = { receiver: unknown };
+// `args`: the arguments in front of this one, where a call is being made.
+export type CreationContext = { receiver: unknown; args?: readonly unknown[] };
 export type Candidate = {
   name: string;
   kind: ValueKind;

@@ -26,7 +26,7 @@ import {
   schemaRustFiles,
   type EngineSources,
 } from "../../scripts/build/aot.ts";
-import { registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
+import { registerCodegenRules, type BindgenSources, type CodegenOutputs } from "../../scripts/build/codegen.ts";
 import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja, readManifest, type ManifestEdge } from "../../scripts/build/ninja.ts";
@@ -75,13 +75,15 @@ interface Configured {
   n: Ninja;
   o: CodegenOutputs;
   dirStamp: string;
+  bindgenSources: BindgenSources;
 }
 
 /**
  * A linux-x64 debug target in `buildDir` (resolves on every host once told where
  * its sysroot is; the path is only recorded), with the rules the codegen
  * emitters reference registered and the empty output groups emitCodegen hands
- * them. Nothing is written to `buildDir`.
+ * them. Nothing is written to `buildDir`: no test here has a `.bind.ts`, so the
+ * list of them (`bindgenSources`) is a name and an empty map.
  */
 function configure(buildDir: string): Configured {
   const cfg = resolveConfig(
@@ -104,7 +106,13 @@ function configure(buildDir: string): Configured {
     bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall: resolve(buildDir, "stamps", "install.stamp"),
   };
-  return { cfg, n, o, dirStamp: resolve(cfg.codegenDir, ".dir") };
+  return {
+    cfg,
+    n,
+    o,
+    dirStamp: resolve(cfg.codegenDir, ".dir"),
+    bindgenSources: { path: resolve(buildDir, "bindgen-sources.txt"), crates: new Map() },
+  };
 }
 
 /** Just the lists the emitter under test reads; it never looks at the rest of `Sources`. */
@@ -212,11 +220,18 @@ function noSources(lists: Partial<Sources> = {}): Sources {
 describe("emitRemovableFeatures", () => {
   test("declares the Rust file, the header and the JSON file on one edge", () => {
     using dir = tempDir("build-aot-removable-features", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
     const script = resolve(cfg.cwd, "src", "codegen", "generate-removable-features.ts");
     const definitions = resolve(cfg.cwd, "src", "trim", "features", "engine.def");
 
-    emitRemovableFeatures({ n, cfg, sources: noSources({ removableFeatures: [definitions] }), o, dirStamp });
+    emitRemovableFeatures({
+      n,
+      cfg,
+      sources: noSources({ removableFeatures: [definitions] }),
+      o,
+      dirStamp,
+      bindgenSources,
+    });
 
     const rust = resolve(cfg.codegenDir, "removable_features.rs");
     const header = resolve(cfg.codegenDir, "BunRemovableFeatures.h");
@@ -238,9 +253,9 @@ describe("emitRemovableFeatures", () => {
     async () => {
       using dir = tempDir("build-aot-removable-features-generate", {});
       const c = configure(String(dir));
-      const { cfg, n, o, dirStamp } = c;
+      const { cfg, n, o, dirStamp, bindgenSources } = c;
 
-      emitRemovableFeatures({ n, cfg, sources: noSources(), o, dirStamp });
+      emitRemovableFeatures({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources });
 
       const script = resolve(cfg.cwd, "src", "codegen", "generate-removable-features.ts");
       expect(await bunRun(["run", script, cfg.cwd, cfg.codegenDir])).toSpawn("");
@@ -254,9 +269,9 @@ describe("emitRemovableFeatures", () => {
 describe("emitAotSchema", () => {
   test("with a checkout of the engine it declares the engine's generated files and Bun's on one edge", () => {
     using dir = tempDir("build-aot-schema", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
-    emitAotSchema({ n, cfg, sources: noSources(), o, dirStamp, engine: checkout });
+    emitAotSchema({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources, engine: checkout });
 
     const rust = schemaRustFiles(cfg);
     const outputs = [...checkout.schemaOutputs, ...rust, schemaHashHeader(cfg)];
@@ -273,9 +288,9 @@ describe("emitAotSchema", () => {
 
   test("with a prebuilt engine it writes Bun's half alone, by the generator and from the schema of the tarball", () => {
     using dir = tempDir("build-aot-schema-prebuilt", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
-    emitAotSchema({ n, cfg, sources: noSources(), o, dirStamp, engine: prebuilt });
+    emitAotSchema({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources, engine: prebuilt });
 
     const rust = schemaRustFiles(cfg);
     const outputs = [...rust, schemaHashHeader(cfg)];
@@ -309,7 +324,7 @@ describe("emitBuiltinsTable", () => {
 
   test("declares the three Rust tables, the C++ files, the four data files and the engine's files on one edge", () => {
     using dir = tempDir("build-aot-builtins-table", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
     const script = resolve(cfg.cwd, "src", "codegen", "builtins", "index.ts");
     const prelude = resolve(cfg.cwd, "src", "aot", "prelude", "map-set.ts");
 
@@ -319,6 +334,7 @@ describe("emitBuiltinsTable", () => {
       sources: noSources({ builtinsTableCodegen: [script], aotPrelude: [prelude] }),
       o,
       dirStamp,
+      bindgenSources,
       engine: checkout,
     });
 
@@ -349,13 +365,16 @@ describe("emitBuiltinsTable", () => {
       ),
     );
     expect(inputs.filter(input => input === n.rel(script))).toHaveLength(1);
+    // The .bind.ts files go by their list, which fits a command line on a Windows host; the files themselves are inputs.
+    expect(inputs).toContain(n.rel(bindgenSources.path));
+    expect(edgeArgs(n, cpp)).toContain(`--sources=@${bindgenSources.path}`);
     expect(edgeArgs(n, cpp)).toContain(`--javascriptcore=${checkout.javaScriptCore}`);
     expect(edgeArgs(n, cpp)).not.toContain("--prebuilt-generated");
   });
 
   test("with a prebuilt engine it is told where that engine's generated files lie", () => {
     using dir = tempDir("build-aot-builtins-table-prebuilt", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
     emitBuiltinsTable({
       n,
@@ -363,6 +382,7 @@ describe("emitBuiltinsTable", () => {
       sources: noSources(),
       o,
       dirStamp,
+      bindgenSources,
       engine: prebuilt,
     });
 
@@ -375,9 +395,9 @@ describe("emitBuiltinsTable", () => {
 describe("emitBuiltinSources", () => {
   test("declares the manifest and the archive, and runs behind the table of built-ins", () => {
     using dir = tempDir("build-aot-builtin-sources", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
-    emitBuiltinSources({ n, cfg, sources: noSources(), o, dirStamp, engine: checkout });
+    emitBuiltinSources({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources, engine: checkout });
 
     const manifest = resolve(cfg.codegenDir, "builtins.manifest");
     const archive = resolve(cfg.codegenDir, "builtin_sources.bin");
@@ -399,9 +419,9 @@ describe("emitBuiltinSources", () => {
 describe("emitAotCodegen", () => {
   test("without an engine it generates the removable features and nothing else", () => {
     using dir = tempDir("build-aot-codegen-no-engine", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
-    emitAotCodegen({ n, cfg, sources: noSources(), o, dirStamp });
+    emitAotCodegen({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources });
 
     expect(normalized(o.all)).toEqual(
       normalized(
@@ -414,9 +434,9 @@ describe("emitAotCodegen", () => {
 
   test("with an engine the removable features come first, and no file is declared twice", () => {
     using dir = tempDir("build-aot-codegen", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
-    emitAotCodegen({ n, cfg, sources: noSources(), o, dirStamp, engine: checkout });
+    emitAotCodegen({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources, engine: checkout });
 
     const steps = readManifest(n.toString()).edges.filter(edge => edge.rule === "codegen_bun");
     expect(steps[0].outputs).toContain(n.rel(removableFeaturesJson(cfg)));
@@ -435,9 +455,11 @@ describe("emitAotCodegen", () => {
     ["emitBuiltinSources", emitBuiltinSources],
   ] as const)("%s throws without an engine", (name, emit) => {
     using dir = tempDir("build-aot-codegen-needs-an-engine", {});
-    const { cfg, n, o, dirStamp } = configure(String(dir));
+    const { cfg, n, o, dirStamp, bindgenSources } = configure(String(dir));
 
-    expect(() => emit({ n, cfg, sources: noSources(), o, dirStamp })).toThrow(`${name} needs an engine`);
+    expect(() => emit({ n, cfg, sources: noSources(), o, dirStamp, bindgenSources })).toThrow(
+      `${name} needs an engine`,
+    );
     expect(o.all).toEqual([]);
   });
 });

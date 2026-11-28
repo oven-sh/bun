@@ -625,6 +625,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
       description: "cargo $name ($rust_target)",
       restat: true,
       pool: "dep",
+      hostShell: true,
     });
   }
 

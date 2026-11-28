@@ -1,5 +1,5 @@
 import { bunExe, isASAN, tempDir } from "harness";
-import { cpSync, existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
@@ -21,13 +21,16 @@ export async function generateAgainst(
   sources: readonly string[] = schemas,
 ): Promise<Generated> {
   using directory = tempDir("builtins-table", {});
+  // The list of schemas goes in a file, as the build passes it (writeBindgenSources in scripts/build/codegen.ts).
+  const list = join(String(directory), "bindgen-sources.txt");
+  writeFileSync(list, sources.map((schema, index) => `${crateOf(schemas[index])}=${schema}\n`).join(""));
   await using generator = Bun.spawn({
     cmd: [
       bunExe(),
       join(bunRoot, "src", "codegen", "builtins", "index.ts"),
       `--codegen-path=${directory}`,
       "--target=Linux",
-      `--sources=${sources.map((schema, index) => `${crateOf(schemas[index])}=${schema}`).join(",")}`,
+      `--sources=@${list}`,
       `--prebuilt-generated=${prebuiltGenerated}`,
       `--engine-directory=${engineDirectory}`,
     ],

@@ -150,7 +150,7 @@ pub(crate) fn command_after_flags() -> Option<&'static [u8]> {
 ///
 /// Only flags that the tools behind such scripts don't have. `-v`, `--version`, `--init`, `--rules` and `--print-config` mean
 /// something to ESLint, oxlint, Prettier and others, and `bun lint -v` must not turn a failing script into exit code 0.
-/// `--doctor` and `--explain` are here because the migration guides send people to them who still have `"lint": "eslint ."`.
+/// `--doctor`, `--explain` and `--upgrade` are here because the docs send people to them who still have `"lint": "eslint ."`.
 /// `--no-script` is for tools that run these commands in projects they know nothing about.
 fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
@@ -159,7 +159,7 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
         b"--help-all" | b"--doctor" => command != b"check" && command != b"compile",
         b"--aot" => command == b"check",
         b"--library" => command == b"compile",
-        b"--explain" => command == b"lint",
+        b"--explain" | b"--upgrade" => command == b"lint",
         _ => false,
     }
 }

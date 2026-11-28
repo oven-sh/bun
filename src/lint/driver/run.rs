@@ -636,6 +636,15 @@ impl Run<'_> {
                 format!("The --ext option arguments cannot be empty strings. Found an empty string at index {index}.")
                     .into_bytes(),
             );
+        } else if options.upgrade
+            && (options.config.is_some()
+                || options.flavor.is_some()
+                || options.init
+                || options.suppress_all
+                || options.suppress_rule.is_some()
+                || options.prune_suppressions)
+        {
+            b"The --upgrade option doesn't use a config or suppressions, so it cannot be used with the options for them."
         } else if options.suppress_all && options.suppress_rule.is_some() {
             b"The --suppress-all option and the --suppress-rule option cannot be used together."
         } else if options.suppress_all && options.prune_suppressions {
@@ -1659,7 +1668,10 @@ impl Run<'_> {
             fixes = fixes_written.into_inner() as usize;
         }
 
-        let suppressed = match options.stdin {
+        if options.upgrade {
+            self.skip_unparsed_files(&mut results);
+        }
+        let suppressed = match options.stdin || options.upgrade {
             true => Suppressed::default(),
             false => match self.apply_suppressions(&mut results, is_oxlint, is_native) {
                 Ok(suppressed) => suppressed,
@@ -1891,6 +1903,29 @@ impl Run<'_> {
             u8::from(fails_on_problems || (has_no_files && options.error_on_unmatched_pattern))
         };
         self.out
+    }
+
+    /// A project's config ignores its broken fixtures and the files in other dialects. `--upgrade` doesn't read it.
+    fn skip_unparsed_files(&mut self, results: &mut [FileResult]) {
+        const NAMED: usize = 3;
+        let mut skipped = Vec::new();
+        for result in results.iter_mut().filter(|it| it.counts.fatal_errors > 0) {
+            result.messages.clear();
+            result.counts = Counts::default();
+            let path = paths::from_native(&result.path);
+            skipped.push(paths::relative(&self.environment.cwd, &path));
+        }
+        if skipped.is_empty() {
+            return;
+        }
+        let more = match skipped.len().saturating_sub(NAMED) {
+            0 => String::new(),
+            more => format!(" and {more} more"),
+        };
+        bun_lint::utils::sort::sort_unstable(&mut skipped);
+        skipped.truncate(NAMED);
+        let named = paths::escaped(&skipped.join(&b", "[..]));
+        self.warn(&[b"Skipped what doesn't parse: ", &named[..], more.as_bytes()].concat());
     }
 
     /// Handles `eslint-suppressions.json` the way ESLint's `cli.execute` does.

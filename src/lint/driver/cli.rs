@@ -35,6 +35,9 @@ const RULES: &[Param] = &[
         "--doctor                        Show which rules run natively and which packages you can remove"
     ),
     clap::param!(
+        "--upgrade                       Find code that breaks in this version of Bun, without reading your config"
+    ),
+    clap::param!(
         "--allow-unsupported             Warn instead of failing when the config has a rule or file that is not supported"
     ),
 ];
@@ -264,6 +267,7 @@ pub const HELP: Help = Help {
         b"max-warnings",
         b"init",
         b"doctor",
+        b"upgrade",
         b"no-script",
     ],
 };
@@ -529,6 +533,8 @@ pub struct Options {
     pub print_config: Option<Vec<u8>>,
     /// Report what a run would do with this config, without linting.
     pub doctor: bool,
+    /// Run the rules for Bun's own breaking changes, and nothing that the project configures.
+    pub upgrade: bool,
     pub suppress_all: bool,
     pub suppress_rule: Option<Vec<Vec<u8>>>,
     pub suppressions_location: Option<Vec<u8>>,
@@ -648,6 +654,7 @@ impl Default for Options {
             pass_on_no_patterns: false,
             print_config: None,
             doctor: false,
+            upgrade: false,
             suppress_all: false,
             suppress_rule: None,
             suppressions_location: None,
@@ -880,6 +887,7 @@ impl Options {
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
             b"print-config" => self.print_config = owned(),
             b"doctor" => self.doctor = is_on,
+            b"upgrade" => self.upgrade = is_on,
             b"type-aware" => self.type_aware = Some(is_on),
             b"infer-globals" => self.infer_globals = Some(is_on),
             b"tsconfig" | b"project" => self.tsconfig = owned(),
@@ -1270,6 +1278,18 @@ impl Options {
         args: &[&[u8]],
     ) -> Result<Options, UsageError> {
         let from_args = Options::parse(args)?;
+        if from_args.upgrade {
+            defaults = Options {
+                bunfig: defaults.bunfig,
+                has_bunfig_section: defaults.has_bunfig_section,
+                is_bunfig_from_flag: defaults.is_bunfig_from_flag,
+                ignore_pattern: defaults.ignore_pattern,
+                bunfig_ignore_pattern_count: defaults.bunfig_ignore_pattern_count,
+                ignore_path: defaults.ignore_path,
+                bunfig_ignore_file_name: defaults.bunfig_ignore_file_name,
+                ..Options::default()
+            };
+        }
         let names = |flag: &[u8]| {
             args.iter().any(|arg| {
                 let name = arg.strip_prefix(b"--").unwrap_or_default();

@@ -403,6 +403,27 @@ it.concurrent(
   },
 );
 
+// On Windows the fake release is the executable under test, which can't report another version.
+it.concurrent.skipIf(isWindows)("points to bun lint --upgrade after an upgrade to a new minor version", async () => {
+  using dir = tempDir("bun-upgrade-hint", {});
+  const zipPath = join(String(dir), "release.zip");
+  const [execPath] = await Promise.all([installStandIn(String(dir)), writeFakeReleaseZip(zipPath, "9.9.9")]);
+  using server = startReleaseServer({ tagName: "bun-v9.9.9", zipPath });
+  await using proc = Bun.spawn({
+    cmd: [execPath, "upgrade", "--stable"],
+    cwd: String(dir),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: server.env,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(
+    `...bun-v9.9.9\n\nFind code in your project that breaks in this version:\n\n    bun lint --upgrade\n`,
+  );
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {
   const tagName = "bun-v9.9.9";
   // Simulate a directory that already exists at the predictable staging path

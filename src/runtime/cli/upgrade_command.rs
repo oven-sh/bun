@@ -1222,6 +1222,16 @@ impl UpgradeCommand {
                     bun_v,
                     bstr::BStr::new(&*version.tag)
                 );
+
+                let minor = |version: &[u8]| {
+                    let version = bun_semver::Version::parse_utf8(version).version.min();
+                    (version.major, version.minor)
+                };
+                if minor(&version_name) > minor(Global::package_json_version.as_bytes()) {
+                    bun_core::pretty_errorln!(
+                        "\nFind code in your project that breaks in this version:\n\n    <cyan>bun lint --upgrade<r>\n"
+                    );
+                }
             }
 
             Output::flush();

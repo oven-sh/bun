@@ -5,11 +5,12 @@
 //!   https://github.com/vitest-dev/eslint-plugin-vitest (Copyright Verite Mugabo, MIT License)
 //!
 //! The `bun:test` rules are the same rules applied to `bun test` tests. They're Bun's own and are available with every
-//! config.
+//! config. So are the `bun` plugin's rules about tests, which need the same helpers.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
 
+mod bun;
 mod jest;
 mod jest_expect;
 mod jest_hooks;
@@ -19,6 +20,11 @@ mod jest_tests;
 
 // `<1>` is the `vitest` rule, `<2>` the `bun:test` rule.
 bun_lint::rules! {
+    bun_await_async_expect::AwaitAsyncExpect,
+    bun_no_mock_returned_from_hook::NoMockReturnedFromHook,
+    bun_no_unhoisted_mock_variables::NoUnhoistedMockVariables,
+    bun_no_vitest_done_callback::NoVitestDoneCallback,
+    bun_prefer_string_containing::PreferStringContaining,
     bun_test_consistent_test_filename::ConsistentTestFilename = vitest_consistent_test_filename<2>,
     bun_test_consistent_test_it::ConsistentTestIt = jest_consistent_test_it<2>,
     bun_test_expect_expect::ExpectExpect = jest_expect_expect<2>,

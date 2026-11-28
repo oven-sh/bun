@@ -1,4 +1,5 @@
 {
+  "bun/await-async-expect": [],
   "bun/axios-no-unbounded-requests": [
     {
       "type": "object",
@@ -39,6 +40,7 @@
     }
   ],
   "bun/fast-check-no-unseeded-random": [],
+  "bun/fetch-require-servername": [],
   "bun/format": [
     {
       "type": "object",
@@ -166,6 +168,7 @@
       "additionalProperties": false
     }
   ],
+  "bun/no-legacy-fetch-error-codes": [],
   "bun/no-literal-temp-dir": [
     {
       "type": "object",
@@ -181,8 +184,10 @@
       "additionalProperties": false
     }
   ],
+  "bun/no-mock-returned-from-hook": [],
   "bun/no-negative-repeat-count": [],
   "bun/no-redundant-catch-type": [],
+  "bun/no-renamed-env-vars": [],
   "bun/no-restricted-text": [
     {
       "type": "object",
@@ -260,6 +265,7 @@
       "additionalProperties": false
     }
   ],
+  "bun/no-unhoisted-mock-variables": [],
   "bun/no-unportable-commands": [
     {
       "type": "object",
@@ -304,6 +310,7 @@
       "additionalProperties": false
     }
   ],
+  "bun/no-vitest-done-callback": [],
   "bun/prefer-builtin-sleep": [],
   "bun/prefer-local-module": [
     {
@@ -345,6 +352,7 @@
       "additionalProperties": false
     }
   ],
+  "bun/prefer-string-containing": [],
   "bun/prefer-timeout-signal": [
     {
       "type": "object",
@@ -375,6 +383,10 @@
   ],
   "bun/react-no-namespace-hooks": [],
   "bun/react-prefer-updater-function": [],
+  "bun/sql-require-array-type": [],
+  "bun/tls-require-request-cert": [],
+  "bun/websocket-close-code": [],
+  "bun/ws-require-error-listener": [],
   "bun/zod-prefer-lazy-schema": [
     {
       "type": "object",

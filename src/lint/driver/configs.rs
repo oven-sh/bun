@@ -236,6 +236,34 @@ const BUILT_IN: &[u8] = br#"[
     }
 ]"#;
 
+/// The config of `--upgrade`: the files of [`BUILT_IN`], parsed the same way, with the rules for Bun's breaking changes.
+/// A warning is for code that can be fine as it is.
+const UPGRADE: &[u8] = br#"[
+    { "ignores": ["**/.git/", "**/*.min.js", "**/*.d.{ts,mts,cts}"] },
+    { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
+    {
+        "languageOptions": { "$env": { "node": true }, "parserOptions": { "ecmaFeatures": { "jsx": true } } },
+        "rules": {
+            "bun/await-async-expect": "error",
+            "bun/fetch-require-servername": "warn",
+            "bun/no-legacy-fetch-error-codes": "error",
+            "bun/no-mock-returned-from-hook": "error",
+            "bun/no-renamed-env-vars": "error",
+            "bun/no-unhoisted-mock-variables": "error",
+            "bun/no-vitest-done-callback": "error",
+            "bun/prefer-string-containing": "error",
+            "bun/sql-require-array-type": "warn",
+            "bun/tls-require-request-cert": "error",
+            "bun/websocket-close-code": "warn",
+            "bun/ws-require-error-listener": "warn"
+        }
+    },
+    { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/base"] },
+    { "files": ["**/*.cts"], "languageOptions": { "sourceType": "commonjs" } },
+    { "files": ["**/*.{js,jsx,ts,tsx}"], "languageOptions": { "$sourceTypeBySyntax": true } },
+    { "$packageType": "module", "languageOptions": { "$packageIsModule": true } }
+]"#;
+
 /// Options for both `no-unused-vars` rules in [`BUILT_IN`]. A name that starts with `_` is unused on purpose.
 const UNUSED_ON_PURPOSE: &[u8] = br#"{
     "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_",
@@ -1022,7 +1050,7 @@ impl<'l> Loader<'l> {
 
     /// True if every file uses the same configuration, wherever it is.
     fn has_one_configuration(&self) -> bool {
-        self.options.config.is_some() || !self.options.config_lookup
+        self.options.config.is_some() || !self.options.config_lookup || self.options.upgrade
     }
 
     /// True if a configuration file other than the working directory's has been read. In that case oxlint doesn't print
@@ -1826,10 +1854,10 @@ impl<'l> Loader<'l> {
             .or_else(|| paths::ancestors(self.cwd()).find(has_package))
             .unwrap_or_else(|| self.cwd());
         // The base path is `/`, which contains every file on any drive.
-        let mut objects = vec![built_in_json(
-            self.options.type_aware == Some(true),
-            project,
-        )];
+        let mut objects = vec![match self.options.upgrade {
+            true => bun_lint::json::parse(UPGRADE).unwrap_or(Json::Null),
+            false => built_in_json(self.options.type_aware == Some(true), project),
+        }];
         let mut user_objects = native::categories(self.linter.registry(), self.options);
         user_objects.extend(self.added(b"/", Shape::Native));
         let user_objects = self.split_pairs(user_objects);
@@ -2078,7 +2106,7 @@ impl<'l> Loader<'l> {
     fn load(&self, path: &[u8], base_path: &[u8]) -> Found {
         let slot = Arc::clone(self.by_file.lock().entry(path.to_vec()).or_default());
         slot.get_or_init(|| match path {
-            b"" if !self.options.config_lookup => {
+            b"" if !self.options.config_lookup && !self.options.upgrade => {
                 self.check_flags(Flavor::Eslint, None)?;
                 let named = self.named_plugins(Flavor::Eslint)?;
                 Ok(Arc::new(Loaded {
@@ -2104,6 +2132,9 @@ impl<'l> Loader<'l> {
     fn tool(&self) -> Option<Flavor> {
         *self.tool.get_or_init(|| {
             let options = self.options;
+            if options.upgrade {
+                return None;
+            }
             let wanted = options.flavor.map(|it| match it {
                 Tool::Eslint => Flavor::Eslint,
                 Tool::Oxlint => Flavor::Oxlint,
@@ -2418,6 +2449,9 @@ impl<'l> Loader<'l> {
     fn is_eslint_8_command_line(&self) -> bool {
         *self.is_legacy.get_or_init(|| {
             let options = self.options;
+            if options.upgrade {
+                return false;
+            }
             let has_flag =
                 !options.eslintrc || !options.env.is_empty() || !options.rulesdir.is_empty();
             let Some(path) = &options.config else {
@@ -2929,6 +2963,7 @@ impl<'l> Loader<'l> {
     pub(crate) fn ignore_file_name(&self, loaded: &Loaded) -> Option<&[u8]> {
         match &self.options.ignore_path {
             _ if !self.options.ignore => None,
+            None if self.options.upgrade => None,
             None => Some(b".eslintignore"),
             Some(name) => (loaded.flavor == Flavor::Oxlint).then_some(
                 self.options

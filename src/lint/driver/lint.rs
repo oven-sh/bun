@@ -177,7 +177,7 @@ pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
 impl Context<'_, '_> {
     pub(crate) fn lint_options(&self) -> LintOptions<'_> {
         LintOptions {
-            allow_inline_config: self.options.inline_config,
+            allow_inline_config: self.options.inline_config && !self.options.upgrade,
             // It's part of the config. See `Loader::override_config`.
             report_unused_disable_directives: None,
             wants_fixes: self.fixes() || self.reads_fixes,

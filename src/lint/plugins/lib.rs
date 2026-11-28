@@ -14,6 +14,7 @@
 #![deny(clippy::iter_over_hash_type)]
 
 mod bun;
+mod bun_emitters;
 mod import_export_map;
 mod import_export_record;
 mod import_minimatch;
@@ -30,6 +31,7 @@ bun_lint::rules! {
     bun_axios_no_unbounded_requests::AxiosNoUnboundedRequests,
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,
     bun_fast_check_no_unseeded_random::FastCheckNoUnseededRandom,
+    bun_fetch_require_servername::FetchRequireServername,
     bun_jsx_no_forbidden_nesting::JsxNoForbiddenNesting,
     bun_no_array_just_to_count::NoArrayJustToCount,
     bun_no_cast_to_brand::NoCastToBrand,
@@ -38,9 +40,11 @@ bun_lint::rules! {
     bun_no_eager_dynamic_import::NoEagerDynamicImport,
     bun_no_eager_native_addon::NoEagerNativeAddon,
     bun_no_env_at_module_scope::NoEnvAtModuleScope,
+    bun_no_legacy_fetch_error_codes::NoLegacyFetchErrorCodes,
     bun_no_literal_temp_dir::NoLiteralTempDir,
     bun_no_negative_repeat_count::NoNegativeRepeatCount,
     bun_no_redundant_catch_type::NoRedundantCatchType,
+    bun_no_renamed_env_vars::NoRenamedEnvVars,
     bun_no_restricted_text::NoRestrictedText,
     bun_no_side_effects_on_import::NoSideEffectsOnImport,
     bun_no_unhandled_emitter_errors::NoUnhandledEmitterErrors,
@@ -54,6 +58,10 @@ bun_lint::rules! {
     bun_react_no_local_render_helpers::ReactNoLocalRenderHelpers,
     bun_react_no_namespace_hooks::ReactNoNamespaceHooks,
     bun_react_prefer_updater_function::ReactPreferUpdaterFunction,
+    bun_sql_require_array_type::SqlRequireArrayType,
+    bun_tls_require_request_cert::TlsRequireRequestCert,
+    bun_websocket_close_code::WebsocketCloseCode,
+    bun_ws_require_error_listener::WsRequireErrorListener,
     bun_zod_prefer_lazy_schema::ZodPreferLazySchema,
     import_consistent_type_specifier_style::ConsistentTypeSpecifierStyle,
     import_default::Default,

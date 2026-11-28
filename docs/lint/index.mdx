@@ -288,6 +288,34 @@ steps:
 
 For other systems, pick a report format with `--format`: `json`, `junit`, `checkstyle`, `gitlab`, `sarif`, `unix`.
 
+## Upgrade Bun
+
+`--upgrade` finds code that a new version of Bun breaks. It runs the rules below and nothing else: it doesn't read your ESLint or oxlint config, the rules in `bunfig.toml`, `eslint-disable` comments or suppressions, and it doesn't run your `lint` script. It skips the files that `.gitignore` and `bunfig.toml` ignore, and names the ones that don't parse.
+
+```bash terminal icon="terminal"
+bun lint --upgrade        # see what breaks
+bun lint --upgrade --fix  # fix what can be fixed
+```
+
+| Rule                                                                         | Finds                                                      | Since | `--fix` |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------- | ----- | ------- |
+| [`await-async-expect`](/lint/rules/bun/await-async-expect)                   | `.resolves`, `.rejects`, async `toThrow()` without `await` | 1.5   | Yes     |
+| [`no-vitest-done-callback`](/lint/rules/bun/no-vitest-done-callback)         | `done` in files that import from `vitest`                  | 1.5   | Yes     |
+| [`no-mock-returned-from-hook`](/lint/rules/bun/no-mock-returned-from-hook)   | `beforeEach(() => send.mockClear())`                       | 1.5   | Yes     |
+| [`no-unhoisted-mock-variables`](/lint/rules/bun/no-unhoisted-mock-variables) | Variables in a `vi.mock()` factory                         | 1.5   | Yes     |
+| [`prefer-string-containing`](/lint/rules/bun/prefer-string-containing)       | `expect.stringMatching("total (net)")`                     | 1.5   | Yes     |
+| [`no-renamed-env-vars`](/lint/rules/bun/no-renamed-env-vars)                 | `BUN_JSC_useSharedArrayBuffer`                             | 1.5   | Yes     |
+| [`no-legacy-fetch-error-codes`](/lint/rules/bun/no-legacy-fetch-error-codes) | `error.code === "ConnectionRefused"`                       | 1.4.3 | Yes     |
+| [`tls-require-request-cert`](/lint/rules/bun/tls-require-request-cert)       | `ca` without `requestCert` on a server                     | 1.4.4 |         |
+| [`ws-require-error-listener`](/lint/rules/bun/ws-require-error-listener)     | `ws` sockets without an `error` listener                   | 1.4.4 |         |
+| [`websocket-close-code`](/lint/rules/bun/websocket-close-code)               | Checks for close code `1000`                               | 1.4.4 |         |
+| [`sql-require-array-type`](/lint/rules/bun/sql-require-array-type)           | `sql.array()` without a type                               | 1.4.4 |         |
+| [`fetch-require-servername`](/lint/rules/bun/fetch-require-servername)       | A `Host` header on an HTTPS `fetch()`                      | 1.4.1 |         |
+
+The last four are warnings, because the code they find can be fine. To skip a rule, pass `--rule 'bun/websocket-close-code: off'`.
+
+The fixed code needs the new version: `vi.hoisted()` doesn't exist before Bun 1.5.
+
 ## Migrate from ESLint or oxlint
 
 Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint` reads it and reports what that tool reports. Change the script and you're done.

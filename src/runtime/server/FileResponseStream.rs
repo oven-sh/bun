@@ -577,7 +577,8 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
             return false;
         }
         let Some(len) = length else { return false };
-        // Below ~1MB the syscall + dual-readiness overhead doesn't pay off.
-        len >= (1 << 20)
+        // Below ~96 KiB the buffered reader beats sendfile's syscall + dual-readiness
+        // overhead (measured crossover is between 64 and 96 KiB).
+        len >= 96 * 1024
     }
 }

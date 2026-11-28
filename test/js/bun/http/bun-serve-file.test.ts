@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1683,7 +1683,7 @@ test("file route serves a burst of concurrent requests after reloads", async () 
   expect(a).toBe("a-new");
 });
 
-// Linux file responses >= 1MB go through sendfile(2), which writes straight to
+// Linux file responses >= 96 KiB go through sendfile(2), which writes straight to
 // the socket fd. When the response header block only partially reaches the
 // kernel (its tail parked in the userspace socket buffer), the first sendfile
 // round must wait for that tail to flush; otherwise file bytes overtake it and
@@ -1925,6 +1925,36 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   const body = Buffer.from(await res.arrayBuffer());
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
+});
+
+// The scoped log is compiled out of release builds, so mode selection is only observable in debug builds.
+test.skipIf(!isLinux || !isDebug)("sendfile is used from 96 KiB, the buffered reader below", async () => {
+  using dir = tempDir("serve-sendfile-threshold", {
+    "small.bin": Buffer.alloc(95 * 1024, 0xee),
+    "large.bin": Buffer.alloc(96 * 1024, 0xee),
+  });
+  const fixture = `
+    const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: req => new Response(Bun.file("." + new URL(req.url).pathname)) });
+    for (const name of ["small.bin", "large.bin"]) {
+      const body = await (await fetch(s.url + name)).arrayBuffer();
+      console.log(name, body.byteLength);
+    }
+    await s.stop(true);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_DEBUG_FileResponseStream: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.match(/start mode=\w+ len=Some\(\d+\)|^(?:small|large)\.bin \d+$/gm)).toEqual([
+    `start mode=Reader len=Some(${95 * 1024})`,
+    `small.bin ${95 * 1024}`,
+    `start mode=Sendfile len=Some(${96 * 1024})`,
+    `large.bin ${96 * 1024}`,
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 // Sends a request, waits for the response head and then resets the connection.

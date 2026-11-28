@@ -2576,7 +2576,7 @@ pub mod parse_worker {
                         Ok(_) if log.has_errors() => Err(crate::Error::SyntaxError),
                         read => read,
                     };
-                    let entry = match read {
+                    let mut entry = match read {
                         Ok(entry) => entry,
                         Err(e) => {
                             break 'value ResultValue::Err(ResultError {
@@ -2588,6 +2588,15 @@ pub mod parse_worker {
                             });
                         }
                     };
+                    // Windows: an open file can't be replaced by a rename-style save; closed now, watched by path.
+                    if cfg!(windows)
+                        && entry
+                            .file
+                            .as_ref()
+                            .is_some_and(bun_sys::MaybeOwnedFile::is_owned)
+                    {
+                        entry.file = Some(bun_sys::MaybeOwnedFile::INVALID);
+                    }
 
                     if crate::ThreadPool::uses_io_pool() {
                         this.stage = ParseTaskStage::NeedsParse(entry);

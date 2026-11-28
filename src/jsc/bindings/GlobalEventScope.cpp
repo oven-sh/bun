@@ -4,11 +4,31 @@
 #include "MessagePort.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalEventScope);
+
+GlobalEventScope::~GlobalEventScope() = default;
+
+JSC::JSObject* GlobalEventScope::globalThis() const
+{
+    return m_globalThis.get();
+}
+
+void GlobalEventScope::setGlobalThis(JSC::JSObject* globalThis)
+{
+    m_globalThis = JSC::Weak<JSC::JSObject>(globalThis);
+}
+
+JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, GlobalEventScope& scope)
+{
+    if (auto* globalThis = scope.globalThis())
+        return globalThis;
+    return JSC::jsNull();
+}
 
 void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {

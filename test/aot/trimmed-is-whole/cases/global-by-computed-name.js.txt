@@ -121,7 +121,6 @@ dispatchEvent(new Event("ping"));
 addEventListener("ping", event => { for (const name of names) show(event.currentTarget[name]); });
 dispatchEvent(new Event("ping"));
 //// event-this
-//@ exit 1
 addEventListener("ping", function () { for (const name of names) show(this[name]); });
 dispatchEvent(new Event("ping"));
 //// event-through-prototype

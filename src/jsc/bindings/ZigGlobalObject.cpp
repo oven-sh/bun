@@ -1619,6 +1619,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 GlobalObject::~GlobalObject()
 {
     static_assert(OBJECT_OFFSETOF(GlobalObject, m_scriptExecutionContext) + sizeof(m_scriptExecutionContext) + alignof(GlobalObject) > sizeof(GlobalObject), "must be the last member");
+    // An Event holds a reference to the scope, so the scope can outlive the heap that its weak handle lies in.
+    globalEventScope->setGlobalThis(nullptr);
     m_scriptExecutionContext->globalObjectDestroyed();
 }
 
@@ -2645,6 +2647,7 @@ void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    globalEventScope->setGlobalThis(globalThis());
 
     setConsoleClient(WebCore::clientData(vm)->consoleClient());
 

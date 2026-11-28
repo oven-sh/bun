@@ -257,7 +257,7 @@ const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
 
 // The listeners that were added earlier run, with the event and the target, and the event keeps the target.
-// What stands for the global object there has the members of the global object, and is not identical to `globalThis`. Native code makes no other object for it.
+// What stands for the global object there is `globalThis`.
 const eventDispatch = (eventTarget: b.TableType) =>
   ({
     args: { event: b.object },

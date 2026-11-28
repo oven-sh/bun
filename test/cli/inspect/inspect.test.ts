@@ -644,14 +644,10 @@ test("a client that leaves before the busy main thread accepts it does not end t
   expect({ stdout, exitCode }).toEqual({ stdout: "timer fired\n", exitCode: 0 });
 });
 
-test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
-  await using child = spawn({
-    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
-    env: bunEnv,
-    stdout: "ignore",
-    stderr: "pipe",
-  });
+type Reply = { result?: any; error?: { message: string } };
 
+/** Connects to the inspector whose URL `child` prints. A crash closes the socket: a command then resolves with an error, so the failure shows up in what a test expects. */
+async function inspectorOf(child: Subprocess) {
   let stderr = "";
   let url: string | undefined;
   const decoder = new TextDecoder();
@@ -662,9 +658,7 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   }
   if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
 
-  type Reply = { result?: any; error?: { message: string } };
   const pending = new Map<number, (reply: Reply) => void>();
-  // A crash closes the socket. Resolve instead of rejecting so the failure shows up in the snapshot below.
   const closed = Promise.withResolvers<Reply>();
   const opened = Promise.withResolvers<Reply>();
   const webSocket = new WebSocket(url);
@@ -687,6 +681,17 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   }
 
   expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+  return { send, close: () => webSocket.close() };
+}
+
+test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const { send, close } = await inspectorOf(child);
 
   const argv: Record<string, unknown> = {};
   for (const expression of ["undefined", "0", `"abc"`, "{}", `["a", "b"]`]) {
@@ -709,5 +714,60 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   `);
 
   expect(child.exitCode).toBe(null);
-  webSocket.close();
+  close();
+});
+
+// Bun's own internal properties are there under --inspect-wait and --inspect-brk, which install Bun's host of the injected script.
+test("Runtime.getProperties lists the listeners of the global object, as of any other EventTarget", async () => {
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const { send, close } = await inspectorOf(child);
+
+  // The event types under the internal property `listeners` of what the expression answers.
+  async function listenersOf(expression: string) {
+    const evaluated = await send("Runtime.evaluate", { expression });
+    if (evaluated.error) return evaluated.error.message;
+    // One property is enough: the internal ones come with the first. The global object of `-e` has a getter for each
+    // built-in module, and a walk over all of its properties loads every one of them.
+    const properties = await send("Runtime.getProperties", {
+      objectId: evaluated.result.result.objectId,
+      ownProperties: true,
+      fetchStart: 0,
+      fetchCount: 1,
+    });
+    if (properties.error) return properties.error.message;
+    const listeners = properties.result.internalProperties?.find((property: any) => property.name === "listeners");
+    if (!listeners) return "no listeners";
+    const types = await send("Runtime.getProperties", { objectId: listeners.value.objectId, ownProperties: true });
+    if (types.error) return types.error.message;
+    return types.result.properties.map((property: any) => property.name).filter((name: string) => name !== "__proto__");
+  }
+
+  expect({
+    "an EventTarget": await listenersOf(`(() => {
+      const target = new EventTarget();
+      target.addEventListener("ping", function onPing() {});
+      return target;
+    })()`),
+    "globalThis": await listenersOf(`addEventListener("ping", function onPing() {}), globalThis`),
+    "the target of an event on the global object": await listenersOf(`(() => {
+      let target;
+      addEventListener("pong", event => { target = event.target; }, { once: true });
+      dispatchEvent(new Event("pong"));
+      return target;
+    })()`),
+    "no EventTarget": await listenersOf(`({})`),
+  }).toEqual({
+    "an EventTarget": ["ping"],
+    "globalThis": ["ping"],
+    "the target of an event on the global object": ["ping"],
+    "no EventTarget": "no listeners",
+  });
+
+  expect(child.exitCode).toBe(null);
+  close();
 });

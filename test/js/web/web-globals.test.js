@@ -4,6 +4,7 @@ import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressive
 import { once } from "node:events";
 import { connect } from "node:net";
 import { join } from "node:path";
+import vm from "node:vm";
 import storesThatEndInADefinition from "../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
 test("exists", () => {
@@ -87,6 +88,380 @@ for (const [Constructor, name, eventName, prop] of globalSetters) {
     }
   });
 }
+
+// This file is a module: a listener that is called with the JSGlobalObject cell as `this` sees undefined.
+describe("an event dispatched on the global object has globalThis as its target", () => {
+  function seenBy(thisValue, event) {
+    return {
+      this: thisValue === globalThis,
+      target: event.target === globalThis,
+      currentTarget: event.currentTarget === globalThis,
+      srcElement: event.srcElement === globalThis,
+      composedPath: event.composedPath().map(target => target === globalThis),
+    };
+  }
+  const everythingIsGlobalThis = {
+    this: true,
+    target: true,
+    currentTarget: true,
+    srcElement: true,
+    composedPath: [true],
+  };
+  const { addEventListener: add, removeEventListener: remove, dispatchEvent: dispatch } = EventTarget.prototype;
+
+  test.each([
+    ["the functions of the global object", addEventListener, removeEventListener, dispatchEvent],
+    ...[globalThis, undefined, null].map(receiver => [
+      `the methods of EventTarget.prototype called on ${receiver === globalThis ? "globalThis" : receiver}`,
+      add.bind(receiver),
+      remove.bind(receiver),
+      dispatch.bind(receiver),
+    ]),
+  ])("a function listener, through %s", (_, addListener, removeListener, send) => {
+    const seen = [];
+    function listener(event) {
+      seen.push(seenBy(this, event));
+    }
+    const event = new Event("global-target");
+    addListener("global-target", listener);
+    try {
+      send(event);
+    } finally {
+      removeListener("global-target", listener);
+    }
+    expect(seen).toEqual([everythingIsGlobalThis]);
+    // The event keeps its target behind the dispatch.
+    expect([event.target === globalThis, event.srcElement === globalThis, event.currentTarget]).toEqual([
+      true,
+      true,
+      null,
+    ]);
+    expect(event.composedPath()).toEqual([]);
+  });
+
+  test("an object with handleEvent: `this` is the object", () => {
+    const seen = [];
+    const listener = {
+      handleEvent(event) {
+        seen.push({ thisIsListener: this === listener, ...seenBy(globalThis, event) });
+      },
+    };
+    addEventListener("global-target", listener);
+    try {
+      dispatchEvent(new Event("global-target"));
+    } finally {
+      removeEventListener("global-target", listener);
+    }
+    expect(seen).toEqual([{ thisIsListener: true, ...everythingIsGlobalThis }]);
+  });
+
+  for (const [Constructor, name, eventName] of globalSetters) {
+    test(`a function in ${name}`, () => {
+      const seen = [];
+      globalThis[name] = function (event) {
+        seen.push(seenBy(this, event));
+      };
+      try {
+        dispatchEvent(new Constructor(eventName));
+      } finally {
+        globalThis[name] = null;
+      }
+      expect(seen).toEqual([everythingIsGlobalThis]);
+    });
+  }
+
+  test("no listener", () => {
+    const event = new Event("global-target");
+    dispatchEvent(event);
+    expect([event.target === globalThis, event.srcElement === globalThis]).toEqual([true, true]);
+  });
+
+  test("an event that is dispatched on the global object, on another target and on the global object again", () => {
+    const other = new EventTarget();
+    const event = new Event("global-target");
+    const targets = [];
+    for (const target of [globalThis, other, globalThis]) {
+      target.dispatchEvent(event);
+      targets.push(event.target === globalThis ? "globalThis" : event.target === other ? "other" : "neither");
+    }
+    expect(targets).toEqual(["globalThis", "other", "globalThis"]);
+  });
+
+  // The listener is called on the target, as on any other EventTarget, and not on the global object of its own realm.
+  test("a listener that a node:vm context made", () => {
+    const seen = [];
+    const context = vm.createContext({ seen });
+    const body = "seen.push(this, event.target, event.currentTarget);";
+    const listeners = [
+      vm.runInContext(`(function (event) { ${body} })`, context),
+      vm.runInContext(`(function (event) { "use strict"; ${body} })`, context),
+      vm.compileFunction(body, ["event"], { parsingContext: context }),
+    ];
+    for (const listener of listeners) {
+      addEventListener("global-target", listener);
+      try {
+        dispatchEvent(new Event("global-target"));
+      } finally {
+        removeEventListener("global-target", listener);
+      }
+    }
+    globalThis.onmessage = listeners[0];
+    try {
+      dispatchEvent(new MessageEvent("message"));
+    } finally {
+      globalThis.onmessage = null;
+    }
+    expect(seen.map(value => value === globalThis)).toEqual(Array(12).fill(true));
+  });
+
+  test.concurrent("in a CommonJS file, where a function listener is sloppy", async () => {
+    using dir = tempDir("global-event-target", {
+      "main.cjs": `
+        const seen = [];
+        function seenBy(thisValue, event) {
+          return [thisValue, event.target, event.currentTarget, event.srcElement, ...event.composedPath()].map(value => value === globalThis);
+        }
+        addEventListener("global-target", function (event) {
+          seen.push(seenBy(this, event));
+        });
+        addEventListener("global-target", function (event) {
+          "use strict";
+          seen.push(seenBy(this, event));
+        });
+        onmessage = function (event) {
+          seen.push(seenBy(this, event));
+        };
+        try {
+          dispatchEvent(new Event("global-target"));
+          dispatchEvent(new MessageEvent("message"));
+        } finally {
+          // A handler of messages keeps the process alive.
+          onmessage = null;
+        }
+        console.log(JSON.stringify(seen));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(Array(3).fill([true, true, true, true, true])) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The warning names its target as an event would. Only the method of EventTarget.prototype warns: the function of the
+  // global object is another one, without a warning.
+  test.concurrent("the warning about a listener that is null", async () => {
+    const script = `
+      class Sub extends EventTarget {}
+      const channel = new BroadcastChannel("warning-target");
+      const { port1, port2 } = new MessageChannel();
+      const targets = {
+        EventTarget: new EventTarget(),
+        subclass: new Sub(),
+        AbortSignal: new AbortController().signal,
+        BroadcastChannel: channel,
+        MessagePort: port1,
+        performance,
+      };
+      const receivers = [globalThis, undefined, null];
+      const seen = [];
+      const { promise, resolve } = Promise.withResolvers();
+      process.on("warning", warning => {
+        const { target } = warning;
+        seen.push(target === globalThis ? "globalThis" : Object.keys(targets).find(name => targets[name] === target));
+        if (seen.length === Object.keys(targets).length + receivers.length) resolve();
+      });
+      for (const target of Object.values(targets)) target.addEventListener("warning-target", null);
+      for (const receiver of receivers) EventTarget.prototype.addEventListener.call(receiver, "warning-target", undefined);
+      await promise;
+      channel.close();
+      port1.close();
+      port2.close();
+      console.log(JSON.stringify(seen));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    // stderr has the nine warnings.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout:
+        JSON.stringify([
+          "EventTarget",
+          "subclass",
+          "AbortSignal",
+          "BroadcastChannel",
+          "MessagePort",
+          "performance",
+          "globalThis",
+          "globalThis",
+          "globalThis",
+        ]) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  // A class of a node:vm context has no global object with event wrappers of its own: JSDOMWrapperCache.cpp makes its
+  // instances in the main global object, also where the class is used inside a ShadowRealm. The first answer says that
+  // it still does. Once it does not, this test goes: the tests of `bun test --isolate` below do not need that.
+  test("an event whose wrapper another global object made", () => {
+    const seen = new ShadowRealm().evaluate(`(() => {
+      "use strict";
+      const vm = process.getBuiltinModule("node:vm");
+      const Sub = vm.runInContext("(class Sub extends Event {})", vm.createContext({ Event }));
+      const seen = [];
+      addEventListener("global-target", function (event) {
+        seen.push(
+          event.composedPath().constructor !== Array,
+          this === globalThis,
+          event.target === globalThis,
+          event.currentTarget === globalThis,
+          event.srcElement === globalThis,
+          event.composedPath()[0] === globalThis,
+        );
+      });
+      const event = new Sub("global-target");
+      dispatchEvent(event);
+      seen.push(event.target === globalThis);
+      return seen.join();
+    })()`);
+    expect(seen).toBe("true,true,true,true,true,true,true");
+  });
+
+  // With --isolate, `bun test` loads the package of a DOM environment into a global object that outlives the files. The
+  // wrapper of an event that the package makes is of that global object, and a file dispatches the event on its own.
+  const fakeHappyDOM = {
+    "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+    "node_modules/happy-dom/index.js": `
+      const kept = [];
+      exports.Window = class Window {
+        document = {};
+        happyDOM = { cancelAsync() {} };
+        eventOfPackage = () => {
+          const event = new Event("global-target");
+          kept.push(event);
+          return event;
+        };
+        eventsOfPackage = () => kept;
+        isGlobalOfPackage = value => value === globalThis;
+      };
+    `,
+  };
+  // In two parts: `bun test` looks for the comment in the whole text of a test file, and this file is one.
+  const inHappyDOM = `// ${"@vitest"}-environment happy-dom`;
+  // EventTarget and dispatchEvent are the window's in such a file. BroadcastChannel.prototype is still below Bun's EventTarget.prototype.
+  const methodsOfBun = `const { addEventListener, removeEventListener, dispatchEvent } = Object.getPrototypeOf(BroadcastChannel.prototype);`;
+  const nameOf = `const name = value =>
+    value === null ? "null" : value === globalThis ? "globalThis" : isGlobalOfPackage(value) ? "of the package" : typeof value;`;
+
+  // What the files print, and how the run ends.
+  async function bunTest(dir, ...flags) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags],
+      env: { ...bunEnv, NODE_PATH: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      // The first line is the banner of `bun test`.
+      stdout: stdout.split(/\r?\n/).slice(1).filter(Boolean),
+      summary: stderr.match(/^ *\d+ (?:pass|fail)$/gm)?.map(line => line.trim()),
+      exitCode,
+    };
+  }
+
+  test.concurrent.each(["--isolate", "--parallel=2"])(
+    "an event whose wrapper the lasting global object of `bun test %s` made",
+    async flag => {
+      using dir = tempDir("global-event-target", {
+        ...fakeHappyDOM,
+        "target.test.js": `${inHappyDOM}
+          import { expect, test } from "bun:test";
+          test("target", () => {
+            expect(isGlobalOfPackage(globalThis)).toBe(false);
+            ${methodsOfBun}
+            const event = eventOfPackage();
+            const seen = [];
+            function listener(event) {
+              seen.push(this, event.target, event.currentTarget, event.srcElement, ...event.composedPath());
+            }
+            addEventListener.call(globalThis, "global-target", listener);
+            try {
+              dispatchEvent.call(globalThis, event);
+            } finally {
+              removeEventListener.call(globalThis, "global-target", listener);
+            }
+            seen.push(event.target);
+            ${nameOf}
+            console.log(JSON.stringify(seen.map(name)));
+          });
+        `,
+      });
+      expect(await bunTest(dir, flag, "target.test.js")).toEqual({
+        stdout: [JSON.stringify(Array(6).fill("globalThis"))],
+        summary: ["1 pass", "0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // A file that is done leaves its global object to the collector. An event that the package keeps has that object as
+  // its target until then, and no target after. Which object the collector takes first is not told, so the last file
+  // asks until one is gone.
+  test.concurrent("an event that outlives the global object that it was dispatched on", async () => {
+    const dispatches = `${inHappyDOM}
+      import { expect, test } from "bun:test";
+      test("dispatch", () => {
+        ${methodsOfBun}
+        const event = eventOfPackage();
+        dispatchEvent.call(globalThis, event);
+        expect(event.target === globalThis).toBe(true);
+      });
+    `;
+    using dir = tempDir("global-event-target", {
+      ...fakeHappyDOM,
+      ...Object.fromEntries(["a", "b", "c", "d", "e", "f"].map(name => [`${name}.test.js`, dispatches])),
+      "z.test.js": `${inHappyDOM}
+        import { test } from "bun:test";
+        test("read", async () => {
+          const events = eventsOfPackage();
+          let gone;
+          for (let round = 0; round < 50 && !gone; round++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+            gone = events.find(event => event.target === null);
+          }
+          ${nameOf}
+          const seen = { kept: events.length, gone: gone ? [gone.target, gone.srcElement].map(name) : "none" };
+          // No event answers the global object of the package, or of this file.
+          seen.others = [...new Set(events.map(event => name(event.target)))].filter(kind => kind !== "null" && kind !== "object");
+          if (gone) {
+            ${methodsOfBun}
+            dispatchEvent.call(globalThis, gone);
+            seen.again = [gone.target, gone.srcElement].map(name);
+          }
+          console.log(JSON.stringify(seen));
+        });
+      `,
+    });
+    expect(await bunTest(dir, "--isolate")).toEqual({
+      stdout: [JSON.stringify({ kept: 6, gone: ["null", "null"], others: [], again: ["globalThis", "globalThis"] })],
+      summary: ["7 pass", "0 fail"],
+      exitCode: 0,
+    });
+  });
+});
 
 // Assigning onmessage/onerror through a receiver that is not the global object
 // (e.g. a Proxy of globalThis) used to crash with a type confusion.

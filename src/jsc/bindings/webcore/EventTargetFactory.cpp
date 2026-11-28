@@ -46,7 +46,12 @@ template<> JSC::JSValue toJS<EventTarget>(JSC::JSGlobalObject* state, JSDOMGloba
     case BunWebViewEventTargetInterfaceType:
         return Bun::toJS(state, globalObject, static_cast<Bun::WebViewEventTarget&>(impl));
     case DOMWindowEventTargetInterfaceType:
-        return globalObject;
+        // Script holds a global object as its `globalThis`, never as the JSGlobalObject cell.
+        if (globalObject->globalEventScope.ptr() == &impl) [[likely]] {
+            ASSERT(globalObject->globalEventScope->globalThis() == globalObject->globalThis());
+            return globalObject->globalThis();
+        }
+        return toJS(state, globalObject, static_cast<GlobalEventScope&>(impl));
     case MessagePortEventTargetInterfaceType:
         return toJS(state, globalObject, static_cast<MessagePort&>(impl));
     case WebSocketEventTargetInterfaceType:

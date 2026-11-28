@@ -2,7 +2,7 @@
 // definition and sampled lines, all in the original source.
 // Runs alone: it counts the samples that a timer takes.
 import { expect } from "bun:test";
-import { closeSync, openSync, readFileSync, readSync, rmSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { cCompiler, without } from "./harness/capabilities";
@@ -76,7 +76,6 @@ async function checkSamples(
 
     const isLastRun = total >= 2000 || Date.now() >= end;
     if (total < 400 && !isLastRun) continue;
-    console.log("TEMPORARY hits", JSON.stringify(hits));
     try {
       return check(hits);
     } catch (error) {
@@ -285,7 +284,7 @@ test("what the runtime does for a function without a frame of its own belongs to
         return sum;
       }
       let total = 0;
-      // Where the clock is a system call, a signal that is on its way is delivered at the end of it.
+      // The clock is a system call on Alpine aarch64, and a signal that is on its way is delivered at the end of it.
       for (const step of [finds, equals, compares, getters, literals, adds])
         for (const end = Date.now() + 200; Date.now() < end; ) for (let i = 0; i < 8; i++) total += step();
       console.log(total > 0);`,
@@ -465,7 +464,7 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
         for (const step of [sines, powers, clocks, dates, getters, alternates]) {
           let rounds = 0;
           for (const end = Date.now() + 100; Date.now() < end; rounds++) total += step();
-          spinsInEveryStep &&= rounds < 1000;
+          spinsInEveryStep &&= rounds < 1000; // 100 spins are 2 million cycles.
         }
         console.log(total > 0 && spinsInEveryStep);`,
     });
@@ -495,120 +494,3 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
   },
   120_000,
 );
-
-test("TEMPORARY: prints where the samples of a short step go", async () => {
-  const main = `
-      const flat = (text: string) => Buffer.from(text, "latin1").toString("latin1");
-      const long = Buffer.alloc(20_000, "a").toString("latin1");
-      const text = flat(long + "b");
-      const names = Array.from({ length: 500 }, (_, id) => ({ name: flat("n" + (10_000 + id)) }));
-      const table: any = {
-        text,
-        same: flat(long + "b"),
-        other: flat(long + "c"),
-        isLast(item: any) { return item.name === "n10499"; },
-        get getter() { return text.indexOf(key("b")); },
-        now() { return Date.now(); },
-      };
-      const key = (name: string) => (process.argv.length > 50 ? "" : name);
-      function finds(): number { let sum = 0; for (let i = 0; i < 100; i++) sum += text.indexOf(key("b")); return sum; }
-      function equals(): number { let sum = 0; const a = table[key("text")], b = table[key("same")]; for (let i = 0; i < 100; i++) sum += +(a === b); return sum; }
-      function compares(): number { let sum = 0; const a = table[key("text")], b = table[key("other")]; for (let i = 0; i < 100; i++) sum += +(a < b); return sum; }
-      function getters(): number { let sum = 0; for (let i = 0; i < 100; i++) sum += table[key("getter")]; return sum; }
-      function literals(): number { let sum = 0; const isLast = table[key("isLast")]; for (const item of names) sum += +isLast(item); return sum; }
-      function adds(): number {
-        let sum = 0;
-        for (let i = 0; i < 10; i++) {
-          table.add = function add() { return i + sum; };
-          for (let calls = 0; calls < 300; calls++) sum += table[key("add")]() & 1;
-        }
-        return sum;
-      }
-      function clock(): string {
-        const usage = process.cpuUsage();
-        const start = performance.now();
-        let reads = 0;
-        for (const end = Date.now() + 100; Date.now() < end; ) reads++;
-        const { user, system } = process.cpuUsage(usage);
-        return (((performance.now() - start) * 1e6) / reads).toFixed(0) + " ns a read, user " + user + " system " + system;
-      }
-      let total = 0;
-      const times: string[] = [];
-      for (const step of [finds, equals, compares, getters, literals, adds]) {
-        let rounds = 0;
-        if (process.env.BY_VALUE) for (const now = table[key("now")], end = now() + 200; now() < end; rounds++) total += step();
-        else for (const end = Date.now() + 200; Date.now() < end; rounds++) total += step();
-        times.push(step.name + " " + (200e3 / rounds).toFixed(1));
-      }
-      console.log(times.join(", ") + "; " + clock());`;
-  using dir = tempDir("aot-cpu-profile-temporary", { "main.ts": main });
-  const cwd = String(dir);
-  await buildProgramThatProfilesItself(cwd);
-  const steps = ["finds", "equals", "compares", "getters", "literals", "adds", "clock"];
-
-  const oneCore = Bun.which("taskset") ? ["taskset", "-c", "1"] : [];
-  for (let run = 0; run < 14; run++) {
-    const prefix = run < 12 ? [] : oneCore;
-    const BY_VALUE = run % 2 ? "1" : undefined;
-    const { stdout } = await spawned([...prefix, join(cwd, "program")], cwd, { ...bunEnv, BY_VALUE });
-    const { nodes, samples } = JSON.parse(readFileSync(join(cwd, "own.cpuprofile"), "utf8"));
-    const parents = new Map<number, ProfileNode>();
-    for (const node of nodes) for (const child of node.children ?? []) parents.set(child, node);
-    const module: ProfileNode = nodes.find((node: ProfileNode) => node.callFrame.functionName === "(module)");
-    const inModule: Record<string, [number, number, number]> = {};
-    let step = "start";
-    for (const id of samples) {
-      let node = nodes[id - 1];
-      while (parents.has(node.id) && parents.get(node.id) !== module) node = parents.get(node.id);
-      if (steps.includes(node.callFrame.functionName)) step = node.callFrame.functionName;
-      (inModule[step] ??= [0, 0, 0])[0] += +(id === module.id);
-      inModule[step][1] += +(node.callFrame.functionName === "now");
-      inModule[step][2]++;
-    }
-    const withPosition = (module.positionTicks ?? []).reduce((sum, tick) => sum + tick.ticks, 0);
-    console.log(
-      "TEMPORARY",
-      prefix.join(" "),
-      BY_VALUE ? "by value" : "direct",
-      stdout.trim(),
-      "| (module), now, all, by step",
-      JSON.stringify(inModule),
-      `| (module) ${module.hitCount}, without a position ${module.hitCount - withPosition}`,
-    );
-  }
-
-  if (!isLinux) return;
-  const [start, end] = readFileSync("/proc/self/maps", "utf8")
-    .match(/^(\w+)-(\w+) .*\[vdso\]$/m)!
-    .slice(1)
-    .map(address => BigInt("0x" + address));
-  const vdso = Buffer.alloc(Number(end - start));
-  const memory = openSync("/proc/self/mem", "r");
-  readSync(memory, vdso, 0, vdso.length, start);
-  closeSync(memory);
-  const tags: string[] = [];
-  for (let i = 0; i < vdso.readUInt16LE(56); i++) {
-    const header = Number(vdso.readBigUInt64LE(32)) + i * vdso.readUInt16LE(54);
-    if (vdso.readUInt32LE(header) !== 2) continue;
-    for (let entry = Number(vdso.readBigUInt64LE(header + 8)); vdso.readBigUInt64LE(entry); entry += 16)
-      tags.push(vdso.readBigUInt64LE(entry).toString(16));
-  }
-  const output = (...cmd: string[]) => {
-    try {
-      const { stdout, stderr } = Bun.spawnSync({ cmd });
-      return (stdout.toString() + stderr.toString()).trim().split("\n").slice(0, 3).join(" / ");
-    } catch (error) {
-      return String(error);
-    }
-  };
-  console.log(
-    "TEMPORARY vDSO has DT_HASH",
-    tags.includes("4"),
-    "DT_GNU_HASH",
-    tags.includes("6ffffef5"),
-    "|",
-    output("sh", "-c", "apk info -v | grep '^musl-[0-9]'; uname -r; grep -m1 'CPU part\\|model name' /proc/cpuinfo"),
-    "|",
-    output("cat", "/sys/devices/system/clocksource/clocksource0/current_clocksource"),
-  );
-}, 120_000);

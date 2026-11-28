@@ -1767,12 +1767,12 @@ pub(crate) fn get_timer_count<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, usiz
 }
 
 pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
-    let global = cx.global();
-    error_unless_fake_timers(global)?;
+    // As in Jest and Vitest: a shared `afterEach` also calls this after a test that faked no timers.
+    if is_active() {
+        timer_all().fake_timers.clear();
+    }
 
-    timer_all().fake_timers.clear();
-
-    Ok(chainable_this(global, this_value))
+    Ok(chainable_this(cx.global(), this_value))
 }
 
 pub(crate) fn is_fake_timers() -> bool {

@@ -93,7 +93,7 @@ impl FileLowering<'_, '_, '_, '_> {
         is_plain.then(|| (object, name, hir.ids(site.args).collect()))
     }
 
-    fn is_name_of(&self, name: ExprId, symbol: SymbolId) -> bool {
+    pub(super) fn is_name_of(&self, name: ExprId, symbol: SymbolId) -> bool {
         self.symbol_named_by(name) == Some(symbol)
     }
 

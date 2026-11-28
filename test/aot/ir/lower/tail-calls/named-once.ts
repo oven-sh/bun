@@ -1,13 +1,16 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="breakBehind"
 // CHECK: [[breakCall]] = Call
-// CHECK-NEXT: ReturnCall [[breakCall]]
+// CHECK-NEXT: [[breakValue]] = CheckInitialized [[breakCall]]
+// CHECK-NEXT: Return [[breakValue]]
 // CHECK-LABEL: function {{*}}name="castsOnTheWay"
 // CHECK: [[castCall]] = Call
-// CHECK-NEXT: ReturnCall [[castCall]] casts=[{{*}}{declared={type=undefined|null|number|string{{*}}}}, {declared={type=number{{*}}}}, {declared={type=number{{*}}}}]
+// CHECK-NEXT: [[annotated]] = Convert [[castCall]] declared={type=undefined|null|number|string{{*}}}
+// CHECK-NEXT: [[asserted]] = Convert [[annotated]] declared={type=number}
+// CHECK-NEXT: Return [[asserted]]
 // CHECK-LABEL: function {{*}}name="inOneStatement"
 // CHECK: [[statementCall]] = Call
-// CHECK-NEXT: ReturnCall [[statementCall]]
+// CHECK-NEXT: Return [[statementCall]]
 // CHECK-LABEL: function {{*}}name="notTheLast"
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[first]]

@@ -11,12 +11,11 @@ use smallvec::SmallVec;
 
 use super::statements_behind;
 use crate::builtins::id::BuiltinId;
-use crate::ir::{BlockId, DeclaredType, LocalVariable, TypeTable, ValueId, VariableKey};
+use crate::ir::{BlockId, LocalVariable, TypeTable, ValueId, VariableKey};
 use crate::lower::call::emit_call;
-use crate::lower::expression::{Evaluation, Tail, TailCast};
 use crate::lower::member::PropertyName;
 use crate::lower::object::finish_object;
-use crate::lower::{FileLowering, FunctionLowering, control, scope};
+use crate::lower::{FileLowering, FunctionLowering, scope};
 use crate::modules::{CopiedExports, ShownNames};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -53,28 +52,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some((hir.id_at(list, index), behind))
     }
 
-    fn push_casts_around_name(
-        &mut self,
-        value: ExprId,
-        symbol: SymbolId,
-        casts: &mut SmallVec<[DeclaredType; 2]>,
-    ) -> bool {
-        let hir = self.hir;
-        let first = casts.len();
-        let mut current = value;
-        while let Some(operand) = hir.type_assertion_operand(current) {
-            if let ExprKind::As { ty, .. } = hir[current].kind
-                && self.is_checked()
-            {
-                casts.push(self.assertion_position(ty));
-            }
-            current = operand;
-        }
-        casts[first..].reverse();
-        matches!(hir[current].kind, ExprKind::Ident(_))
-            && self.bound.binding(current) == Binding::Symbol(symbol)
-    }
-
     fn is_any_named_where_never_reached(&self, list: IdList<StmtId>, symbols: &[SymbolId]) -> bool {
         let (hir, bound, decisions) = (self.hir, self.bound, self.decisions());
         let never_reached = hir.ids(list).filter(|&it| decisions.is_dead_stmt(it));
@@ -92,28 +69,18 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    fn find_casts_up_to_return(
-        &mut self,
+    /// The statements behind the `return` that `first` hands its value on to, and the variables on the way there.
+    fn find_row_up_to_return(
+        &self,
         first: VarDeclId,
         mut behind: IdList<StmtId>,
-    ) -> Option<SmallVec<[DeclaredType; 2]>> {
+    ) -> Option<(IdList<StmtId>, SmallVec<[SymbolId; 2]>)> {
         let (hir, bound) = (self.hir, self.bound);
-        let initializer = self.skip_type_syntax(hir[first].init);
-        if matches!(hir[initializer].kind, ExprKind::Ident(_))
-            || self.is_class_named_by_its_declaration(initializer)
-            || self.stands_as_written(hir[initializer].pos)
-        {
-            return None;
-        }
-        let mut casts = SmallVec::new();
-        let mut row: SmallVec<[SymbolId; 2]> = SmallVec::new();
+        let mut row = SmallVec::new();
         let mut next = Some(first);
         while let Some(declaration) = next {
             let symbol = self.find_variable_named_once(declaration)?;
             row.push(symbol);
-            if self.is_checked() {
-                casts.push(self.annotation_position(hir[declaration].ty));
-            }
             let StmtKind::Var(declarations) = hir[bound.var_stmt[declaration.idx()]].kind else {
                 return None;
             };
@@ -134,36 +101,28 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                 }
             };
-            if !self.push_casts_around_name(value.some()?, symbol, &mut casts) {
+            if !self.is_name_of(self.skip_type_syntax(value.some()?), symbol) {
                 return None;
             }
         }
-        (!self.is_any_named_where_never_reached(behind, &row)).then_some(casts)
+        Some((behind, row))
+    }
+
+    /// `bun run` prints `const made = () => {}; return made;` as `return () => {};`, where the function gets no name.
+    fn is_only_returned(&mut self, first: VarDeclId, behind: IdList<StmtId>) -> bool {
+        let initializer = self.skip_type_syntax(self.hir[first].init);
+        !matches!(self.hir[initializer].kind, ExprKind::Ident(_))
+            && !self.is_class_named_by_its_declaration(initializer)
+            && !self.stands_as_written(self.hir[initializer].pos)
+            && self
+                .find_row_up_to_return(first, behind)
+                .is_some_and(|(behind, row)| !self.is_any_named_where_never_reached(behind, &row))
     }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_variable_declaration(&mut self, declaration: VarDeclId) {
         self.lower_variable_declaration_in_list(declaration, IdList::EMPTY);
-    }
-
-    fn lower_returned_initializer(
-        &mut self,
-        initializer: ExprId,
-        casts: &[DeclaredType],
-    ) -> ValueId {
-        let casts = TailCast {
-            positions: casts,
-            outer: None,
-            breaks_no_int32_promise: false,
-        };
-        let tail = match control::allows_tail_call_of(self, initializer) {
-            true => Tail::Yes {
-                casts: Some(&casts),
-            },
-            false => Tail::No,
-        };
-        self.lower_expression_in(initializer, Evaluation::at_tail(tail))
     }
 
     pub(super) fn lower_variable_declaration_in_list(
@@ -217,17 +176,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_expression(initializer)
             }
             PatKind::Ident(name) => {
-                let casts = match target.is_none() && !self.drops_returned_value() {
-                    true => self.file.find_casts_up_to_return(declaration, behind),
-                    false => None,
-                };
-                match casts {
-                    Some(casts) => self.lower_returned_initializer(initializer, &casts),
-                    None => {
-                        let binding = bound.initialized_binding(decl.pat);
-                        let name = self.file.name_given_by_binding(binding, name);
-                        self.lower_named_evaluation(initializer, name)
-                    }
+                if target.is_none()
+                    && !self.drops_returned_value()
+                    && self.file.is_only_returned(declaration, behind)
+                {
+                    self.lower_expression(initializer)
+                } else {
+                    let binding = bound.initialized_binding(decl.pat);
+                    let name = self.file.name_given_by_binding(binding, name);
+                    self.lower_named_evaluation(initializer, name)
                 }
             }
             PatKind::Object(_) if self.file.find_destructured_module(initializer).is_some() => {

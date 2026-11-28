@@ -187,6 +187,11 @@ impl PosixLoop {
         self.active.get() > 0
     }
 
+    /// How many things keep the loop alive.
+    pub fn active_count(&self) -> u32 {
+        self.active.get()
+    }
+
     // This exists as a method so that we can stick a debugger in here
     pub fn add_active(&self, value: u32) {
         let active = self.active.get();
@@ -381,6 +386,11 @@ impl WindowsLoop {
 
     pub fn is_active(&self) -> bool {
         self.uv().is_active()
+    }
+
+    /// How many things keep the loop alive.
+    pub fn active_count(&self) -> u32 {
+        self.uv().active_count()
     }
 
     /// The one method that other threads may call.

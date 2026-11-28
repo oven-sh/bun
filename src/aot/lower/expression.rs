@@ -29,7 +29,7 @@ pub(in crate::lower) use self::chain::{ShortCircuit, is_link_in_brackets};
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct TailCast<'t> {
-    pub(in crate::lower) positions: &'t [DeclaredType],
+    pub(in crate::lower) position: DeclaredType,
     pub(in crate::lower) outer: Option<&'t TailCast<'t>>,
     pub(in crate::lower) breaks_no_int32_promise: bool,
 }
@@ -622,13 +622,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         ty: TypeNodeId,
         evaluation: Evaluation<'_>,
     ) -> ValueId {
-        let position;
         let cast;
         let tail = match evaluation.tail {
             Tail::Yes { casts } if self.file.is_checked() => {
-                position = self.file.assertion_position(ty);
                 cast = TailCast {
-                    positions: std::slice::from_ref(&position),
+                    position: self.file.assertion_position(ty),
                     outer: casts,
                     breaks_no_int32_promise: false,
                 };

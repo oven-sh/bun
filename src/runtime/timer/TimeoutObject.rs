@@ -337,6 +337,7 @@ impl TimeoutObject {
             && let Some(idle_start) = value.get_number().filter(|ms| ms.is_finite())
         {
             let ms = (idle_start as i64).saturating_add(i64::from(self.interval.get()));
+            self.event_loop_timer.is_due_when_idle.set(false);
             timer_all().update(self.node(), &Timespec::EPOCH.add_ms(ms.max(0)));
         }
         js::idle_start_set_cached(this_value.to_js(), cx.global(), value);

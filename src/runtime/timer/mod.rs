@@ -612,7 +612,7 @@ impl All {
         // Real clock: both heaps hold opt-out-of-fake-timers nodes armed in
         // real-time units; the mocked clock made internal pacing spin on re-arm.
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
-        if next.greater(&now) && !self.is_due_when_idle() {
+        if next.greater(&now) && !(self.is_due_when_idle() && self.is_idle(vm)) {
             *spec = next.duration(&now);
             if let Some(us) = quic_next_tick_us {
                 if us >= 0 {
@@ -635,6 +635,23 @@ impl All {
         }
     }
 
+    /// Whether the event loop would only sleep until the next timer: nothing is queued, and nothing but timers and immediates
+    /// keeps it alive. A read, a request or a child process that is under way may well end within 1 ms, and tests count on that.
+    fn is_idle(&self, vm: &VirtualMachine) -> bool {
+        #[cfg(not(windows))]
+        let own = u32::from(self.active_timer_count.get() > 0)
+            + u32::from(self.immediate_ref_count.get() > 0);
+        #[cfg(windows)]
+        let own = {
+            // SAFETY: JS thread only, and `is_active` runs no callback.
+            let (uv_timer, uv_idle) = unsafe { (&*self.uv_timer.get(), &*self.uv_idle.get()) };
+            // libuv stops a timer before it calls its callback, which is where the timers are drained.
+            u32::from(self.active_timer_count.get() > 0 && uv_timer.is_active())
+                + u32::from(uv_idle.is_active())
+        };
+        !vm.has_queued_work() && vm.uws_loop().active_count() <= own
+    }
+
     /// Whether the first timer does not wait for its deadline. See `EventLoopTimer::is_due_when_idle`.
     fn is_due_when_idle(&self) -> bool {
         self.timers.peek().is_some_and(|first| {
@@ -645,20 +662,27 @@ impl All {
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
-    fn next(&self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
+    fn next(
+        &self,
+        is_idle: bool,
+        started: &mut Option<Timespec>,
+        now: &mut Timespec,
+    ) -> Option<*mut EventLoopTimer> {
         // SAFETY: peek returns a live heap node
         let first = unsafe { &*self.timers.peek()? };
-        if !*has_set_now {
+        let started = *started.get_or_insert_with(|| {
             // Real clock: this heap is the opt-out-of-fake-timers set.
             *now = Timespec::now(TimespecMockMode::ForceRealTime);
-            *has_set_now = true;
-            // What this drain's callbacks set is due later than this, so it waits for the next turn of the event loop.
-            if first.is_due_when_idle.get() && first.next.get().greater(now) {
-                *now = first.next.get();
+            *now
+        });
+        let deadline = first.next.get();
+        if deadline.greater(now) {
+            // All that were set before this drain run in it, as in Node. What its callbacks set is due later than 1 ms after
+            // its start, so it waits for the next turn of the event loop.
+            if !is_idle || !first.is_due_when_idle.get() || deadline.greater(&started.add_ms(1)) {
+                return None;
             }
-        }
-        if first.next.get().greater(now) {
-            return None;
+            *now = deadline;
         }
         self.timers.delete_min()
     }
@@ -667,9 +691,11 @@ impl All {
         let mut wtf_now: Option<Timespec> = None;
         let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
+        // An immediate or a task that the poll's callbacks queued runs before a timer that still has 1 ms to wait, as in Node.
+        let is_idle = self.zero_delay_is_due_when_idle.get() && self.is_idle(vm);
         let mut now = Timespec { sec: 0, nsec: 0 };
-        let mut has_set_now = false;
-        while let Some(t) = self.next(&mut has_set_now, &mut now) {
+        let mut started = None;
+        while let Some(t) = self.next(is_idle, &mut started, &mut now) {
             // SAFETY: `t` was just popped from the intrusive heap and is live.
             let fired = unsafe { crate::dispatch::fire_timer(t, &now, vm) };
             if fold_timer(vm, fired).is_err() {

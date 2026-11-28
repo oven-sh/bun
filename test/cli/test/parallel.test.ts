@@ -58,6 +58,35 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   expect(c2).toBe(0);
 });
 
+test("--parallel: the link to the coordinator does not make a delay of 0 wait for Node's minimum of 1 ms", async () => {
+  const fixture = `
+    import { test } from "bun:test";
+    test("t", async () => {
+      let fastest = Infinity;
+      for (let i = 0; i < 100; i++) {
+        const start = performance.now();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        fastest = Math.min(fastest, performance.now() - start);
+      }
+      console.log(JSON.stringify({ isWorker: "BUN_TEST_WORKER_ID" in process.env, waits: fastest >= 1 }));
+    });
+  `;
+  using dir = tempDir("parallel-delay-of-0", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_TEST_WORKER_ID: undefined },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(Array.from((stdout + stderr).matchAll(/^\{.*\}/gm), match => JSON.parse(match[0]))).toEqual([
+    { isWorker: true, waits: false },
+    { isWorker: true, waits: false },
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test.each([
   ["--parallel=2", ["a.test.js", "b.test.js", "c.test.js"], /^(1,1,1,1|2,2,2,2)$/],
   // These two fall back to a serial run.

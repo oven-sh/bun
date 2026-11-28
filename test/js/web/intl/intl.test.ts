@@ -125,6 +125,15 @@ describe("Intl.Collator", () => {
     expect(["하", "가", "나"].sort(new Intl.Collator("ko").compare)).toMatchSnapshot();
   });
 
+  snapshotIf("ja, ko and zh each reorder the same kanji (coll/ja.res, coll/ko.res, coll/zh.res)", () => {
+    // The Hangul above sorts the same way under every locale, so it does not show whether coll/ko.res loads. Here
+    // a locale whose tailoring does not load sorts like `en`.
+    const out: Record<string, string[]> = {};
+    for (const loc of ["en", "ja", "ko", "zh"])
+      out[loc] = ["一", "丁", "亜", "愛"].sort(new Intl.Collator(loc).compare);
+    expect(out).toMatchSnapshot();
+  });
+
   snapshotIf("de phonebook vs standard", () => {
     expect({
       standard: ["öf", "of"].sort(new Intl.Collator("de").compare),
@@ -251,6 +260,14 @@ describe("Intl.Segmenter", () => {
       zh: seg("zh", "word", "中文分词测试"),
       ja: seg("ja", "word", "今日はいい天気"),
       th: seg("th", "word", "สวัสดีครับ"),
+    }).toMatchSnapshot();
+  });
+
+  snapshotIf("word in km/lo/my (brkitr/khmerdict, laodict, burmesedict)", () => {
+    expect({
+      km: seg("km", "word", "ភាសាខ្មែរគឺជាភាសាផ្លូវការ"),
+      lo: seg("lo", "word", "ພາສາລາວເປັນພາສາທາງການ"),
+      my: seg("my", "word", "မြန်မာဘာသာစကားဖြစ်သည်"),
     }).toMatchSnapshot();
   });
 });

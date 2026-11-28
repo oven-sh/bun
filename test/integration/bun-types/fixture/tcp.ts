@@ -1,4 +1,5 @@
 import * as Bun from "bun";
+import { expectType } from "./utilities";
 
 await Bun.connect({
   data: { arg: "asdf" },
@@ -166,3 +167,25 @@ await Bun.connect({
   hostname: "localhost",
   port: 1,
 });
+
+// Bun.connect() accepts an already-connected file descriptor (issue #48846)
+declare const connectedFd: number;
+const fdOptions: Bun.FdSocketOptions = {
+  fd: connectedFd,
+  socket: {
+    data() {},
+  },
+};
+expectType(await Bun.connect(fdOptions)).is<Bun.Socket<undefined>>();
+
+expectType(
+  await Bun.connect({
+    fd: connectedFd,
+    data: { arg: "asdf" },
+    socket: {
+      data(socket) {
+        socket.data.arg.toLowerCase();
+      },
+    },
+  }),
+).is<Bun.Socket<{ arg: string }>>();

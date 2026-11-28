@@ -1,8 +1,6 @@
 const EventEmitter = require("node:events");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
-
-const ObjectCreate = Object.create;
-const kEmptyObject = ObjectCreate(null);
+const { kEmptyObject } = require("internal/shared");
 
 var fetch: (input: string | URL | Request, init?: object) => Promise<Response> = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
@@ -108,7 +106,6 @@ class BodyReadable extends ReadableFromWeb {
 // NOT IMPLEMENTED
 // *   idempotent?: boolean;
 // *   onInfo?: (info: { statusCode: number, headers: Object<string, string | string[]> }) => void;
-// *   opaque?: *;
 // *   responseHeader: 'raw' | null;
 // *   headersTimeout?: number | null;
 // *   bodyTimeout?: number | null;
@@ -128,14 +125,15 @@ class BodyReadable extends ReadableFromWeb {
  *   query?: Record<string, any>;
  *   reset?: boolean;
  *   throwOnError?: boolean;
+ *   opaque?: *;
  * }} [options]
  * @returns {{
  *   statusCode: number;
  *   headers: IncomingHttpHeaders;
  *   body: ResponseBody;
- *   trailers: Object<string, string>;
+ *   trailers: undefined;
  *   opaque: *;
- *   context: Object<string, *>;
+ *   context?: Object<string, *>;
  * }}
  */
 interface RequestOptions {
@@ -147,6 +145,7 @@ interface RequestOptions {
   query?: ConstructorParameters<typeof globalThis.URLSearchParams>[0] | null;
   reset?: boolean;
   throwOnError?: boolean;
+  opaque?: unknown;
 }
 
 async function request(
@@ -181,6 +180,7 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
+    opaque,
     // dispatcher,
   } = options;
 
@@ -217,7 +217,7 @@ async function request(
 
   const followRedirects = maxRedirections != null && maxRedirections > 0;
 
-  const resp: Response & { trailers?: undefined } = await fetch(url, {
+  const resp = await fetch(url, {
     signal,
     mode: "cors",
     method,
@@ -228,7 +228,7 @@ async function request(
     keepalive: !reset,
   });
 
-  const { status: statusCode, headers, trailers } = resp;
+  const { status: statusCode, headers } = resp;
 
   // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
@@ -237,7 +237,17 @@ async function request(
 
   const body = new BodyReadable(resp);
 
-  return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
+  // The result of undici: https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L141-L147
+  return {
+    statusCode,
+    headers: headers.toJSON(),
+    body,
+    // Not implemented: fetch() does not report the trailers of a response.
+    trailers: undefined,
+    opaque: opaque || null,
+    // undici keeps the `history` of the redirects here. fetch() does not report them.
+    context: followRedirects ? {} : undefined,
+  };
 }
 
 function stream() {

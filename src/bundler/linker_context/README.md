@@ -760,7 +760,7 @@ The renamed symbols are then used during final code generation to produce output
 **Key functions**:
 
 - Walks the import graph in evaluation order (`EntryWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports
-- One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
+- One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). `for_each_edge` and the CSS walk (`findImportedCSSFilesInJSOrder.rs`) decide with one rule which import records a load follows (`edge_of_record`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
 - On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
@@ -772,9 +772,10 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- Orders CSS imports within JS chunks
-- Handles CSS dependency resolution
-- Manages CSS-in-JS import patterns
+- One walk per entry point, depth first from the entry point's file, along every import record of every file. The walk gives each CSS file that JS imports its place: among these files, the order is the one without tree shaking. A CSS file that stays only through an `@import` in a kept CSS file is not in the result, and `findImportedFilesInCSSOrder.rs` places it
+- A CSS file stays in the result only if a JS file that runs imports it, with an `import` statement, or with a `require()` or an `import()` in a part that runs (`edge_of_record`). A file runs if it is live and the entry point loads it (`files_live` and the entry point's bit in `entry_bits`). The CSS file's own `sideEffects` flag and liveness are not read
+- With code splitting, the entry points that an entry point loads on demand count as that entry point (`CssWalkPlan`): no code adds a stylesheet when a chunk loads, so the stylesheet of the entry point holds the CSS of the chunks it loads later
+- The walks read `entry_bits` before `merge_small_chunks` changes them. They ask which files a load evaluates, not which chunk holds a file
 
 #### `findImportedFilesInCSSOrder.rs`
 

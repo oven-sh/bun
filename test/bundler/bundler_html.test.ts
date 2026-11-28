@@ -1358,6 +1358,39 @@ body {
     },
   });
 
+  // lib/index.js re-exports A and B. The script uses A, and loads lazy.js later.
+  itBundled("html/CSSOfTreeShakenScriptImport", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./page.css" />
+    <script type="module" src="./script.js"></script>
+  </head>
+  <body></body>
+</html>`,
+      "/page.css": `.page { color: green }`,
+      "/script.js": `import { A } from "./lib/index.js"; console.log(A); import("./lazy.js");`,
+      "/lazy.js": `import "./lazy.css"; console.log("lazy");`,
+      "/lazy.css": `.lazy { color: purple }`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+      "/lib/index.js": `export { A } from "./a.js"; export { B } from "./b.js";`,
+      "/lib/a.js": `import "./a.css"; export const A = "A";`,
+      "/lib/b.js": `import "./b.css"; export const B = "B";`,
+      "/lib/a.css": `.a { color: red }`,
+      "/lib/b.css": `.b { color: blue }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(Array.from(stylesheetOf(api, "index.html").matchAll(/^\/\* (\S+) \*\/$/gm), match => match[1])).toEqual([
+        "page.css",
+        "lib/a.css",
+        "lazy.css",
+      ]);
+    },
+  });
+
   // lol-html doesn't infer end tags, so every <p> is open until </body>.
   itBundled("html/many-unclosed-elements", {
     outdir: "out/",

@@ -806,7 +806,7 @@ impl LoadEffect {
 }
 
 #[derive(Clone, Copy)]
-enum Edge {
+pub(super) enum Edge {
     /// `file` runs here, under the same load.
     Import(IndexInt),
     /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
@@ -932,15 +932,9 @@ fn for_each_edge(
         let part_index = part_index as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
-            let is_statement = record.kind == ImportKind::Stmt;
-            if !record.source_index.is_valid() || !(is_statement || is_live) {
-                continue;
+            if let Some(edge) = edge_of_record(c, source_index, part, is_live, record) {
+                each(part_index, record.kind != ImportKind::Stmt, edge);
             }
-            each(
-                part_index,
-                !is_statement,
-                edge_of_record(c, source_index, part, record),
-            );
         }
         // A chunk prints its own copy of the CSS class names that it uses, also when the `import` is in another chunk.
         if is_live {
@@ -983,20 +977,25 @@ impl<'a> PartsToWalk<'a> {
     }
 }
 
-fn edge_of_record(
+/// The edge along `record`, if a load follows it: a `require()` or an `import()` only from a part that runs.
+pub(super) fn edge_of_record(
     c: &LinkerContext,
     source_index: IndexInt,
     part: &bun_ast::Part,
+    part_runs: bool,
     record: &ImportRecord,
-) -> Edge {
+) -> Option<Edge> {
+    if !record.source_index.is_valid() || !(record.kind == ImportKind::Stmt || part_runs) {
+        return None;
+    }
     let other = record.source_index.get();
-    if !c.is_external_dynamic_import(record, source_index) {
+    Some(if !c.is_external_dynamic_import(record, source_index) {
         Edge::Import(other)
     } else if record.kind == ImportKind::Require && !part_has_no_side_effects(part) {
         Edge::LoadNow(other)
     } else {
         Edge::LoadLater(other)
-    }
+    })
 }
 
 #[derive(Clone, Copy)]

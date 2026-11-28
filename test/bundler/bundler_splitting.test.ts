@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer, type RawSourceMap } from "source-map";
-import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
+import { cssFilesIn, itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 import { checkGraph, run } from "./splitting-fuzz";
 
 const env = {
@@ -84,6 +84,10 @@ describe("bundler", () => {
     target: "browser",
     dotenv: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      // No code adds a stylesheet when a chunk loads. The stylesheet of the entry point has the CSS of the chunk.
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["static.css", "dynamic.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -114,6 +118,9 @@ describe("bundler", () => {
     target: "browser",
     dotenv: "inline",
     format: "esm",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["level1.css", "level2.css"]);
+    },
     run: {
       file: "/out/entry.js",
       env,
@@ -121,6 +128,206 @@ describe("bundler", () => {
       // load before the outer .then callback runs (matches Node).
       stdout: "level1.js executed\nlevel2.js executed\nlevel1 loaded\nlevel2 loaded from level1",
     },
+  });
+
+  // lib/index.js re-exports A from a.js and B from b.js. Each of a.js and b.js imports its own stylesheet.
+  const cssBehindBarrel = {
+    "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+    "/lib/index.js": `export { A } from "./a.js"; export { B } from "./b.js";`,
+    "/lib/a.js": `import "./a.css"; export const A = "A"; console.log("a.js runs");`,
+    "/lib/b.js": `import "./b.css"; export const B = "B"; console.log("b.js runs");`,
+    "/lib/a.css": `.a { color: red }`,
+    "/lib/b.css": `.b { color: blue }`,
+  };
+  const stylesheets = (api: BundlerTestBundleAPI) =>
+    Object.fromEntries(
+      readdirSync(api.outdir)
+        .filter(file => file.endsWith(".css"))
+        .map(file => [file.replace(/-[a-z0-9]{8}\.css$/, "-[hash].css"), cssFilesIn(api, "/out/" + file)]),
+    );
+  itBundled("splitting/CSSOfFileOnlyAnotherEntryPointRuns", {
+    files: {
+      ...cssBehindBarrel,
+      "/e1.js": `import { A } from "./lib/index.js"; console.log(A);`,
+      "/e2.js": `import { B } from "./lib/index.js"; console.log(B);`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css"], "e2.css": ["lib/b.css"] });
+    },
+    run: [
+      { file: "/out/e1.js", env, stdout: "a.js runs\nA" },
+      { file: "/out/e2.js", env, stdout: "b.js runs\nB" },
+    ],
+  });
+  itBundled("splitting/CSSOfFileOnlyAnotherEntryPointLoadsLater", {
+    files: {
+      ...cssBehindBarrel,
+      "/e1.js": `import { A } from "./lib/index.js"; console.log(A);`,
+      "/e2.js": `import("./lib/b.js").then(({ B }) => console.log(B));`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css"], "e2.css": ["lib/b.css"] });
+    },
+    run: [
+      { file: "/out/e1.js", env, stdout: "a.js runs\nA" },
+      { file: "/out/e2.js", env, stdout: "b.js runs\nB" },
+    ],
+  });
+  // e1.js does not run b.js when it loads, but it loads b.js later: its stylesheet needs b.css.
+  itBundled("splitting/CSSOfFileTheEntryPointLoadsLater", {
+    files: {
+      ...cssBehindBarrel,
+      "/e1.js": `import { A } from "./lib/index.js"; console.log(A); import("./lib/b.js").then(({ B }) => console.log(B));`,
+    },
+    entryPoints: ["/e1.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css", "lib/b.css"], "b-[hash].css": ["lib/b.css"] });
+    },
+    run: { file: "/out/e1.js", env, stdout: "a.js runs\nA\nb.js runs\nB" },
+  });
+  itBundled("splitting/CSSOfUserEntryPointThatAnotherLoadsLater", {
+    files: {
+      ...cssBehindBarrel,
+      "/e1.js": `import { A } from "./lib/index.js"; console.log(A); import("./e2.js");`,
+      "/e2.js": `import { B } from "./lib/index.js"; console.log(B);`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css", "lib/b.css"], "e2.css": ["lib/b.css"] });
+    },
+    run: { file: "/out/e1.js", env, stdout: "a.js runs\nA\nb.js runs\nB" },
+  });
+  // e1.js runs f.js. Only lazy.js uses g, which f.js re-exports from g.js, and e1.js loads lazy.js later.
+  itBundled("splitting/CSSOfFileOnlyTheChunkLoadedLaterRuns", {
+    files: {
+      "/e1.js": `import { f } from "./lib/f.js"; console.log(f); import("./lazy.js");`,
+      "/lazy.js": `import { g } from "./lib/f.js"; console.log(g);`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+      "/lib/f.js": `export const f = "f"; export { g } from "./g.js";`,
+      "/lib/g.js": `import "./g.css"; export const g = "g";`,
+      "/lib/g.css": `.g { color: red }`,
+    },
+    entryPoints: ["/e1.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/g.css"] });
+    },
+    run: { file: "/out/e1.js", env, stdout: "f\ng" },
+  });
+  // The loads go e1.js, lazy1.js, lazy2.js, lazy3.js, and only lazy3.js uses x1.js.
+  itBundled("splitting/CSSOfFileOnlyTheThirdChunkLoadedLaterRuns", {
+    files: {
+      "/e1.js": `import { f } from "./lib/f.js"; console.log(f); import("./lazy1.js");`,
+      "/lazy1.js": `import { x3 } from "./lib/f.js"; x3();`,
+      "/lazy2.js": `import { x2 } from "./lib/f.js"; x2();`,
+      "/lazy3.js": `import { x1 } from "./lib/f.js"; console.log(x1);`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+      "/lib/f.js": `export const f = "f"; export { x1 } from "./x1.js"; export { x2 } from "./x2.js"; export { x3 } from "./x3.js";`,
+      "/lib/x1.js": `import "./x1.css"; export const x1 = "x1";`,
+      "/lib/x2.js": `export const x2 = () => import("../lazy3.js");`,
+      "/lib/x3.js": `export const x3 = () => import("../lazy2.js");`,
+      "/lib/x1.css": `.x1 { color: red }`,
+    },
+    entryPoints: ["/e1.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/x1.css"] });
+    },
+    run: { file: "/out/e1.js", env, stdout: "f\nx1" },
+  });
+  // l1.js and l2.js load each other.
+  itBundled("splitting/CSSOfChunksThatLoadEachOtherLater", {
+    files: {
+      "/e.js": `import("./l1.js");`,
+      "/l1.js": `import("./l2.js"); import("./l3.js");`,
+      "/l2.js": `import "./l2.css"; import("./l1.js");`,
+      "/l3.js": `import "./l3.css";`,
+      "/l2.css": `.l2 { color: red }`,
+      "/l3.css": `.l3 { color: blue }`,
+    },
+    entryPoints: ["/e.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e.css": ["l2.css", "l3.css"], "l3-[hash].css": ["l3.css"] });
+    },
+  });
+  // More entry points than an inline bit set holds.
+  itBundled("splitting/CSSOfChunkLoadedLaterWithManyEntryPoints", {
+    files: {
+      ...Object.fromEntries(
+        Array.from({ length: 130 }, (_, i) => [
+          [`/e${i}.js`, `import "./s${i}.css"; import("./lazy.js");`],
+          [`/s${i}.css`, `.s${i} { color: red }`],
+        ]).flat(),
+      ),
+      "/lazy.js": `import "./lazy.css"; console.log("lazy.js runs");`,
+      "/lazy.css": `.lazy { color: blue }`,
+    },
+    entryPoints: Array.from({ length: 130 }, (_, i) => `/e${i}.js`),
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({
+        ...Object.fromEntries(Array.from({ length: 130 }, (_, i) => [`e${i}.css`, [`s${i}.css`, "lazy.css"]])),
+        "lazy-[hash].css": ["lazy.css"],
+      });
+    },
+  });
+  // minChunkSize folds b.js into a chunk that e1.js imports. e1.js still does not run b.js.
+  itBundled("splitting/CSSOfFileFoldedIntoAChunkTheEntryPointImports", {
+    files: {
+      ...cssBehindBarrel,
+      "/lib/a.js": `import "./a.css"; export function A() { return "A"; }`,
+      "/lib/b.js": `import "./b.css"; export function B() { return "B"; }`,
+      "/common.js": `export function c() { return "c"; }\nexport function pad() { return "${Buffer.alloc(4096, "s").toString()}"; }\n`,
+      ...Object.fromEntries(
+        [
+          ["e1", "A"],
+          ["e2", "B"],
+          ["e3", "B"],
+        ].map(([entry, name]) => [
+          `/${entry}.js`,
+          `import { ${name} } from "./lib/index.js"; import { c } from "./common.js"; console.log("${entry}", ${name}(), c());\n` +
+            `console.log("${Buffer.alloc(20_000, "a").toString()}".length);\n`,
+        ]),
+      ),
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    minChunkSize: 100_000,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const imported = api.readFile("/out/e1.js").match(/from "\.\/(.+?\.js)"/)![1];
+      api.expectFile("/out/" + imported).toContain(`return "B"`);
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css"], "e2.css": ["lib/b.css"] });
+    },
+  });
+  itBundled("splitting/CSSOfSplitRequire", {
+    files: {
+      ...cssBehindBarrel,
+      "/e1.js": `import { A } from "./lib/index.js"; console.log(A); console.log(require("./lib/b.js").B);`,
+    },
+    entryPoints: ["/e1.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css", "lib/b.css"], "b-[hash].css": ["lib/b.css"] });
+    },
+    run: { file: "/out/e1.js", env, stdout: "a.js runs\nA\nb.js runs\nB" },
   });
 
   itBundled("splitting/SharedCSSBetweenChunks", {

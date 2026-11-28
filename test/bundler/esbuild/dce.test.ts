@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
-import { dedent, itBundled } from "../expectBundled";
+import { readdirSync } from "node:fs";
+import { cssFilesIn, dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -3554,155 +3555,250 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("__defProp");
     },
   });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSS", {
-  //   // TODO: css assertions. this should contain both button and menu
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg/button'
-  //       import { Menu } from 'pkg/menu'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/button.js": /* js */ `
-  //       import './button.css'
-  //       export let Button
-  //     `,
-  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
-  //     "/project/node_modules/pkg/menu.js": /* js */ `
-  //       import './menu.css'
-  //       export let Menu
-  //     `,
-  //     "/project/node_modules/pkg/menu.css": `menu { color: green }`,
-  //   },
-  //   external: ["react"],
-  // });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalse", {
-  //   // GENERATED
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
-  //     "/project/node_modules/pkg/package.json": /* json */ `
-  //       {
-  //       "main": "./entry.js",
-  //       "sideEffects": false
-  //     }
-  //     `,
-  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
-  //       require('./button.css')
-  //       export const Button = () => <button/>
-  //     `,
-  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
-  //   },
-  // });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS", {
-  //   // GENERATED
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
-  //     "/project/node_modules/pkg/package.json": /* json */ `
-  //       {
-  //       "main": "./entry.js",
-  //       "sideEffects": ["*.css"]
-  //     }
-  //     `,
-  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
-  //       require('./button.css')
-  //       export const Button = () => <button/>
-  //     `,
-  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
-  //   },
-  // });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse", {
-  //   // GENERATED
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/entry.js": `export * from './components'`,
-  //     "/project/node_modules/pkg/package.json": /* json */ `
-  //       {
-  //       "main": "./entry.js",
-  //       "sideEffects": false
-  //     }
-  //     `,
-  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
-  //       require('./button.css')
-  //       export const Button = () => <button/>
-  //     `,
-  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
-  //   },
-  // });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS", {
-  //   // GENERATED
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/entry.js": `export * from './components'`,
-  //     "/project/node_modules/pkg/package.json": /* json */ `
-  //       {
-  //       "main": "./entry.js",
-  //       "sideEffects": ["*.css"]
-  //     }
-  //     `,
-  //     "/project/node_modules/pkg/components.jsx": /* jsx */ `
-  //       require('./button.css')
-  //       export const Button = () => <button/>
-  //     `,
-  //     "/project/node_modules/pkg/button.css": `button { color: red }`,
-  //   },
-  // });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse", {
-  //   // GENERATED
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg/button'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/package.json": /* json */ `
-  //       {
-  //       "sideEffects": false
-  //     }
-  //     `,
-  //     "/project/node_modules/pkg/button.jsx": /* jsx */ `
-  //       import styles from './styles'
-  //       export const Button = () => <button/>
-  //     `,
-  //     "/project/node_modules/pkg/styles.js": /* js */ `
-  //       import './styles.css'
-  //       export default {}
-  //     `,
-  //     "/project/node_modules/pkg/styles.css": `button { color: red }`,
-  //   },
-  // });
-  // itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS", {
-  //   // GENERATED
-  //   files: {
-  //     "/project/test.jsx": /* jsx */ `
-  //       import { Button } from 'pkg/button'
-  //       render(<Button/>)
-  //     `,
-  //     "/project/node_modules/pkg/package.json": /* json */ `
-  //       {
-  //         "sideEffects": ["*.css"]
-  //       }
-  //     `,
-  //     "/project/node_modules/pkg/button.jsx": /* jsx */ `
-  //       import styles from './styles'
-  //       export const Button = () => <button/>
-  //     `,
-  //     "/project/node_modules/pkg/styles.js": /* js */ `
-  //       import './styles.css'
-  //       export default {}
-  //     `,
-  //     "/project/node_modules/pkg/styles.css": `button { color: red }`,
-  //   },
-  // });
+  itBundled("dce/TreeShakingJSWithAssociatedCSS", {
+    files: {
+      "/project/test.jsx": /* jsx */ `
+        import { Button } from 'pkg/button'
+        import { Menu } from 'pkg/menu'
+        render(<Button/>)
+      `,
+      "/project/node_modules/pkg/button.js": /* js */ `
+        import './button.css'
+        export let Button
+      `,
+      "/project/node_modules/pkg/button.css": `button { color: red }`,
+      "/project/node_modules/pkg/menu.js": /* js */ `
+        import './menu.css'
+        export let Menu
+      `,
+      "/project/node_modules/pkg/menu.css": `menu { color: green }`,
+    },
+    external: ["react"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/test.css")).toEqual([
+        "project/node_modules/pkg/button.css",
+        "project/node_modules/pkg/menu.css",
+      ]);
+    },
+  });
+  for (const [name, barrel, sideEffects] of [
+    ["ReExportSideEffectsFalse", `export { Button } from './components'`, false],
+    ["ReExportSideEffectsFalseOnlyJS", `export { Button } from './components'`, ["*.css"]],
+    ["ExportStarSideEffectsFalse", `export * from './components'`, false],
+    ["ExportStarSideEffectsFalseOnlyJS", `export * from './components'`, ["*.css"]],
+  ] as const) {
+    itBundled("dce/TreeShakingJSWithAssociatedCSS" + name, {
+      files: {
+        "/project/test.jsx": /* jsx */ `
+          import { Button } from 'pkg'
+          render(<Button/>)
+        `,
+        "/project/node_modules/pkg/entry.js": barrel,
+        "/project/node_modules/pkg/package.json": JSON.stringify({ main: "./entry.js", sideEffects }),
+        "/project/node_modules/pkg/components.jsx": /* jsx */ `
+          require('./button.css')
+          export const Button = () => <button/>
+        `,
+        "/project/node_modules/pkg/button.css": `button { color: red }`,
+      },
+      external: ["react"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(cssFilesIn(api, "/out/test.css")).toEqual(["project/node_modules/pkg/button.css"]);
+      },
+    });
+  }
+  for (const [name, sideEffects] of [
+    ["UnusedNestedImportSideEffectsFalse", false],
+    ["UnusedNestedImportSideEffectsFalseOnlyJS", ["*.css"]],
+  ] as const) {
+    itBundled("dce/TreeShakingJSWithAssociatedCSS" + name, {
+      files: {
+        "/project/test.jsx": /* jsx */ `
+          import { Button } from 'pkg/button'
+          render(<Button/>)
+        `,
+        "/project/node_modules/pkg/package.json": JSON.stringify({ sideEffects }),
+        "/project/node_modules/pkg/button.jsx": /* jsx */ `
+          import styles from './styles'
+          export const Button = () => <button/>
+        `,
+        "/project/node_modules/pkg/styles.js": /* js */ `
+          import './styles.css'
+          export default {}
+        `,
+        "/project/node_modules/pkg/styles.css": `button { color: red }`,
+      },
+      external: ["react"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        // esbuild (0.17.7 and later) keeps styles.css. Bun drops the CSS of a file that tree
+        // shaking removed: nothing uses the import of styles.js, so styles.js never runs.
+        expect(cssFilesIn(api, "/out/test.css")).toEqual([]);
+      },
+    });
+  }
+
+  // A barrel in a package re-exports A and B, the entry point uses only A, and each of a.js
+  // and b.js imports its own stylesheet.
+  const cssBehindBarrel = (packageJson: object, barrel: string) => ({
+    "/entry.js": `import { A } from "./lib/index.js"; console.log(A);`,
+    "/entry2.js": `import { B } from "./lib/index.js"; console.log(B);`,
+    "/lib/package.json": JSON.stringify({ name: "lib", ...packageJson }),
+    "/lib/index.js": barrel,
+    "/lib/a.js": `import "./a.css"; export const A = "A"; console.log("a.js runs");`,
+    "/lib/b.js": `import "./b.css"; export const B = "B"; console.log("b.js runs");`,
+    "/lib/a.css": `.a { color: red }`,
+    "/lib/b.css": `.b { color: blue }`,
+  });
+  const namedBarrel = `export { A } from "./a.js"; export { B } from "./b.js";`;
+  const starBarrel = `export * from "./a.js"; export * from "./b.js";`;
+  for (const [name, packageJson, barrel, stdout] of [
+    ["SideEffectsOnlyCSS", { sideEffects: ["*.css"] }, namedBarrel, "a.js runs\nA"],
+    ["SideEffectsOnlyCSSExportStar", { sideEffects: ["*.css"] }, starBarrel, "a.js runs\nA"],
+    ["SideEffectsFalseExportStar", { sideEffects: false }, starBarrel, "a.js runs\nA"],
+    [
+      // With an export of its own, the barrel is not one that barrel optimization reads only in part.
+      "SideEffectsFalseBarrelWithOwnExport",
+      { sideEffects: false },
+      `console.log("barrel runs"); export const version = 1; ` + namedBarrel,
+      "a.js runs\nbarrel runs\nA",
+    ],
+  ] as const) {
+    itBundled("dce/CSSOfTreeShakenFile" + name, {
+      files: cssBehindBarrel(packageJson, barrel),
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/a.css"]);
+      },
+      run: { file: "/out/entry.js", stdout },
+    });
+  }
+  // The package says that theme.js has no side effects, so the bare import of theme.js does not run it.
+  // webpack drops theme.css too. esbuild keeps it, and warns that it ignores the import.
+  for (const [name, sideEffects] of [
+    ["SideEffectsFalse", false],
+    ["SideEffectsOnlyCSS", ["*.css"]],
+  ] as const) {
+    itBundled("dce/CSSBehindBareImportOfFileThatDoesNotRun" + name, {
+      files: {
+        "/entry.js": `import "pkg/theme"; console.log("entry.js runs");`,
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", sideEffects }),
+        "/node_modules/pkg/theme.js": `import "./theme.css"; console.log("theme.js runs");`,
+        "/node_modules/pkg/theme.css": `.theme { color: red }`,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(cssFilesIn(api, "/out/entry.css")).toEqual([]);
+      },
+      run: { file: "/out/entry.js", stdout: "entry.js runs" },
+    });
+  }
+  // b.js runs, so its CSS stays.
+  for (const [name, packageJson, options] of [
+    ["SideEffectsListsTheFile", { sideEffects: ["*.css", "./b.js"] }, {}],
+    ["NoSideEffectsField", {}, {}],
+    ["IgnoreDCEAnnotations", { sideEffects: ["*.css"] }, { ignoreDCEAnnotations: true }],
+  ] as const) {
+    itBundled("dce/CSSOfFileThatRuns" + name, {
+      files: cssBehindBarrel(packageJson, namedBarrel),
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      ...options,
+      onAfterBundle(api) {
+        expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/a.css", "lib/b.css"]);
+      },
+      run: { file: "/out/entry.js", stdout: "a.js runs\nb.js runs\nA" },
+    });
+  }
+  itBundled("dce/CSSOfTreeShakenFileTwoEntryPoints", {
+    files: cssBehindBarrel({ sideEffects: ["*.css"] }, namedBarrel),
+    entryPoints: ["/entry.js", "/entry2.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect({
+        entry: cssFilesIn(api, "/out/entry.css"),
+        entry2: cssFilesIn(api, "/out/entry2.css"),
+      }).toEqual({
+        entry: ["lib/a.css"],
+        entry2: ["lib/b.css"],
+      });
+    },
+  });
+  // The import() and the require() are in a function that nothing calls.
+  for (const [name, unused] of [
+    ["DynamicImport", `import("./lazy.js")`],
+    ["Require", `require("./lazy.js")`],
+    ["DynamicImportOfCSS", `import("./lazy.css")`],
+    ["RequireOfCSS", `require("./lazy.css")`],
+  ] as const) {
+    for (const splitting of [false, true]) {
+      itBundled(`dce/CSSBehindUnused${name}${splitting ? "Splitting" : ""}`, {
+        files: {
+          "/entry.js": `import { used } from "./lib.js"; import "./entry.css"; console.log(used);`,
+          "/lib.js": `export const used = "used"; export function unused() { return ${unused}; }`,
+          "/lazy.js": `import "./lazy.css"; console.log("lazy.js runs");`,
+          "/entry.css": `.entry { color: red }`,
+          "/lazy.css": `.lazy { color: blue }`,
+        },
+        entryPoints: ["/entry.js"],
+        outdir: "/out",
+        splitting,
+        onAfterBundle(api) {
+          expect(cssFilesIn(api, "/out/entry.css")).toEqual(["entry.css"]);
+          expect(readdirSync(api.outdir).filter(file => file.endsWith(".css"))).toEqual(["entry.css"]);
+        },
+        run: { file: "/out/entry.js", stdout: "used" },
+      });
+    }
+  }
+  // unused.js does not run. Only the @import in a.css keeps x.css, so x.css goes where that @import puts it.
+  itBundled("dce/CSSOfTreeShakenFileThatACSSFileAlsoImports", {
+    files: {
+      "/entry.js": `import "./a.css"; import { unused } from "./lib/unused.js"; console.log("entry.js runs");`,
+      "/a.css": `@import "./lib/x.css";\n.a { color: red }`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+      "/lib/unused.js": `import "./x.css"; export const unused = 1;`,
+      "/lib/x.css": `.x { color: blue }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/x.css", "a.css"]);
+    },
+    run: { file: "/out/entry.js", stdout: "entry.js runs" },
+  });
+  // treeShaking: false keeps code that nothing uses. The sideEffects field still applies, so b.js does not run.
+  itBundled("dce/CSSOfTreeShakenFileTreeShakingFalse", {
+    files: cssBehindBarrel({ sideEffects: ["*.css"] }, namedBarrel),
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    treeShaking: false,
+    backend: "api",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/a.css"]);
+    },
+    run: { file: "/out/entry.js", stdout: "a.js runs\nA" },
+  });
+  // unused.js does not run. Its CSS goes, and shared.css keeps the place that the import in unused.js gives it.
+  itBundled("dce/CSSOfTreeShakenFileKeepsTheOrder", {
+    files: {
+      "/entry.js": `import { unused } from "./lib/unused.js"; import "./lib/used.js";`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css", "./used.js"] }),
+      "/lib/unused.js": `import "./shared.css"; import "./unused.css"; export const unused = 1;`,
+      "/lib/used.js": `import "./used.css"; import "./shared.css"; console.log("used.js runs");`,
+      "/lib/shared.css": `.shared { color: red }`,
+      "/lib/unused.css": `.unused { color: green }`,
+      "/lib/used.css": `.used { color: blue }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/shared.css", "lib/used.css"]);
+    },
+    run: { file: "/out/entry.js", stdout: "used.js runs" },
+  });
 });

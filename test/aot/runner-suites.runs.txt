@@ -47,3 +47,11 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too
+# The next one cannot pass: jest.requireActual() in a CommonJS file gets a name that only an import resolves. The build follows the name as it follows that of a require(), which finds no file, and --aot only runs code that was compiled.
+test/js/bun/test/mock/mock-module.test.ts: jest's lookups of a name that import and require() resolve to two files > calls with a name that only an import resolves do not grow the process
+# The next one: import(X) is in flight when mock.module(X, factory) comes. Plain runs X, compiled does not. And mock.module(X, factory) replaces a mock of X that has no factory: compiled runs X, plain does not. Every test of the fixture passes.
+test/js/bun/test/mock/mock-module.test.ts: jest's lookups of a name that import and require() resolve to two files > in a CommonJS file, a mock and an import of the name do the same after jest.requireActual() as without it
+# The next one cannot pass: a file that Bun runs as an ES module writes the name out for jest.requireActual(), which gives it the file that an import loads. The build follows that name as it follows the name of a require().
+test/js/bun/test/mock/mock-module.test.ts: jest's lookups of a name that import and require() resolve to two files > a file is of the kind that Bun runs it as > an ES module, by one import or by the type of its package.json
+# The next one: the build reads the text of new Function() and compiles it as code of its file, so in a CommonJS file it gets the file that require() loads. In a plain run such a function has the kind of no file, and gets the file that an import loads.
+test/js/bun/test/mock/mock-module.test.ts: jest's lookups of a name that import and require() resolve to two files > code from a string gets the file that an import loads

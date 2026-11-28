@@ -47,3 +47,57 @@ test("the three of jest", async () => {
   expect(plain.results).toEqual(["pass the three of jest"]);
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 });
+
+// A package with a file for `import` and a file for `require()`. In a CommonJS file the three load the second, as the build does, while the name has no mock.
+// A mock of the name stands for the first, which is its original.
+const twoFiles = {
+  "package.json": `{}`,
+  "node_modules/dual/package.json": JSON.stringify({
+    name: "dual",
+    exports: { import: "./esm.mjs", require: "./cjs.cjs" },
+  }),
+  "node_modules/dual/esm.mjs": `export const which = "esm"; export const plain = () => "esm";`,
+  "node_modules/dual/cjs.cjs": `exports.which = "cjs"; exports.plain = () => "cjs";`,
+  "__mocks__/dual.mjs": `export const which = "manual esm";`,
+  "__mocks__/dual.cjs": `exports.which = "manual cjs";`,
+  "5.test.cjs": `const { jest, test } = require("bun:test");
+    test("the three of jest in a CommonJS file", () => {
+      const actual = jest.requireActual("dual");
+      console.log("requireActual:", actual.which, actual === require("dual"));
+      console.log("requireMock:", jest.requireMock("dual").which);
+      const made = jest.createMockFromModule("dual");
+      console.log("createMockFromModule:", made.which, jest.isMockFunction(made.plain), String(made.plain()));
+      // The function that makes the call is code of this file, whatever calls that function.
+      globalThis.eval("globalThis.callIt = f => f()");
+      console.log("called by code from a string:", globalThis.callIt(() => jest.requireActual("dual").which));
+    });`,
+  "6.test.cjs": `const { jest, test } = require("bun:test");
+    jest.mock("dual", () => ({ ...jest.requireActual("dual"), extra: 1 }));
+    test("the three of jest under a mock of the name", async () => {
+      const mocked = await import("dual");
+      console.log("the mock:", mocked.which, mocked.plain(), mocked.extra);
+      console.log("requireActual:", jest.requireActual("dual").which);
+      console.log("createMockFromModule:", jest.createMockFromModule("dual").which);
+      console.log("requireMock:", jest.requireMock("dual").which, jest.requireMock("dual").extra);
+    });`,
+};
+
+test("the three of jest, for a name with two files", async () => {
+  using dir = tempDir("runner-loads-by-name", twoFiles);
+  const plain = await runTests(String(dir));
+  expect(plain).toEqual({
+    printed: [
+      "requireActual: cjs true",
+      "requireMock: manual cjs",
+      "createMockFromModule: cjs true undefined",
+      "called by code from a string: cjs",
+      "the mock: esm esm 1",
+      "requireActual: esm",
+      "createMockFromModule: esm",
+      "requireMock: esm 1",
+    ],
+    results: ["pass the three of jest in a CommonJS file", "pass the three of jest under a mock of the name"],
+    exitCode: 0,
+  });
+  expect(await runTests(String(dir), "--aot")).toEqual(plain);
+});

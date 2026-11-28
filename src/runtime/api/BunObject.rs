@@ -978,6 +978,35 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     })
 }
 
+// HOST_EXPORT(Bun__resolveAsRequireIfExists, c)
+pub(crate) fn bun_resolve_as_require_if_exists(
+    global: &JSGlobalObject,
+    specifier: JSValue,
+    source: &BunString,
+) -> JSValue {
+    let Ok(specifier_str) = specifier.to_bun_string(global) else {
+        return JSValue::ZERO;
+    };
+    jsc::to_js_host_call(global, || {
+        let mut query_string = BunString::EMPTY;
+        let resolved =
+            VirtualMachine::resolve_as_require(global, &specifier_str, source, &mut query_string)?;
+        match resolved {
+            Ok(Some(path)) if query_string.is_empty() => path.into_js(global),
+            Ok(Some(path)) => {
+                let mut with_query: Vec<u8> = Vec::new();
+                // Vec<u8> writes are infallible.
+                let _ = write!(&mut with_query, "{}{}", path, query_string);
+                BunString::clone_utf8(&with_query).into_js(global)
+            }
+            Ok(None) => Ok(JSValue::UNDEFINED),
+            Err(err) if err.is::<jsc::ResolveMessage>() => Ok(JSValue::UNDEFINED),
+            // e.g. an onResolve plugin returned an invalid result
+            Err(err) => Err(global.throw_value(err)),
+        }
+    })
+}
+
 pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
     // The cast saturates: NaN and a negative offset are 0.
     let offset = offset as usize;

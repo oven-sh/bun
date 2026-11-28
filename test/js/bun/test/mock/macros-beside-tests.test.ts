@@ -32,7 +32,8 @@ test.concurrent.each([
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.replace(/^bun test v.*$/m, "").trim()).toBe(String(loads));
+  // Debug builds also print "[macro] call <name>" to stdout.
+  expect(stdout.replace(/^(bun test v|\[macro\]).*$/gm, "").trim()).toBe(String(loads));
   expect(stderr).toContain("(pass) runs");
   expect(exitCode).toBe(0);
 });
@@ -93,6 +94,43 @@ test.concurrent.each([
     "afterAll throws: Cannot use afterAll() in a macro.",
     "onTestFinished throws: Cannot use onTestFinished() in a macro.",
   ]);
+  expect(stderr).toContain("(pass) runs");
+  expect(exitCode).toBe(0);
+});
+
+// The VM of a macro outlives the test file that loaded the macro. Under bun test its process listeners are not
+// called: one of them would take the error of a later file, or end the run.
+test.concurrent("a process listener of a macro's module is not called for what the macro leaves uncaught", async () => {
+  using dir = tempDir("macros-own-listeners", {
+    "macro.ts": `
+      for (const event of ["unhandledRejection", "uncaughtException"]) {
+        process.on(event, error => {
+          console.log("macro listener: " + error.message);
+          process.exit(42);
+        });
+      }
+      export async function leavesARejection() {
+        Promise.reject(new Error("left behind"));
+        await new Promise(resolve => setImmediate(resolve));
+        return "from the macro";
+      }`,
+    "calls-macro.ts": `
+      import { leavesARejection } from "./macro.ts" with { type: "macro" };
+      export default leavesARejection();`,
+    "runs.test.ts": `
+      import { test } from "bun:test";
+      test("runs", async () => {
+        console.log("result", (await import("./calls-macro.ts")).default);
+      });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./runs.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.split("\n").filter(line => /^(result|macro listener)/.test(line))).toEqual(["result from the macro"]);
   expect(stderr).toContain("(pass) runs");
   expect(exitCode).toBe(0);
 });

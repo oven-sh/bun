@@ -577,33 +577,22 @@ describe("stdio is flushed when the worker exits synchronously", () => {
 
   // Same on an uncaught exception: the user's handler sees code 1 with _exiting
   // set, buffered + exit-time output arrives, and its exitCode wins (as in node).
-  // Spawned so the test runner's unhandled-error hook doesn't intercept the
-  // worker's uncaught exception.
-  test.concurrent("user 'exit' handler on uncaught exception: output flushed and exitCode honored", async () => {
-    const workerSrc = `process.on("exit", code => {
-        process.stdout.write("exit handler " + code + " " + process._exiting + "\\n");
-        process.exitCode = 42;
-      });
-      console.log("hello");
-      throw new Error("boom");`;
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker } = require("node:worker_threads");
-         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, stdout: true });
-         let out = "";
-         w.stdout.setEncoding("utf8").on("data", d => (out += d));
-         w.on("error", e => console.log("error " + e.message));
-         w.on("exit", c => console.log(JSON.stringify({ code: c, out })));`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
-    expect(exitCode).toBe(0);
+  test("user 'exit' handler on uncaught exception: output flushed and exitCode honored", async () => {
+    const worker = new Worker(
+      `process.on("exit", code => {
+         process.stdout.write("exit handler " + code + " " + process._exiting + "\\n");
+         process.exitCode = 42;
+       });
+       console.log("hello");
+       throw new Error("boom");`,
+      { eval: true, stdout: true },
+    );
+    let out = "";
+    worker.stdout.setEncoding("utf8").on("data", d => (out += d));
+    const errors: string[] = [];
+    worker.on("error", e => errors.push(e.message));
+    const code = await new Promise<number>(resolve => worker.on("exit", resolve));
+    expect({ errors, out, code }).toEqual({ errors: ["boom"], out: "hello\nexit handler 1 true\n", code: 42 });
   });
 });
 
@@ -745,6 +734,179 @@ describe("error event", () => {
   });
 });
 
+// These workers start in this process on purpose. Under `bun test`, the VM that runs the test files
+// gives an uncaught error to the test runner ahead of its `process` listeners. A worker has its own
+// `process`, so it handles the error as it does outside of `bun test`.
+describe("a worker that a test file starts handles its own uncaught errors", () => {
+  // `took()` posts once more from a later turn of the loop, then lets the worker end.
+  const helpers = `
+    const keepAlive = setInterval(() => {}, 1 << 30);
+    function took(text) {
+      parentPort.postMessage(text);
+      setImmediate(() => {
+        parentPort.postMessage("still running");
+        clearInterval(keepAlive);
+      });
+    }`;
+  const cjs = `const { parentPort, Worker } = require("node:worker_threads");${helpers}`;
+  const esm = `import { parentPort } from "node:worker_threads";${helpers}`;
+
+  // Each row is what Node.js gives.
+  test.concurrent.each([
+    [
+      "process.on('unhandledRejection') takes a rejection",
+      `${cjs}
+       process.on("unhandledRejection", reason => took("unhandledRejection: " + reason.message));
+       Promise.reject(new Error("boom"));`,
+      { events: ["message unhandledRejection: boom", "message still running"], code: 0 },
+    ],
+    [
+      "process.on('uncaughtException') takes a throw from a callback",
+      `${cjs}
+       process.on("uncaughtException", (error, origin) => took(origin + ": " + error.message));
+       setImmediate(() => { throw new Error("boom"); });`,
+      { events: ["message uncaughtException: boom", "message still running"], code: 0 },
+    ],
+    [
+      "process.on('uncaughtException') takes a throw from a CommonJS entry",
+      `${cjs}
+       process.on("uncaughtException", (error, origin) => took(origin + ": " + error.message));
+       throw new Error("boom");`,
+      { events: ["message uncaughtException: boom", "message still running"], code: 0 },
+    ],
+    [
+      "process.on('uncaughtException') takes a throw from an ES module entry",
+      `${esm}
+       process.on("uncaughtException", (error, origin) => took(origin + ": " + error.message));
+       throw new Error("boom");`,
+      { events: ["message unhandledRejection: boom", "message still running"], code: 0 },
+    ],
+    [
+      "process.setUncaughtExceptionCaptureCallback() takes a throw",
+      `${cjs}
+       process.setUncaughtExceptionCaptureCallback(error => took("captured: " + error.message));
+       setImmediate(() => { throw new Error("boom"); });`,
+      { events: ["message captured: boom", "message still running"], code: 0 },
+    ],
+    [
+      "'uncaughtExceptionMonitor' sees a throw that nothing takes",
+      `${cjs}
+       process.on("uncaughtExceptionMonitor", (error, origin) => parentPort.postMessage("monitor " + origin + ": " + error.message));
+       setImmediate(() => { throw new Error("boom"); });`,
+      { events: ["message monitor uncaughtException: boom", "error boom"], code: 1 },
+    ],
+    [
+      "a throw from an 'uncaughtException' listener stops the worker",
+      `${cjs}
+       process.on("uncaughtException", error => {
+         parentPort.postMessage("uncaughtException: " + error.message);
+         throw new Error("second");
+       });
+       setImmediate(() => { throw new Error("boom"); });`,
+      { events: ["message uncaughtException: boom", "error second"], code: 1 },
+    ],
+    [
+      "a throw from the entry that nothing takes exits 1",
+      `throw new Error("boom");`,
+      { events: ["error boom"], code: 1 },
+    ],
+    [
+      "a throw from a callback that nothing takes exits 1",
+      `setImmediate(() => { throw new Error("boom"); });`,
+      { events: ["error boom"], code: 1 },
+    ],
+    [
+      "process.on('uncaughtException') takes the 'error' of a worker of its own",
+      `${cjs}
+       process.on("uncaughtException", error => parentPort.postMessage("uncaughtException: " + error.message));
+       new Worker('throw new Error("boom");', { eval: true }).on("exit", code => took("inner exit " + code));`,
+      { events: ["message uncaughtException: boom", "message inner exit 1", "message still running"], code: 0 },
+    ],
+  ])("%s", async (_, source, expected) => {
+    const worker = new Worker(source, { eval: true });
+    const events: string[] = [];
+    worker.on("message", message => events.push("message " + message));
+    worker.on("error", error => events.push("error " + error.message));
+    const code = await new Promise<number>(resolve => worker.on("exit", resolve));
+    expect({ events, code }).toEqual(expected);
+  });
+
+  // Node.js has no global Worker. Each row is what `bun run` gives.
+  test.concurrent.each([
+    [
+      "process.on('uncaughtException') takes a throw",
+      `process.on("uncaughtException", (error, origin) => took(origin + ": " + error.message));
+       setImmediate(() => { throw new Error("boom"); });`,
+      { events: ["message uncaughtException: boom", "message still running"], code: 0 },
+    ],
+    [
+      "process.on('unhandledRejection') takes a rejection",
+      `process.on("unhandledRejection", reason => took("unhandledRejection: " + reason.message));
+       Promise.reject(new Error("boom"));`,
+      { events: ["message unhandledRejection: boom", "message still running"], code: 0 },
+    ],
+    [
+      "a throw that nothing takes closes it with code 1",
+      `setImmediate(() => { throw "boom"; });`,
+      { events: ["error boom"], code: 1 },
+    ],
+  ])("in a Web Worker, %s", async (_, source, expected) => {
+    const worker = new globalThis.Worker(
+      "data:text/javascript," + encodeURIComponent(`const parentPort = self;${helpers}${source}`),
+    );
+    const events: string[] = [];
+    worker.addEventListener("message", event => events.push("message " + event.data));
+    worker.addEventListener("error", event => events.push("error " + event.message));
+    const [close] = await once(worker, "close");
+    expect({ events, code: close.code }).toEqual(expected);
+  });
+
+  // The flag is the process's. With a listener for exceptions in the worker, the five modes give five results,
+  // the same as in Node.js.
+  test.concurrent.each([
+    ["none", { events: ["message still running"], code: 0, warned: false }],
+    ["warn", { events: ["message still running"], code: 0, warned: true }],
+    ["warn-with-error-code", { events: ["message still running"], code: 1, warned: true }],
+    ["strict", { events: ["message unhandledRejection: boom", "message still running"], code: 0, warned: true }],
+    ["throw", { events: ["message unhandledRejection: boom", "message still running"], code: 0, warned: false }],
+  ])("--unhandled-rejections=%s reaches the worker", async (mode, expected) => {
+    using dir = tempDir("worker-unhandled-rejections-mode", {
+      "mode.test.ts": `
+        import { test } from "bun:test";
+        import { Worker } from "node:worker_threads";
+        test("a rejection in a worker", async () => {
+          const worker = new Worker(
+            \`const { parentPort } = require("node:worker_threads");
+              process.on("uncaughtException", (error, origin) => parentPort.postMessage(origin + ": " + error.message));
+              setImmediate(() => {
+                Promise.reject(new Error("boom"));
+                setImmediate(() => parentPort.postMessage("still running"));
+              });\`,
+            { eval: true, stderr: true },
+          );
+          let warning = "";
+          worker.stderr.setEncoding("utf8").on("data", chunk => (warning += chunk));
+          const events = [];
+          worker.on("message", message => events.push("message " + message));
+          worker.on("error", error => events.push("error " + error.message));
+          const code = await new Promise(resolve => worker.on("exit", resolve));
+          console.log(JSON.stringify({ events, code, warned: warning.includes("UnhandledPromiseRejectionWarning: Error: boom") }));
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--unhandled-rejections=" + mode, "./mode.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(pass) a rejection in a worker");
+    expect(JSON.parse(stdout.match(/^\{.*\}$/m)?.[0] ?? "null")).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Debug and ASAN builds assert on `vm.hasTerminationRequest()` if startup continues to its GC after the stop.
 const spinUntilTerminated = `require("node:worker_threads").parentPort.postMessage("in the handler"); for (;;) {}`;
 test.concurrent.each([
@@ -813,15 +975,11 @@ describe("getHeapSnapshot", () => {
     });
   });
 
-  // "entry throws" is omitted: under `bun test`, isBunTest makes a worker's
-  // uncaught_exception return handled=true so spin() continues to
-  // fireEarlyMessages (the call resolves with real data). Under `bun -e`
-  // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. A worker whose entry is not found takes the
-  // shutdown() path directly, so it exercises the m_pendingTasks abandon drain
-  // regardless.
-  test("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start", async () => {
-    const worker = new Worker("/nonexistent/__bun_worker_path__.js");
+  test.each([
+    ["entry not found", () => new Worker("/nonexistent/__bun_worker_path__.js")],
+    ["entry throws", () => new Worker("throw new Error('x')", { eval: true })],
+  ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, start) => {
+    const worker = start();
     worker.on("error", () => {});
     // Called immediately (m_state still Pending) so the task queues into
     // m_pendingTasks; dispatchExit drains it on the parent thread when the
@@ -2487,27 +2645,15 @@ describe("parentPort queues messages until a 'message' listener is attached", ()
 
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
-// (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
 test("a top-level await rejecting while the loop is alive fails the worker then", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Worker } = require("worker_threads");
-       const w = new Worker(
-         'setInterval(() => {}, 1000); await new Promise((_, reject) => setTimeout(() => reject(new Error("late")), 5));',
-         { eval: true },
-       );
-       w.on("error", e => console.log("error: " + e.message));
-       w.on("exit", c => console.log("exit " + c));`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("error: late\nexit 1\n");
-  expect(exitCode).toBe(0);
+  const w = new Worker(
+    'setInterval(() => {}, 1000); await new Promise((_, reject) => setTimeout(() => reject(new Error("late")), 5));',
+    { eval: true },
+  );
+  const errors: string[] = [];
+  w.on("error", e => errors.push((e as Error).message));
+  const code = await new Promise<number>(resolve => w.on("exit", resolve));
+  expect({ errors, code }).toEqual({ errors: ["late"], code: 1 });
 });
 
 // Static imports that are still being read/transpiled are loading, not a

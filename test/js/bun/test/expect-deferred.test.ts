@@ -1055,6 +1055,60 @@ describe.concurrent(".resolves and .rejects", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
+  // The worker's `process` listeners are asked before toThrow() is, as they are outside of bun test.
+  test("in a Worker, toThrow() takes what its function reports like outside of bun test", async () => {
+    const { stdout, results, exitCode, signalCode } = await run(["test", "./a.test.js"], {
+      "a.test.js": `
+        import { test } from "bun:test";
+        test("runs", async () => {
+          for (const listens of ["yes", "no"]) {
+            const worker = new Worker(new URL("./worker.js", import.meta.url).href, { env: { LISTENS: listens } });
+            const closed = Promise.withResolvers();
+            worker.onmessage = event => console.log(listens, event.data);
+            worker.addEventListener("close", event => closed.resolve(event.code));
+            console.log(listens, "close", await closed.promise);
+          }
+        });
+      `,
+      "worker.js": `
+        import { expect } from "bun:test";
+        const heard = [];
+        if (process.env.LISTENS === "yes") process.on("uncaughtException", error => heard.push(error.message));
+        function listenerThrows(message) {
+          const target = new EventTarget();
+          target.addEventListener("event", () => {
+            throw new Error(message);
+          });
+          target.dispatchEvent(new Event("event"));
+        }
+        const outcome = fn => {
+          try {
+            fn();
+            return "passes";
+          } catch {
+            return "fails";
+          }
+        };
+        postMessage(
+          JSON.stringify({
+            toThrow: outcome(() => expect(() => listenerThrows("first")).toThrow("first")),
+            notToThrow: outcome(() => expect(() => listenerThrows("second")).not.toThrow()),
+            heard,
+          }),
+        );
+      `,
+    });
+    expect(stdout).toEqual([
+      `yes ${JSON.stringify({ toThrow: "fails", notToThrow: "passes", heard: ["first", "second"] })}`,
+      "yes close 0",
+      `no ${JSON.stringify({ toThrow: "passes", notToThrow: "fails", heard: [] })}`,
+      // A report that no listener takes sets exit code 1, and toThrow() does not put the code back.
+      "no close 1",
+    ]);
+    expect(results).toEqual(["(pass) runs"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
   test("a matcher left pending by its test never runs and isn't reported in a later file", async () => {
     for (const [args] of isolationFlags) {
       const { stdout, report, stderr, exitCode } = await run(["test", ...args, "./a.test.js", "./b.test.js"], {

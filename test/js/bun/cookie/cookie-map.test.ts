@@ -203,6 +203,22 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  test("a cookie value keeps a '%' that is not an escape", () => {
+    const map = new Bun.CookieMap("a=50%-off; b=caf%C3%A9; c=x%zz; d=100%25; e=abc%; f=x%2");
+    expect(Object.fromEntries(map)).toEqual({
+      a: "50%-off",
+      b: "café",
+      c: "x%zz",
+      d: "100%",
+      e: "abc%",
+      f: "x%2",
+    });
+  });
+
+  test("a cookie value with a '%' that is not an escape still decodes its valid escapes", () => {
+    expect(new Bun.CookieMap("v=a%25b%zz").get("v")).toBe("a%b%zz");
+  });
+
   test("can create CookieMap from object", () => {
     const map = new Bun.CookieMap({
       name: "value",

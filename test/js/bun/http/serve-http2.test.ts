@@ -120,6 +120,17 @@ for (const secure of [true, false]) {
       expect(res.body.length).toBe(0);
     });
 
+    // RFC 9110 8.6: a null body does not say what GET would send, so HEAD sends no content-length.
+    test("HEAD of a null-body Response has no content-length", async () => {
+      const res = await request(session, { ":path": "/null-body", ":method": "HEAD" });
+      expect({
+        status: res.status,
+        marker: res.headers["x-null"],
+        contentLength: res.headers["content-length"],
+        body: res.body.length,
+      }).toEqual({ status: 200, marker: "1", contentLength: undefined, body: 0 });
+    });
+
     test("unknown route is 404 from fetch", async () => {
       const res = await request(session, { ":path": "/nope" });
       expect(res.status).toBe(404);

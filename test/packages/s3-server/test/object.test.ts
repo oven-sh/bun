@@ -293,7 +293,7 @@ describe("PutObject", () => {
     const Code = "InvalidRequest";
     const needsKey = "The object was stored using a form of Server Side Encryption. The correct parameters must be provided to retrieve the object."; // prettier-ignore
     expect(await send("GET", "secret", {})).toEqual(answer(400, {}, { Error: { Code, Message: needsKey } }));
-    expect(await send("HEAD", "secret", {})).toEqual(answer(400, { "content-length": "0" }));
+    expect(await send("HEAD", "secret", {})).toEqual(answer(400, {}));
     expect(await send("GET", "secret", other)).toMatchObject({
       status: 403,
       body: { Error: { Code: "AccessDenied" } },
@@ -375,7 +375,7 @@ describe("GetObject and HeadObject", () => {
     const expected: Record<number, [get: Fields, body: unknown, head: Fields]> = {
       200: [full, "hello", full],
       304: [kept, "", kept],
-      412: [{}, failed, { "content-length": "0" }],
+      412: [{}, failed, {}],
     };
     const [get, body, head] = expected[status];
     expect(await read(t, "GET", "object", { headers })).toEqual(answer(status, get, body));

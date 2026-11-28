@@ -4404,8 +4404,10 @@ impl<'a> HTTPClient<'a> {
             // the keep-alive behavior (keep-alive being the default behavior for HTTP/1.1 and not for HTTP/1.0)
             //
             // but, we must only do this IF the status code allows it to contain a body.
+            // A response to HEAD never has one (RFC 9112 §6.3 rule 1), so it ends at its header section.
             if self.state.content_length.is_none()
                 && self.state.transfer_encoding != Encoding::Chunked
+                && self.method.has_body()
             {
                 self.state.flags.allow_keepalive = false;
             }

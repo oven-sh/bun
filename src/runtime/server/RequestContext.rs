@@ -2387,8 +2387,6 @@ where
         let Some(server) = this.try_server() else {
             // server detached?
             this.render_metadata();
-            // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", 0);
             this.end_without_body(this.should_close_connection());
             return;
         };
@@ -2430,14 +2428,17 @@ where
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
                     let content_length_str = content_length.to_utf8();
-                    let len: usize = HTTP::parse_content_length(content_length_str.slice());
+                    let len = HTTP::parse_content_length_strict(content_length_str.slice());
                     drop(content_length_str);
 
-                    this.render_metadata();
-                    // SAFETY: FFI handle
-                    resp.write_header_int(b"content-length", len as u64);
-                    this.end_without_body(this.should_close_connection());
-                    return;
+                    // A value that is not a length is not forwarded.
+                    if let Some(len) = len {
+                        this.render_metadata();
+                        // SAFETY: FFI handle
+                        resp.write_header_int(b"content-length", len);
+                        this.end_without_body(this.should_close_connection());
+                        return;
+                    }
                 }
             }
         }
@@ -2450,11 +2451,7 @@ where
                 let size = blob.size();
                 this.render_metadata();
 
-                if size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
-                    resp.write_header_int(b"content-length", size as u64);
-                }
+                resp.write_header_int(b"content-length", size as u64);
                 this.end_without_body(this.should_close_connection());
             }
 
@@ -2472,9 +2469,8 @@ where
                 };
                 this.render_metadata();
 
-                if blob_size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
+                // A file with no size (a pipe, a device) has no length to report.
+                if blob_size != crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", blob_size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
@@ -2492,9 +2488,14 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+                // Only an empty body says what GET would send. RFC 9110 §8.6 forbids a
+                // Content-Length that differs from GET's, so the others send none.
+                let is_empty = matches!(body_value, Body::Value::Empty);
                 this.render_metadata();
-                // SAFETY: FFI handle
-                resp.write_header_int(b"content-length", 0);
+                if is_empty {
+                    // SAFETY: FFI handle
+                    resp.write_header_int(b"content-length", 0);
+                }
                 this.end_without_body(this.should_close_connection());
             }
         }

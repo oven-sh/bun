@@ -133,6 +133,27 @@ test("an element that Buffer.concat refuses is described by the error", () => {
   for (const list of ofAnyElements) expect(list.uses).toContain("RetainsContents");
 });
 
+test("a DataView that Buffer.copyBytesFrom refuses is described by the error", () => {
+  let asked = 0;
+  class Odd extends DataView {
+    static get name() {
+      asked++;
+      return "Odd";
+    }
+  }
+  expect(() => Buffer.copyBytesFrom(new Odd(new ArrayBuffer(1)) as unknown as Uint8Array)).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+  );
+  expect(asked).toBeGreaterThan(0);
+  const takesDataView = ({ accepted }: Parameter) =>
+    accepted.isAnything || accepted.hasAnyObject || accepted.parts.some(part => part.class === "DataView");
+  // A row that took a DataView would say that the call reads its bytes and nothing more.
+  for (const view of rowsOf("Buffer.copyBytesFrom").map(row => row.parameters[0])) {
+    expect(takesDataView(view)).toBe(false);
+    expect(view.roles).toContain("DescribedWhenRefused");
+  }
+});
+
 test("what takes a list of promises reads `constructor` off each", async () => {
   for (const method of ["all", "allSettled", "any", "race"] as const) {
     let asked = 0;

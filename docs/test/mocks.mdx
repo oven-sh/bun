@@ -807,6 +807,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
+- If a `--preload` script has mocked a package, and the preload script or an earlier test file has loaded that package, a test file that mocks it again with `vi.mock()` or `vi.doMock()` gets the preload's mock as the original. `importOriginal`, `vi.importActual()` and `jest.requireActual()` return it, and a mock without a factory is made from it. In Vitest they get the real package. To get the real package, remove the preload's mock first: call `vi.unmock("pkg")` above the file's `vi.mock("pkg", ...)`, and call `vi.doUnmock("pkg")` in `afterAll()` so that the next test file gets the preload's mock again. Until then, a module that the preload script imported can get the real package too.
 
 ## Implementation Details
 

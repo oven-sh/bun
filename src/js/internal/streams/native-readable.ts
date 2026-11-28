@@ -51,6 +51,8 @@ interface NativePtr {
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
   setFlowing?: (flowing: boolean) => void;
+  /** File sources only: the raw fd, `-1` once closed. */
+  getFd?: () => number;
 }
 
 let debugId = 0;

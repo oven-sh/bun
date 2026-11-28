@@ -217,20 +217,27 @@ impl<'t> Property<'t> {
             value: strings::trim_left(rest, b" "),
         })
     }
+}
 
-    /// The value with `// ..` stripped: `/(^|\s+)\/\/([^\n\r]*)/g`.
-    fn value_without_line_comment(&self) -> &'t [u8] {
-        let value = self.value;
-        let mut from = 0;
-        while let Some(at) = strings::index_of(&value[from..], b"//").map(|at| from + at) {
-            let before = strings::trim_js_whitespace_end(&value[..at]);
-            if at == 0 || before.len() < at {
-                return before;
-            }
-            from = at + 1;
+/// A pragma's value with `// ..` stripped: `/(^|\s+)\/\/([^\n\r]*)/g`. `value` is one line.
+pub fn without_line_comment(value: &[u8]) -> &[u8] {
+    let mut from = 0;
+    while let Some(at) = strings::index_of(&value[from..], b"//").map(|at| from + at) {
+        let before = strings::trim_js_whitespace_end(&value[..at]);
+        if at == 0 || before.len() < at {
+            return before;
         }
-        value
+        from = at + 1;
     }
+    value
+}
+
+/// True if `line`, without the spaces before it, continues the value of the pragma on the line before it.
+pub fn is_continuation_line(line: &[u8]) -> bool {
+    line.len() >= 2
+        && strings::js_whitespace_len(line) == 0
+        && !strings::contains_char(line, b'@')
+        && !strings::contains(line, b"//")
 }
 
 impl DocBlock {
@@ -281,7 +288,7 @@ impl DocBlock {
             };
             let entry = (
                 property.name.to_vec(),
-                property.value_without_line_comment().to_vec(),
+                without_line_comment(property.value).to_vec(),
             );
             match pragmas.iter().rposition(|(name, _)| name == property.name) {
                 Some(last) => pragmas.insert(last + 1, entry),
@@ -377,11 +384,7 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
                 second_start + strings::index_of_char_usize(&text[second_start..], b'\n')?;
             let second = &text[second_start..second_end];
             let second = strings::trim_left(second, b" ");
-            if second.len() < 2
-                || strings::js_whitespace_len(second) != 0
-                || strings::contains_char(second, b'@')
-                || strings::contains(second, b"//")
-            {
+            if !is_continuation_line(second) {
                 return None;
             }
             // The lazy `+?` matches at least one character, even a space.

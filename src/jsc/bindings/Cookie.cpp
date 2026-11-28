@@ -149,7 +149,10 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
         }
     }
 
-    return Cookie::create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
+    auto cookie = Cookie::create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
+    if (!cookie.hasException())
+        cookie.returnValue()->m_valueIsWireText = true;
+    return cookie;
 }
 
 bool Cookie::isExpired() const
@@ -234,15 +237,34 @@ bool Cookie::isValidCookieDomain(const String& domain)
     return true;
 }
 
+static inline bool isCookieOctet(char16_t c)
+{
+    return c == 0x21 || (c >= 0x23 && c <= 0x2B) || (c >= 0x2D && c <= 0x3A) || (c >= 0x3C && c <= 0x5B) || (c >= 0x5D && c <= 0x7E);
+}
+template<typename CharacterType>
+static bool isEncodedCookieValue(std::span<const CharacterType> value)
+{
+    // RFC 6265 4.1.1: cookie-value = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+        value = value.subspan(1, value.size() - 2);
+    for (size_t i = 0; i < value.size(); i++) {
+        if (!isCookieOctet(value[i])) return false;
+        // CookieMap reads a '%' that does not start an escape back as U+FFFD, so a value with one stays percent-encoded.
+        if (value[i] == '%' && (value.size() - i < 3 || !isASCIIHexDigit(value[i + 1]) || !isASCIIHexDigit(value[i + 2]))) return false;
+    }
+    return true;
+}
+
 void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
 {
     // Name=Value is the basic format
     builder.append(m_name);
     builder.append('=');
-    auto result = encodeURIComponent(vm, m_value, builder);
-    if (result.hasException()) {
-        // m_value contained unpaired surrogate. oops!
-        // fortunately, this never happens because the string has already had invalid surrogate pairs converted to the replacement character
+    if (m_valueIsWireText && (m_value.is8Bit() ? isEncodedCookieValue(m_value.span8()) : isEncodedCookieValue(m_value.span16()))) {
+        builder.append(m_value);
+    } else {
+        // This fails only for an unpaired surrogate, which m_value never has.
+        encodeURIComponent(vm, m_value, builder);
     }
 
     // Add domain if present

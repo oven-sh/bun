@@ -340,6 +340,20 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         }
         return;
     }
+    case Op::MouseMove: {
+        auto p = decode<MouseMovePayload>(r);
+        if (auto* v = view(viewId, op)) {
+            if (!v->mouseMoveIPC(p.x, p.y)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
+    case Op::Hover: {
+        auto p = decode<HoverPayload>(r);
+        if (auto* v = view(viewId, op)) {
+            if (!v->hoverSelectorIPC(r.str(), p.timeout)) writer.sendReply(viewId, Reply::Ack);
+        }
+        return;
+    }
     case Op::ScrollTo: {
         auto p = decode<ScrollToPayload>(r);
         if (auto* v = view(viewId, op)) {

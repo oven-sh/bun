@@ -5,6 +5,7 @@ use bun_core::fmt::parse_decimal;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::bun_test;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
@@ -47,7 +48,8 @@ impl Rule for NoNamespace {
         if is_oxlint {
             cx.report(local, OXLINT);
         } else {
-            cx.report(node, NO_NAMESPACE).fix(|fixer| fix(fixer, stmt, local, node));
+            let is_safe = || !changes_module_mock_calls(stmt, import, local);
+            cx.report(node, NO_NAMESPACE).fix_where_safe(is_safe, |fixer| fix(fixer, stmt, local, node));
         }
     }
 }
@@ -111,6 +113,19 @@ impl<'a> Member<'a> {
             property: Cow::Borrowed(property.bytes()),
         })
     }
+}
+
+/// True if the fix makes `ns.jest` with a module mock call a named import, for which `bun test` hoists and for `ns.jest` doesn't: see [`bun_test`].
+#[cold]
+fn changes_module_mock_calls<'a>(declaration: Stmt<'a>, import: Import<'a>, local: Ident<'a>) -> bool {
+    if !bun_test::is_test_module(import.spec().bytes()) {
+        return false;
+    }
+    let members = Node::Stmt(declaration).scope().get_name(local.name()).map(Symbol::references);
+    members.into_iter().flatten().filter_map(Member::from_reference).any(|it| match it.node {
+        Node::Expr(member) => bun_test::is_object_of_module_mock_call(member, &it.property),
+        _ => false,
+    })
 }
 
 /// True if ESLint's `scope.variables` has a variable called `name`.

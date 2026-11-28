@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, makeTree, noCoreCmd, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
@@ -86,10 +86,11 @@ describe.if(!isWindows)("uv stubs", () => {
   // beforeAll), so run them concurrently.
   for (const symbol of symbols_to_test) {
     test.concurrent(`unsupported: ${symbol}`, async () => {
-      const { stderr } = await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${bunExe()} run index.ts ${symbol}`
-        .cwd(tempdir)
-        .throws(false)
-        .quiet();
+      const { stderr } =
+        await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${noCoreCmd([bunExe(), "run", "index.ts", symbol])}`
+          .cwd(tempdir)
+          .throws(false)
+          .quiet();
       const stderrStr = stderr.toString();
       expect(stderrStr).toContain("Bun encountered a crash when running a NAPI module that tried to call");
       expect(stderrStr).toContain(symbol);

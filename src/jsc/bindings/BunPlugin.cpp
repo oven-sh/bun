@@ -3823,7 +3823,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 #if ENABLE(AOT)
             // A CommonJS file that required a module that isn't compiled. The original of a compiled file is compiled.
             auto requirer = vm.hasCompiledCode() && !testFile && !stays && importer != key && !isBuiltinModuleKey(key) && !Bun::compiledModuleForPath(key.endsWith("?actual"_s) ? key.left(key.length() - "?actual"_s.length()) : key) ? Bun::compiledModuleForPath(importer) : std::nullopt;
-            if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer)) {
+            if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer) && !JSC::AOT::wasRunByPreloadHook(globalObject, *requirer)) {
                 // Like any other patched-in-place module that requires an evicted one.
                 bool stayed = staysInRegistry.remove(importer);
                 stayed |= staysInRequireCache.remove(importer);

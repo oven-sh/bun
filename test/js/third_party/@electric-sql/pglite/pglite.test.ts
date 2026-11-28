@@ -10,14 +10,15 @@ describe("pglite", () => {
     expect(await db.query("SELECT version()")).toEqual({
       rows: [
         {
-          version:
-            // since pglite is wasm, there is only one binary for all platforms. it always thinks it
-            // is aarch64-unknown-linux-gnu.
-            "PostgreSQL 17.5 on aarch64-unknown-linux-gnu, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5), 32-bit",
+          // since pglite is wasm, there is only one binary for all platforms. it always says
+          // wasm32-unknown-emscripten.
+          version: expect.stringMatching(/^PostgreSQL \d+\.\d+ \(PGlite [\d.]+\) on wasm32-unknown-emscripten, /),
         },
       ],
       fields: [{ name: "version", dataTypeID: 25 }],
       affectedRows: 0,
+      command: "SELECT",
+      rowCount: 1,
     });
   });
 });

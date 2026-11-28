@@ -260,6 +260,8 @@ describe("Server", () => {
       server.forceShutdown();
     });
 
+    // With @grpc/grpc-js 1.14 the call ends with UNAVAILABLE, not CANCELLED. Bun emits the 'error' event of the client
+    // session before the streams close, and grpc-js then reports a dropped connection. Node closes the streams first.
     it.todo("Should cancel open calls after the grace period ends", done => {
       const call = client.echoBidiStream();
       call.on("error", (error: ServiceError) => {
@@ -683,7 +685,7 @@ describe("Echo service", () => {
     class ToggleableSecureServerCredentials extends ServerCredentials {
       private contextOptions: SecureContextOptions;
       constructor(key: Buffer, cert: Buffer) {
-        super();
+        super({});
         this.contextOptions = { key, cert };
         this.enable();
       }

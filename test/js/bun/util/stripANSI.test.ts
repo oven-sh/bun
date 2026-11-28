@@ -110,7 +110,7 @@ describe("Bun.stripANSI", () => {
     // Partial sequences
     ["text\x1b", "text"],
     ["text\x1b[", "text"],
-    "text\x1b[3",
+    ["text\x1b[3", "text"],
 
     // Real world examples
     "\x1b[2K\x1b[1G\x1b[36m?\x1b[39m Installing...",
@@ -138,7 +138,7 @@ describe("Bun.stripANSI", () => {
     "\x1b[moretext",
     ["\x1b]incomplete", ""],
     ["\x1b]", ""],
-    "\x1b]i",
+    ["\x1b]i", ""],
     ["\x1b]in", ""],
     ["\x1b]inc", ""],
 
@@ -352,9 +352,9 @@ describe("Bun.stripANSI", () => {
     ["\x1b#6text", "text"], // Double-width line
 
     // Malformed sequences that should partially match
-    "\x1b[31", // Incomplete CSI (no final byte)
+    ["\x1b[31", ""], // Incomplete CSI (no final byte)
     ["\x1b[31;", ""], // Incomplete parameters
-    "\x1b[31;4", // Incomplete parameters
+    ["\x1b[31;4", ""], // Incomplete parameters
     ["\x1b]0;title", ""], // Incomplete OSC
     ["\x1b]0;title\x1b", ""], // Incomplete OSC terminator
 

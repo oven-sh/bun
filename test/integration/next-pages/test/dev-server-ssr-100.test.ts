@@ -167,9 +167,7 @@ test(
         { signal: controller.signal },
       );
     }
-    queue.once("error", e => {
-      reject(e);
-    });
+    queue.addEventListener("error", event => reject(event.detail), { once: true });
     queue.onIdle().then(resolve);
     await promise;
   },

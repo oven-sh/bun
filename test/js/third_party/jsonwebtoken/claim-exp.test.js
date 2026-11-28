@@ -120,7 +120,7 @@ describe("expires", function () {
   describe("when signing and verifying a token with expires option", function () {
     let fakeClock;
     beforeEach(function () {
-      fakeClock = sinon.useFakeTimers({ now: 60000 });
+      fakeClock = sinon.useFakeTimers({ now: 60000, toNotFake: ["nextTick", "queueMicrotask"] });
     });
 
     afterEach(function () {
@@ -129,7 +129,7 @@ describe("expires", function () {
 
     it('should set correct "exp" with negative number of seconds', function (done) {
       signWithExpiresIn(-10, {}, (e1, token) => {
-        fakeClock.tick(-10001);
+        fakeClock.setSystemTime(Date.now() - 10001);
         testUtils.verifyJWTHelper(token, "secret", {}, (e2, decoded) => {
           testUtils.asyncCheck(done, () => {
             expect(e1).toBeNull();
@@ -154,7 +154,7 @@ describe("expires", function () {
 
     it('should set correct "exp" with zero seconds', function (done) {
       signWithExpiresIn(0, {}, (e1, token) => {
-        fakeClock.tick(-1);
+        fakeClock.setSystemTime(Date.now() - 1);
         testUtils.verifyJWTHelper(token, "secret", {}, (e2, decoded) => {
           testUtils.asyncCheck(done, () => {
             expect(e1).toBeNull();
@@ -167,7 +167,7 @@ describe("expires", function () {
 
     it('should set correct "exp" with negative string timespan', function (done) {
       signWithExpiresIn("-10 s", {}, (e1, token) => {
-        fakeClock.tick(-10001);
+        fakeClock.setSystemTime(Date.now() - 10001);
         testUtils.verifyJWTHelper(token, "secret", {}, (e2, decoded) => {
           testUtils.asyncCheck(done, () => {
             expect(e1).toBeNull();
@@ -180,7 +180,7 @@ describe("expires", function () {
 
     it('should set correct "exp" with positive string timespan', function (done) {
       signWithExpiresIn("10 s", {}, (e1, token) => {
-        fakeClock.tick(-10001);
+        fakeClock.setSystemTime(Date.now() - 10001);
         testUtils.verifyJWTHelper(token, "secret", {}, (e2, decoded) => {
           testUtils.asyncCheck(done, () => {
             expect(e1).toBeNull();
@@ -193,7 +193,7 @@ describe("expires", function () {
 
     it('should set correct "exp" with zero string timespan', function (done) {
       signWithExpiresIn("0 s", {}, (e1, token) => {
-        fakeClock.tick(-1);
+        fakeClock.setSystemTime(Date.now() - 1);
         testUtils.verifyJWTHelper(token, "secret", {}, (e2, decoded) => {
           testUtils.asyncCheck(done, () => {
             expect(e1).toBeNull();

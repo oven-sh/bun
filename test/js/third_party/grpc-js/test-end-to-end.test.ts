@@ -46,7 +46,6 @@ const echoServiceImplementation = {
   },
 };
 
-// is something with the file watcher?
 describe("Client should successfully communicate with server", () => {
   let server: Server | null = null;
   let client: ServiceClient | null = null;
@@ -56,7 +55,7 @@ describe("Client should successfully communicate with server", () => {
     server?.forceShutdown();
     server = null;
   });
-  it.skip("With file watcher credentials", done => {
+  it("With file watcher credentials", done => {
     const [caPath, keyPath, certPath] = ["ca.pem", "server1.key", "server1.pem"].map(file =>
       path.join(__dirname, "fixtures", file),
     );

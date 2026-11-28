@@ -49,7 +49,7 @@ describe("app.router", function () {
         request(app)[method]("/foo").expect(200, done);
       });
 
-      it.todo("should reject numbers for app." + method, function () {
+      it("should reject numbers for app." + method, function () {
         var app = express();
         assert.throws(app[method].bind(app, "/", 3), /argument handler must be a function/);
       });
@@ -167,7 +167,7 @@ describe("app.router", function () {
     });
 
     if (supportsRegexp("(?<foo>.*)")) {
-      it.todo("should populate req.params with named captures", function (done) {
+      it("should populate req.params with named captures", function (done) {
         var app = express();
         var re = new RegExp("^/user/(?<userId>[0-9]+)/(view|edit)?$");
 
@@ -573,7 +573,7 @@ describe("app.router", function () {
       request(app).get("/user/tj/edit").expect("editing tj", done);
     });
 
-    it.todo("should work following a partial capture group", function (done) {
+    it("should work following a partial capture group", function (done) {
       var app = express();
       var cb = after(2, done);
 
@@ -610,7 +610,7 @@ describe("app.router", function () {
     });
   });
 
-  describe.todo(":name?", function () {
+  describe(":name?", function () {
     it("should denote an optional capture group", function (done) {
       var app = express();
 
@@ -634,7 +634,7 @@ describe("app.router", function () {
     });
   });
 
-  describe.todo(":name*", function () {
+  describe(":name*", function () {
     it("should match one segment", function (done) {
       var app = express();
 
@@ -666,7 +666,7 @@ describe("app.router", function () {
     });
   });
 
-  describe.todo(":name+", function () {
+  describe(":name+", function () {
     it("should match one segment", function (done) {
       var app = express();
 
@@ -698,7 +698,7 @@ describe("app.router", function () {
     });
   });
 
-  describe.todo(".:name", function () {
+  describe(".:name", function () {
     it("should denote a format", function (done) {
       var app = express();
       var cb = after(2, done);
@@ -713,7 +713,7 @@ describe("app.router", function () {
     });
   });
 
-  describe.todo(".:name?", function () {
+  describe(".:name?", function () {
     it("should denote an optional format", function (done) {
       var app = express();
       var cb = after(2, done);
@@ -728,7 +728,7 @@ describe("app.router", function () {
     });
   });
 
-  describe.todo("when next() is called", function () {
+  describe("when next() is called", function () {
     it("should continue lookup", function (done) {
       var app = express(),
         calls: string[] = [];
@@ -806,7 +806,7 @@ describe("app.router", function () {
   });
 
   describe("when next(err) is called", function () {
-    it.todo("should break out of app.router", function (done) {
+    it("should break out of app.router", function (done) {
       var app = express(),
         calls: string[] = [];
 
@@ -865,8 +865,7 @@ describe("app.router", function () {
     });
   });
 
-  // TODO: upgrade to express v5
-  describe.todo("promise support", function () {
+  describe("promise support", function () {
     it("should pass rejected promise value", function (done) {
       var app = express();
       var router = new express.Router();
@@ -1002,7 +1001,7 @@ describe("app.router", function () {
     request(app).get("/account/edit").expect("editing user 12", done);
   });
 
-  it.todo("should run in order added", function (done) {
+  it("should run in order added", function (done) {
     var app = express();
     var path: number[] = [];
 

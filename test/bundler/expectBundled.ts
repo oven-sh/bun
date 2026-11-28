@@ -1784,7 +1784,23 @@ for (const [key, blob] of build.outputs) {
                 for (const mapping of map_tests.mappings) {
                   const src = parseSourceMapStrSource(outdir!, parsed, mapping[0]);
                   const dest = parseSourceMapStrGenerated(generated_code, mapping[1]);
-                  const pos = map.generatedPositionFor(src);
+                  let pos = map.generatedPositionFor(src);
+                  if (pos.line !== dest.line || pos.column !== dest.column) {
+                    // One original position can map to several generated positions, and source-map releases differ in
+                    // which of them generatedPositionFor() returns. Take the expected one when it is mapped from the
+                    // same original position as the one that was returned.
+                    const original = map.originalPositionFor({ line: pos.line!, column: pos.column! });
+                    if (original.source !== null && original.line !== null && original.column !== null) {
+                      pos =
+                        map
+                          .allGeneratedPositionsFor({
+                            source: original.source,
+                            line: original.line,
+                            column: original.column,
+                          })
+                          .find(candidate => candidate.line === dest.line && candidate.column === dest.column) ?? pos;
+                    }
+                  }
                   if (!dest.matched) {
                     const real_generated = generated_code
                       .split("\n")

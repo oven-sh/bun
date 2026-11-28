@@ -71,6 +71,12 @@ function createWindow(windowUrl) {
     url: windowUrl,
     width: 1024,
     height: 768,
+    // happy-dom 20 and later run the page's scripts and load its stylesheets only when asked to.
+    settings: {
+      enableJavaScriptEvaluation: true,
+      suppressInsecureJavaScriptEnvironmentWarning: true,
+      enableCSSFileLoading: true,
+    },
   });
 
   // The harness counts one `received-hmr-event` per build per page. A page

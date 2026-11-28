@@ -59,13 +59,14 @@ export function registerClientReference(
       return component(...args);
     }
     isInsideIsland = true;
-    const [payload, props] = args;
+    // The first argument is Svelte's server renderer. Before Svelte 5.39.1 it was a payload with an `out` string.
+    const [renderer, props] = args;
     const islandId = nextIslandId++;
-    payload.out += `<bake-island id="I:${islandId}">`;
+    renderer.push(`<bake-island id="I:${islandId}">`);
     const file = (islands[clientModuleId] ??= []);
     file.push([islandId, clientExportId, props]);
     component(...args);
-    payload.out += `</bake-island>`;
+    renderer.push(`</bake-island>`);
     isInsideIsland = false;
   };
 }

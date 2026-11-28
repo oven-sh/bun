@@ -15,7 +15,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--bytecode-depth" type="number">
-  How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all
+  How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all.
+  Without <code>--bytecode</code>, Bun checks the value and does not use it
 </ParamField>
 
 <ParamField path="--no-optimize-bytecode" type="boolean">
@@ -133,7 +134,18 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--no-bundle" type="boolean">
-  Transpile only — do not bundle
+  Transpile only — do not bundle. Bun transpiles each entry point on its own and does not bundle the modules it imports.
+  Imports that remain in the output keep their specifiers as written. In a TypeScript file, Bun removes imported names
+  that the file never uses as a value, and an `import` statement with no name left. A side-effect import such as `import
+  "./setup"` stays. Transpiler options such as `--define`, `--env`, `--drop`, `--loader`, `--jsx-runtime`, `--minify`
+  and `--tsconfig-override` apply. So do `--outdir` and `--outfile`, and with `--outdir` also `--root` and
+  `--entry-naming`. Bun validates options that describe a bundle (`--splitting`, `--external`, `--packages`, `--banner`,
+  `--footer`, `--sourcemap`, `--metafile`, `--metafile-md`) and then ignores them. The validation can fail: without
+  `--outdir`, `--splitting` and `--sourcemap=external` are errors. `--format` does not convert the module format: an ES
+  module stays an ES module. With `--target=bun`, `--format=cjs` still prints `import.meta.main` as `require.main ==
+  module`. `--bytecode` writes no bytecode file. It acts like `--target=bun --format=cjs`, and Bun rejects it with
+  another `--target`. `--watch` runs the first build and then keeps the process alive without rebuilding. Bun rejects
+  `--compile` together with `--no-bundle`
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">
@@ -183,7 +195,7 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--watch" type="boolean">
-  Rebuild automatically when files change
+  Rebuild automatically when files change. Applies to bundles; see `--no-bundle` for the transpile-only case
 </ParamField>
 
 <ParamField path="--no-clear-screen" type="boolean">

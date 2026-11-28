@@ -79,6 +79,33 @@ describe("Math", () => {
 
 For this test, `bun test` matches the pattern against the string "Math operations should add correctly".
 
+### When Nothing Matches
+
+`bun test` exits with code 1 in each of these cases:
+
+- It finds no test file.
+- The [filters](#position-arguments-as-filters) or [paths](#specifying-exact-file-paths) you pass select no test file.
+- `--test-name-pattern` filters out at least one test, and the run counts nothing else: no passed, failed, skipped or todo test, and no `expect()` call.
+
+`bun test` does not fail these runs for lack of a match:
+
+- A run whose test files define no test.
+- A run with `--test-name-pattern` where a test that the pattern does not match sits inside a skipped or todo `describe` block. Bun counts that test as skipped or todo.
+- A run where Bun finds test files, but [`--shard`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard) assigns none to this shard or `--changed` selects none. Bun runs no test.
+
+The exit code of such a run depends on the rest of the run. A test file that throws while it loads, or a test that fails, still exits with code 1.
+
+Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
+
+```bash terminal icon="terminal"
+bun test --pass-with-no-tests
+```
+
+Two cases exit with code 1 even with `--pass-with-no-tests`:
+
+- A single path that does not exist. `bun test ./missing.test.ts --pass-with-no-tests` prints `Test filter "./missing.test.ts" had no matches`.
+- A `--files-from` list that contains no path. `bun test --files-from ./list.txt --pass-with-no-tests` prints `error: --files-from file ./list.txt lists no test files`.
+
 ### Changing the Root Directory
 
 By default, Bun looks for test files starting from the current working directory. Change this with the `root` option in `bunfig.toml`:

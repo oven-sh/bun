@@ -43,6 +43,7 @@ S3 is the [de facto standard](https://en.wikipedia.org/wiki/De_facto_standard) i
 - DigitalOcean Spaces
 - MinIO
 - Backblaze B2
+- Neon Object Storage
 - ...and any other S3-compatible storage service
 
 ## Basic Usage
@@ -396,6 +397,35 @@ const supabase = new S3Client({
   bucket: "my-bucket",
   region: "us-west-1",
   endpoint: "https://<account-id>.supabase.co/storage/v1/s3",
+});
+```
+
+### Using Bun's S3Client with Neon Object Storage
+
+To use Bun's S3 client with [Neon Object Storage](https://neon.com/docs/storage/overview), set `endpoint` to your branch's storage endpoint and `region` to your project's region in the `S3Client` constructor. Each Neon branch has its own endpoint, which you can copy from the **Storage** tab of the **Connect** dialog in the Neon Console. The access key ID and secret access key come from a [Neon credential](https://neon.com/docs/storage/authentication) with the `storage:read` or `storage:write` scope.
+
+Neon Object Storage only supports path-style requests, so don't set `virtualHostedStyle`.
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={7-8}
+import { S3Client } from "bun";
+
+const neon = new S3Client({
+  accessKeyId: "access-key", // nak_live_...
+  secretAccessKey: "secret-key", // nsk_live_...
+  bucket: "my-bucket",
+  region: "us-east-2",
+  endpoint: "https://<branch-id>.storage.<cell>.<region>.aws.neon.tech",
+});
+```
+
+`neon env pull` writes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT_URL_S3` to your `.env` file. Bun reads the first three [automatically](#credentials), but not `AWS_ENDPOINT_URL_S3`, so pass it as `endpoint`:
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { S3Client } from "bun";
+
+const neon = new S3Client({
+  bucket: "my-bucket",
+  endpoint: process.env.AWS_ENDPOINT_URL_S3,
 });
 ```
 

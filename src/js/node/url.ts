@@ -373,7 +373,7 @@ Url.prototype.parse = function parse(
 
     // validate a little.
     if (!ipv6Hostname) {
-      rest = getHostname(this, rest, hostname, url);
+      rest = getHostname(this, rest, hostname, url, lowerProto!, slashesDenoteHost);
     }
 
     if (this.hostname.length > hostnameMaxLen) {
@@ -575,8 +575,14 @@ function isIpv6Hostname(hostname: string) {
   );
 }
 
-let warnInvalidPort = true;
-function getHostname(self: $Node.Url, rest: string, hostname: string, url: string) {
+function getHostname(
+  self: $Node.Url,
+  rest: string,
+  hostname: string,
+  url: string,
+  lowerProto: string | undefined,
+  slashesDenoteHost: boolean | undefined,
+) {
   for (let i = 0; i < hostname.length; ++i) {
     const code = hostname.$charCodeAt(i);
     const isValid =
@@ -587,14 +593,11 @@ function getHostname(self: $Node.Url, rest: string, hostname: string, url: strin
       code !== Char.COLON;
 
     if (!isValid) {
-      // If leftover starts with :, then it represents an invalid port.
-      // But url.parse() is lenient about it for now.
-      // Issue a warning and continue.
-      if (warnInvalidPort && code === Char.COLON) {
-        const detail = `The URL ${url} is invalid. Future versions of Node.js will throw an error.`;
-        process.emitWarning(detail, "DeprecationWarning", "DEP0170");
-        warnInvalidPort = false;
+      if (code === Char.COLON && (lowerProto ? slashedProtocol[lowerProto] : slashesDenoteHost)) {
+        // Node passes the text as the value and the url as the reason. Keep that order.
+        throw $ERR_INVALID_ARG_VALUE("url", "Invalid port in url", url);
       }
+      // Node 25+ throws for every scheme (DEP0170), but packages still parse scp-style git URLs. Keep it working.
       self.hostname = hostname.slice(0, i);
       return `/${hostname.slice(i)}${rest}`;
     }

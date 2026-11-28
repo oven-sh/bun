@@ -78,29 +78,19 @@ if (common.hasIntl) {
 {
   const badURLs = [
     'https://evil.com:.example.com',
-    'git+ssh://git@github.com:npm/npm',
+    // bun: upstream v26.3.0 also lists 'git+ssh://git@github.com:npm/npm'. Bun still parses it:
+    // see test/js/node/url/url-parse-invalid-input.test.js.
   ];
   badURLs.forEach((badURL) => {
     common.spawnPromisified(process.execPath, ['-e', `url.parse(${JSON.stringify(badURL)})`])
       .then(common.mustCall(({ code, stdout, stderr }) => {
-        assert.strictEqual(code, 0);
-        assert.strictEqual(stdout, '');
-        // NOTE: bun formats errors slightly differently from node, but we're
-        // printing the same deprecation message.
-        // assert.match(stderr, /\[DEP0170\] DeprecationWarning:/);
-        assert.match(stderr, /\DEP0170/);
-        assert.match(stderr, /\DeprecationWarning/);
+        assert.strictEqual(code, 1);
       }));
   });
 
-  // Warning should only happen once per process.
-  common.expectWarning({
-    DeprecationWarning: {
-      DEP0169: '`url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.',
-      DEP0170: `The URL ${badURLs[0]} is invalid. Future versions of Node.js will throw an error.`,
-    },
-  });
   badURLs.forEach((badURL) => {
-    url.parse(badURL);
+    assert.throws(() => url.parse(badURL), {
+      code: 'ERR_INVALID_ARG_VALUE',
+    });
   });
 }

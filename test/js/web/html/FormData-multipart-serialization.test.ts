@@ -136,8 +136,22 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      ["blob", { file: true, name: undefined as any, type: "", text: "blob-bytes" }],
+      ["blob", { file: true, name: undefined as any, type: "application/octet-stream", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
+    ]);
+  });
+
+  test("parses back the Content-Type it writes for each file part", async () => {
+    const formData = new FormData();
+    formData.append("typed blob", new Blob(["x"], { type: "image/webp" }));
+    formData.append("named blob", new Blob(["x"]), "x.png");
+    formData.append("typed file", new File(["x"], "x.txt", { type: "image/png" }));
+
+    const parsed = await new Response(formData).formData();
+    expect([...parsed].map(([name, value]) => [name, (value as File).type])).toEqual([
+      ["typed blob", "image/webp"],
+      ["named blob", "application/octet-stream"],
+      ["typed file", "image/png"],
     ]);
   });
 

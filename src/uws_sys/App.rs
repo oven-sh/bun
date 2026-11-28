@@ -90,10 +90,7 @@ impl<const SSL: bool> OwnedApp<SSL> {
     pub fn new(ctx: Option<&OwnedSslCtx>) -> Self {
         debug_assert_eq!(SSL, ctx.is_some());
         let web_sockets = Rc::<WebSockets>::default();
-        let app = c::uws_create_app(
-            ctx.map(|ctx| SslCtx::opaque_ref(ctx.as_ptr())),
-            Rc::as_ptr(&web_sockets).cast(),
-        );
+        let app = c::uws_create_app(ctx.map(|ctx| &**ctx), Rc::as_ptr(&web_sockets).cast());
         Self {
             app: NonNull::new(app.cast()).expect("`new` does not return null"),
             _web_sockets: web_sockets,
@@ -360,7 +357,7 @@ impl<const SSL: bool> App<SSL> {
             c::uws_add_server_name(
                 self.as_raw(),
                 hostname_pattern.as_ptr(),
-                SslCtx::opaque_ref(ctx.as_ptr()),
+                ctx,
                 own_client_auth,
             )
         }

@@ -908,13 +908,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return;
         }
         let socket = this.socket.get();
+        // SAFETY: `on_close` detaches the socket, and `ssl` is last used before anything closes it.
+        let mut ssl = socket.as_tls().and_then(|tls| unsafe { tls.ssl_mut() });
         let name_matches = |hostname: &[u8]| {
-            let AnySocket::SocketTls(tls) = &socket else {
-                return false;
-            };
             !hostname.is_empty()
-                && tls
-                    .ssl_mut()
+                && ssl
+                    .as_deref_mut()
                     .is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
         };
         if success != 1
@@ -928,7 +927,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         if let Some(callback) = this.check_server_identity_callback() {
             let hostname = this.tls_config.server_name_bytes();
             if let Err(reason) =
-                server_identity::check(&this.global_object, callback, &socket, hostname)
+                server_identity::check(&this.global_object, callback, socket, ssl, hostname)
             {
                 return this.fail_with_js_value(reason);
             }

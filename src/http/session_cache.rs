@@ -110,14 +110,11 @@ pub(crate) struct SessionSink {
 }
 
 /// BoringSSL's new-session callback. Runs inside `SSL_read`/`SSL_do_handshake`.
-extern "C" fn on_new_session(owner: *mut c_void, session: *mut SSL_SESSION) {
-    if session.is_null() {
-        return;
-    }
+extern "C" fn on_new_session(owner: *mut c_void, session: &SSL_SESSION) {
     let Some(owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };
-    let session = OwnedSslSession::retain(SSL_SESSION::opaque_ref(session));
+    let session = OwnedSslSession::retain(session);
     // SAFETY: `owner` is the Box interior installed by [`install`]. Runs on
     // the HTTP thread inside `SSL_read`/`SSL_do_handshake`; nothing else
     // holds a borrow of the sink during that call.
@@ -148,7 +145,7 @@ unsafe extern "C" {
     fn us_socket_set_session_sink(
         s: *mut bun_uws::us_socket_t,
         sink: *mut c_void,
-        on_session: extern "C" fn(*mut c_void, *mut SSL_SESSION),
+        on_session: extern "C" fn(*mut c_void, &SSL_SESSION),
         on_free: extern "C" fn(*mut c_void),
     );
     fn us_socket_session_sink(s: *mut bun_uws::us_socket_t) -> *mut c_void;
@@ -168,23 +165,21 @@ pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
 /// Offer any cached session for this key and install an unarmed sink.
 ///
 /// # Safety
-/// `socket` must be live and `ssl` its pre-handshake `SSL*`; `ctx` must outlive `ssl`.
+/// `socket` must be live and `ssl` its pre-handshake `SSL`; `ctx` must outlive `ssl`.
 pub(crate) unsafe fn install(
     socket: *mut bun_uws::us_socket_t,
-    ssl: *mut SSL,
+    ssl: &SSL,
     ctx: *const crate::HttpsContext,
     hostname: &[u8],
     port: u16,
     proxy_auth_hash: u64,
     unix_path: &[u8],
 ) {
-    debug_assert!(!ssl.is_null());
     debug_assert!(!ctx.is_null());
     // SAFETY: caller contract.
     let cache = unsafe { &(*ctx).session_cache };
     if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path) {
-        // SAFETY: `ssl` is live and pre-handshake; it takes its own reference.
-        unsafe { SSL_set_session(ssl, session.as_ptr()) };
+        SSL_set_session(ssl, &session);
     }
     let sink = Box::new(SessionSink {
         ctx,

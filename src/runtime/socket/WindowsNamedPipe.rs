@@ -804,9 +804,7 @@ impl Transport for WindowsNamedPipe {
     }
 
     fn ssl(&self) -> Option<*mut boringssl::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
+        Some(self.wrapper_ref()?.ssl()?.as_ptr())
     }
 }
 

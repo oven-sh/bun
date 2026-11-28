@@ -1,9 +1,9 @@
 //! File reads for the native CA loaders in `packages/bun-usockets/src/crypto/root_certs*.cpp`, which keep to the
 //! BoringSSL side (PEM, X509) and take bytes from here rather than opening files themselves.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 
-use bun_core::{ZBox, ZStr, env_var, strings};
+use bun_core::{CStrRef, ZBox, ZStr, env_var, strings};
 use bun_sys::O;
 
 /// Receives the whole contents of one file.
@@ -32,15 +32,14 @@ fn hand_over(bytes: &[u8], ctx: *mut c_void, on_file: OnFile) {
 /// `NODE_EXTRA_CA_CERTS` and friends: one named file.
 ///
 /// # Safety
-/// `path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
+/// `ctx` must be whatever `on_file` expects.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__readCertificateFile(
-    path: *const c_char,
+    path: CStrRef<'_>,
     ctx: *mut c_void,
     on_file: OnFile,
 ) -> c_int {
-    // SAFETY: caller contract.
-    read_file_for(unsafe { ZStr::from_c_ptr(path) }, ctx, on_file)
+    read_file_for(ZStr::from_cstr(path.to_cstr()), ctx, on_file)
 }
 
 /// A pipe or FIFO reads only once, so the first loader keeps its bytes for the other. Locked across `open(2)`.
@@ -90,31 +89,28 @@ pub(crate) fn read_openssl_default_cert_file(
 /// The file half of OpenSSL's `X509_STORE_set_default_paths`, for the default store.
 ///
 /// # Safety
-/// `default_path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
+/// `ctx` must be whatever `on_file` expects.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__readOpenSSLDefaultCertFile(
-    default_path: *const c_char,
+    default_path: CStrRef<'_>,
     ctx: *mut c_void,
     on_file: OnFile,
 ) {
-    // SAFETY: caller contract.
-    let default_path = unsafe { ZStr::from_c_ptr(default_path) };
+    let default_path = ZStr::from_cstr(default_path.to_cstr());
     read_openssl_default_cert_file(default_path, |bytes, _| hand_over(bytes, ctx, on_file));
 }
 
 /// The files of the directory half of OpenSSL's `X509_STORE_set_default_paths` that are named `<subject hash>.<n>`.
 ///
 /// # Safety
-/// `default_path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
+/// `ctx` must be whatever `on_file` expects.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__readOpenSSLDefaultCertDir(
-    default_path: *const c_char,
+    default_path: CStrRef<'_>,
     ctx: *mut c_void,
     on_file: OnFile,
 ) {
-    // SAFETY: caller contract.
-    let default_path = unsafe { ZStr::from_c_ptr(default_path) };
-    let dirs = env_var::SSL_CERT_DIR::get().unwrap_or(default_path.as_bytes());
+    let dirs = env_var::SSL_CERT_DIR::get().unwrap_or_else(|| default_path.to_cstr().to_bytes());
     let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
     let mut bytes = Vec::new();
     for path in strings::tokenize(dirs, if cfg!(windows) { b";" } else { b":" }) {

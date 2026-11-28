@@ -664,9 +664,7 @@ impl Transport for UpgradedDuplex {
     }
 
     fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
+        Some(self.wrapper_ref()?.ssl()?.as_ptr())
     }
 
     /// The JS duplex may be dead too, so the SSL shutdown that follows writes no close_notify and ends nothing.

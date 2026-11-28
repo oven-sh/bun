@@ -569,17 +569,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let opts = uws::SocketContext::BunSocketContextOptions {
-            ca: if !init_opts.ca.is_empty() {
-                init_opts.ca.as_ptr().cast()
-            } else {
-                core::ptr::null()
-            },
-            ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
-            ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
-                init_opts.abs_ca_file_name.as_ptr()
-            } else {
-                core::ptr::null()
-            },
+            ca: (!init_opts.ca.is_empty()).then_some(init_opts.ca).into(),
+            ca_file_name: (!init_opts.abs_ca_file_name.is_empty())
+                .then_some(init_opts.abs_ca_file_name.into()),
             request_cert: 1,
             ..Default::default()
         };

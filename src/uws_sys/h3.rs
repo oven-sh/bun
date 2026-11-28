@@ -390,9 +390,8 @@ impl<const SSL: bool> OwnedApp<SSL> {
         if !SSL {
             return None;
         }
-        // SAFETY: opts is `#[repr(C)]` passed by value
-        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s, max_request_body_size) };
-        core::ptr::NonNull::new(p).map(Self)
+        let app = c::uws_h3_create_app(*opts, idle_timeout_s, max_request_body_size);
+        core::ptr::NonNull::new(app).map(Self)
     }
 
     pub fn as_ptr(&self) -> *mut App {
@@ -617,7 +616,7 @@ mod c {
     // only pointer arg is the opaque handle (plus value types) are `safe fn`.
     // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
     unsafe extern "C" {
-        pub(super) fn uws_h3_create_app(
+        pub(super) safe fn uws_h3_create_app(
             opts: BunSocketContextOptions,
             idle_timeout_s: u32,
             max_request_body_size: u64,

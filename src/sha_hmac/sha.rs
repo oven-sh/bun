@@ -1,4 +1,5 @@
 use core::ffi::{c_int, c_void};
+use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_boringssl as boringssl;
@@ -47,7 +48,7 @@ macro_rules! new_hasher {
     ) => {
         #[repr(C)]
         pub struct $name {
-            hasher: $ctx,
+            hasher: MaybeUninit<$ctx>,
         }
 
         impl $name {
@@ -56,11 +57,9 @@ macro_rules! new_hasher {
             pub fn init() -> Self {
                 boringssl::load();
                 let mut this = Self {
-                    hasher: bun_core::ffi::zeroed(),
+                    hasher: MaybeUninit::uninit(),
                 };
-                // SAFETY: `this.hasher` is a writable, properly sized `$ctx`;
-                // BoringSSL *_Init only writes to it and does not read prior contents.
-                let rc: c_int = unsafe { $init(&mut this.hasher) };
+                let rc: c_int = $init(&mut this.hasher);
                 debug_assert!(rc == 1);
                 this
             }
@@ -75,14 +74,18 @@ macro_rules! new_hasher {
                 // SAFETY: `self.hasher` was initialised in `init()`; BoringSSL
                 // *_Update reads exactly `len` bytes from `data`.
                 let rc: c_int = unsafe {
-                    $update(&mut self.hasher, data.as_ptr().cast::<c_void>(), data.len())
+                    $update(
+                        self.hasher.as_mut_ptr(),
+                        data.as_ptr().cast::<c_void>(),
+                        data.len(),
+                    )
                 };
                 debug_assert!(rc == 1);
             }
 
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
-                // SAFETY: `out` is exactly DIGEST bytes; *_Final writes that many.
-                let rc: c_int = unsafe { $final_(out.as_mut_ptr(), &mut self.hasher) };
+                // SAFETY: `init()` wrote `self.hasher`; *_Final writes DIGEST bytes, the size of `out`.
+                let rc: c_int = unsafe { $final_(out.as_mut_ptr(), self.hasher.as_mut_ptr()) };
                 debug_assert!(rc == 1);
             }
         }

@@ -378,10 +378,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
-        match self.ssl_mut() {
-            Some(ssl) if !self.is_closed() => crate::ssl::us_ssl_socket_verify_error_from_ssl(ssl),
-            _ => us_bun_verify_error_t::default(),
-        }
+        self.with_open_ssl(crate::ssl::us_ssl_socket_verify_error_from_ssl)
+            .unwrap_or_default()
     }
 
     pub fn get_error(&self) -> i32 {
@@ -630,10 +628,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         if let InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) = self.socket {
             return sock(s).sni_resolve(ctx, error);
         }
-        let Some(ssl) = self.ssl_mut() else { return };
-        let ctx = ctx.map_or(core::ptr::null_mut(), |ctx| ctx.into_raw());
-        // SAFETY: `ssl` is live, and the callee takes the reference `ctx` carries.
-        if unsafe { crate::ssl::us_ssl_sni_resolve(ssl, ctx, c_int::from(error)) } != 0 {
+        let waited = self.with_open_ssl(|ssl| {
+            let ctx = ctx.map_or(core::ptr::null_mut(), |ctx| ctx.into_raw());
+            // SAFETY: the callee takes the reference `ctx` carries.
+            unsafe { crate::ssl::us_ssl_sni_resolve(ssl, ctx, c_int::from(error)) }
+        });
+        if waited.is_some_and(|waited| waited != 0) {
             // Drives the handshake again.
             self.flush();
         }
@@ -644,9 +644,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Refuse a bad server chain during the handshake, before the client
     /// certificate goes out. Client-only; call it before the handshake is driven.
     pub fn set_inline_reject(&self) {
-        if let Some(ssl) = self.ssl_mut() {
-            crate::ssl::us_ssl_set_inline_reject(ssl);
-        }
+        self.with_open_ssl(crate::ssl::us_ssl_set_inline_reject);
     }
 
     /// Drop the handshake flight that usockets holds across the handshake callback.
@@ -681,13 +679,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.get_native_handle().map(|h| h.cast())
     }
 
-    /// The socket's `SSL` handle as a borrow (`SSL` is a zero-sized opaque,
-    /// so this is the safe spelling of [`ssl`](Self::ssl)).
+    /// SAFETY: the socket is detached, connecting, or open with TLS attached. The borrow is last used before it closes or anything else touches its `SSL`.
     #[inline]
-    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
-        self.ssl()
-            .filter(|p| !p.is_null())
-            .map(bun_opaque::opaque_deref_mut)
+    pub unsafe fn ssl_mut<'a>(&self) -> Option<&'a mut bun_boringssl_sys::SSL> {
+        // SAFETY: fn contract; every transport reports a null handle as `None`.
+        self.ssl().map(|ssl| unsafe { &mut *ssl })
+    }
+
+    /// For an `f` that neither closes the socket nor runs script.
+    fn with_open_ssl<R>(&self, f: impl FnOnce(&bun_boringssl_sys::SSL) -> R) -> Option<R> {
+        let ssl = self.ssl().filter(|_| !self.is_closed())?;
+        // SAFETY: an open TLS socket has its `SSL`.
+        Some(f(unsafe { &*ssl }))
     }
 
     /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
@@ -1032,6 +1035,13 @@ impl AnySocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
+        }
+    }
+
+    pub fn as_tls(&self) -> Option<&SocketTLS> {
+        match self {
+            AnySocket::SocketTcp(_) => None,
+            AnySocket::SocketTls(s) => Some(s),
         }
     }
 

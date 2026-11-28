@@ -392,9 +392,7 @@ impl SecureContext {
     pub(crate) fn session_id_context(&self) -> [u8; 32] {
         let mut id = self.digest.get();
         let name = self.session_name.get();
-        // SAFETY: `self.ctx` is live.
-        let verifies = unsafe { boringssl::SSL_CTX_get_verify_mode(self.ctx.as_ptr()) }
-            != boringssl::SSL_VERIFY_NONE;
+        let verifies = boringssl::SSL_CTX_get_verify_mode(&self.ctx) != boringssl::SSL_VERIFY_NONE;
         if name == [0; SESSION_NAME_MAX] && !verifies {
             return id;
         }
@@ -410,11 +408,7 @@ impl SecureContext {
     }
 
     fn apply_session_id_context(&self) {
-        let id = self.session_id_context();
-        // SAFETY: `self.ctx` is live; the call copies the 32 bytes.
-        unsafe {
-            boringssl::SSL_CTX_set_session_id_context(self.ctx.as_ptr(), id.as_ptr(), id.len());
-        }
+        self.ctx.set_session_id_context(&self.session_id_context());
     }
 
     /// The `SSL_CTX` for a member that changes it. A digest-interned one also serves other consumers, so it's refused.

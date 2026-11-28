@@ -396,7 +396,7 @@ fn is_hostname(host: &[u8]) -> bool {
         .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+pub fn check_x509_server_identity(x509: &boring::X509, hostname: &[u8]) -> bool {
     // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`.
     let typed = unfqdn(hostname);
     let mut host_ip = bun_core::ip_address::parse_strict(typed);
@@ -465,7 +465,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
 /// `host_ptr[..host_len]` must be readable.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__X509__checkServerIdentity(
-    x509: &mut boring::X509,
+    x509: &boring::X509,
     host_ptr: *const u8,
     host_len: usize,
 ) -> bool {
@@ -521,7 +521,7 @@ fn set_peer(name: &[u8], out_peer: Option<&mut MaybeUninit<bun_core::String>>) {
 /// readable, and `out_peer` must be null or point to an empty string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__X509__checkHost(
-    x509: Option<&mut boring::X509>,
+    x509: Option<&boring::X509>,
     host_ptr: *const u8,
     host_len: usize,
     flags: u32,

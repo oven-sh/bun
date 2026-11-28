@@ -251,23 +251,22 @@ pub(crate) unsafe extern "C" fn us_dispatch_tls_event(
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_bun_socket_identity(
     bun_socket: *mut c_void,
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &mut bun_boringssl_sys::SSL,
 ) -> c_int {
     // SAFETY: openssl.cpp passes the live `TLSSocket` whose `on_open` called `us_ssl_set_bun_socket`.
     let tls = unsafe { &*bun_socket.cast::<super::NewSocket<true>>() };
-    tls.server_identity(bun_boringssl_sys::SSL::opaque_mut(ssl)) as c_int
+    tls.server_identity(ssl) as c_int
 }
 
 /// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_server_identity(
     s: *mut us_socket_t,
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &mut bun_boringssl_sys::SSL,
 ) -> c_int {
     use bun_boringssl::ServerIdentity::Unchecked;
     use bun_uws_sys::thunk::ExtSlot;
     let s_ref = us_socket_t::opaque_mut(s);
-    let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
         SocketKind::HttpClientTls => {
             bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)

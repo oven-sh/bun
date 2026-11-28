@@ -181,7 +181,7 @@ impl WebSocketProxyTunnel {
         if reject_unauthorized {
             wrapper.set_inline_reject();
         }
-        let ssl = wrapper.ssl.get();
+        let ssl = wrapper.ssl();
 
         // Configure SNI with hostname.
         //
@@ -200,13 +200,12 @@ impl WebSocketProxyTunnel {
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
                     // `on_handshake`).
-                    // `hostname_z` is a NUL-terminated owned buffer in scope.
                     bun_http::configure_http_client_with_alpn(
-                        bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                        hostname_z.as_ptr(),
+                        // SAFETY: the new wrapper's live `SSL`, used for this one call.
+                        unsafe { ssl_ptr.as_ref() },
+                        Some(hostname_z.as_zstr().into()),
                         bun_http::AlpnOffer::H1,
                     );
-                    // hostname_z dropped here (owned NUL-terminated copy)
                 }
             }
         }
@@ -282,8 +281,9 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
         let ssl = self
             .wrapper
             .get()
-            .and_then(|w| w.ssl.get())
-            .map(|ssl| bun_opaque::opaque_deref_mut(ssl.as_ptr()));
+            .and_then(|w| w.ssl())
+            // SAFETY: the wrapper's live `SSL`, done with before `tls.checkServerIdentity` runs.
+            .map(|mut ssl| unsafe { ssl.as_mut() });
         let accepted = upgrade_client.accepts_tunnel_peer(
             ssl,
             ssl_error.error_no == 0,

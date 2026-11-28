@@ -139,11 +139,8 @@ fn log_event(name: &str, handlers: &Handlers) {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The socket `on_open` put on the `SSL`. An `SSL_CTX` is shared, so its ALPN callback has no argument of its own.
-fn alpn_socket(ssl: *mut bun_boringssl_sys::SSL) -> Option<RefPtr<TLSSocket>> {
-    // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
-    // through the const-asserted opaque-ZST accessor so the call is safe.
-    let this_ptr =
-        tls_socket_functions::ffi::us_ssl_bun_socket(boringssl_sys::SSL::opaque_ref(ssl));
+fn alpn_socket(ssl: &bun_boringssl_sys::SSL) -> Option<RefPtr<TLSSocket>> {
+    let this_ptr = tls_socket_functions::ffi::us_ssl_bun_socket(ssl);
     if this_ptr.is_null() {
         return None;
     }
@@ -160,7 +157,7 @@ fn alpn_socket(ssl: *mut bun_boringssl_sys::SSL) -> Option<RefPtr<TLSSocket>> {
 /// Runs `ALPNCallback` before BoringSSL picks the certificate and the session, so its `setKeyCert()` still applies. Returns 0 if it refused.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_alpn_offer(
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &bun_boringssl_sys::SSL,
     in_: *const u8,
     inlen: c_uint,
 ) -> c_int {
@@ -196,7 +193,7 @@ pub(crate) extern "C" fn us_dispatch_alpn_offer(
             let mut saved_loop_state: [*mut c_void; LOOP_STATE_SLOTS] =
                 [core::ptr::null_mut(); LOOP_STATE_SLOTS];
             tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                boringssl_sys::SSL::opaque_ref(ssl),
+                ssl,
                 saved_loop_state.as_mut_ptr(),
             );
             let _restore_loop_state = scopeguard::guard(saved_loop_state, |mut saved| {
@@ -225,16 +222,10 @@ pub(crate) extern "C" fn us_dispatch_alpn_offer(
                 // and `in_` is valid for `inlen` per the callback contract.
                 unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
             }
-            // SAFETY: `ssl` is the live SSL handle passed into the select-certificate
-            // callback; SSL_get_servername reads the ClientHello's SNI name and
-            // returns NULL or a NUL-terminated string owned by the SSL.
-            let servername_ptr = unsafe { boringssl_sys::SSL_get_servername(ssl.cast_const(), 0) };
-            let servername_js = if servername_ptr.is_null() {
-                JSValue::UNDEFINED
-            } else {
-                // SAFETY: BoringSSL hands back a NUL-terminated name.
-                let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
-                EncodedSlice::latin1(name.to_bytes()).to_js(&global)
+            // SAFETY: nothing else touches `ssl` until the name is copied.
+            let servername_js = match unsafe { NonNull::from(ssl).as_mut() }.servername() {
+                Some(name) => EncodedSlice::latin1(name).to_js(&global),
+                None => JSValue::UNDEFINED,
             };
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
@@ -287,7 +278,7 @@ pub(crate) extern "C" fn us_dispatch_alpn_offer(
 /// BoringSSL's ALPN select callback for a server whose listen socket has no protocol list of its own.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_alpn_select(
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &bun_boringssl_sys::SSL,
     out: *mut *const u8,
     outlen: *mut u8,
     in_: *const u8,
@@ -1551,27 +1542,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Add SNI support for TLS (mongodb and others requires this)
         if SSL {
             if let Some(ssl_ptr) = self.socket.get().ssl() {
+                // SAFETY: the socket has just opened, and nothing in this block closes it.
+                let ssl = unsafe { &*ssl_ptr };
                 // BoringSSL's callbacks find this socket through the `SSL`, whichever engine drives it.
-                tls_socket_functions::ffi::us_ssl_set_bun_socket(
-                    boringssl_sys::SSL::opaque_ref(ssl_ptr),
-                    this_ptr.cast::<c_void>(),
-                );
-                if tls_socket_functions::ffi::SSL_is_init_finished(boringssl_sys::SSL::opaque_ref(
-                    ssl_ptr,
-                )) == 0
-                {
+                // SAFETY: the transport holds `self` until `on_close`, which takes it back.
+                unsafe { tls_socket_functions::ffi::us_ssl_set_bun_socket(ssl, this_ptr.cast()) };
+                if boringssl_sys::SSL_is_init_finished(ssl) == 0 {
                     if self.acts_as_tls_server() {
                         // As in Node, a `serverName` handler (the user's SNICallback) replaces the lookup in the addContext() entries.
                         if !handlers.on_server_name().is_empty() {
-                            tls_socket_functions::ffi::us_ssl_on_server_name(
-                                boringssl_sys::SSL::opaque_ref(ssl_ptr),
-                            );
+                            tls_socket_functions::ffi::us_ssl_on_server_name(ssl);
                         }
                         // The static list is read by `us_dispatch_alpn_select`.
                         if !handlers.on_alpn_callback().is_empty() {
-                            tls_socket_functions::ffi::us_ssl_on_alpn_offer(
-                                boringssl_sys::SSL::opaque_ref(ssl_ptr),
-                            );
+                            tls_socket_functions::ffi::us_ssl_on_alpn_offer(ssl);
                         }
                     } else {
                         // Only a client sends a server name. A server's `SSL` must keep the ClientHello's.
@@ -1583,25 +1567,14 @@ impl<const SSL: bool> NewSocket<SSL> {
                             _ => b"",
                         };
                         if !host.is_empty() {
-                            let host_z = bun_core::ZBox::from_bytes(host);
-                            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                            unsafe {
-                                boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr())
-                            };
+                            ssl.set_servername(&bun_core::ZBox::from_bytes(host));
                         }
                         // Like Node observably does, a rejecting client refuses a bad chain during the handshake (test-tls-close-error).
                         if self.flags.get().contains(Flags::REJECT_UNAUTHORIZED) {
                             self.socket.get().set_inline_reject();
                         }
                         if let Some(protos) = self.protos.get() {
-                            // SAFETY: `ssl_ptr` is non-null in this branch, and BoringSSL copies the `protos.len()` readable bytes.
-                            unsafe {
-                                boringssl_sys::SSL_set_alpn_protos(
-                                    ssl_ptr,
-                                    protos.as_ptr(),
-                                    protos.len(),
-                                );
-                            }
+                            ssl.set_alpn_protos(protos);
                         }
                     }
                 }
@@ -1805,23 +1778,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
             && !self.acts_as_tls_server()
         {
-            if let Some(ssl_ptr) = self.socket.get().ssl() {
+            // SAFETY: the socket that reports its handshake is open, and this block only reads certificates.
+            if let Some(ssl) = unsafe { self.socket.get().ssl_mut() } {
                 let hostname = self.server_identity_hostname();
-                if rejected_in_handshake
-                    || !uws::check_server_identity(
-                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                        hostname,
-                    )
-                {
+                if rejected_in_handshake || !uws::check_server_identity(ssl, hostname) {
                     authorized = false;
                     hostname_mismatch = true;
                     hostname_mismatch_message = Some(
-                        bun_boringssl::server_identity_mismatch_message(
-                            boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                            hostname,
-                        )
-                        .into_bytes()
-                        .into_boxed_slice(),
+                        bun_boringssl::server_identity_mismatch_message(ssl, hostname)
+                            .into_bytes()
+                            .into_boxed_slice(),
                     );
                 }
             }
@@ -2103,10 +2069,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         if let Some(ssl) = socket.ssl() {
-            tls_socket_functions::ffi::us_ssl_set_bun_socket(
-                boringssl_sys::SSL::opaque_ref(ssl),
-                ptr::null_mut(),
-            );
+            // SAFETY: a transport frees its `SSL` after it has reported the close.
+            unsafe { tls_socket_functions::ffi::us_ssl_set_bun_socket(&*ssl, ptr::null_mut()) };
         }
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -2118,6 +2082,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !self.has_handlers() {
             self.detach_native_callback();
             self.socket.set(SocketHandler::<SSL>::DETACHED);
+            // The raw twin of `upgradeTLS` gets its close only from here, as below.
+            if let Some(raw) = self.twin.take() {
+                crate::dispatch::fold(raw.on_close(socket, err, reason));
+            }
             return Ok(());
         }
         let handlers = self.get_handlers();
@@ -3591,7 +3559,7 @@ impl UpgradeOptions {
 
     /// A server's `requestCert` and `rejectUnauthorized`. A bare `secureContext` has them in its verify mode.
     fn server_verify(&self) -> ServerVerify {
-        let ctx = Some(self.ctx.as_ptr());
+        let ctx = Some(&*self.ctx);
         match &self.config {
             Some(c) => ServerVerify {
                 request_cert: c.request_cert != 0,
@@ -3611,7 +3579,7 @@ impl UpgradeOptions {
             self.handlers.vm,
             config,
             self.is_server,
-            Some(self.ctx.as_ptr()),
+            Some(&self.ctx),
         ));
         flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         flags.set(Flags::TLS_SERVER_ROLE, self.is_server);
@@ -3630,7 +3598,7 @@ fn upgrade_reject_policy(
     vm: &VirtualMachine,
     cfg: Option<&SSLConfig>,
     is_server: bool,
-    ctx: Option<*mut SSL_CTX>,
+    ctx: Option<&SSL_CTX>,
 ) -> bool {
     if cfg.is_none() && is_server {
         server_ctx_rejects_unauthorized(ctx)
@@ -3641,18 +3609,16 @@ fn upgrade_reject_policy(
 
 /// The policy a server-side `SSL_CTX` was built with: `us_ssl_ctx_from_options` sets
 /// `FAIL_IF_NO_PEER_CERT` iff the context was created with `requestCert` and `rejectUnauthorized`.
-pub(crate) fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_rejects_unauthorized(ctx: Option<&SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     const MODE: c_int =
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
-    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
+    boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE
 }
 
-pub(crate) fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_requests_cert(ctx: Option<&SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
-    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
-    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
+    boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0
 }
 
 // ──────────────────────────────────────────────────────────────────────────

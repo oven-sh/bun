@@ -150,11 +150,11 @@ pub use bun_core::Timespec;
 /// openssl.cpp's functions that need only an `SSL*`: what the TLS engine over a `us_socket_t` and `SSLWrapper` share.
 pub mod ssl {
     use super::{SslCtx, us_bun_verify_error_t};
-    use bun_boringssl_sys::{SSL, SSL_SESSION};
+    use bun_boringssl_sys::{OwnedSsl, SSL, SSL_SESSION};
     use core::ffi::{c_char, c_int, c_uint, c_void};
     unsafe extern "C" {
         /// `SSL_new` and the setup of a client or a server. Never null.
-        pub fn us_ssl_new(ctx: *mut SslCtx, is_client: c_int) -> *mut SSL;
+        pub safe fn us_ssl_new(ctx: &SslCtx, is_client: c_int) -> OwnedSsl;
         /// `requestCert` / `rejectUnauthorized` as BoringSSL's verify mode.
         pub safe fn us_ssl_set_verify_mode(
             ssl: &SSL,
@@ -167,7 +167,7 @@ pub mod ssl {
         /// `check(owner, ssl)` gives the verify step's `US_IDENTITY_*` verdict. `owner` must outlive `ssl`.
         pub fn us_ssl_set_identity_check(
             ssl: &SSL,
-            check: extern "C" fn(*mut c_void, *mut SSL) -> c_int,
+            check: extern "C" fn(*mut c_void, &mut SSL) -> c_int,
             owner: *mut c_void,
         );
         /// 1 when the verify step of this handshake asked the owner for the server's name.
@@ -180,11 +180,11 @@ pub mod ssl {
         pub fn us_ssl_take_error_reason(reason: *mut c_char, length: usize) -> c_int;
         /// Answers `SSL_ERROR_WANT_RENEGOTIATE` within the context's budget. 0 if refused.
         pub safe fn us_ssl_renegotiate(ssl: &SSL) -> c_int;
-        /// The `TLSSocket` that BoringSSL's callbacks on `ssl` report to. Stored verbatim, never dereferenced there.
-        pub safe fn us_ssl_set_bun_socket(ssl: &SSL, bun_socket: *mut c_void);
+        /// The `TLSSocket` that BoringSSL's callbacks on `ssl` report to. It must be taken back, with null, before it dies.
+        pub fn us_ssl_set_bun_socket(ssl: &SSL, bun_socket: *mut c_void);
         pub safe fn us_ssl_bun_socket(ssl: &SSL) -> *mut c_void;
-        /// Hands what the new-session and keylog callbacks parked to that socket. Runs JS.
-        pub safe fn us_ssl_flush_pending_events(ssl: &SSL);
+        /// Hands what the new-session and keylog callbacks parked to that socket. Runs JS, which must not be able to free `ssl`.
+        pub fn us_ssl_flush_pending_events(ssl: &SSL);
         /// The session the new-session callback delivered last, borrowed. Null if none.
         pub safe fn us_ssl_latest_session(ssl: &SSL) -> *mut SSL_SESSION;
         /// Asks `us_dispatch_server_name` for the context of this SSL's server name.

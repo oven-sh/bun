@@ -1532,13 +1532,15 @@ impl QuicSession {
     fn capture_hsk_snapshot(&self, conn: lsquic::Conn) {
         let sni = conn.sni().map(|s| s.to_bytes().to_vec());
         let cipher = conn.cipher().map(|s| s.to_bytes().to_vec());
-        let ssl = conn.ssl().cast();
-        let alpn = tls::negotiated_alpn(ssl);
-        let validation = tls::validation_error(ssl);
-        let peer_cert_der = tls::peer_certificate_der(ssl);
-        let local_cert_der = tls::local_certificate_der(ssl);
-        let ephemeral = tls::ephemeral_key_info(ssl);
-        let early_data = tls::early_data_info(ssl);
+        // SAFETY: only lsquic drives or frees the `SSL`, and it is not called while `ssl` is in use.
+        let mut ssl = unsafe { conn.ssl().cast::<bun_boringssl_sys::SSL>().as_mut() };
+        let alpn = ssl.as_deref_mut().and_then(tls::negotiated_alpn);
+        let ssl = ssl.as_deref();
+        let validation = ssl.and_then(tls::validation_error);
+        let peer_cert_der = ssl.and_then(tls::peer_certificate_der);
+        let local_cert_der = ssl.and_then(tls::local_certificate_der);
+        let ephemeral = ssl.and_then(tls::ephemeral_key_info);
+        let early_data = ssl.map_or((false, false), tls::early_data_info);
         let peer_transport_params = conn.peer_transport_params();
         self.hsk_snapshot.with_mut(|s| {
             *s = Some(HskSnapshot {
@@ -2007,7 +2009,9 @@ impl QuicSession {
     }
     pub(crate) fn get_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        if let Some(der) = self.conn_ssl().and_then(tls::local_certificate_der) {
+        // SAFETY: only lsquic frees the `SSL`, and the one call that uses `ssl` does not call lsquic.
+        let ssl = unsafe { self.conn_ssl().as_ref() };
+        if let Some(der) = ssl.and_then(tls::local_certificate_der) {
             return ArrayBuffer::create_buffer(global, der.as_slice());
         }
         if let Some(der) = self
@@ -2022,7 +2026,9 @@ impl QuicSession {
     }
     pub(crate) fn get_peer_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        if let Some(der) = self.conn_ssl().and_then(tls::peer_certificate_der) {
+        // SAFETY: only lsquic frees the `SSL`, and the one call that uses `ssl` does not call lsquic.
+        let ssl = unsafe { self.conn_ssl().as_ref() };
+        if let Some(der) = ssl.and_then(tls::peer_certificate_der) {
             return ArrayBuffer::create_buffer(global, &der);
         }
         if let Some(der) = self
@@ -2037,8 +2043,9 @@ impl QuicSession {
     }
     pub(crate) fn get_ephemeral_key(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        let Some((kind, name, bits)) = self
-            .conn_ssl()
+        // SAFETY: only lsquic frees the `SSL`, and the one call that uses `ssl` does not call lsquic.
+        let ssl = unsafe { self.conn_ssl().as_ref() };
+        let Some((kind, name, bits)) = ssl
             .and_then(tls::ephemeral_key_info)
             .or_else(|| self.hsk_snapshot.get().as_ref().and_then(|s| s.ephemeral))
         else {
@@ -2067,9 +2074,8 @@ impl QuicSession {
         // SAFETY: see doc comment.
         self.conn.get()
     }
-    fn conn_ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let ssl = self.conn()?.ssl().cast::<bun_boringssl_sys::SSL>();
-        (!ssl.is_null()).then_some(ssl)
+    fn conn_ssl(&self) -> *mut bun_boringssl_sys::SSL {
+        self.conn().map_or(null_mut(), |conn| conn.ssl().cast())
     }
     pub(crate) fn application_options(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();

@@ -608,6 +608,7 @@ test("the queue drains", async () => {
 | `message`  |         | Custom message shown if the matcher fails, as in `expect(x, msg)` |
 
 - `interval` and `timeout` are measured in real time, even with [fake timers](/test/dates-times). Each attempt also advances the fake clock by `interval`.
+- `interval` and `timeout` go up to `2147483647` ms (almost 25 days), the same limit as `setTimeout()`. Bun uses 1 ms for a larger value, for `Infinity`, for `NaN`, and for a `timeout` below 1. `timeout: Infinity` therefore gives the matcher one attempt. To poll until the test's own timeout, pass `timeout: 2147483647`.
 - `expect.poll()` doesn't support `.resolves`, `.rejects`, `toThrow()`, or the snapshot matchers. Use `vi.waitFor()` for those.
 
 ## Assertion Counting

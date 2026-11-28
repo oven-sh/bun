@@ -978,6 +978,7 @@ declare namespace $Node {
     serialize(handle: SQLDatabase, name: string): Buffer;
     deserialize(serialized: ArrayBufferView | ArrayBufferLike, deserializeFlags: number): SQLDatabase;
     fcntl(handle: SQLDatabase, zDbName: string | null, op: number, arg: unknown): number;
+    dbStatus(handle: SQLDatabase, op: number, reset: boolean): { current: number; highwater: number };
     close(handle: SQLDatabase, throwOnError: boolean): void;
     setCustomSQLite(path: string): boolean;
     run(

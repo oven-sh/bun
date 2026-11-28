@@ -59,6 +59,11 @@ expectType(db.fileControl("main", constants.SQLITE_FCNTL_RESET_CACHE)).is<number
 // @ts-expect-error - an object that is not an ArrayBufferView throws at runtime
 db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, {});
 
+expectType(db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).is<{ current: number; highwater: number }>();
+expectType(db.status(constants.SQLITE_DBSTATUS_LOOKASIDE_USED, true)).is<{ current: number; highwater: number }>();
+// @ts-expect-error - op is a number
+db.status("SQLITE_DBSTATUS_CACHE_USED");
+
 expectType(query1.safeIntegers(true)).is<typeof query1>();
 expectType(query1.safeIntegers()).is<boolean>();
 expectType(query1.reader).is<boolean>();

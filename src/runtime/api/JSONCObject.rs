@@ -17,7 +17,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
         ));
     }
     super::with_text_format_source(global, input, b"input.jsonc", |_, log, source| {
-        // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
+        // The shared parser maps empty input to {}; the public API rejects it like JSON.parse.
         if source.contents.is_empty() {
             return Err(
                 global.throw_value(global.create_syntax_error_instance(format_args!(
@@ -26,7 +26,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
             );
         }
         let parsed =
-            match json::ParsedJson::parse_jsonc(source, log) {
+            match json::ParsedJson::parse_jsonc_document(source, log) {
                 Ok(v) => v,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());

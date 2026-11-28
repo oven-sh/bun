@@ -3521,6 +3521,106 @@ pub(crate) mod tests {
         StandaloneModuleGraph::from_bytes(base, length, offsets, None).unwrap()
     }
 
+    #[test]
+    fn damaged_graph_is_refused_and_never_read_out_of_bounds() {
+        let module_prefix = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let output_files = [
+            entry_point_file(b"main.js", Some(0)),
+            asset(b"odd.txt", b"7 bytes"),
+            asset(b"even.txt", b"8 bytes!"),
+        ];
+        let entry_points = [entry_point(1, b"/$bunfs/root/main.js")];
+        let request = GraphRequest {
+            target: &CompileTarget::default(),
+            output_files: &output_files,
+            module_prefix,
+            output_format: Format::Esm,
+            exec_argv: b"--smol",
+            flags: Flags::default(),
+            runtime_options: RuntimeOptions { jit_policy: 2.0 },
+            compiled_program: Some(program(&IMAGE, ALIGNMENT, &entry_points, false)),
+        };
+        // Exactly as long as it is, so that a tool sees a read behind it.
+        let bytes = graph_bytes(&request).unwrap().bytes.into_boxed_slice();
+        let bytes: &'static mut [u8] = Box::leak(bytes);
+        let length = bytes.len();
+        let base = bytes.as_mut_ptr();
+        let offsets_at = length - b"\n---- Bun! ----\n".len() - size_of::<Offsets>();
+        // SAFETY: as in `read_graph`.
+        let read_offsets = || unsafe { read_unaligned(base.add(offsets_at).cast::<Offsets>()) };
+        // Returns whether the graph was taken, after a look at everything that it refers to.
+        let take = |length: usize, offsets: Offsets| {
+            let read = StandaloneModuleGraph::from_bytes(base, length, offsets, None);
+            let Ok(graph) = read else {
+                return false;
+            };
+            let mut sum = 0u64;
+            let mut add = |bytes: &[u8]| sum += bytes.iter().map(|&it| u64::from(it)).sum::<u64>();
+            for file in graph.files.values() {
+                for bytes in [file.name, file.contents.as_bytes(), file.module_info] {
+                    add(bytes);
+                }
+                add(file.bytecode_origin_path);
+                file.utf8_contents();
+                file.load_sourcemap();
+            }
+            add(graph.compile_exec_argv);
+            core::hint::black_box(sum);
+            core::mem::forget(graph);
+            true
+        };
+        let offsets = read_offsets();
+        assert!(take(length, offsets));
+
+        // The table of the files, the records behind it, and the offsets that lead to all of them.
+        let table_at = offsets.modules_ptr.offset as usize;
+        for at in table_at..offsets_at + size_of::<Offsets>() {
+            // SAFETY: `at` is in bounds, and nothing looks at an earlier graph again.
+            let (written, write) =
+                unsafe { (base.add(at).read(), |byte: u8| base.add(at).write(byte)) };
+            for other in [0, 1, 0x7f, 0x80, 0xff, written.wrapping_add(1)] {
+                write(other);
+                take(length, read_offsets());
+            }
+            write(written);
+        }
+        for cut in 0..length - table_at {
+            take(length - cut, offsets);
+        }
+
+        let refuses = |offset_in_record: usize, value: u8| {
+            let at = base.wrapping_add(table_at + offset_in_record);
+            // SAFETY: as above.
+            let written = unsafe { at.replace(value) };
+            let is_refused = !take(length, offsets);
+            // SAFETY: as above.
+            unsafe { at.write(written) };
+            is_refused
+        };
+        use crate::StandaloneModuleGraph::CompiledModuleGraphFile as Record;
+        use core::mem::offset_of;
+        assert!(refuses(offset_of!(Record, name) + 3, 0x7f));
+        assert!(refuses(offset_of!(Record, contents) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, sourcemap) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, module_info) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, bytecode) + 7, 0x7f));
+        assert!(refuses(offset_of!(Record, encoding), 3));
+        assert!(refuses(offset_of!(Record, loader), 200));
+        assert!(refuses(offset_of!(Record, module_format), 3));
+        assert!(refuses(offset_of!(Record, side), 2));
+        // Two-byte units, of which 7 bytes are no whole number.
+        let encoding_of_second = size_of::<Record>() + offset_of!(Record, encoding);
+        assert!(refuses(encoding_of_second, 2));
+        assert!(!take(
+            length,
+            Offsets {
+                byte_count: length + 1,
+                ..offsets
+            }
+        ));
+        assert!(take(length, offsets));
+    }
+
     fn directory_key(graph: &StandaloneModuleGraph, name: &[u8]) -> Option<Vec<u8>> {
         let mut buffer = Path::new();
         graph.directory_key(name, &mut buffer).map(<[u8]>::to_vec)

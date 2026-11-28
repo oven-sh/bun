@@ -228,6 +228,13 @@ const forms: { encoding: string; type: string; boundary?: string; body: string; 
     body: "\uFEFFhello=world",
     entries: [["\uFEFFhello", "world"]],
   },
+  {
+    encoding: "multipart",
+    type: "multipart/form-data; boundary=bom",
+    boundary: "bom",
+    body: ["--bom", 'Content-Disposition: form-data; name="field"', "", "\uFEFFvalue", "--bom--", ""].join("\r\n"),
+    entries: [["field", "\uFEFFvalue"]],
+  },
 ];
 
 describe.each(forms)("every way to parse a $encoding form keeps a leading BOM", ({ type, boundary, body, entries }) => {
@@ -304,5 +311,38 @@ describe.each(forms)("every way to parse a $encoding form keeps a leading BOM", 
     const formData = response.formData();
     rest.resolve();
     expect([...(await formData)]).toEqual(entries);
+  });
+});
+
+// A part is decoded with "UTF-8 decode without BOM", which treats a leading U+FEFF as data.
+describe("UTF-8 BOM should be preserved in formData()", () => {
+  it("in multipart/form-data part values", async () => {
+    const boundary = "----x";
+    const body = [`------x`, `Content-Disposition: form-data; name="field"`, ``, `\uFEFFvalue`, `------x--`, ``].join(
+      "\r\n",
+    );
+    const response = new Response(body, {
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    });
+    const formData = await response.formData();
+    expect([...formData]).toEqual([["field", "\uFEFFvalue"]]);
+  });
+
+  it("in multipart/form-data round-tripped through FormData", async () => {
+    const sent = new FormData();
+    sent.append("leading", "\uFEFFbom");
+    sent.append("only", "\uFEFF");
+    sent.append("trailing", "x\uFEFF");
+    sent.append("file", new Blob([new Uint8Array([0xef, 0xbb, 0xbf, 0x41])]), "f.txt");
+    const received = await new Request("http://h/", { method: "POST", body: sent }).formData();
+
+    const strings = [...received].filter(([, v]) => typeof v === "string");
+    expect(strings).toEqual([
+      ["leading", "\uFEFFbom"],
+      ["only", "\uFEFF"],
+      ["trailing", "x\uFEFF"],
+    ]);
+    const file = received.get("file") as Blob;
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0xef, 0xbb, 0xbf, 0x41]);
   });
 });

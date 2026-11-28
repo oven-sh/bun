@@ -1618,8 +1618,12 @@ interface Blob {
   /**
    * Read the data from the blob as a {@link FormData} object.
    *
-   * This first decodes the data from UTF-8, then parses it as a
-   * `multipart/form-data` body or an `application/x-www-form-urlencoded` body.
+   * Bun parses the data as a `multipart/form-data` body or an
+   * `application/x-www-form-urlencoded` body. It decodes names and text values
+   * as UTF-8. A file part keeps its bytes.
+   *
+   * A byte order mark (U+FEFF) at the start of a name or a text value stays in
+   * it. `text()` and `json()` remove one from the start of the data.
    *
    * The blob's `type` property determines the format of the body.
    *

@@ -198,16 +198,8 @@ pub(crate) fn to_js_from_multipart_data(
                     &filename,
                 )
             } else {
-                let value = EncodedSlice::utf8(
-                    // > Each part whose `Content-Disposition` header does not
-                    // > contain a `filename` parameter must be parsed into an
-                    // > entry whose value is the UTF-8 decoded without BOM
-                    // > content of the part. This is done regardless of the
-                    // > presence or the value of a `Content-Type` header and
-                    // > regardless of the presence or the value of a
-                    // > `charset` parameter.
-                    strings::without_utf8_bom(value_str),
-                );
+                // "UTF-8 decode without BOM" skips BOM handling, so a leading U+FEFF is data.
+                let value = EncodedSlice::utf8(value_str);
                 wrap.form.append(wrap.global, &key, &value)
             }
         }

@@ -4318,6 +4318,7 @@ describe.concurrent("a module made from an object", () => {
   );
 
   // JSC creates the module again for a require() right after import() created it, so the object must outlive a GC.
+  // The GC is explicit. With BUN_JSC_slowPathAllocsBetweenGCs=1, a debug build takes over ten seconds to start.
   it("keeps the object alive across a GC so require() can create the module again", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 8; i++) {
@@ -4343,7 +4344,10 @@ describe.concurrent("a module made from an object", () => {
         const imports = [import(\`./data\${i}.json\`), import(\`./text\${i}.txt\`), import(\`./served\${i}.ts\`)];
         let turn = Promise.resolve();
         for (let turns = 0; turns < i; turns++) turn = turn.then(() => {});
-        await turn.then(() => all.push(require(\`./imports\${i}.mjs\`).all.join()));
+        await turn.then(() => {
+          Bun.gc(true);
+          all.push(require(\`./imports\${i}.mjs\`).all.join());
+        });
         await Promise.all(imports);
       }
       console.log(all.join(" "));
@@ -4352,7 +4356,9 @@ describe.concurrent("a module made from an object", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.ts"],
       cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "1" },
+      // useZombieMode overwrites the cells that a GC frees. Without it, a module made from a freed object can still
+      // read the object's old contents and pass.
+      env: { ...bunEnv, BUN_JSC_useZombieMode: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });

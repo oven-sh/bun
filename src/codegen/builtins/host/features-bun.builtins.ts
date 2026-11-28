@@ -225,7 +225,16 @@ export default b.declarations(
   extendAll(["Shell"], "%ParsedShellScript%"),
 
   extendAll(["Color"], "Bun.color"),
-  extendAll(["Markdown", "StringHTML"], ...withMembers("Bun.markdown", "ansi", "html", "react", "render")),
+  extendAll(["Markdown", "StringHTML"], ...withMembers("Bun.markdown", "ansi", "html", "react", "render", "tokens")),
+  extendAll(
+    ["Markdown", "StringHTML", "WebStreams"],
+    "Bun.markdown.ansiStream",
+    "Bun.markdown.htmlStream",
+    "Bun.markdown.reactStream",
+    "Bun.markdown.renderStream",
+    "Bun.markdown.tokensStream",
+  ),
+  extendAll(["Markdown"], "%MarkdownStream%"),
   extendAll(["Xml"], "Bun.XML"),
   extendAll(["Json5"], "Bun.JSON5"),
   extendAll(["Jsonc"], "Bun.JSONC"),

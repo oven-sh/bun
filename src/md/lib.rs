@@ -17,6 +17,8 @@ pub mod parser;
 pub(crate) mod ref_defs;
 pub(crate) mod render_blocks;
 pub mod root;
+pub mod stream;
+pub mod tokens;
 pub mod types;
 pub(crate) mod unicode;
 

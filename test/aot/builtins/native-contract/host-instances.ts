@@ -347,6 +347,7 @@ const openers: (Open & { className?: string })[] = [
   () => ({ value: new Bun.Image(Buffer.from(pixel, "base64")), close: noop }),
   openTerminal,
   openCronJob,
+  () => ({ value: Bun.markdown.htmlStream(), close: noop }),
   () => ({ value: createHistogram(), close: noop }),
   openIntervalHistogram,
   () => ({ value: new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings: "AAAA", file: "b.js", sourceRoot: "" }), close: noop }),

@@ -1,3 +1,5 @@
+use bun_core::strings;
+
 use crate::helpers;
 use crate::inlines::EmphDelim;
 
@@ -24,51 +26,84 @@ pub(crate) fn is_emph_boundary_resolved(
     al: Autolink,
     resolved: &[EmphDelim],
 ) -> bool {
-    // Check left boundary: if it's an emphasis char, it must be a resolved delimiter
-    if al.beg > 0 {
-        let prev = content[al.beg - 1];
-        if prev == b'*' || prev == b'_' || prev == b'~' {
-            if !check_left_boundary(content, al.beg, false) {
-                // Left boundary failed strict check, emphasis char caused the relaxed match.
-                // Verify it's actually resolved.
-                let mut found_resolved = false;
-                for d in resolved {
-                    if d.pos < al.beg
-                        && al.beg - 1 < d.pos + d.count
-                        && (d.open_count + d.close_count > 0)
-                    {
-                        found_resolved = true;
-                        break;
-                    }
-                }
-                if !found_resolved {
-                    return false;
-                }
+    let is_resolved = |pos: usize| {
+        let before = &resolved[..resolved.partition_point(|d| d.pos <= pos)];
+        let run = before.last();
+        run.is_some_and(|d| pos < d.pos + d.count && d.open_count + d.close_count > 0)
+    };
+    let is_emph = |c: u8| matches!(c, b'*' | b'_' | b'~');
+    if al.beg > 0
+        && is_emph(content[al.beg - 1])
+        && !check_left_boundary(content, al.beg, false)
+        && !is_resolved(al.beg - 1)
+    {
+        return false;
+    }
+    al.end >= content.len()
+        || !is_emph(content[al.end])
+        || check_right_boundary(content, al.end, false)
+        || is_resolved(al.end)
+}
+
+/// The URL whose `:` or whose `.` behind `www` is at `pos`, by the rules `url` and `_backpedal` of
+/// https://github.com/markedjs/marked/blob/v15.0.12/src/rules.ts, but not in the middle of a word.
+/// No `(` in `unclosed_parens` is closed. It has places in the text that `content` starts at `base` of.
+pub(crate) fn find_url_like_marked(
+    content: &[u8],
+    pos: usize,
+    base: usize,
+    unclosed_parens: &mut core::ops::Range<usize>,
+) -> AutolinkResult {
+    let (names, host): (&[&[u8]], usize) = match content[pos..] {
+        [b':', b'/', b'/', ..] => (&[b"http", b"https", b"ftp"], pos + 3),
+        [b'.', ..] => (&[b"www"], pos + 1),
+        _ => return None,
+    };
+    let is_before = |name: &&&[u8]| {
+        pos >= name.len() && helpers::ascii_case_eql(&content[pos - name.len()..pos], name)
+    };
+    let beg = pos - names.iter().find(is_before)?.len();
+    let is_in_host = |&c: &u8| c.is_ascii_alphanumeric() || c == b'-';
+    if (beg > 0 && content[beg - 1].is_ascii_alphanumeric())
+        || !content.get(host).is_some_and(is_in_host)
+    {
+        return None;
+    }
+
+    let ends_url = |c: u8| c == b'<' || helpers::is_whitespace(c);
+    let (mut end, mut kept) = (host, host + 1);
+    while end < content.len() && !ends_url(content[end]) {
+        if content[end] == b'(' {
+            if unclosed_parens.contains(&(base + end)) {
+                break;
+            }
+            let inside = &content[end..];
+            let len = strings::index_of_any(inside, b")< \t\n\r\x0B\x0C");
+            let close = end + len.unwrap_or(inside.len());
+            if content.get(close) != Some(&b')') {
+                *unclosed_parens = base + end..base + close;
+                break;
+            }
+            (end, kept) = (close, close + 1);
+        }
+        end += 1;
+    }
+
+    while end > kept {
+        let last = content[end - 1];
+        if !strings::contains_char(b"?!.,:;*_'\"~)", last) {
+            break;
+        }
+        end -= 1;
+        if last == b';' {
+            let before = content[kept..end].iter().rev();
+            let name = before.take_while(|c| c.is_ascii_alphanumeric()).count();
+            if name > 0 && content[end - name - 1] == b'&' && end - name > kept {
+                end -= name + 1;
             }
         }
     }
-    // Check right boundary: if it's an emphasis char, it must be a resolved delimiter
-    if al.end < content.len() {
-        let next = content[al.end];
-        if next == b'*' || next == b'_' || next == b'~' {
-            if !check_right_boundary(content, al.end, false) {
-                let mut found_resolved = false;
-                for d in resolved {
-                    if d.pos <= al.end
-                        && al.end < d.pos + d.count
-                        && (d.open_count + d.close_count > 0)
-                    {
-                        found_resolved = true;
-                        break;
-                    }
-                }
-                if !found_resolved {
-                    return false;
-                }
-            }
-        }
-    }
-    true
+    Some(Autolink { beg, end })
 }
 
 #[derive(Copy, Clone)]

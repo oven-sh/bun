@@ -82,6 +82,8 @@ static JSPromise* performTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalO
         RELEASE_AND_RETURN(scope, runNativeArm<JSCompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return compressionStreamTransform(globalObject, s, controller, chunk); }));
     case TransformerKind::Decompression:
         RELEASE_AND_RETURN(scope, runNativeArm<JSDecompressionStream>(controller->m_algorithmContext.get(), [&](auto* s) { return decompressionStreamTransform(globalObject, s, controller, chunk); }));
+    case TransformerKind::Markdown:
+        RELEASE_AND_RETURN(scope, runNativeArm<JSTransformStream>(controller->m_algorithmContext.get(), [&](auto*) { return markdownStreamTransform(globalObject, controller, chunk); }));
     }
     RELEASE_AND_RETURN(scope, defaultTransformAlgorithm(vm, globalObject, controller, chunk));
 }
@@ -323,6 +325,8 @@ static void nativeTransformReleaseStateOrDefer(JSTransformStreamDefaultControlle
 void transformStreamDefaultControllerClearAlgorithms(JSTransformStreamDefaultController* controller)
 {
     nativeTransformReleaseStateOrDefer(controller);
+    if (controller->m_transformerKind == TransformerKind::Markdown)
+        markdownStreamRelease(controller);
     controller->m_transformerKind = TransformerKind::Identity;
     controller->m_transformer.clear();
     controller->m_transformMethod.clear();

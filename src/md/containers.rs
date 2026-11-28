@@ -1,9 +1,10 @@
 use bun_alloc::AllocError;
+use bun_collections::smallvec::SmallVec;
 
 use crate::autolinks::is_list_bullet;
 use crate::compat;
 use crate::parser::{self, BlockHeader, Parser};
-use crate::types::{self, BlockType, Container, ContainerEnds, OFF};
+use crate::types::{self, BlockType, Container, ContainerEnds, OFF, VerbatimLine};
 
 impl Parser<'_> {
     pub(crate) fn keeps_quotes(&self) -> bool {
@@ -104,6 +105,8 @@ impl Parser<'_> {
                 self.containers[idx].mark_indent,
             );
 
+            self.containers[idx].opener_index = u32::try_from(self.blocks.len()).expect("int cast");
+
             // Emit container opener blocks
             if ch == b'>' {
                 self.push_container_block(
@@ -131,9 +134,6 @@ impl Parser<'_> {
                     mark,
                 )?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
-                // Save opener position for later loose-list patching
-                self.containers[idx].opener_index =
-                    u32::try_from(self.blocks.len()).expect("int cast");
                 // Unordered list + list item
                 self.push_container_block(BlockType::Ul, 0, types::BLOCK_CONTAINER_OPENER, mark)?;
                 self.push_container_block(
@@ -147,9 +147,6 @@ impl Parser<'_> {
                     mark,
                 )?;
             } else if ch == b'.' || ch == b')' {
-                // Save opener position for later loose-list patching
-                self.containers[idx].opener_index =
-                    u32::try_from(self.blocks.len()).expect("int cast");
                 // Ordered list + list item
                 self.push_container_block(
                     BlockType::Ol,
@@ -258,34 +255,45 @@ impl Parser<'_> {
         false
     }
 
-    pub(crate) fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
-        let blocks = core::mem::take(&mut self.blocks);
-        let lines = core::mem::take(&mut self.block_lines);
-        let mut lines = lines.as_slice();
+    /// Returns how many of `container_sources` are used up.
+    pub(crate) fn process_blocks(
+        &mut self,
+        blocks: &[BlockHeader],
+        lines: &[VerbatimLine],
+    ) -> Result<usize, parser::Error> {
+        // One for each list and block quote that the block is in
+        let mut is_loose = SmallVec::<[bool; 32]>::new();
+        let mut next = BlockPlace::default();
 
-        // Reuse containers array for tight/loose tracking (same approach as md4c).
-        // The containers are no longer needed for line analysis at this point.
-        self.n_containers = 0;
-        let mut next_container_source: usize = 0;
-
-        for &BlockHeader {
+        while let Some(&BlockHeader {
             block_type,
             flags,
             data,
             n_lines,
-        } in &blocks
+        }) = blocks.get(next.block)
         {
-            let block_lines;
-            (block_lines, lines) = lines.split_at(n_lines as usize);
+            if block_type == BlockType::Li
+                && flags & types::BLOCK_CONTAINER_OPENER != 0
+                && self.reuse.is_some()
+                && let Some(behind) = self.reuse_item(next, is_loose.last() == Some(&true))?
+            {
+                next = behind;
+                continue;
+            }
+
+            let first_line = next.line;
+            next.block += 1;
+            next.line += n_lines as usize;
+            let block_lines = &lines[first_line..next.line];
 
             if self.track
                 && flags & (types::BLOCK_CONTAINER_OPENER | types::BLOCK_CONTAINER_CLOSER) != 0
             {
-                if let Some(&(beg, end, indent)) = self.container_sources.get(next_container_source)
+                if let Some(&(beg, end, indent)) = self.container_sources.get(next.container_source)
                 {
                     self.renderer.ptr.container_source(beg, end, indent);
                 }
-                next_container_source += 1;
+                next.container_source += 1;
             }
 
             // Handle container openers/closers
@@ -293,18 +301,11 @@ impl Parser<'_> {
                 self.enter_block(block_type, data, flags)?;
                 // Track tight/loose state per container level (md4c approach)
                 if block_type == BlockType::Ul || block_type == BlockType::Ol {
-                    if (self.n_containers as usize) < self.containers.len() {
-                        self.containers[self.n_containers as usize].is_loose =
-                            flags & types::BLOCK_LOOSE_LIST != 0;
-                        self.n_containers += 1;
-                    }
+                    is_loose.push(flags & types::BLOCK_LOOSE_LIST != 0);
                 } else if block_type == BlockType::Quote {
                     // Blockquotes always act as "loose" — content inside blockquotes
                     // always gets <p> tags even when nested inside tight lists
-                    if (self.n_containers as usize) < self.containers.len() {
-                        self.containers[self.n_containers as usize].is_loose = true;
-                        self.n_containers += 1;
-                    }
+                    is_loose.push(true);
                 }
                 continue;
             }
@@ -313,11 +314,12 @@ impl Parser<'_> {
                     || block_type == BlockType::Ol
                     || block_type == BlockType::Quote
                 {
-                    if self.n_containers > 0 {
-                        self.n_containers -= 1;
-                    }
+                    is_loose.pop();
                 }
                 self.leave_block(block_type, data)?;
+                if block_type == BlockType::Li && self.reuse.is_some() {
+                    self.keep_item(next)?;
+                }
                 continue;
             }
 
@@ -327,9 +329,7 @@ impl Parser<'_> {
             }
 
             // Determine if we're in a tight list (md4c approach: check innermost container)
-            let is_in_tight_list = !self.track
-                && self.n_containers > 0
-                && !self.containers[(self.n_containers - 1) as usize].is_loose;
+            let is_in_tight_list = !self.track && is_loose.last() == Some(&false);
             let is_read_by_consumer =
                 self.track && self.renderer.ptr.leaf_source(block_type, block_lines);
 
@@ -342,15 +342,35 @@ impl Parser<'_> {
                 BlockType::Hr => {}
                 BlockType::Code => self.process_code_block(block_lines, data, flags)?,
                 BlockType::Html => self.process_html_block(block_lines)?,
-                BlockType::Table => self.process_table_block(block_lines, data)?,
+                BlockType::Table => self.process_table_block(block_lines, first_line, data)?,
+                BlockType::P if self.tracks_content => {
+                    self.process_paragraph_as_written(block_lines)?
+                }
                 BlockType::P => self.process_leaf_block(block_lines, true)?,
-                BlockType::H => self.process_leaf_block(block_lines, true)?,
+                BlockType::H => {
+                    if let Some(reuse) = &mut self.reuse {
+                        reuse.n_headings += 1;
+                    }
+                    if self.tracks_content && flags & types::BLOCK_SETEXT_HEADER != 0 {
+                        self.process_paragraph_as_written(block_lines)?
+                    } else {
+                        self.process_leaf_block(block_lines, true)?
+                    }
+                }
                 _ => self.process_leaf_block(block_lines, false)?,
             }
             if !is_in_tight_list || block_type != BlockType::P {
                 self.leave_block(block_type, data)?;
             }
         }
-        Ok(())
+        Ok(next.container_source)
     }
+}
+
+/// An index in `Parser::blocks`, and those in `block_lines` and `container_sources` that go with it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BlockPlace {
+    pub(crate) block: usize,
+    pub(crate) line: usize,
+    pub(crate) container_source: usize,
 }

@@ -443,6 +443,7 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
 pub(crate) fn generate_slug<'a>(
     text_buf: &'a mut Vec<u8>,
     slug_counts: &mut bun_collections::StringHashMap<u32>,
+    provisional: Option<&mut Vec<Box<[u8]>>>,
 ) -> &'a [u8] {
     let text_len = text_buf.len();
     let mut out_len: usize = 0;
@@ -479,6 +480,9 @@ pub(crate) fn generate_slug<'a>(
     let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
         return &text_buf[..out_len];
     };
+    if let Some(provisional) = provisional {
+        provisional.push(Box::from(&text_buf[..out_len]));
+    }
     if !gop.found_existing {
         // First occurrence — value initialised to 0 by `get_or_put`.
         return &text_buf[..out_len];
@@ -504,6 +508,10 @@ pub struct HeadingIdTracker {
     pub(crate) in_heading: bool,
     pub(crate) text_buf: Vec<u8>,
     pub(crate) slug_counts: bun_collections::StringHashMap<u32>,
+    /// The keys of `slug_counts` that were counted since `begin_provisional`.
+    provisional: Option<Vec<Box<[u8]>>>,
+    /// No less than the length of the other keys.
+    pub(crate) slug_bytes: usize,
 }
 
 impl HeadingIdTracker {
@@ -550,7 +558,32 @@ impl HeadingIdTracker {
             return None;
         }
         self.in_heading = false;
-        Some(generate_slug(&mut self.text_buf, &mut self.slug_counts))
+        if self.provisional.is_none() {
+            self.slug_bytes += self.text_buf.len();
+        }
+        Some(generate_slug(
+            &mut self.text_buf,
+            &mut self.slug_counts,
+            self.provisional.as_mut(),
+        ))
+    }
+
+    pub(crate) fn begin_provisional(&mut self) {
+        self.provisional = Some(Vec::new());
+    }
+
+    /// Back to what it was at `begin_provisional`.
+    pub(crate) fn discard_provisional(&mut self) {
+        for slug in self.provisional.take().into_iter().flatten() {
+            match self.slug_counts.get_mut(&*slug) {
+                Some(count) if *count > 0 => *count -= 1,
+                _ => {
+                    self.slug_counts.remove(&*slug);
+                }
+            }
+        }
+        self.in_heading = false;
+        self.text_buf.clear();
     }
 
     /// Call after using the slug to reset text buffer.

@@ -9,6 +9,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "streams/JSReadableStream.h"
+#include "streams/JSWritableStream.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -206,6 +207,11 @@ extern "C" bool Bun__Bindgen__isReadableStream(EncodedJSValue value)
 extern "C" bool Bun__Bindgen__isURL(EncodedJSValue value)
 {
     return !!dynamicDowncast<WebCore::JSDOMURL>(JSValue::decode(value));
+}
+
+extern "C" bool Bun__Bindgen__isWritableStream(EncodedJSValue value)
+{
+    return !!dynamicDowncast<WebCore::JSWritableStream>(JSValue::decode(value));
 }
 
 }

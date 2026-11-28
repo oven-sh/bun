@@ -797,7 +797,15 @@ const cellTypesOfDeclaredInstances: Readonly<Record<string, readonly string[]>> 
   Uint8Array: ["Uint8Array"],
 };
 /** Classes that no `.bind.ts` file defines and no cell type tells. Their tests are in src/jsc/bindings/Bindgen/ToJS.cpp. */
-const nativeInstances: readonly string[] = ["AbortSignal", "ArrayBuffer", "Buffer", "Headers", "ReadableStream", "URL"];
+const nativeInstances: readonly string[] = [
+  "AbortSignal",
+  "ArrayBuffer",
+  "Buffer",
+  "Headers",
+  "ReadableStream",
+  "URL",
+  "WritableStream",
+];
 
 /** A Rust closure that is true of a `JSValue` that is one of the words. */
 function rustTestOfDeclaredWords(words: readonly string[], { member, receiver }: ResultSite): string {

@@ -145,6 +145,7 @@ enum class TransformerKind : uint8_t {
     TextDecoder, // TextDecoderStream (context = the JSTextDecoderStream cell)
     Compression, // CompressionStream   (context = the JSCompressionStream cell)
     Decompression, // DecompressionStream (context = the JSDecompressionStream cell)
+    Markdown, // Bun.markdown.*Stream() (context = the JSTransformStream, transformer = the JSMarkdownStream cell)
 };
 
 // CompressionStream / DecompressionStream format. Matches the `Format` enum in

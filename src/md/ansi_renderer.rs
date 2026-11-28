@@ -12,10 +12,12 @@ use bun_core::strings;
 use crate::helpers;
 use crate::output::{OutputBuffer, try_extend, try_push};
 use crate::root;
+use crate::stream::{Part, Pass};
 use crate::types::{
     self, Align, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
 };
 
+#[derive(Clone, Copy)]
 pub struct Theme<'a> {
     /// True when the terminal background is light. Controls color choices
     /// so text stays readable.
@@ -265,7 +267,7 @@ impl InlineStyle {
 
 impl<'a> AnsiRenderer<'a> {
     pub(crate) fn init(src_text: &'a [u8], theme: Theme<'a>) -> AnsiRenderer<'a> {
-        let mut r = AnsiRenderer {
+        AnsiRenderer {
             out: OutputBuffer {
                 list: Vec::new(),
                 oom: false,
@@ -297,12 +299,7 @@ impl<'a> AnsiRenderer<'a> {
             cell_align: Align::Default,
             last_was_newline: true,
             blank_emitted: false,
-        };
-        // The output is usually ~1.5x the input; this is only a throughput
-        // hint, so on failure fall back to the incremental `try_reserve`s in
-        // `write` instead of aborting.
-        let _ = r.out.list.try_reserve(src_text.len() + src_text.len() / 2);
-        r
+        }
     }
 
     pub(crate) fn renderer(&mut self) -> Renderer<'_> {
@@ -2833,11 +2830,14 @@ pub fn render_to_ansi<'a>(
     theme: Theme<'a>,
 ) -> Result<Option<Box<[u8]>>, crate::parser::ParserError> {
     use crate::parser::ParserError;
-    // `AnsiRenderer::init` reserves output space proportional to the input, so
-    // an input the parser cannot address has to be rejected before it is
+    // An input the parser cannot address has to be rejected before it is
     // allocated for, not only when `Parser::init` sees it.
     crate::parser::input_size(text)?;
     let mut renderer = AnsiRenderer::init(text, theme);
+    // The output is usually ~1.5x the input; this is only a throughput
+    // hint, so on failure fall back to the incremental `try_reserve`s in
+    // `write` instead of aborting.
+    let _ = renderer.out.list.try_reserve(text.len() + text.len() / 2);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}
         Err(ParserError::JSError) => return Ok(None),
@@ -2849,4 +2849,55 @@ pub fn render_to_ansi<'a>(
     Ok(Some(
         core::mem::take(&mut renderer.out.list).into_boxed_slice(),
     ))
+}
+
+/// Renders the parts of a [`Stream`](crate::stream::Stream), each below the one before.
+pub struct AnsiStream<'a> {
+    theme: Theme<'a>,
+    /// The last two bytes of the output, which `ensure_blank_line` looks at.
+    tail: Vec<u8>,
+    col: u32,
+    last_was_newline: bool,
+    blank_emitted: bool,
+}
+
+impl<'a> AnsiStream<'a> {
+    pub fn new(theme: Theme<'a>) -> Self {
+        AnsiStream {
+            theme,
+            tail: Vec::new(),
+            col: 0,
+            last_was_newline: true,
+            blank_emitted: false,
+        }
+    }
+
+    pub fn render(&mut self, pass: Pass<'_>) -> Result<Vec<u8>, crate::parser::ParserError> {
+        let part = pass.part();
+        let mut renderer = AnsiRenderer::init(pass.text(), self.theme);
+        let len = pass.new_text_len();
+        let _ = renderer.out.list.try_reserve(len + len / 2);
+        renderer.out.write(&self.tail);
+        renderer.col = self.col;
+        renderer.last_was_newline = self.last_was_newline;
+        renderer.blank_emitted = self.blank_emitted;
+
+        pass.render(&mut renderer)?;
+        if renderer.out.oom {
+            return Err(crate::parser::ParserError::OutOfMemory);
+        }
+
+        let mut out = renderer.out.list;
+        let written_before = self.tail.len();
+        if part != Part::Preview {
+            self.tail.clear();
+            self.tail
+                .extend_from_slice(&out[out.len().saturating_sub(2)..]);
+            self.col = renderer.col;
+            self.last_was_newline = renderer.last_was_newline;
+            self.blank_emitted = renderer.blank_emitted;
+        }
+        out.drain(..written_before);
+        Ok(out)
+    }
 }

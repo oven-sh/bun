@@ -762,26 +762,10 @@ impl Parser<'_> {
             pos += 1;
         }
 
-        // Count cells between pipes
-        let mut in_cell = false;
+        let mut code_span_ends = crate::inlines::CodeSpanEnds::default();
         while pos < row.len() {
-            if row[pos] == b'|' {
-                col_count += 1;
-                in_cell = false;
-                pos += 1;
-            } else if row[pos] == b'\\' && pos + 1 < row.len() {
-                in_cell = true;
-                pos += 2;
-            } else if helpers::is_newline(row[pos]) {
-                break;
-            } else {
-                in_cell = true;
-                pos += 1;
-            }
-        }
-        // If there's content after the last pipe (no trailing pipe), count it as a column
-        if in_cell {
             col_count += 1;
+            pos = self.table_cell_end(row, pos, &mut code_span_ends) + 1;
         }
         col_count
     }

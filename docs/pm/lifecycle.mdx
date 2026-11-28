@@ -10,6 +10,12 @@ Packages on `npm` can define _lifecycle scripts_ in their `package.json`. These 
 - `preuninstall`: Runs before the package is uninstalled
 - `prepublishOnly`: Runs before the package is published
 
+<Note>
+  The npm `dependencies` script (which npm runs after `node_modules` is changed by commands like `npm install` or
+  `npm remove`, per the [npm scripts docs](https://docs.npmjs.com/cli/v10/using-npm/scripts#dependencies)) is not
+  implemented in Bun and will not run.
+</Note>
+
 These scripts are arbitrary shell commands that the package manager is expected to run at the appropriate time. Because running arbitrary code is a security risk, Bun does not execute arbitrary lifecycle scripts by default, unlike other `npm` clients.
 
 ---

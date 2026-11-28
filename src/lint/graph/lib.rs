@@ -37,7 +37,9 @@ use bun_sema::config::{
 };
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
-use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
+use bun_sema::resolve::{
+    AsRequire, Entry, Host, Resolver, ScriptKind, ancestors, join, typescript_path,
+};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native};
@@ -639,6 +641,7 @@ impl<'h> Graph<'h> {
         extensions: &[&[u8]],
         configured_paths: &[&[u8]],
         module_directories: &[&[u8]],
+        entry: Entry,
     ) -> Option<Vec<u8>> {
         let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
         // `resolve`'s `loadpkg` walks up from where the file would be until it finds a `package.json`. On a relative
@@ -667,6 +670,7 @@ impl<'h> Graph<'h> {
             paths: &paths,
             through_paths: false,
             as_import: false,
+            entry,
             base_url: None,
         };
         // No TypeScript config applies here.
@@ -699,6 +703,7 @@ impl<'h> Graph<'h> {
             paths: &[],
             through_paths: true,
             as_import: false,
+            entry: Entry::ForBundlers,
             base_url: None,
         };
         let from_base_url = || {
@@ -864,6 +869,7 @@ impl<'h> Graph<'h> {
                 paths: &[],
                 through_paths: true,
                 as_import: true,
+                entry: Entry::ForBundlers,
                 base_url: base_url.map(Vec::as_slice),
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
@@ -1425,14 +1431,29 @@ impl Modules for Graph<'_> {
                 }
             }
             Lookup::Node(extensions) => {
-                self.resolve_as_require((specifier, &from), extensions, &[], &[b"node_modules"])?
+                let directories: [&[u8]; 1] = [b"node_modules"];
+                let entry = Entry::ForBundlers;
+                self.resolve_as_require((specifier, &from), extensions, &[], &directories, entry)?
             }
             Lookup::NodeWith {
                 extensions,
                 paths,
                 module_directories,
             } => {
-                self.resolve_as_require((specifier, &from), extensions, paths, module_directories)?
+                let (directories, entry) = (module_directories, Entry::ForBundlers);
+                self.resolve_as_require((specifier, &from), extensions, paths, directories, entry)?
+            }
+            Lookup::Require => {
+                // `Object.keys(Module._extensions)`
+                let extensions: [&[u8]; 3] = [b".js", b".json", b".node"];
+                let directories: [&[u8]; 1] = [b"node_modules"];
+                self.resolve_as_require(
+                    (specifier, &from),
+                    &extensions,
+                    &[],
+                    &directories,
+                    Entry::Main,
+                )?
             }
         };
         Some(typescript_path(&found).to_vec())

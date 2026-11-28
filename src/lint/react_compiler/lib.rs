@@ -22,7 +22,7 @@ pub mod rule;
 mod suppression;
 
 pub use bun_react_compiler::diagnostics::ErrorCategory;
-pub use compile::Flavor;
+pub use compile::{Flavor, Reanimated};
 pub use finding::{Detail, Finding, Suggestion};
 pub use oxlint::{Label, Rendered, render_all};
 
@@ -37,45 +37,55 @@ struct PerFlavor {
     findings: OnceCell<(Vec<Finding>, Categories)>,
 }
 
+/// For each flavor: a compilation without [Reanimated's types](Reanimated), and one with them.
 #[derive(Default)]
 struct PerFile {
-    oxlint: PerFlavor,
-    eslint: PerFlavor,
+    oxlint: [PerFlavor; 2],
+    eslint: [PerFlavor; 2],
 }
 
-fn per_flavor<'a>(file: &'a File<'a>, flavor: Flavor) -> Option<&'a PerFlavor> {
+fn per_flavor<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    knows_reanimated: bool,
+) -> Option<&'a PerFlavor> {
     let per_file = file.extension(PerFile::default)?;
     Some(match flavor {
-        Flavor::Oxlint => &per_file.oxlint,
-        Flavor::Eslint => &per_file.eslint,
+        Flavor::Oxlint => &per_file.oxlint[knows_reanimated as usize],
+        Flavor::Eslint => &per_file.eslint[knows_reanimated as usize],
     })
 }
 
 /// Asks [`findings`] to include the compiler's diagnostics in `category`. It only has an effect
 /// before the first [`findings`] call.
-pub fn want<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) {
-    if let Some(per_flavor) = per_flavor(file, flavor) {
+pub fn want<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    knows_reanimated: bool,
+    category: ErrorCategory,
+) {
+    if let Some(per_flavor) = per_flavor(file, flavor, knows_reanimated) {
         (per_flavor.wanted).set(per_flavor.wanted.get().with(category));
     }
 }
 
 /// The compiler's diagnostics for the file in the [wanted](want) categories, in the compiler's
 /// order. There may be some from other categories too. The compiler runs on the first call.
-pub fn findings<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Finding] {
-    let Some(per_flavor) = per_flavor(file, flavor) else {
+pub fn findings<'a>(file: &'a File<'a>, flavor: Flavor, knows_reanimated: bool) -> &'a [Finding] {
+    let Some(per_flavor) = per_flavor(file, flavor, knows_reanimated) else {
         debug_assert!(false, "the file has no slot for the compiler's findings");
         return &[];
     };
     let wanted = per_flavor.wanted.get();
     let (findings, wanted_then) = per_flavor.findings.get_or_init(|| {
-        let findings = program::compile_program(file, flavor, wanted);
+        let findings = program::compile_program(file, flavor, wanted, knows_reanimated);
         #[cfg(debug_assertions)]
         {
             let only_wanted = |all: &[Finding]| -> Vec<Finding> {
                 let is_wanted = |it: &&Finding| wanted.has(it.category);
                 all.iter().filter(is_wanted).cloned().collect()
             };
-            let all = program::compile_program(file, flavor, Categories::ALL);
+            let all = program::compile_program(file, flavor, Categories::ALL, knows_reanimated);
             debug_assert_eq!(only_wanted(&findings), only_wanted(&all));
         }
         (findings, wanted)

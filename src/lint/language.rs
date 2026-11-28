@@ -247,6 +247,11 @@ pub struct LanguageOptions {
     pub parser_options: Json,
     /// ESLint's `settings`.
     pub settings: Arc<Json>,
+    /// The module that the config loads its `react-hooks` plugin from.
+    pub react_hooks_module: Option<Arc<[u8]>>,
+    /// Set on first use: whether that module can `require.resolve("react-native-reanimated")`.
+    #[doc(hidden)]
+    pub has_reanimated: OnceLock<bool>,
     /// Computed lazily from the fields above, which must not change afterwards.
     #[doc(hidden)]
     pub config_globals: OnceLock<ConfigGlobals>,
@@ -502,6 +507,8 @@ impl LanguageOptions {
             infers_globals: InferGlobals::No,
             parser_options,
             settings,
+            react_hooks_module: None,
+            has_reanimated: OnceLock::new(),
             config_globals: OnceLock::new(),
         };
         options.set_source_type(source_type);
@@ -672,6 +679,8 @@ impl Default for LanguageOptions {
             infers_globals: InferGlobals::No,
             parser_options: Json::Null,
             settings: Arc::new(Json::Null),
+            react_hooks_module: None,
+            has_reanimated: OnceLock::new(),
             config_globals: OnceLock::new(),
         }
     }

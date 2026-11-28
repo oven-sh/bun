@@ -5,7 +5,9 @@ use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
 use bun_core::strings;
-use bun_lint::ast::{BinOp, File, Func};
+use bun_lint::ast::{BinOp, File, Func, Stmt, StmtKind, StmtTag};
+use bun_lint::modules::Lookup;
+use bun_lint::options::{Json, Object};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic,
@@ -38,9 +40,14 @@ pub(crate) struct Compiler<'a> {
 
 /// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `has_no_foreign_config` we don't
 /// follow the plugin where that would make a rule useless.
-fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
+fn config_of(
+    flavor: Flavor,
+    has_no_foreign_config: bool,
+    knows_reanimated: bool,
+) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
+        enable_custom_type_definition_for_reanimated: knows_reanimated,
         validate_ref_access_during_render: true,
         joined_ref_values_keep_their_place: is_oxlint,
         effects_keep_their_place: is_oxlint,
@@ -75,13 +82,84 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
     }
 }
 
+const REANIMATED: &str = "react-native-reanimated";
+
+/// What a rule's options say about the compiler's types for `react-native-reanimated`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Reanimated {
+    /// The plugin's default: they're known if its module can `require.resolve` the package.
+    #[default]
+    IfInstalled,
+    /// `environment.enableCustomTypeDefinitionForReanimated` is on.
+    Always,
+    /// `enableReanimatedCheck` is off.
+    Never,
+}
+
+impl Reanimated {
+    /// `options` is the rule's options object.
+    pub fn of(options: Object) -> Reanimated {
+        let environment = options.object("environment");
+        let is_on = environment.bool("enableCustomTypeDefinitionForReanimated") == Some(true);
+        // Only `true` keeps the check.
+        let checks = matches!(
+            options.get("enableReanimatedCheck"),
+            None | Some(Json::Bool(true))
+        );
+        match (is_on, checks) {
+            (true, _) => Reanimated::Always,
+            (false, true) => Reanimated::IfInstalled,
+            (false, false) => Reanimated::Never,
+        }
+    }
+}
+
+/// The plugin's `pipelineUsesReanimatedPlugin` and `injectReanimatedFlag`. Without a plugin module, the import decides.
+pub(crate) fn knows_reanimated<'a>(file: &'a File<'a>, option: Reanimated) -> bool {
+    let imports_it = |it: Stmt<'a>| match it.kind() {
+        StmtKind::Import(import) => import.spec().is(REANIMATED),
+        _ => false,
+    };
+    let language = file.language();
+    // oxlint 1.87 doesn't have these types.
+    if language.is_oxlint
+        || option == Reanimated::Never
+        || !file.mentions(REANIMATED)
+        || !file.stmts_of_kind(StmtTag::Import).any(imports_it)
+    {
+        return false;
+    }
+    let plugin = match (option, language.react_hooks_module.as_deref()) {
+        (Reanimated::IfInstalled, Some(plugin)) => plugin,
+        _ => return true,
+    };
+    if let Some(known) = language.has_reanimated.get() {
+        return *known;
+    }
+    let Some(modules) = file.modules() else {
+        return true;
+    };
+    let resolves = || {
+        modules
+            .resolve_file(plugin, REANIMATED.as_bytes(), true, &Lookup::Require)
+            .is_some()
+    };
+    *language.has_reanimated.get_or_init(resolves)
+}
+
 impl<'a> Compiler<'a> {
-    pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, wanted: Categories) -> Compiler<'a> {
+    pub(crate) fn new(
+        file: &'a File<'a>,
+        flavor: Flavor,
+        wanted: Categories,
+        knows_reanimated: bool,
+    ) -> Compiler<'a> {
+        let has_no_foreign_config = file.language().has_no_foreign_config;
         Compiler {
             file,
             flavor,
             wanted,
-            config: config_of(flavor, file.language().has_no_foreign_config),
+            config: config_of(flavor, has_no_foreign_config, knows_reanimated),
             arena: bun_alloc::Arena::new(),
         }
     }

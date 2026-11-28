@@ -18,6 +18,9 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   const folder = String(tempDir("addon-allocations", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const addon = join(folder, "allocations.node");
+  const weakStubs = join(folder, "weak-stubs.node");
+  const replacesOperators = join(folder, "replaces-operators.node");
+  const loadedAfter = join(folder, "loaded-after.node");
 
   const exitLibrary = join(folder, "exit-instead-of-quick-exit.so");
 
@@ -71,9 +74,24 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   beforeAll(async () => {
     await Promise.all([
       compile("addon.cpp", addon),
+      compile("weak-stubs.cpp", weakStubs),
+      ...(isMacOS
+        ? [compile("replaces-operators.cpp", replacesOperators), compile("loaded-after.cpp", loadedAfter)]
+        : []),
       ...(isLinux ? [compile("exit-instead-of-quick-exit.cpp", exitLibrary)] : []),
     ]);
   }, 120_000);
+
+  async function evaluate(script: string) {
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, MallocDebugReport: "crash" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    return { stdout, stderr, exitCode, signalCode: child.signalCode };
+  }
 
   const whenTheProcessEnds = ["released by an atexit handler", "released by a static destructor"];
   const whenTheEnvironmentEnds = [
@@ -83,6 +101,114 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   ];
   // When a thread ends is not tied to when the process does.
   const whenAThreadEnds = ["released by a thread-local destructor"];
+
+  // The places that release blocks as the process ends print a line each.
+  async function printedBy(addonFunction: string, env: Record<string, string> = {}) {
+    const result = await run("operators.js", [addonFunction], { MallocDebugReport: "crash", ADDON: addon, ...env });
+    return { ...result, stdout: result.stdout.replace(/^released by .*\n/gm, "") };
+  }
+
+  // An ASAN build of the runtime has operators of ASAN's in front of both.
+  test.skipIf(!isMacOS || isASAN)(
+    "the addon calls the operator new and the operator delete of the C++ library, not the runtime's",
+    async () => {
+      expect(await printedBy("printImagesOfOperators")).toEqual({
+        stdout: "operator new: /usr/lib/libc++abi.dylib\noperator delete: /usr/lib/libc++abi.dylib\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  test.skipIf(isMacOS && isASAN)(
+    "operator new tells the addon of a request that it cannot serve, as the C++ standard says",
+    async () => {
+      expect(await printedBy("askForTooMuch")).toEqual({
+        stdout: [
+          "operator new (std::nothrow): the new handler ran, then null",
+          "operator new[] (std::nothrow): the new handler ran, then null",
+          "operator new (std::nothrow) with an alignment: the new handler ran, then null",
+          "operator new[] (std::nothrow) with an alignment: the new handler ran, then null",
+          "operator new: std::bad_alloc",
+          "operator new[]: std::bad_alloc",
+          "operator new with an alignment: std::bad_alloc",
+          "operator new[] with an alignment: std::bad_alloc",
+          "std::wstring::reserve: std::bad_alloc",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  // The report is the runtime's on macOS, where the addon and the runtime share one C++ library.
+  test.skipIf(!isMacOS || isASAN)(
+    "a request that operator new cannot serve and the addon does not catch is reported as out of memory",
+    async () => {
+      // CI collects crash reports for crashes that nobody expects.
+      const result = await printedBy("askForTooMuchAndLeaveIt", {
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      });
+      expect(result.stderr).toContain("Bun has run out of memory");
+      expect(result.stderr).not.toContain("A C++ exception occurred");
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  test.skipIf(!isMacOS || isASAN)(
+    "another exception that the addon does not catch is not reported as out of memory",
+    async () => {
+      const result = await printedBy("throwAndLeaveIt", {
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      });
+      expect(result.stderr).toContain("A C++ exception occurred");
+      expect(result.stderr).not.toContain("Bun has run out of memory");
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  // With an operator delete that the runtime exports, the addon has the library's operator new and the runtime's
+  // operator delete, which cannot release the library's block.
+  test.skipIf(!isMacOS || isASAN)(
+    "an addon that is loaded after a library with operators of its own calls that library's operators",
+    async () => {
+      const script = `require(${JSON.stringify(replacesOperators)}); require(${JSON.stringify(loadedAfter)});`;
+      expect(await evaluate(script)).toEqual({
+        stdout:
+          "operator new: replaces-operators.node\noperator delete: replaces-operators.node\nreleased 1000 blocks\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  // The addon of Dawn (the webgpu package) has such stubs. On macOS the loader looks in the runtime for a function to
+  // put in their place only where the runtime's header has MH_WEAK_DEFINES, which an ASAN build lacks.
+  test.skipIf(isMacOS && isASAN)(
+    "a Node-API function of the runtime takes the place of an addon's weak stub of it",
+    async () => {
+      expect(await evaluate(`console.log(require(${JSON.stringify(weakStubs)}).text);`)).toEqual({
+        stdout: "made by the runtime\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
 
   describe.each(Object.keys(variants))("with %s", variant => {
     const { env, callsExit } = variants[variant];

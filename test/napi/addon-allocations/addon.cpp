@@ -5,6 +5,7 @@
 #define NAPI_VERSION 10
 #include <node_api.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +24,11 @@
 #include <unistd.h>
 #include <vector>
 
+#ifdef __APPLE__
+#include <dlfcn.h>
+#include <malloc/malloc.h>
+#endif
+
 namespace {
 
 void writeLine(int fd, const char* first, const char* second)
@@ -33,11 +39,28 @@ void writeLine(int fd, const char* first, const char* second)
     static_cast<void>(written);
 }
 
-void reportDamage(const char* owner, const char* kind)
+void reportBlock(const char* owner, const char* kind, const char* fault)
 {
     char line[256];
     snprintf(line, sizeof(line), "%s: the block from %s", owner, kind);
-    writeLine(2, line, " does not hold the bytes that were written to it");
+    writeLine(2, line, fault);
+}
+
+void reportDamage(const char* owner, const char* kind)
+{
+    reportBlock(owner, kind, " does not hold the bytes that were written to it");
+}
+
+// On macOS the runtime's operator new serves the runtime alone, and an addon gets a block of the system allocator from
+// the C++ library's. That allocator knows the size of its own blocks and of no others.
+bool systemAllocatorOwns(const void* block)
+{
+#ifdef __APPLE__
+    return malloc_size(block) > 0;
+#else
+    static_cast<void>(block);
+    return true;
+#endif
 }
 
 void announceRelease(const char* place) { writeLine(1, "released by ", place); }
@@ -138,6 +161,15 @@ public:
         for (int i = 0; i < 3; i++)
             fill(m_alignedNewArray[i].bytes, sizeof(Aligned::bytes), seed + i);
 
+        m_smallAlignment[0] = ::operator new(m_size, smallAlignment);
+        m_smallAlignment[1] = ::operator new[](m_size, smallAlignment);
+        m_smallAlignment[2] = ::operator new(m_size, smallAlignment, std::nothrow);
+        m_smallAlignment[3] = ::operator new[](m_size, smallAlignment, std::nothrow);
+        for (void* block : m_smallAlignment) {
+            if (block)
+                fill(block, m_size, seed);
+        }
+
         // Members of std::string that the C++ library defines out of line.
         m_string.clear();
         m_string.shrink_to_fit();
@@ -223,6 +255,26 @@ public:
         check(!(reinterpret_cast<uintptr_t>(m_alignedNewArray) % 128) && holds(m_alignedNewArray[2].bytes, sizeof(Aligned::bytes), seed + 2), "aligned new[]");
         delete[] m_alignedNewArray;
 
+        static const char* const smallAlignmentKinds[] = {
+            "operator new with an alignment of 4",
+            "operator new[] with an alignment of 4",
+            "operator new (std::nothrow) with an alignment of 4",
+            "operator new[] (std::nothrow) with an alignment of 4",
+        };
+        for (size_t i = 0; i < std::size(m_smallAlignment); i++) {
+            void* block = m_smallAlignment[i];
+            if (!block)
+                reportBlock(m_owner, smallAlignmentKinds[i], " is null");
+            else if (!systemAllocatorOwns(block))
+                reportBlock(m_owner, smallAlignmentKinds[i], " is not the system allocator's");
+            else
+                check(holds(block, m_size, seed), smallAlignmentKinds[i]);
+        }
+        ::operator delete(m_smallAlignment[0], smallAlignment);
+        ::operator delete[](m_smallAlignment[1], smallAlignment);
+        ::operator delete(m_smallAlignment[2], smallAlignment);
+        ::operator delete[](m_smallAlignment[3], smallAlignment);
+
         check(m_string.size() == m_stringLength && !m_string.compare(0, m_text.size(), m_text), "std::string");
         std::string().swap(m_string);
         check(m_strings.size() == 40 && m_strings[39] == makeText(39 * 9, seed) + "39", "std::vector<std::string>");
@@ -246,6 +298,9 @@ public:
 
 private:
     static constexpr size_t largeSize = 3 * 1024 * 1024 + 100;
+    // What llvm::allocate_buffer passes for the buckets of a DenseMap of ints. operator new takes an alignment below
+    // sizeof(void*), and posix_memalign and malloc_zone_memalign refuse one.
+    static constexpr std::align_val_t smallAlignment { 4 };
 
     static bool isZero(const void* block, size_t size)
     {
@@ -287,6 +342,7 @@ private:
     unsigned char* m_nothrowNew = nullptr;
     Aligned* m_alignedNew = nullptr;
     Aligned* m_alignedNewArray = nullptr;
+    void* m_smallAlignment[4] = {};
     std::string m_text;
     std::string m_string;
     std::string m_streamed;
@@ -725,6 +781,116 @@ napi_value countFinalizersFromNow(napi_env, napi_callback_info)
     return nullptr;
 }
 
+#ifdef __APPLE__
+// The image that holds a function, or "the runtime" where that image also holds the Node-API functions.
+const char* imageOf(void* function)
+{
+    Dl_info image;
+    Dl_info runtime;
+    if (!dladdr(function, &image) || !dladdr(reinterpret_cast<void*>(&napi_create_object), &runtime))
+        return "no image";
+    return image.dli_fbase == runtime.dli_fbase ? "the runtime" : image.dli_fname;
+}
+#endif
+
+// printImagesOfOperators(): which image the addon's calls of operator new and of operator delete go to. Nothing where
+// the platform is not macOS.
+napi_value printImagesOfOperators(napi_env, napi_callback_info)
+{
+#ifdef __APPLE__
+    writeLine(1, "operator new: ", imageOf(reinterpret_cast<void*>(static_cast<void* (*)(size_t)>(&::operator new))));
+    writeLine(1, "operator delete: ", imageOf(reinterpret_cast<void*>(static_cast<void (*)(void*) noexcept>(&::operator delete))));
+#endif
+    return nullptr;
+}
+
+// More than any allocator has: the system allocator of macOS answers a size this close to SIZE_MAX without a try, so
+// without a report of its own. The compiler does not know the value.
+volatile size_t tooMuch = SIZE_MAX - 4096;
+
+std::atomic<unsigned> newHandlerCalls { 0 };
+
+// operator new asks the new handler for memory, and gives up once there is no handler.
+void countCallAndLeave()
+{
+    newHandlerCalls++;
+    std::set_new_handler(nullptr);
+}
+
+// The C++ library defines this member out of line, so the allocation is the library's. The length is below what any
+// version of libc++ allows, and its bytes are as close to SIZE_MAX as tooMuch. max_size() can be more than libc++
+// allows: it is the header's, and the library that runs can be newer. libstdc++ allows less. Never destroyed, so that
+// the compiler has to make the call.
+void* reserveWideString(size_t)
+{
+    static auto* text = new std::wstring;
+    text->reserve(std::min(text->max_size(), SIZE_MAX / sizeof(wchar_t) - 64));
+    return text->data();
+}
+
+// askForTooMuch(): asks every form of operator new for more than there is, and the C++ library for a std::wstring of
+// that size, and prints what each did, as it goes. A form that may throw has to throw std::bad_alloc. A std::nothrow
+// form has to call the new handler and then return null.
+napi_value askForTooMuch(napi_env, napi_callback_info)
+{
+    static constexpr std::align_val_t alignment { 64 };
+    struct Form {
+        const char* kind;
+        void* (*request)(size_t);
+    };
+    static const Form quiet[] = {
+        { "operator new (std::nothrow)", [](size_t size) { return ::operator new(size, std::nothrow); } },
+        { "operator new[] (std::nothrow)", [](size_t size) { return ::operator new[](size, std::nothrow); } },
+        { "operator new (std::nothrow) with an alignment", [](size_t size) { return ::operator new(size, alignment, std::nothrow); } },
+        { "operator new[] (std::nothrow) with an alignment", [](size_t size) { return ::operator new[](size, alignment, std::nothrow); } },
+    };
+    static const Form throwing[] = {
+        { "operator new", [](size_t size) { return ::operator new(size); } },
+        { "operator new[]", [](size_t size) { return ::operator new[](size); } },
+        { "operator new with an alignment", [](size_t size) { return ::operator new(size, alignment); } },
+        { "operator new[] with an alignment", [](size_t size) { return ::operator new[](size, alignment); } },
+        { "std::wstring::reserve", reserveWideString },
+    };
+
+    for (auto& form : quiet) {
+        newHandlerCalls = 0;
+        std::new_handler previous = std::set_new_handler(countCallAndLeave);
+        void* block = form.request(tooMuch);
+        std::set_new_handler(previous);
+        const char* handler = newHandlerCalls ? ": the new handler ran, then " : ": the new handler did not run, then ";
+        writeLine(1, (std::string(form.kind) + handler).c_str(), block ? "a block" : "null");
+    }
+    for (auto& form : throwing) {
+        const char* outcome = ": no exception";
+        try {
+            form.request(tooMuch);
+        } catch (const std::bad_alloc&) {
+            outcome = ": std::bad_alloc";
+        } catch (const std::length_error&) {
+            outcome = ": std::length_error";
+        } catch (...) {
+            outcome = ": another exception";
+        }
+        writeLine(1, form.kind, outcome);
+    }
+    return nullptr;
+}
+
+// askForTooMuchAndLeaveIt(): what operator new throws leaves the addon, and nothing catches it.
+napi_value askForTooMuchAndLeaveIt(napi_env, napi_callback_info)
+{
+    static void* volatile block;
+    block = ::operator new(tooMuch);
+    writeLine(1, "operator new returned", "");
+    return nullptr;
+}
+
+// throwAndLeaveIt(): an exception that is not about memory leaves the addon, and nothing catches it.
+napi_value throwAndLeaveIt(napi_env, napi_callback_info)
+{
+    throw std::runtime_error("not about memory");
+}
+
 } // namespace
 
 NAPI_MODULE_INIT()
@@ -785,6 +951,10 @@ NAPI_MODULE_INIT()
         { "holdsWrittenBytes", holdsWrittenBytes },
         { "countBlocksOnLoan", countBlocksOnLoan },
         { "countFinalizersFromNow", countFinalizersFromNow },
+        { "printImagesOfOperators", printImagesOfOperators },
+        { "askForTooMuch", askForTooMuch },
+        { "askForTooMuchAndLeaveIt", askForTooMuchAndLeaveIt },
+        { "throwAndLeaveIt", throwAndLeaveIt },
     };
     for (auto& entry : functions) {
         napi_value function;

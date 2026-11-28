@@ -44,6 +44,8 @@ export interface BinaryExpectations {
     /** On top of what the files list. */
     exact: string[];
     patterns: string[];
+    /** Mach-O: what may not be exported, whatever the files list. */
+    forbidden?: string[];
   };
   /**
    * The dynamic libraries the executable loads (ELF DT_NEEDED, Mach-O
@@ -97,6 +99,8 @@ export interface BinaryExpectations {
   /** Undefined dynamic symbols that must not appear (`*` wildcards). */
   forbiddenImports: string[];
   requiredImports?: string[];
+  /** Mach-O: the only C++ functions that may be imported, as the Itanium ABI mangles them (`*` wildcards). Undefined = not checked. */
+  cxxImports?: string[];
   /**
    * The exact set of imported symbols, for a program small enough that every import is a decision (the Windows
    * `.bin/` shim). Undefined = only `forbiddenImports` is checked.
@@ -303,6 +307,55 @@ function requiredImports(cfg: Config): string[] {
   ];
 }
 
+/**
+ * What the macOS executable may not export, whatever src/symbols.txt lists: the operators that dyld looks up in an
+ * executable when a process starts (sTreatAsWeak in dyld). dyld points every use in the shared cache at one that the
+ * executable exports. That cost each start of bun 2 to 5 ms of CPU time, and 2 to 8 MB of memory on macOS 14 and 15
+ * (oven-sh/bun#49439).
+ */
+const operatorsThatDyldRebinds = [
+  ...replacedOperatorNewSymbols,
+  "_ZnwmSt19__type_descriptor_t",
+  "_ZnamSt19__type_descriptor_t",
+];
+
+/**
+ * The C++ functions that the macOS executable imports (`*` wildcards). Code in the executable has its own operator
+ * new and operator delete, and every other image has those of libc++abi.dylib (MimallocOverrideDarwin.cpp). So no
+ * code of libc++.1.dylib may release or grow a block that the executable allocated: the system allocator ends the
+ * process on a block of mimalloc. The other direction is fine (std::to_string): the executable's operator delete
+ * gives a block back to its owner.
+ *
+ * The question is about a class and every use the executable can make of it, not about one function. The code that
+ * releases can be a virtual member behind an imported vtable (`_ZTV`, `_ZTT`), or no import at all: std::thread
+ * imports nothing that releases, and the dylib deletes the executable's `__thread_struct` when the thread exits.
+ *   - No object of the class can carry a block across: list the name here.
+ *   - One can, and the class is an extern template (std::string): instantiate it in MimallocOverrideDarwin.cpp.
+ *   - One can, and there is nothing to instantiate: it stays out, and `forbiddenImports` names it.
+ * A debug build is not held to the list: it can import what the optimizer removes from a release build.
+ */
+const importedCxxFunctions = [
+  // A control block releases itself in its own virtual function, which is code of the executable.
+  "_ZNKSt3__119__shared_weak_count*",
+  "_ZNSt3__119__shared_weak_count*",
+  "_ZNSt3__111__call_once*",
+  "_ZNSt3__112__next_primeEm",
+  "_ZNSt3__115system_categoryEv",
+  "_ZNSt3__118condition_variable*",
+  "_ZNSt3__15mutex*",
+  "_ZNSt3__16__sortI*",
+  "_ZNSt3__16chrono12steady_clock3nowEv",
+  "_ZNSt3__19to_stringE*",
+  // They read the path.
+  "_ZNSt3__14__fs10filesystem8__statusERKNS1_4pathEPNS_10error_codeE",
+  "_ZNSt3__14__fs10filesystem16__symlink_statusERKNS1_4pathEPNS_10error_codeE",
+  // From libc++abi.dylib.
+  "_ZSt13set_terminatePFvvE",
+  "_ZSt15get_new_handlerv",
+  "_ZSt7nothrow",
+  "_ZSt9terminatev",
+];
+
 function forbiddenImports(cfg: Config): string[] {
   // Emulated TLS and libatomic calls: nowhere.
   const forbidden = ["__emutls_*", "__atomic_*"];
@@ -328,6 +381,21 @@ function forbiddenImports(cfg: Config): string[] {
     // (MimallocOverrideDarwin.cpp). An import of one of these is code that
     // reached the system allocator around it.
     forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols);
+    // Code of libc++.1.dylib that releases or grows a block of the executable (see importedCxxFunctions).
+    forbidden.push(
+      // A character type that MimallocOverrideDarwin.cpp does not instantiate.
+      "_ZNSt3__112basic_stringI*",
+      // std::thread, std::async: the dylib deletes the executable's __thread_struct when the thread exits.
+      "_ZNSt3__115__thread_struct*",
+      "_ZNSt3__119__thread_local_dataEv",
+      // A stream that holds a std::string of the executable: basic_stringbuf::overflow grows it.
+      "_ZNSt3__115basic_stringbufI*",
+      "_ZTVNSt3__115basic_stringbufI*",
+      // They change a std::filesystem::path of the executable.
+      "_ZNSt3__14__fs10filesystem4path17replace_extensionERKS2_",
+      "_ZNSt3__14__fs10filesystem4path8iterator11__incrementEv",
+      "_ZNSt3__14__fs10filesystem4path8iterator11__decrementEv",
+    );
   }
   if (cfg.linux && cfg.abi !== "musl") {
     // …nor the function-local-static guards (musl/FreeBSD/macOS take them
@@ -576,8 +644,9 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         format,
         exports: {
           symbolList: src("symbols.txt"),
-          exact: overridesDarwinAllocator(cfg) ? replacedOperatorNewSymbols.map(name => `_${name}`) : [],
+          exact: [],
           patterns: [],
+          ...(overridesDarwinAllocator(cfg) && { forbidden: operatorsThatDyldRebinds.map(name => `_${name}`) }),
         },
         neededLibs: {
           names: [
@@ -591,10 +660,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         },
         ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
         forbiddenImports: forbiddenImports(cfg),
+        ...(overridesDarwinAllocator(cfg) && !cfg.debug && { cxxImports: importedCxxFunctions }),
         ...(staticInitializers && { staticInitializers }),
         ...(forbiddenSymbols && { forbiddenSymbols }),
         macho: {
-          flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
+          // dyld's weak lookup reads the exports of an executable only where its header has MH_WEAK_DEFINES: with it,
+          // an addon's weak stub of a Node-API function gives way to the executable's (oven-sh/bun#19336). ld64.lld
+          // sets it because the operators override the weak ones of libc++abi.dylib.
+          flags: ["PIE", "TWOLEVEL", "DYLDLINK", ...(overridesDarwinAllocator(cfg) ? ["WEAK_DEFINES"] : [])],
           segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
         },
       };

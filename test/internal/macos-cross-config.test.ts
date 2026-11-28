@@ -9,16 +9,19 @@
  */
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { binaryExpectations } from "../../scripts/build/binary-expectations.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { replacedLibcAllocationSymbols, replacedOperatorNewSymbols } from "../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
 import { rustTarget } from "../../scripts/build/rust.ts";
 import { machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
+import { machoExportViolations, machoImportViolations } from "../../scripts/build/verify-binary.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -184,6 +187,84 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const x64 = computeFlags(resolveDarwin({ arch: "x64" }));
     expect(x64.ldflags).toContain("-Wl,-sectalign,__BUN,__bun,0x1000");
     expect(arm64.ldflags).not.toContain("-Wl,-sectalign,__BUN,__bun,0x1000");
+  });
+
+  test("the executable exports no operator of MimallocOverrideDarwin.cpp, and the C++ functions that it imports are listed", () => {
+    const source = readFileSync(join(import.meta.dir, "../../src/jsc/bindings/MimallocOverrideDarwin.cpp"), "utf8");
+    const typeCodes: Record<string, string> = {
+      "size_t": "m",
+      "void*": "Pv",
+      "const std::nothrow_t&": "RKSt9nothrow_t",
+      "std::align_val_t": "St11align_val_t",
+    };
+    const codeOf = (parameter: string) => {
+      const type = Object.keys(typeCodes).find(type => parameter.startsWith(type));
+      if (type === undefined) throw new Error(`the test does not know the type of "${parameter}"`);
+      return typeCodes[type];
+    };
+    // Each operator that the file defines, as the Itanium ABI mangles it.
+    const operators = Array.from(
+      source.matchAll(/^BUN_\w+ void\*? operator (new|delete)(\[\])?\(([^)]*)\)/gm),
+      ([, operator, array, parameters]) =>
+        `_Z${operator === "new" ? "n" : "d"}${array ? "a" : operator === "new" ? "w" : "l"}` +
+        parameters.split(", ").map(codeOf).join(""),
+    );
+    expect(operators.sort()).toEqual([...replacedOperatorNewSymbols].sort());
+    const libcFunctions = Array.from(source.matchAll(/^BUN_LINKED_ONLY [\w*]+ (\w+)\(/gm), ([, name]) => name);
+    expect(libcFunctions.sort()).toEqual([...replacedLibcAllocationSymbols].sort());
+
+    // The members of std::string that libc++.1.dylib has are compiled into the executable.
+    expect(source).toContain("template class std::basic_string<char>;");
+    const listedExports = new Set(readFileSync(join(import.meta.dir, "../../src/symbols.txt"), "utf8").split("\n"));
+
+    for (const arch of ["aarch64", "x64"] as const) {
+      const cfg = resolveDarwin({ arch });
+      // Only the names in src/symbols.txt are exported, and no operator is among them.
+      expect(computeFlags(cfg).ldflags.filter(flag => flag.includes("exported_symbol,"))).toEqual([]);
+      const expectations = binaryExpectations(cfg);
+      expect(expectations.exports.exact).toEqual([]);
+      expect(expectations.exports.forbidden).toEqual(expect.arrayContaining(operators.map(name => `_${name}`)));
+      expect(expectations.exports.forbidden?.filter(name => listedExports.has(name))).toEqual([]);
+      expect(expectations.forbiddenImports).toEqual(expect.arrayContaining([...operators, ...libcFunctions]));
+      expect(expectations.macho?.flags).toContain("WEAK_DEFINES");
+
+      // What the check of the linked executable says about an export that a list could bring back.
+      expect(
+        machoExportViolations(
+          ["__ZdlPv", "__ZnwmSt19__type_descriptor_t", "_napi_create_object", "_stray"],
+          name => name !== "_stray",
+          expectations.exports.forbidden,
+        ),
+      ).toEqual([
+        "+ __ZdlPv (may not be exported)",
+        "+ __ZnwmSt19__type_descriptor_t (may not be exported)",
+        "+ _stray (not in the export list)",
+      ]);
+      // And about imports: an operator, code of the C++ library that releases what the executable allocated, a C++
+      // function that nobody has looked at, two that are listed, and two that are not C++.
+      expect(
+        machoImportViolations(
+          [
+            "__Znwm",
+            "__ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE9push_backEc",
+            "__ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE7reserveEm",
+            "__ZNSt3__115__thread_structC1Ev",
+            "__ZSt17current_exceptionv",
+            "__ZNSt3__15mutex4lockEv",
+            "__ZSt7nothrow",
+            "___cxa_guard_acquire",
+            "_pthread_self",
+          ],
+          expectations,
+        ),
+      ).toEqual([
+        "+ __Znwm (forbidden import)",
+        "+ __ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE9push_backEc (forbidden import)",
+        "+ __ZNSt3__112basic_stringIwNS_11char_traitsIwEENS_9allocatorIwEEE7reserveEm (forbidden import)",
+        "+ __ZNSt3__115__thread_structC1Ev (forbidden import)",
+        "+ __ZSt17current_exceptionv (a C++ import that is not in the list)",
+      ]);
+    }
   });
 
   test("rust side cross-compiles to apple-darwin triples from linux", () => {

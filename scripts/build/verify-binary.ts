@@ -107,6 +107,10 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "to come only from the lists in src/ (linker.lds, symbols.txt, symbols.def, NAPI_EXTERN /",
     "BUN_EXPORT in code); a stray one is usually a vendored header's __declspec(dllexport)",
     'or visibility("default"). Fix the declaration rather than extending the list.',
+    "An operator new or operator delete on macOS may not be exported, in src/symbols.txt or",
+    "otherwise: operatorsThatDyldRebinds in binary-expectations.ts has the cost at each launch.",
+    "What needs another image to release a block of the executable allocates that block with",
+    "malloc_zone_malloc(malloc_default_zone(), size) instead.",
   ],
   imports: [
     "These imports mean a toolchain feature bun builds without has crept into some object",
@@ -114,6 +118,10 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "references the symbol (llvm-nm -A over the link inputs) and fix its compile flags.",
     "malloc, free, operator new and their relatives on macOS: MimallocOverrideDarwin.cpp defines",
     "them for the whole link, so an import means it lacks the one that is listed. Add it there.",
+    "A C++ import that is not in the list, on macOS: importedCxxFunctions in",
+    "binary-expectations.ts has the rule and the three things to do with one. The question is",
+    "whether any code of libc++.1.dylib can release or grow a block that the executable",
+    "allocated through an object of that class. It is not about the one function that is printed.",
   ],
   "static initializers": [
     "A static initializer runs before main() on every start of every bun process, in",
@@ -484,6 +492,34 @@ function verifyElf(spec: VerifySpec): void {
 // Mach-O
 // ───────────────────────────────────────────────────────────────────────────
 
+/** What a Mach-O executable exports and should not: a name outside the lists, or one that no list may bring back. */
+export function machoExportViolations(
+  exported: string[],
+  listed: (name: string) => boolean,
+  forbidden: string[] = [],
+): string[] {
+  const never = new Set(forbidden);
+  return exported.flatMap(s =>
+    never.has(s) ? [`+ ${s} (may not be exported)`] : listed(s) ? [] : [`+ ${s} (not in the export list)`],
+  );
+}
+
+/** What a Mach-O executable imports and should not. Mach-O spells every C-level symbol with one more leading underscore. */
+export function machoImportViolations(
+  imported: string[],
+  expect: Pick<BinaryExpectations, "forbiddenImports" | "cxxImports">,
+): string[] {
+  const forbidden = globToRegExp(expect.forbiddenImports.map(p => `_${p}`));
+  const listed = expect.cxxImports && globToRegExp(expect.cxxImports.map(p => `_${p}`));
+  return imported.flatMap(s =>
+    forbidden.test(s)
+      ? [`+ ${s} (forbidden import)`]
+      : listed && s.startsWith("__Z") && !listed.test(s)
+        ? [`+ ${s} (a C++ import that is not in the list)`]
+        : [],
+  );
+}
+
 function verifyMachO(spec: VerifySpec): void {
   const { nm, readobj, objdump } = spec.tools;
   const { exe, expect } = spec;
@@ -496,11 +532,11 @@ function verifyMachO(spec: VerifySpec): void {
     const { exact, pat } = expectedExports(expect);
     // dyld's own entry points every executable exports.
     const builtin = new Set(["__mh_execute_header", "_main"]);
-    const bad = exported.filter(s => !exact.has(s) && !pat.test(s) && !builtin.has(s));
+    const listed = (s: string) => exact.has(s) || pat.test(s) || builtin.has(s);
     report(
       "exports",
       `${exported.length} exported symbols`,
-      bad.map(s => `+ ${s} (not in the export list)`),
+      machoExportViolations(exported, listed, expect.exports.forbidden),
     );
   }
 
@@ -528,14 +564,7 @@ function verifyMachO(spec: VerifySpec): void {
     const imported = run(nm, ["--undefined-only", "--format=just-symbols", "--no-demangle", exe])
       .split("\n")
       .filter(s => s.length > 0);
-    // Mach-O spells every C-level symbol with one more leading underscore.
-    const pat = globToRegExp(expect.forbiddenImports.map(p => `_${p}`));
-    const bad = imported.filter(s => pat.test(s));
-    report(
-      "imports",
-      `${imported.length} imported symbols`,
-      bad.map(s => `+ ${s} (forbidden import)`),
-    );
+    report("imports", `${imported.length} imported symbols`, machoImportViolations(imported, expect));
   }
 
   // 4. static initializers: __mod_init_func (pointers) or __init_offsets

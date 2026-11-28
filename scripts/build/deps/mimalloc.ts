@@ -41,10 +41,9 @@ export const replacedLibcAllocationSymbols: readonly string[] = [
 
 /**
  * Every replaceable form of operator new and operator delete, as the Itanium
- * ABI mangles it. The macOS executable exports them: libc++.1.dylib allocates
- * and releases std::string buffers that inlined code in bun also allocates and
- * releases, and dyld binds an image to the executable's operators only if they
- * are exported.
+ * ABI mangles it. That file defines them for the objects of the link, and the
+ * executable neither exports nor imports them: every other image calls those
+ * of libc++abi.dylib.
  */
 export const replacedOperatorNewSymbols: readonly string[] = ["w", "a"].flatMap(form => [
   `_Zn${form}m`,

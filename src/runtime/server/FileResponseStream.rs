@@ -410,7 +410,7 @@ impl FileResponseStream {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        loop {
+        {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
@@ -437,7 +437,6 @@ impl FileResponseStream {
                     }
                     return self.arm_sendfile_writable();
                 }
-                sys::E::EINTR => continue,
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
                 _ => {
                     self.fail_with(

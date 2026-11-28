@@ -6826,6 +6826,279 @@ console.log(fs.readdirSync(".").filter(name => /^eintr-(file|folder|link)/.test(
   });
 });
 
+// The same for the calls that copy or send a file, list a folder or look a path up. bun makes most of them
+// with syscall(2), so the shim takes syscall() too. The first call of a kind on each file of the test named
+// "eintr-" fails, and each failure is logged.
+const eintrShim = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// The folder of the test is the working directory.
+static char root[PATH_MAX];
+__attribute__((constructor)) static void find_root(void) {
+  if (!getcwd(root, sizeof root)) root[0] = 0;
+}
+
+// The part of a path below the folder of the test, or "" for a file outside it.
+static const char *in_test(const char *path) {
+  size_t length = strlen(root);
+  if (path[0] != '/') return path;
+  return length && strncmp(path, root, length) == 0 && path[length] == '/' ? path + length + 1 : "";
+}
+
+// \`last\` is the file of the call that failed last.
+static int is_interrupted(const char *name, const char *path, char *last) {
+  if (!strstr(in_test(path), "eintr-") || strcmp(path, last) == 0) return 0;
+  snprintf(last, PATH_MAX, "%s", path);
+  dprintf(2, "%s\\n", name);
+  errno = EINTR;
+  return 1;
+}
+
+// The path of an open file.
+static const char *path_of(int file) {
+  static __thread char path[PATH_MAX];
+  char link[32];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", file);
+  ssize_t length = readlink(link, path, sizeof path - 1);
+  path[length > 0 ? length : 0] = 0;
+  return path;
+}
+
+int access(const char *path, int mode) {
+  static char last[PATH_MAX];
+  if (is_interrupted("access", path, last)) return -1;
+  return ((int (*)(const char *, int)) dlsym(RTLD_NEXT, "access"))(path, mode);
+}
+
+char *realpath(const char *path, char *resolved) {
+  static char last[PATH_MAX];
+  if (is_interrupted("realpath", path, last)) return NULL;
+  return ((char *(*)(const char *, char *)) dlsym(RTLD_NEXT, "realpath"))(path, resolved);
+}
+
+// Not <sys/stat.h>: glibc before 2.33 defines stat() there, over __xstat().
+static char last_stat[PATH_MAX];
+#define STAT(name, parameters, arguments) \\
+  int name parameters { \\
+    if (is_interrupted("stat", path, last_stat)) return -1; \\
+    return ((int (*) parameters) dlsym(RTLD_NEXT, #name)) arguments; \\
+  }
+STAT(stat, (const char *path, void *buffer), (path, buffer))
+STAT(stat64, (const char *path, void *buffer), (path, buffer))
+STAT(__xstat, (int version, const char *path, void *buffer), (version, path, buffer))
+STAT(__xstat64, (int version, const char *path, void *buffer), (version, path, buffer))
+
+// The files of the test are pipes without a name, so the first call of the process fails.
+ssize_t splice(int in, off_t *in_offset, int out, off_t *out_offset, size_t length, unsigned flags) {
+  static int calls;
+  if (calls++ == 0) {
+    dprintf(2, "splice\\n");
+    errno = EINTR;
+    return -1;
+  }
+  return ((ssize_t (*)(int, off_t *, int, off_t *, size_t, unsigned)) dlsym(RTLD_NEXT, "splice"))(in, in_offset, out, out_offset, length, flags);
+}
+
+long syscall(long number, ...) {
+  static long (*real)(long, ...);
+  static char copied[PATH_MAX], sent[PATH_MAX], listed[PATH_MAX];
+  if (!real) real = dlsym(RTLD_NEXT, "syscall");
+  va_list list;
+  va_start(list, number);
+  long a = va_arg(list, long), b = va_arg(list, long), c = va_arg(list, long);
+  long d = va_arg(list, long), e = va_arg(list, long), f = va_arg(list, long);
+  va_end(list);
+  if (number == SYS_copy_file_range) {
+    // Each copy to a file named "enospc-" fails with another errno.
+    if (strstr(in_test(path_of(c)), "enospc-")) {
+      dprintf(2, "copy_file_range ENOSPC\\n");
+      errno = ENOSPC;
+      return -1;
+    }
+    if (is_interrupted("copy_file_range", path_of(c), copied)) return -1;
+  }
+  if (number == SYS_sendfile && is_interrupted("sendfile", path_of(b), sent)) return -1;
+  if (number == SYS_getdents64 && is_interrupted("getdents64", path_of(a), listed)) return -1;
+  return real(number, a, b, c, d, e, f);
+}
+`;
+
+/** Runs `script` with `eintrShim` preloaded. `stderr` is the list of the calls that the shim failed. */
+async function runUnderEintrShim(script: string) {
+  using dir = tempDir("fs-eintr", { "shim.c": eintrShim, "index.js": script });
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build the EINTR shim:\n${compile.stderr.toString()}`);
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: {
+      ...bunEnv,
+      // A relative path: the loader splits LD_PRELOAD at each space and colon.
+      LD_PRELOAD: bunEnv.LD_PRELOAD ? `./shim.so:${bunEnv.LD_PRELOAD}` : "./shim.so",
+      // Without the clone, a copy reaches copy_file_range on every file system.
+      BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+      // The settings of the outer shell do not decide a row.
+      BUN_CONFIG_DISABLE_COPY_FILE_RANGE: undefined,
+      NODE_COMPILE_CACHE: undefined,
+      NODE_COMPILE_CACHE_PORTABLE: undefined,
+      NODE_DISABLE_COMPILE_CACHE: undefined,
+    },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+it.concurrent.skipIf(!isLinux || !cc)("a copy is made again after EINTR", async () => {
+  const result = await runUnderEintrShim(`
+import fs from "node:fs";
+import { promisify } from "node:util";
+const text = Buffer.alloc(10000, "0123456789").toString();
+const row = async (name, run) =>
+  console.log(name, JSON.stringify(await Promise.resolve().then(run).catch(error => error.code)));
+const copied = to => fs.readFileSync(to, "utf8") === text;
+fs.writeFileSync("eintr-source", text);
+
+await row("cpSync", () => (fs.cpSync("eintr-source", "eintr-copy-1"), copied("eintr-copy-1")));
+fs.writeFileSync("eintr-copy-2", text + text);
+await row("cpSync onto a longer file", () => (fs.cpSync("eintr-source", "eintr-copy-2"), copied("eintr-copy-2")));
+await row("cp", () => promisify(fs.cp)("eintr-source", "eintr-copy-3").then(() => copied("eintr-copy-3")));
+await row("promises.cp", () => fs.promises.cp("eintr-source", "eintr-copy-4").then(() => copied("eintr-copy-4")));
+await row("copyFileSync", () => (fs.copyFileSync("eintr-source", "eintr-copy-5"), copied("eintr-copy-5")));
+await row("promises.copyFile", () =>
+  fs.promises.copyFile("eintr-source", "eintr-copy-6").then(() => copied("eintr-copy-6")),
+);
+await row("Bun.write", () =>
+  Bun.write("eintr-copy-7", Bun.file("eintr-source")).then(written => [written, copied("eintr-copy-7")]),
+);
+
+// Bun.write uses sendfile once it knows that the destination is not a regular file.
+const device = Bun.file("/dev/null");
+void device.size;
+await row("Bun.write to a device", () => Bun.write(device, Bun.file("eintr-source")));
+// Both ends are pipes, and Bun.write uses splice. The row is the count of bytes and the exit code of bun.
+const pipeline = 'echo eintr | { "$0" -e "await Bun.write(Bun.stdout, Bun.stdin)"; echo $? > status; } | wc -c';
+const piped = Bun.spawnSync({ cmd: ["sh", "-c", pipeline, process.execPath], stderr: "inherit" });
+console.log("Bun.write in a pipeline", piped.stdout.toString().trim(), fs.readFileSync("status", "utf8").trim());
+
+// fetch and Bun.serve use sendfile for a file of this size.
+fs.writeFileSync("eintr-upload", Buffer.alloc(1 << 20, "0123456789"));
+fs.writeFileSync("eintr-served", Buffer.alloc(1 << 20, "0123456789"));
+{
+  using server = Bun.serve({
+    port: 0,
+    fetch: async request =>
+      request.method === "POST"
+        ? new Response(String((await request.arrayBuffer()).byteLength))
+        : new Response(Bun.file("eintr-served")),
+  });
+  await row("fetch", () =>
+    fetch(server.url, { method: "POST", body: Bun.file("eintr-upload") }).then(response => response.text()),
+  );
+  await row("Bun.serve", () => fetch(server.url).then(async response => (await response.arrayBuffer()).byteLength));
+}
+
+// Another errno is not a reason to call again: the shim logs one call for each copy.
+fs.writeFileSync("enospc-source", text);
+await row("cpSync without space", () => fs.cpSync("enospc-source", "enospc-copy-1"));
+await row("copyFileSync without space", () => fs.copyFileSync("enospc-source", "enospc-copy-2"));
+`);
+
+  expect(result).toEqual({
+    stdout:
+      [
+        "cpSync true",
+        "cpSync onto a longer file true",
+        "cp true",
+        "promises.cp true",
+        "copyFileSync true",
+        "promises.copyFile true",
+        "Bun.write [10000,true]",
+        "Bun.write to a device 10000",
+        "Bun.write in a pipeline 6 0",
+        'fetch "1048576"',
+        "Bun.serve 1048576",
+        'cpSync without space "ENOSPC"',
+        'copyFileSync without space "ENOSPC"',
+      ].join("\n") + "\n",
+    stderr:
+      [
+        ...Array(7).fill("copy_file_range"),
+        ...["sendfile", "splice", "sendfile", "sendfile"],
+        ...["copy_file_range ENOSPC", "copy_file_range ENOSPC"],
+      ].join("\n") + "\n",
+    exitCode: 0,
+  });
+});
+
+it.concurrent.skipIf(!isLinux || !cc)("a folder read and a path lookup are made again after EINTR", async () => {
+  const result = await runUnderEintrShim(`
+import fs from "node:fs";
+import module from "node:module";
+import { promisify } from "node:util";
+const row = async (name, run) =>
+  console.log(name, JSON.stringify(await Promise.resolve().then(run).catch(error => error.code)));
+
+fs.mkdirSync("eintr-folder");
+fs.writeFileSync("eintr-folder/a", "a");
+await row("readdirSync", () => fs.readdirSync("eintr-folder"));
+fs.mkdirSync("eintr-tree");
+fs.writeFileSync("eintr-tree/a", "a");
+await row("cpSync of a folder", () => {
+  fs.cpSync("eintr-tree", "eintr-tree-copy", { recursive: true });
+  return fs.readFileSync("eintr-tree-copy/a", "utf8");
+});
+
+for (const name of ["eintr-file-1", "eintr-file-2", "eintr-file-3"]) fs.writeFileSync(name, "");
+await row("existsSync", () => fs.existsSync("eintr-file-1"));
+await row("exists", () => promisify(fs.exists)("eintr-file-2"));
+await row("promises.exists", () => fs.promises.exists("eintr-file-3"));
+
+fs.writeFileSync("eintr-tool", "#!/bin/sh\\n", { mode: 0o755 });
+await row("Bun.which", () => Bun.which("eintr-tool", { PATH: process.cwd() }) !== null);
+
+// The folder of the compile cache is the real path of the one that is asked for.
+fs.mkdirSync("eintr-real");
+fs.symlinkSync("eintr-real", "eintr-symlink");
+await row("enableCompileCache", () => {
+  module.enableCompileCache({ directory: "eintr-symlink", portable: true });
+  return module.getCompileCacheDir().includes("eintr-real");
+});
+`);
+
+  expect(result).toEqual({
+    stdout:
+      [
+        'readdirSync ["a"]',
+        'cpSync of a folder "a"',
+        "existsSync true",
+        "exists true",
+        "promises.exists true",
+        "Bun.which true",
+        "enableCompileCache true",
+      ].join("\n") + "\n",
+    stderr:
+      ["getdents64", "getdents64", "copy_file_range", "access", "access", "access", "stat", "realpath"].join("\n") +
+      "\n",
+    exitCode: 0,
+  });
+});
+
 // A subdirectory can be removed between the moment the recursive walk lists it
 // in its parent and the moment the walk reads it. The walk skipped the
 // subdirectory when its open failed with ENOENT, but when the removal landed

@@ -11,7 +11,7 @@
 //! `bun_sys::Error::from_code_int(e, tag)` — same shape as the existing
 //! `Maybe<T>` plumbing, just without the `last_errno()` round-trip.
 //!
-//! EINTR retry is handled here so callers don't need to loop.
+//! EINTR retry is handled here so callers don't need to loop. Only `close` and `read_raw` can return EINTR.
 //!
 //! Android: bionic is just another userspace libc on the same Linux kernel —
 //! every raw syscall here is identical. Rust splits `target_os` into
@@ -302,6 +302,17 @@ fn sys_retry(mut f: impl FnMut() -> libc::c_long) -> Result<usize, i32> {
     }
 }
 
+/// EINTR-retry a call that keeps the libc-convention return (`-1` and `errno`).
+#[inline(always)]
+pub(crate) fn retry_raw(mut f: impl FnMut() -> isize) -> isize {
+    loop {
+        let rc = f();
+        if rc != -1 || errno() != libc::EINTR {
+            return rc;
+        }
+    }
+}
+
 /// Raw `readv(2)`.
 #[inline]
 pub(crate) fn readv(fd: Fd, vecs: &[IoVecMut<'_>]) -> Result<usize, i32> {
@@ -387,7 +398,7 @@ pub(crate) unsafe fn epoll_ctl(
     unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
 }
 
-/// Raw `sendfile(2)` — libc-convention return.
+/// Raw `sendfile(2)` — libc-convention return. Runs again on EINTR.
 ///
 /// Routed via `libc::syscall(SYS_sendfile, ..)` rather than rustix's
 /// `fs::sendfile` so that (a) `out_fd`/`in_fd == -1` yield EBADF instead of
@@ -407,10 +418,10 @@ pub(crate) fn sendfile(out_fd: i32, in_fd: i32, offset: Option<&mut i64>, count:
 
     let offset = offset.map_or(core::ptr::null_mut(), core::ptr::from_mut);
     // SAFETY: the kernel validates the fds; `offset` is null or live.
-    unsafe { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize }
+    retry_raw(|| unsafe { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize })
 }
 
-/// Raw `copy_file_range(2)` — libc-convention return.
+/// Raw `copy_file_range(2)` — libc-convention return. Runs again on EINTR.
 ///
 /// Routed via `libc::syscall(SYS_copy_file_range, ..)` rather than rustix's
 /// `fs::copy_file_range` because the rustix wrapper hard-codes `flags = 0`.
@@ -429,7 +440,7 @@ pub(crate) fn copy_file_range(
     let off_in = off_in.map_or(core::ptr::null_mut(), core::ptr::from_mut);
     let off_out = off_out.map_or(core::ptr::null_mut(), core::ptr::from_mut);
     // SAFETY: the kernel validates the fds; each offset is null or live.
-    unsafe {
+    retry_raw(|| unsafe {
         libc::syscall(
             libc::SYS_copy_file_range,
             in_,
@@ -439,7 +450,7 @@ pub(crate) fn copy_file_range(
             len,
             flags as libc::c_long,
         ) as isize
-    }
+    })
 }
 
 /// `pidfd_open(2)` — `Result` shape (caller maps to `bun_sys::Error`).
@@ -473,7 +484,7 @@ pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
 
 /// `getdents64(2)` into a caller-provided byte buffer — libc-convention return
 /// (matches the existing `WrappedIterator` parser which decodes the raw
-/// `linux_dirent64` records itself).
+/// `linux_dirent64` records itself). Runs again on EINTR.
 #[inline]
 pub(crate) fn getdents64(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> isize {
     // rustix only exposes `RawDir` (which owns the parse loop). We need the
@@ -482,9 +493,9 @@ pub(crate) fn getdents64(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> isize {
     // errno-on-return mangling beyond the standard `-1`/errno convention).
     // PERF: switch to `rustix::fs::RawDir` once `WrappedIterator` is
     // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
-    let (fd, ptr) = (libc::c_long::from(fd.native()), buf.as_mut_ptr());
-    // SAFETY: `buf` is writable for `buf.len()` bytes; the kernel validates `fd`.
-    unsafe { libc::syscall(libc::SYS_getdents64, fd, ptr, buf.len()) as isize }
+    let (fd, ptr, len) = (libc::c_long::from(fd.native()), buf.as_mut_ptr(), buf.len());
+    // SAFETY: `buf` is writable for `len` bytes; the kernel validates `fd`.
+    retry_raw(|| unsafe { libc::syscall(libc::SYS_getdents64, fd, ptr, len) as isize })
 }
 
 #[inline(always)]

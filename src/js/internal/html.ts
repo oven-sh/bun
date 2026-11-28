@@ -11,6 +11,7 @@ const {
   parseServeFlag,
   serveOnFreePort,
   printBannerAndHandleShortcuts,
+  routeKey,
 } = require("internal/serve_cli");
 
 const env = Bun.env;
@@ -194,7 +195,7 @@ yourself with Bun.serve().
       const html = htmlImport;
       const servePath = servePaths[index];
 
-      acc["/" + servePath] = html;
+      acc[routeKey("/" + servePath)] = html;
       return acc;
     },
     {} as Record<string, HTMLBundle>,
@@ -233,9 +234,8 @@ yourself with Bun.serve().
     pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
   }
 
-  pathnameToPrint ||= "/";
   if (pathnameToPrint === "*") {
-    pathnameToPrint = "/";
+    pathnameToPrint = "";
   }
 
   const routes =
@@ -243,7 +243,7 @@ yourself with Bun.serve().
       ? servePaths.map((route, i) => ({ route, file: args[i] }))
       : [];
 
-  printBannerAndHandleShortcuts({ server, elapsed, pathname: pathnameToPrint, routes });
+  printBannerAndHandleShortcuts({ server, elapsed, pathname: routeKey("/" + pathnameToPrint), routes });
 }
 
 export default start;

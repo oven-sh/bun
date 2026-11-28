@@ -1,11 +1,11 @@
 // Ten generators in test/aot/fuzz write small, dense functions. Machines run them by the million. This is their small edition: a few
-// programs of each, built as executables and compared with plain Bun. In the first three lists all but the last seed once gave another
+// programs of each, each built by itself and compared with plain Bun. In the first three lists all but the last seed once gave another
 // answer or ended in a trap, and so did every seed of the last five lists, or it stopped the compiler. The programs of the fourth and fifth
 // lists never did: each of them answers something else when a condition that an optimization rests on is switched off in the build, so it
 // reaches that optimization.
 import { expect } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
 import { generate as aStoreThroughASecondName } from "./fuzz/a-store-through-a-second-name-between-two-reads";
 import { generate as countersPastInt32 } from "./fuzz/counters-past-int32-over-typed-arrays";
@@ -34,17 +34,37 @@ const editions = [
   ["locals that change their kind, compared in loops", localsThatChangeTheirKind, [54, 62, 150, 234, 238, 384]],
 ] as const;
 
+// The cases ask what compiled code answers, and nothing of the file that holds it. So on Linux each build writes its program alone
+// (harness/program-alone.ts), as the builds of the stored programs do (run-parallel.ts): the compile is the same, and no copy of Bun is
+// written for each of the 61 programs. AOT_REAL_EXECUTABLES=1 around a run asks for the executables, as it does there.
+const atTheBuild =
+  isLinux && !process.env.AOT_REAL_EXECUTABLES ? { ...bunEnv, BUN_AOT_WRITES_PROGRAM_ALONE: "1" } : bunEnv;
+
 for (const [family, generate, seeds] of editions)
   for (const seed of seeds)
     test.concurrent(`${family}: program ${seed} answers as plain Bun`, async () => {
       const typed = seed % 2 === 1;
       const file = typed ? "main.ts" : "main.js";
-      using dir = tempDir("small-generated-functions", { [file]: generate(new Random(seed), typed) });
+      const text = generate(new Random(seed), typed);
+      // Every generator ends its program with a line for each of its functions: `console.log("k0", [k0(..), k0(..)].join(" "));`.
+      const functions = Array.from(text.matchAll(/^console\.log\("(k\d+)", /gm), ([, name]) => name);
+      expect(functions.length).toBeGreaterThan(0);
+      using dir = tempDir("small-generated-functions", { [file]: text });
       const root = realpathSync(String(dir));
       const executable = join(root, "program");
-      built(await spawned([bunExe(), "build", "--compile", "--aot", file, "--outfile", executable], root, bunEnv));
+      built(await spawned([bunExe(), "build", "--compile", "--aot", file, "--outfile", executable], root, atTheBuild));
       const plain = await spawned([bunExe(), file], root, bunEnv);
       const compiled = await spawned([executable], root, bunEnv);
-      expect(plain.stdout).toContain("k0 ");
-      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+      // Plain Bun ran the program to its end: a line for each function, its name in front, and nothing else. A line of another form
+      // stands here as it is.
+      expect({
+        lines: plain.stdout.split("\n").map(line => /^(k\d+) /.exec(line)?.[1] ?? line),
+        stderr: plain.stderr,
+        exitCode: plain.exitCode,
+      }).toEqual({ lines: [...functions, ""], stderr: "", exitCode: 0 });
+      expect({ stdout: compiled.stdout, stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+        stdout: plain.stdout,
+        stderr: "",
+        exitCode: 0,
+      });
     });

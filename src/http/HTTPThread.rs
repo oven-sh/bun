@@ -326,6 +326,11 @@ impl HttpThread {
                 if !tls.get().requires_custom_request_ctx {
                     break 'custom_ctx;
                 }
+                let tls = if client.http_proxy.is_some() {
+                    crate::ssl_config::global_registry::intern(tls.get().without_client_identity())
+                } else {
+                    tls
+                };
                 let requested_config: *const SSLConfig = tls.get();
 
                 // Evict stale entries from the cache
@@ -353,7 +358,7 @@ impl HttpThread {
                 });
                 // SAFETY: fresh allocation; HTTP-thread-only.
                 let custom_context = unsafe { &mut *ctx.as_ptr() };
-                if let Err(err) = custom_context.init_with_client_config(&mut client) {
+                if let Err(err) = custom_context.init_with_client_config(tls.get()) {
                     // `init_with_client_config` fails before `group.init()` runs.
                     // `impl Drop for HTTPContext` tolerates an uninitialized
                     // group (skips close_all when `group.loop_` is

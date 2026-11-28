@@ -120,7 +120,7 @@ pub enum Protocol {
     Http3,
 }
 
-/// Which redirects the request's credential headers survive.
+/// Which redirects the request's credentials survive.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum RedirectCredentialsPolicy {
@@ -2492,6 +2492,7 @@ impl<'a> HTTPClient<'a> {
         if self.remaining_redirect_count == 0 {
             return self.fail(crate::Error::TooManyRedirects);
         }
+        self.strip_redirect_tls_identity();
         // also reset proxy to redirect
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
@@ -2499,6 +2500,16 @@ impl<'a> HTTPClient<'a> {
 
         self.begin_attempt(HTTPRequestBody::Bytes(request_body));
         Break(NextStep::FollowRedirect)
+    }
+
+    fn strip_redirect_tls_identity(&mut self) {
+        if self.state.flags.strip_tls_identity_on_redirect {
+            // The old socket must enter its pool with the TLS identity it was established with.
+            self.tls_props = self.tls_props.as_ref().map(|config| {
+                ssl_config::global_registry::intern(config.without_client_identity())
+            });
+            self.custom_ssl_ctx = None;
+        }
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -3928,6 +3939,7 @@ impl InFlightRequest {
         if self.remaining_redirect_count == 0 {
             return self.fail(crate::Error::TooManyRedirects);
         }
+        self.strip_redirect_tls_identity();
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
@@ -4657,6 +4669,11 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
+                self.state.flags.strip_tls_identity_on_redirect = !hop.same_origin
+                    && (!hop.https_upgrade
+                        || self.flags.redirect_credentials
+                            == RedirectCredentialsPolicy::SameOrigin)
+                    && self.tls_props.is_some();
                 self.state.flags.is_redirect_pending = true;
                 if self.method.has_request_body() {
                     self.state.flags.resend_request_body_on_redirect = true;

@@ -84,6 +84,7 @@ pub struct InternalStateFlags {
     /// The body counts as received, but the transport ended abnormally.
     pub(crate) was_cut_short: bool,
     pub(crate) is_redirect_pending: bool,
+    pub(crate) strip_tls_identity_on_redirect: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
     /// Set when the TLS handshake completed but the user-supplied JS
@@ -119,6 +120,7 @@ impl InternalStateFlags {
             received_last_chunk: false,
             was_cut_short: false,
             is_redirect_pending: false,
+            strip_tls_identity_on_redirect: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
             is_waiting_for_cert_check: false,

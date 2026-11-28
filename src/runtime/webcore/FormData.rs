@@ -92,7 +92,7 @@ impl FormData {
     ) -> crate::Result<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = EncodedSlice::utf8(strings::without_utf8_bom(input));
+                let str = EncodedSlice::utf8(input);
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
                 DOMFormData::create_from_url_query(global, &str).map_err(|_| crate::Error::JSError)
@@ -198,16 +198,8 @@ pub(crate) fn to_js_from_multipart_data(
                     &filename,
                 )
             } else {
-                let value = EncodedSlice::utf8(
-                    // > Each part whose `Content-Disposition` header does not
-                    // > contain a `filename` parameter must be parsed into an
-                    // > entry whose value is the UTF-8 decoded without BOM
-                    // > content of the part. This is done regardless of the
-                    // > presence or the value of a `Content-Type` header and
-                    // > regardless of the presence or the value of a
-                    // > `charset` parameter.
-                    strings::without_utf8_bom(value_str),
-                );
+                // "UTF-8 decode without BOM" skips BOM handling, so a leading U+FEFF is data.
+                let value = EncodedSlice::utf8(value_str);
                 wrap.form.append(wrap.global, &key, &value)
             }
         }

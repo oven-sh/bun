@@ -1609,6 +1609,54 @@
   "a.ts typescript(no-unsafe-assignment) 9:30+15 \"Destructured source provides type `any`.\" | 9:19+2 \"This binding receives type `any`.\" | 9:19+2",
   "a.ts typescript(no-unsafe-assignment) 9:35+8 \"Assigned value has type `any`.\" | 9:32+1 \"Target expects type `2 | undefined`.\" | 9:33+1"
  ],
+ "no-unsafe-assignment/the-name-of-a-shorthand-property": [
+  "a.ts typescript(no-unsafe-assignment) 10:9+1 \"Destructured source provides type `any`.\" | 9:4+1 \"This binding receives type `any`.\" | 9:4+1",
+  "a.ts typescript(no-unsafe-assignment) 11:67+1 \"Destructured source provides type `any`.\" | 11:4+1 \"This binding receives type `any`.\" | 11:4+1",
+  "a.ts typescript(no-unsafe-assignment) 4:14+1 \"Destructured source provides type `any`.\" | 4:4+1 \"This binding receives type `any`.\" | 4:4+1",
+  "a.ts typescript(no-unsafe-assignment) 5:17+1 \"Destructured source provides type `any`.\" | 5:4+1 \"This binding receives type `any`.\" | 5:4+1",
+  "a.ts typescript(no-unsafe-assignment) 5:17+1 \"Destructured source provides type `any`.\" | 5:7+1 \"This binding receives type `any`.\" | 5:7+1",
+  "a.ts typescript(no-unsafe-assignment) 6:23+1 \"Destructured source provides type `any`.\" | 6:17+1 \"This binding receives type `any`.\" | 6:17+1",
+  "a.ts typescript(no-unsafe-assignment) 6:23+1 \"Destructured source provides type `any`.\" | 6:7+5 \"This binding receives type `any`.\" | 6:7+5",
+  "a.ts typescript(no-unsafe-assignment) 7:24+1 \"Destructured source provides type `any`.\" | 7:16+1 \"This binding receives type `any`.\" | 7:16+1",
+  "a.ts typescript(no-unsafe-assignment) 7:24+1 \"Destructured source provides type `any`.\" | 7:9+1 \"This binding receives type `any`.\" | 7:9+1",
+  "a.ts typescript(no-unsafe-assignment) 8:26+6 \"Destructured source provides type `any`.\" | 8:15+1 \"This binding receives type `any`.\" | 8:15+1",
+  "a.ts typescript(no-unsafe-assignment) 8:26+6 \"Destructured source provides type `any`.\" | 8:4+1 \"This binding receives type `any`.\" | 8:4+1"
+ ],
+ "no-unsafe-assignment/a-target-in-parentheses": [
+  "a.ts typescript(no-unsafe-assignment) 10:20+11 \"Destructured source provides type `any`.\" | 10:12+3 \"This binding receives type `any`.\" | 10:12+3",
+  "a.ts typescript(no-unsafe-assignment) 10:20+11 \"Destructured source provides type `any`.\" | 10:2+7 \"This binding receives type `any`.\" | 10:2+7",
+  "a.ts typescript(no-unsafe-assignment) 13:10+1 \"Destructured source provides type `any`.\" | 11:7+68 \"This binding receives type `any`.\" | 11:7+68",
+  "a.ts typescript(no-unsafe-assignment) 5:15+1 \"Destructured source provides type `any`.\" | 5:7+3 \"This binding receives type `any`.\" | 5:7+3",
+  "a.ts typescript(no-unsafe-assignment) 6:27+1 \"Destructured source provides type `any`.\" | 6:17+5 \"This binding receives type `any`.\" | 6:17+5",
+  "a.ts typescript(no-unsafe-assignment) 6:27+1 \"Destructured source provides type `any`.\" | 6:7+5 \"This binding receives type `any`.\" | 6:7+5",
+  "a.ts typescript(no-unsafe-assignment) 7:29+1 \"Destructured source provides type `any`.\" | 7:19+5 \"This binding receives type `any`.\" | 7:19+5",
+  "a.ts typescript(no-unsafe-assignment) 7:29+1 \"Destructured source provides type `any`.\" | 7:7+7 \"This binding receives type `any`.\" | 7:7+7",
+  "a.ts typescript(no-unsafe-assignment) 8:36+1 \"Destructured source provides type `any`.\" | 8:25+6 \"This binding receives type `any`.\" | 8:25+6",
+  "a.ts typescript(no-unsafe-assignment) 8:36+1 \"Destructured source provides type `any`.\" | 8:7+13 \"This binding receives type `any`.\" | 8:7+13",
+  "a.ts typescript(no-unsafe-assignment) 9:16+1 \"Destructured source provides type `any`.\" | 9:2+3 \"This binding receives type `any`.\" | 9:2+3",
+  "a.ts typescript(no-unsafe-assignment) 9:16+1 \"Destructured source provides type `any`.\" | 9:7+5 \"This binding receives type `any`.\" | 9:7+5"
+ ],
+ "no-unsafe-assignment/a-pattern-with-a-type-annotation": [
+  "a.ts typescript(no-unsafe-assignment) 2:27+2 \"Destructured source provides type `any[]`.\" | 2:14+3 \"This binding receives type `any`.\" | 2:14+3",
+  "a.ts typescript(no-unsafe-assignment) 3:31+2 \"Destructured source provides type `any[]`.\" | 3:14+3 \"This binding receives type `any`.\" | 3:14+3",
+  "a.ts typescript(no-unsafe-assignment) 4:80+2 \"Destructured source provides type `any[]`.\" | 4:14+3 \"This binding receives type `any`.\" | 4:14+3",
+  "a.ts typescript(no-unsafe-assignment) 6:32+2 \"Destructured source provides type `any[]`.\" | 6:19+3 \"This binding receives type `any`.\" | 6:19+3",
+  "a.ts typescript(no-unsafe-assignment) 7:85+2 \"Destructured source provides type `any[]`.\" | 7:19+3 \"This binding receives type `any`.\" | 7:19+3"
+ ],
+ "no-unsafe-assignment/a-shorthand-default-outside-a-pattern": [
+  "a.ts typescript(no-unsafe-assignment) 10:8+1 \"Assigned value has type `any`.\" | 10:8+1 \"Target expects type `any`.\" | 10:8+1",
+  "a.ts typescript(no-unsafe-assignment) 11:8+1 \"Assigned value has type `any`.\" | 11:8+1 \"Target expects type `any`.\" | 11:8+1",
+  "a.ts typescript(no-unsafe-assignment) 12:8+1 \"Assigned value has type `any`.\" | 12:8+1 \"Target expects type `any`.\" | 12:8+1",
+  "a.ts typescript(no-unsafe-assignment) 13:9+1 \"Assigned value has type `any`.\" | 13:9+1 \"Target expects type `any`.\" | 13:9+1",
+  "a.ts typescript(no-unsafe-assignment) 14:13+1 \"Assigned value has type `any`.\" | 14:13+1 \"Target expects type `any`.\" | 14:13+1",
+  "a.ts typescript(no-unsafe-assignment) 15:9+1 \"Assigned value has type `any`.\" | 15:9+1 \"Target expects type `any`.\" | 15:9+1",
+  "a.ts typescript(no-unsafe-assignment) 16:4+1 \"Assigned value has type `any`.\" | 16:4+1 \"Target expects type `any`.\" | 16:4+1",
+  "a.ts typescript(no-unsafe-assignment) 17:8+1 \"Assigned value has type `any`.\" | 17:8+1 \"Target expects type `any`.\" | 17:8+1",
+  "a.ts typescript(no-unsafe-assignment) 18:12+1 \"Assigned value has type `any`.\" | 18:8+1 \"Target expects type `any`.\" | 18:10+1",
+  "a.ts typescript(no-unsafe-assignment) 18:8+1 \"Assigned value has type `any`.\" | 18:8+1 \"Target expects type `any`.\" | 18:8+1",
+  "a.ts typescript(no-unsafe-assignment) 20:8+1 \"Assigned value has type `any`.\" | 20:8+1 \"Target expects type `any`.\" | 20:8+1",
+  "a.ts typescript(no-unsafe-assignment) 22:8+1 \"Assigned value has type `any`.\" | 22:8+1 \"Target expects type `any`.\" | 22:8+1"
+ ],
  "types/an-alias-is-a-deferred-reference": [
   "a.ts typescript(no-unsafe-assignment) 14:37+6 \"Assigned value has type `[any, any]`.\" | 14:18+16 \"Target expects type `[string, string]`.\" | 14:35+1",
   "a.ts typescript(no-unsafe-assignment) 16:29+2 \"Assigned value has type `any[]`.\" | 16:18+8 \"Target expects type `string[]`.\" | 16:27+1",

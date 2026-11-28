@@ -87,6 +87,90 @@ test.concurrent(
   },
 );
 
+// Recorded from oxlint 1.87.0 with tsgolint 7.0.2003, and from typescript-eslint 8.71.1.
+describe.concurrent("no-unsafe-assignment marks the target of a destructuring like the configured tool", () => {
+  const files = {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true }, "include": ["*.ts"] }`,
+    "a.ts": `declare const x: { a: any; b: any };
+declare const t: [any, any, any];
+declare const xs: any[];
+declare let v: any;
+let a: number, b: number;
+({ a = 1 } = x);
+({ b: (b) } = x);
+[(a), ((b))] = t;
+const [c]: any[] = xs;
+for ({ v = 1 } of [{ v: 1 }]) {}
+export { a, b, c, v };
+`,
+  };
+  /** Runs `bun lint -f json a.ts` next to `config` and returns what it prints, parsed. */
+  async function run(config: Record<string, string>, args: string[] = []) {
+    using dir = tempDir("bun-lint-rules", { ...files, ...config });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "json", ...args, "a.ts"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 1) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    return JSON.parse(stdout);
+  }
+
+  test("with an oxlint config, tsgolint's node", async () => {
+    const oxlintrc = JSON.stringify({
+      plugins: ["typescript"],
+      categories: { correctness: "off" },
+      rules: { "typescript/no-unsafe-assignment": "error" },
+    });
+    type Label = { label?: string; span: { line: number; column: number; length: number } };
+    const { diagnostics }: { diagnostics: { labels: Label[] }[] } = await run({ ".oxlintrc.json": oxlintrc }, [
+      "--type-aware",
+    ]);
+    const labels = diagnostics.map(it =>
+      it.labels.map(({ label, span }) => `${span.line}:${span.column}+${span.length} ${label ?? ""}`.trimEnd()),
+    );
+    const source = "Destructured source provides type `any`.";
+    const binding = "This binding receives type `any`.";
+    expect(labels).toEqual([
+      // The name of a shorthand property, without its default.
+      [`6:14+1 ${source}`, `6:4+1 ${binding}`, "6:4+1"],
+      // A target with its parentheses.
+      [`7:15+1 ${source}`, `7:7+3 ${binding}`, "7:7+3"],
+      [`8:16+1 ${source}`, `8:2+3 ${binding}`, "8:2+3"],
+      [`8:16+1 ${source}`, `8:7+5 ${binding}`, "8:7+5"],
+      // A pattern without its type annotation.
+      ["9:20+2 Destructured source provides type `any[]`.", `9:7+3 ${binding}`, "9:7+3"],
+      // In the head of a `for`, the name of a shorthand property is a value that's assigned to the property.
+      ["10:8+1 Assigned value has type `any`.", "10:8+1 Target expects type `any`.", "10:8+1"],
+    ]);
+  });
+
+  test("with an ESLint config, typescript-eslint's node", async () => {
+    const eslintrc = JSON.stringify({
+      root: true,
+      parser: "@typescript-eslint/parser",
+      parserOptions: { project: true },
+      plugins: ["@typescript-eslint"],
+      rules: { "@typescript-eslint/no-unsafe-assignment": "error" },
+    });
+    type Message = { line: number; column: number; endLine: number; endColumn: number };
+    const [{ messages }]: { messages: Message[] }[] = await run({ ".eslintrc.json": eslintrc });
+    expect(messages.map(it => `${it.line}:${it.column}-${it.endLine}:${it.endColumn}`)).toEqual([
+      // The name with its default.
+      "6:4-6:9",
+      // A target without its parentheses.
+      "7:8-7:9",
+      "8:3-8:4",
+      "8:9-8:10",
+      // A pattern with its type annotation. Nothing in the head of a `for`.
+      "9:7-9:17",
+    ]);
+  });
+});
+
 test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's", async () => {
   const config = `export default [{ files: ["*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
   using dir = tempDir("bun-lint-rules", {

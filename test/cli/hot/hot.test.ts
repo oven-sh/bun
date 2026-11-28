@@ -1269,6 +1269,28 @@ it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exc
   expect(await runner.exited).toBe(0);
 });
 
+// Nothing wakes the loop of this run: a far interval, the GC timer off, and Bun.gc(true) first.
+it.each(["--hot", "--watch"])("%s reports a rejection in an immediate before the loop sleeps", async flag => {
+  using dir = tempDir("hot-immediate-rejection", {
+    "main.js": `
+      setInterval(() => {}, 2 ** 30);
+      setImmediate(() => {
+        Bun.gc(true);
+        setImmediate(() => Promise.reject(new Error("from an immediate")));
+      });
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  expect(await follow(runner.stderr)("error: from an immediate")).toBe(true);
+});
+
 it.each([
   [
     "a throw",

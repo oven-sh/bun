@@ -1028,6 +1028,332 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(0);
   });
 
+  // Nothing wakes these children's loop: the timer is far away, Bun's GC timer is
+  // off, and Bun.gc(true) leaves JSC's with nothing to collect. A loop that goes
+  // to sleep on the error stays asleep, and the test times out.
+  describe("the event loop does not go to sleep on", () => {
+    async function run(script, entry = "", flags = []) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          ...flags,
+          "-e",
+          `const keepAlive = setTimeout(() => {}, 2 ** 30);
+           const fs = require("fs");
+           const fail = how => { if (how === "throw") throw new Error("boom"); Promise.reject(new Error("boom")); };
+           setImmediate(() => { Bun.gc(true); ${script} });
+           ${entry}`,
+        ],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it.each([
+      ["a throw in an immediate", `setImmediate(fail, "throw");`],
+      ["a rejection in an immediate", `setImmediate(fail, "reject");`],
+      ["a throw in an fs callback", `fs.stat(".", () => fail("throw"));`],
+      ["a rejection in an fs callback", `fs.stat(".", () => fail("reject"));`],
+      ["a throw in the reaction of an fs promise", `fs.promises.stat(".").then(() => fail("throw"));`],
+      ["a rejection in a timer", `setTimeout(fail, 1, "reject");`],
+      // A wake-up at the error is used up by the first poll. These immediates keep the loop turning after it.
+      [
+        "a throw in an immediate that leaves two turns of immediates behind it",
+        `setImmediate(() => { setImmediate(() => setImmediate(() => {})); fail("throw"); });`,
+      ],
+    ])("%s that is fatal", async (_, script) => {
+      const { stdout, stderr, exitCode } = await run(`process.on("exit", () => console.log("exit")); ${script}`);
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+    });
+
+    it.each([
+      ["", `clearTimeout(keepAlive);`, "listener\n"],
+      [
+        ", nor on the immediate the listener schedules",
+        `setImmediate(() => { console.log("immediate"); clearTimeout(keepAlive); });`,
+        "listener\nimmediate\n",
+      ],
+    ])("a rejection in an immediate that has a listener%s", async (_, listener, expected) => {
+      expect(
+        await run(
+          `process.on("unhandledRejection", () => { console.log("listener"); ${listener} }); setImmediate(fail, "reject");`,
+        ),
+      ).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+
+    it.each(["none", "warn", "warn-with-error-code", "throw"])(
+      "a rejection in an immediate that has a listener, with --unhandled-rejections=%s",
+      async mode => {
+        const { stdout, exitCode } = await run(
+          `process.on("unhandledRejection", () => { console.log("listener"); clearTimeout(keepAlive); });
+           setImmediate(fail, "reject");`,
+          "",
+          [`--unhandled-rejections=${mode}`],
+        );
+        expect({ stdout, exitCode }).toEqual({ stdout: "listener\n", exitCode: 0 });
+      },
+    );
+
+    // strict makes the rejection an uncaught exception first. Its listener gets the origin.
+    it("a rejection in an immediate that has listeners, with --unhandled-rejections=strict", async () => {
+      const { stdout, exitCode } = await run(
+        `process.on("uncaughtException", (error, origin) => console.log(origin));
+         process.on("unhandledRejection", () => { console.log("listener"); clearTimeout(keepAlive); });
+         setImmediate(fail, "reject");`,
+        "",
+        ["--unhandled-rejections=strict"],
+      );
+      expect({ stdout, exitCode }).toEqual({ stdout: "unhandledRejection\nlistener\n", exitCode: 0 });
+    });
+
+    // The warning is emitted from a tick. The 'warning' listener ends the child when it has seen it.
+    it.each([
+      ["warn", 0],
+      ["warn-with-error-code", 1],
+    ])("a rejection in an immediate with --unhandled-rejections=%s and no listener", async (mode, status) => {
+      const { stdout, stderr, exitCode } = await run(
+        `process.on("warning", warning => { console.log(warning.name); process.nextTick(() => clearTimeout(keepAlive)); });
+         setImmediate(fail, "reject");`,
+        "",
+        [`--unhandled-rejections=${mode}`],
+      );
+      expect(stderr).toContain("UnhandledPromiseRejectionWarning: Error: boom");
+      expect({ stdout, exitCode }).toEqual({
+        stdout: "UnhandledPromiseRejectionWarning\nUnhandledPromiseRejectionWarning\n",
+        exitCode: status,
+      });
+    });
+
+    it("a rejection in an immediate that has a listener, while the entry awaits", async () => {
+      expect(
+        await run(
+          `process.on("unhandledRejection", () => { console.log("listener"); clearTimeout(keepAlive); entry.resolve(); });
+           setImmediate(fail, "reject");`,
+          `const entry = Promise.withResolvers();
+           await entry.promise;`,
+        ),
+      ).toEqual({ stdout: "listener\n", stderr: "", exitCode: 0 });
+    });
+
+    // An immediate that throws leaves its ticks to the end of the batch. A cleared immediate behind it runs nothing.
+    it("the ticks of an immediate that throws in front of a cleared immediate", async () => {
+      expect(
+        await run(
+          `process.on("uncaughtException", () => console.log("caught"));
+           setImmediate(() => {
+             process.nextTick(() => { console.log("tick"); clearTimeout(keepAlive); });
+             throw new Error("boom");
+           });
+           clearImmediate(setImmediate(() => {}));`,
+        ),
+      ).toEqual({ stdout: "caught\ntick\n", stderr: "", exitCode: 0 });
+    });
+
+    // The same with nothing that catches the throw. Node runs no tick after a fatal error.
+    it("the ticks of an immediate whose throw is fatal, in front of a cleared immediate", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `process.on("exit", () => console.log("exit"));
+         setImmediate(() => {
+           process.nextTick(() => console.log("tick"));
+           throw new Error("boom");
+         });
+         clearImmediate(setImmediate(() => {}));`,
+      );
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode }).toEqual({ stdout: "tick\nexit\n", exitCode: 1 });
+    });
+
+    // The rejections of a batch of immediates are reported when the batch has run, before the
+    // loop polls. A handler that a timer or an I/O callback attaches comes after the report.
+    describe("a rejection in an immediate that gets its handler", () => {
+      const rejectThen = (handle, after = "") =>
+        `setImmediate(() => { const promise = globalThis.promise = Promise.reject(new Error("boom")); ${handle} });
+         ${after}`;
+      const late = [
+        ["in a timer", rejectThen(`setTimeout(() => promise.catch(() => {}), 0);`)],
+        ["in an fs callback", rejectThen(`fs.stat(".", () => promise.catch(() => {}));`)],
+        ["after an fs promise", rejectThen(`fs.promises.stat(".").then(() => promise.catch(() => {}));`)],
+      ];
+
+      it.each(late)("%s, and is fatal", async (_, script) => {
+        const { stdout, stderr, exitCode } = await run(`process.on("exit", () => console.log("exit")); ${script}`);
+        expect(stderr).toContain("error: boom");
+        expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+      });
+
+      it.each(late)("%s, and has listeners", async (_, script) => {
+        expect(
+          await run(
+            `process.on("unhandledRejection", () => console.log("unhandledRejection"));
+             process.on("rejectionHandled", () => { console.log("rejectionHandled"); clearTimeout(keepAlive); });
+             ${script}`,
+          ),
+        ).toEqual({ stdout: "unhandledRejection\nrejectionHandled\n", stderr: "", exitCode: 0 });
+      });
+
+      it.each([
+        ["in a microtask of the immediate", rejectThen(`queueMicrotask(() => promise.catch(handled));`)],
+        ["in a tick of the immediate", rejectThen(`process.nextTick(() => promise.catch(handled));`)],
+        // Node reports this one: it looks after each immediate, and Bun after the batch.
+        ["in the next immediate of the batch", rejectThen("", `setImmediate(() => promise.catch(handled));`)],
+        // The ticks of an immediate that throws run at the end of the batch, before the report.
+        [
+          "in a tick of the immediate, which then throws in front of a cleared immediate",
+          rejectThen(
+            `process.nextTick(() => promise.catch(handled)); throw new Error("thrown");`,
+            `clearImmediate(setImmediate(() => {}));`,
+          ),
+        ],
+      ])("%s, and is not reported", async (_, script) => {
+        expect(
+          await run(
+            `const handled = () => { console.log("handled"); clearTimeout(keepAlive); };
+             process.on("unhandledRejection", () => console.log("unhandledRejection"));
+             process.on("uncaughtException", () => {});
+             ${script}`,
+          ),
+        ).toEqual({ stdout: "handled\n", stderr: "", exitCode: 0 });
+      });
+    });
+
+    // The listeners run entered, as at the end of tick(): a callback that one of them makes is no
+    // microtask checkpoint in the middle of it. terminate() calls the socket's close() at once.
+    it.each([
+      ["", ""],
+      [", while the entry awaits", `globalThis.entry = Promise.withResolvers(); await entry.promise;`],
+    ])("the listener of a rejection in an immediate runs to its end before its microtasks%s", async (_, entry) => {
+      expect(
+        await run(
+          `const log = [];
+           let socket;
+           const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+           Bun.connect({
+             hostname: "127.0.0.1",
+             port: server.port,
+             socket: {
+               data() {},
+               open(opened) { socket = opened; setImmediate(fail, "reject"); },
+               close() { log.push("close"); },
+             },
+           });
+           process.on("unhandledRejection", () => {
+             queueMicrotask(() => {
+               console.log(log.join());
+               server.stop(true);
+               clearTimeout(keepAlive);
+               globalThis.entry?.resolve();
+             });
+             socket.terminate();
+             log.push("rest of listener");
+           });`,
+          entry,
+        ),
+      ).toEqual({ stdout: "close,rest of listener\n", stderr: "", exitCode: 0 });
+    });
+
+    // Node emits an owed 'rejectionHandled' before the next 'unhandledRejection'. Bun emits it from a
+    // task, and the report that follows a batch of immediates comes ahead of that task.
+    it.todo("'rejectionHandled' of an earlier promise comes before 'unhandledRejection' of a later one", async () => {
+      expect(
+        await run(
+          `process.on("unhandledRejection", error => console.log("unhandledRejection " + error.message));
+           process.on("rejectionHandled", () => console.log("rejectionHandled"));
+           const first = Promise.reject(new Error("first"));
+           setImmediate(() => {
+             first.catch(() => {});
+             Promise.reject(new Error("second"));
+             setImmediate(() => clearTimeout(keepAlive));
+           });`,
+        ),
+      ).toEqual({
+        stdout: "unhandledRejection first\nrejectionHandled\nunhandledRejection second\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Bun emits a socket's 'close' from an immediate that it queues itself. A promise that 'close'
+    // rejects is looked at when that batch has run, like one that a setImmediate() of the script rejects.
+    describe("a rejection from the 'close' of a socket that gets its handler", () => {
+      const closeThen = (handle, onConnection = "") =>
+        `const { finished } = require("stream/promises");
+         let closed;
+         const server = require("net").createServer(socket => { socket.write("x"); ${onConnection} }).listen(0, () => {
+           const client = require("net").connect(server.address().port);
+           client.on("data", () => {
+             closed = finished(client);
+             client.destroy();
+             ${handle}
+           });
+         });`;
+
+      it("when the peer sees the end, and is fatal", async () => {
+        const { stdout, stderr, exitCode } = await run(
+          `process.on("exit", () => console.log("exit"));
+           ${closeThen("", `socket.on("end", () => closed.catch(() => {}));`)}`,
+        );
+        expect(stderr).toContain("error: Premature close");
+        expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+      });
+
+      it("in an immediate queued behind the destroy(), and is not reported", async () => {
+        expect(
+          await run(
+            closeThen(
+              `setImmediate(() => closed.catch(error => { console.log(error.code); server.close(); clearTimeout(keepAlive); }));`,
+            ),
+          ),
+        ).toEqual({ stdout: "ERR_STREAM_PREMATURE_CLOSE\n", stderr: "", exitCode: 0 });
+      });
+    });
+
+    // Bun.build() waits for setup() inside its call, so script is beneath the immediates that the wait
+    // runs. There the rejections are looked at when the turn ends, as before: a handler can still be
+    // in a microtask that did not run. The timer is due by then.
+    it.each([
+      ["a timer", `setTimeout(build, 1);`],
+      ["a 'beforeExit' listener", `clearTimeout(keepAlive); process.once("beforeExit", build);`],
+      [
+        "a tick of an immediate that throws",
+        `process.on("uncaughtException", () => {});
+         setImmediate(() => { process.nextTick(build); throw new Error("thrown"); });`,
+      ],
+    ])("a rejection in an immediate inside a plugin's setup(), when %s calls Bun.build()", async (_, call) => {
+      using dir = tempDir("loop-inside-build", { "entry.js": "export default 1;" });
+      expect(
+        await run(
+          `process.on("unhandledRejection", () => console.log("unhandledRejection"));
+           async function build() {
+             await Bun.build({
+               entrypoints: [${JSON.stringify(join(String(dir), "entry.js"))}],
+               plugins: [{
+                 name: "setup",
+                 setup() {
+                   return new Promise(resolve => {
+                     let promise;
+                     setTimeout(() => { promise.catch(() => console.log("handled")); resolve(); }, 1);
+                     setImmediate(() => {
+                       promise = Promise.reject(new Error("boom"));
+                       const due = performance.now() + 5;
+                       while (performance.now() < due);
+                     });
+                   });
+                 },
+               }],
+             });
+             console.log("built");
+             clearTimeout(keepAlive);
+           }
+           ${call}`,
+        ),
+      ).toEqual({ stdout: "handled\nbuilt\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   describe("process.onBeforeExit", () => {
     it("emitted", async () => {
       await using proc = Bun.spawn({
@@ -1039,6 +1365,40 @@ describe.concurrent(() => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(exitCode).toBe(0);
       expect(stdout.trim()).toBe("beforeExit\nexit");
+    });
+
+    // A rejection that the last immediates leave is reported when they have run, before 'beforeExit'.
+    it.each([
+      [
+        "is reported before 'beforeExit' is emitted again",
+        `process.on("unhandledRejection", () => console.log("unhandledRejection"));
+         let count = 0;
+         process.on("beforeExit", () => {
+           console.log("beforeExit", ++count);
+           if (count === 1) setImmediate(() => { Promise.reject(new Error("boom")); });
+         });`,
+        { stdout: "beforeExit 1\nunhandledRejection\nbeforeExit 2\n", reported: false, exitCode: 0 },
+      ],
+      [
+        "with no handler ends the process, and 'beforeExit' is not emitted again",
+        `let count = 0;
+         process.on("beforeExit", () => {
+           console.log("beforeExit", ++count);
+           if (count === 1) setImmediate(() => { Promise.reject(new Error("boom")); });
+         });`,
+        { stdout: "beforeExit 1\n", reported: true, exitCode: 1 },
+      ],
+      [
+        "is too late to handle in a 'beforeExit' listener",
+        `let promise;
+         process.on("beforeExit", () => { console.log("beforeExit"); promise.catch(() => {}); });
+         setImmediate(() => { promise = Promise.reject(new Error("boom")); });`,
+        { stdout: "", reported: true, exitCode: 1 },
+      ],
+    ])("a rejection in an immediate %s", async (_, script, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, reported: stderr.includes("error: boom"), exitCode }).toEqual(expected);
     });
 
     it("works with explicit process.exit", async () => {

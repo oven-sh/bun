@@ -1028,6 +1028,42 @@ extern "C" NEVER_INLINE void Debugger__willDispatchAsyncCall(JSGlobalObject* glo
     JSC_END_REMOVABLE_ENTRY_POINT
 }
 
+// The inspected thread calls this before it exits. The debugger thread writes what was queued for the frontends.
+extern "C" NEVER_INLINE void Bun__InspectorConnection__flushOnExit(Zig::GlobalObject* globalObject)
+{
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    if (!debuggerScriptExecutionContext)
+        return;
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        auto* context = globalObject->scriptExecutionContext();
+        if (!inspectorConnections || !context)
+            return;
+        auto it = inspectorConnections->find(context->identifier());
+        if (it == inspectorConnections->end())
+            return;
+        if (!it->value.containsIf([](auto& connection) { return connection->status == ConnectionStatus::Connected; }))
+            return;
+    }
+
+    struct Flushed : public ThreadSafeRefCounted<Flushed> {
+        WTF::Lock lock;
+        WTF::Condition condition;
+        bool done { false };
+    };
+    Ref flushed = adoptRef(*new Flushed);
+    // Tasks run in order, so this one runs behind the task that hands the queue to the frontends.
+    debuggerScriptExecutionContext->postTaskConcurrently([flushed](ScriptExecutionContext&) {
+        Locker locker { flushed->lock };
+        flushed->done = true;
+        flushed->condition.notifyAll();
+    });
+    Locker locker { flushed->lock };
+    // A debugger thread that is busy does not hold the exit for longer than this.
+    flushed->condition.waitFor(flushed->lock, Seconds(1), [&] { return flushed->done; });
+    JSC_END_REMOVABLE_ENTRY_POINT
+}
+
 extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
 {
     JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)

@@ -525,6 +525,21 @@ impl EventLoop {
         Ok(())
     }
 
+    /// Reports unhandled rejections where each callback's exit was a microtask checkpoint: not beneath script.
+    pub fn maybe_report_rejected_promises(&self) -> Result<(), Stopped> {
+        let vm = self.vm_ref();
+        if self.entered_event_loop_count.get() != 0
+            || vm.is_inside_deferred_task_queue.get()
+            || vm.jsc_vm().is_entered()
+        {
+            return Ok(());
+        }
+        let _entered = self.enter_scope_without_checkpoint();
+        self.global_ref()
+            .handle_rejected_promises()
+            .map_err(|_| Stopped)
+    }
+
     /// `run_callback*`'s way in: whether a callback may be called at all, and if so the scope it
     /// is called inside of. Not with an exception pending. `context` is entered for
     /// the call; [`ContextId::NONE`](crate::ContextId::NONE) enters nothing.
@@ -1046,15 +1061,21 @@ impl EventLoop {
             .immediate_tasks
             .replace(self.next_immediate_tasks.take());
 
+        let ran_any = !to_run_now.is_empty();
+
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
 
-        // make sure microtasks are drained if the last task had an exception
+        // make sure microtasks are drained if a task had an exception
         if exception_thrown {
             let _ = self.maybe_drain_microtasks();
+        }
+        if ran_any {
+            // The caller polls next, and may sleep there.
+            let _ = self.maybe_report_rejected_promises();
         }
 
         if to_run_now.capacity() > 1024 * 128 {

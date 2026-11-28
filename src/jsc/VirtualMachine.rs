@@ -2108,6 +2108,7 @@ impl VirtualMachine {
 
         // The loop won't tick again, so flush now.
         uws::Loop::get().flush_pending_writes();
+        crate::debugger::Debugger::flush_on_exit(self);
 
         self.is_shutting_down.set(true);
 

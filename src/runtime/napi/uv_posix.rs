@@ -338,15 +338,24 @@ impl UvLoop {
 
     /// Runs the idle handles, then the prepare handles. `auto_tick` calls this before
     /// it polls. Returns true if an idle handle is started, so the poll must not block.
+    #[inline]
     pub(crate) fn before_poll(&self, vm: &VirtualMachine) -> bool {
         if self.idles.is_empty() && self.prepares.is_empty() {
             return false;
         }
+        self.run_idles_and_prepares(vm)
+    }
+
+    /// Out of line: with no such handle started, a turn of the loop pays only the test above.
+    #[inline(never)]
+    fn run_idles_and_prepares(&self, vm: &VirtualMachine) -> bool {
         if !vm.script_allowed() {
             return false;
         }
         self.idles.walk(vm);
         self.prepares.walk(vm);
+        // The caller polls next, and may sleep there.
+        let _ = vm.event_loop().maybe_report_rejected_promises();
         !self.idles.is_empty()
     }
 

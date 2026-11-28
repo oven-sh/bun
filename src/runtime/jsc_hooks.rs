@@ -904,7 +904,11 @@ fn auto_tick_active(vm: &VirtualMachine) {
             || el.has_pending_tasks();
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        if loop_.is_active() {
+        // An unhandled error ends the caller's `while is_event_loop_alive()`: no sleep before the caller looks.
+        if loop_.is_active()
+            && (vm.is_event_loop_alive_excluding_immediates()
+                || bun_jsc::debugger::Debugger::is_waiting_for_frontend(vm))
+        {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             el.process_gc_timer();
             // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that

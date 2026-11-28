@@ -11,6 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use bun_core::scoped::ScopedCell as _;
 use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::js_vm_ctx;
@@ -130,6 +131,8 @@ pub struct Debugger {
     pub extension_agent: ErasedAgentSlot,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: Cell<bool>,
+    /// Set while [`Debugger::wait_for_debugger`] waits for a frontend.
+    pub waiting_for_frontend: Cell<bool>,
 }
 
 impl Default for Debugger {
@@ -149,6 +152,7 @@ impl Default for Debugger {
             extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: Cell::new(false),
+            waiting_for_frontend: Cell::new(false),
         }
     }
 }
@@ -159,6 +163,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn Bun__InspectorConnection__flushOnExit(global: &JSGlobalObject);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
@@ -184,6 +189,20 @@ struct DebuggerThreadInit {
 }
 
 impl Debugger {
+    /// The attach wait ends when a frontend connects, so its poll sleeps after an unhandled error too.
+    pub fn is_waiting_for_frontend(vm: &VirtualMachine) -> bool {
+        vm.debugger
+            .get()
+            .is_some_and(|dbg| dbg.waiting_for_frontend.get())
+    }
+
+    /// Before the exit: waits, for a bounded time, until the debugger thread has sent what this thread queued.
+    pub fn flush_on_exit(vm: &VirtualMachine) {
+        if vm.debugger.get().is_some() {
+            Bun__InspectorConnection__flushOnExit(vm.global());
+        }
+    }
+
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
@@ -274,6 +293,7 @@ impl Debugger {
             }
         }
 
+        let _waiting = dbg.waiting_for_frontend.set_for_scope(true);
         while dbg.wait_for_connection.get() != Wait::Off {
             this.event_loop().tick();
             // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.

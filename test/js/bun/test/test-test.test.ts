@@ -854,3 +854,87 @@ test("my-test", () => {
     });
   }
 });
+
+// A rejection that a setImmediate callback leaves with no handler is reported when the immediates
+// have run, as one that a timer callback leaves is. A handler that a later timer attaches comes
+// after the report. One that the next immediate of the batch attaches comes before it.
+test("a rejection in an immediate is reported before a timer handles it", async () => {
+  using dir = tempDir("immediate-rejection", {
+    "package.json": "{}",
+    "late.test.js": /*js*/ `
+import { test } from "bun:test";
+
+const reject = name => Promise.reject(new Error("## " + name + " ##"));
+
+test("the next immediate", async () => {
+  const { promise: done, resolve } = Promise.withResolvers();
+  let promise;
+  setImmediate(() => { promise = reject("the next immediate"); });
+  setImmediate(() => { promise.catch(() => {}); resolve(); });
+  await done;
+});
+
+test("a timer", async () => {
+  const { promise: done, resolve } = Promise.withResolvers();
+  setImmediate(() => {
+    const promise = reject("a timer");
+    setTimeout(() => { promise.catch(() => {}); resolve(); }, 0);
+  });
+  await done;
+});
+
+test("a microtask of the immediate", async () => {
+  const { promise: done, resolve } = Promise.withResolvers();
+  setImmediate(() => {
+    const promise = reject("a microtask of the immediate");
+    queueMicrotask(() => { promise.catch(() => {}); resolve(); });
+  });
+  await done;
+});
+
+// Bun.build() waits for setup() inside its call: script is beneath the immediate. The timer is due when the turn ends.
+test("a timer that is due, inside a plugin's setup()", async () => {
+  await null;
+  await Bun.build({
+    entrypoints: [import.meta.dir + "/entry.js"],
+    plugins: [{
+      name: "setup",
+      setup() {
+        return new Promise(resolve => {
+          let promise;
+          setTimeout(() => { promise.catch(() => {}); resolve(); }, 1);
+          setImmediate(() => {
+            promise = reject("a timer that is due, inside a plugin's setup()");
+            const due = performance.now() + 5;
+            while (performance.now() < due);
+          });
+        });
+      },
+    }],
+  });
+});
+`,
+    "entry.js": "export default 1;",
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "late.test.js"],
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const lines = [...stderr.matchAll(/^(?:error: ## (.*) ##|\((pass|fail)\) (.*) \[)/gm)];
+  expect({ lines: lines.map(match => match[1] ?? match[2] + " " + match[3]), exitCode }).toEqual({
+    lines: [
+      "pass the next immediate",
+      "a timer",
+      "fail a timer",
+      "pass a microtask of the immediate",
+      "pass a timer that is due, inside a plugin's setup()",
+    ],
+    exitCode: 1,
+  });
+});

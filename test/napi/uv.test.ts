@@ -204,7 +204,7 @@ describe.if(!isWindows)("uv stubs", () => {
   // a child process. The child's exit is part of the test: a ref'd handle or a
   // queued request must keep it alive, and an unref'd handle must not. `script`
   // can use `addon` and `report`, which prints one line per event from the addon.
-  async function runInChild(script: string) {
+  async function runInChild(script: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -215,7 +215,7 @@ describe.if(!isWindows)("uv stubs", () => {
           ${script}
         `,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -491,6 +491,29 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(loopWatcherEvents + "worker exited 0\n");
     expect(exitCode).toBe(0);
+  });
+
+  // A prepare callback runs after the immediates and before the poll. Nothing wakes this child's
+  // loop: a far timer, the GC timer off, and Bun.gc(true) first.
+  test.concurrent("a rejection that a prepare callback leaves is reported before the poll sleeps", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `
+      setTimeout(() => {}, 2 ** 30);
+      process.on("exit", () => console.log("exit"));
+      setImmediate(() => {
+        Bun.gc(true);
+        let rejected = false;
+        addon.testPrepareAndCheckAroundIo(event => {
+          if (event !== "prepare" || rejected) return;
+          rejected = true;
+          Promise.reject(new Error("boom"));
+        });
+      });
+    `,
+      { BUN_GC_TIMER_DISABLE: "1" },
+    );
+    expect(stderr).toContain("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
   });
 
   test.concurrent("prepare runs before the poll and check runs after it", async () => {

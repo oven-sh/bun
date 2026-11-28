@@ -461,6 +461,206 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
   expect(exitCode).toBe(0);
 });
 
+// An uncaught error ends the run loops, which then stop sleeping in the poll.
+// This wait ends when a client resumes it, so it has to keep sleeping. The
+// fixture counts the turns of its event loop across the wait: a wait that
+// sleeps takes one turn per wake-up, a wait that does not takes thousands.
+const waitForDebuggerAfterErrorFixture = `
+import inspector from "node:inspector";
+import { getEventLoopStats } from "bun:internal-for-testing";
+
+inspector.open(0, "127.0.0.1", false);
+// One batch of immediates: the second one runs although the first one threw.
+setImmediate(() => {
+  throw new Error("boom");
+});
+setImmediate(() => {
+  const before = getEventLoopStats().iteration;
+  process.stderr.write("WAITING_FOR_DEBUGGER\\n");
+  inspector.waitForDebugger();
+  console.log(JSON.stringify({ turns: getEventLoopStats().iteration - before }));
+  inspector.close();
+});
+`;
+
+test("inspector.waitForDebugger() sleeps until a client resumes the process after an uncaught error", async () => {
+  using dir = tempDir("inspector-wait-after-error", {
+    "fixture.mjs": waitForDebuggerAfterErrorFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl || !stderrText.includes("WAITING_FOR_DEBUGGER")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`stderr closed before the wait began: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl ??= stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+  expect(stderrText).toContain("error: boom");
+
+  const ws = new WebSocket(wsUrl);
+  const opened = Promise.withResolvers<void>();
+  ws.onopen = () => opened.resolve();
+  ws.onerror = error => opened.reject(error);
+  await opened.promise;
+  ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+
+  const drained = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await drained;
+  ws.close();
+
+  // Measured: 3 to 5 turns when the wait sleeps, 18,000 and more when it does not.
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).turns).toBeLessThan(100);
+  expect(exitCode).toBe(1);
+});
+
+// Script is beneath the callbacks that the wait runs, so their exit is no microtask
+// checkpoint. A rejection whose handler is still in a microtask is not unhandled.
+test("inspector.waitForDebugger() does not report a rejection that gets its handler in a microtask", async () => {
+  using dir = tempDir("inspector-wait-handled-rejection", {
+    "fixture.mjs": `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+const handled = [];
+function rejectThenHandle(from) {
+  const promise = Promise.reject(new Error(from));
+  queueMicrotask(() => promise.catch(() => handled.push(from)));
+  if (from === "timer") process.stderr.write("CALLBACKS_RAN\\n");
+}
+setImmediate(rejectThenHandle, "immediate");
+setTimeout(rejectThenHandle, 1, "timer");
+inspector.waitForDebugger();
+console.log(JSON.stringify(handled));
+inspector.close();
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl || !stderrText.includes("CALLBACKS_RAN")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`stderr closed before the callbacks ran: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl ??= stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+
+  const ws = new WebSocket(wsUrl);
+  const opened = Promise.withResolvers<void>();
+  ws.onopen = () => opened.resolve();
+  ws.onerror = error => opened.reject(error);
+  await opened.promise;
+  ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+
+  const drained = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await drained;
+  ws.close();
+
+  expect(stderrText).not.toContain("error:");
+  expect({ stdout, exitCode }).toEqual({ stdout: JSON.stringify(["immediate", "timer"]) + "\n", exitCode: 0 });
+});
+
+// The debugger thread writes what the inspected thread queued for the client. An exit waits, for a
+// bounded time, until that thread has done so.
+test.each([
+  ["an uncaught exception", `throw new Error("boom");`, 1],
+  ["an unhandled rejection", `Promise.reject(new Error("boom"));`, 1],
+  ["process.exit()", `process.exit(3);`, 3],
+])("a client gets the console message that comes just before %s", async (_, end, status) => {
+  using dir = tempDir("inspector-last-message", {
+    "fixture.mjs": `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+inspector.waitForDebugger();
+setImmediate(() => {
+  console.log("last words");
+  ${end}
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`stderr closed before the inspector listened: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+
+  const ws = new WebSocket(wsUrl);
+  const logged: string[] = [];
+  const enabled = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} }));
+  ws.onerror = error => enabled.reject(error);
+  ws.onclose = () => closed.resolve();
+  ws.onmessage = ({ data }) => {
+    const message = JSON.parse(String(data));
+    if (message.id === 1) enabled.resolve();
+    if (message.method === "Runtime.consoleAPICalled") logged.push(message.params.args[0].value);
+  };
+  await enabled.promise;
+  ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+
+  const drained = (async () => {
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, drained, closed.promise]);
+  expect({ logged, stdout, exitCode }).toEqual({ logged: ["last words"], stdout: "last words\n", exitCode: status });
+});
+
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
 // safe to reach after the previous frontend disconnected (once-connected

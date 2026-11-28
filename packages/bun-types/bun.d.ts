@@ -5173,6 +5173,22 @@ declare module "bun" {
     clientRenegotiationLimit?: number;
 
     clientRenegotiationWindow?: number;
+
+    /**
+     * The key agreement groups for the handshake: one name, or a
+     * colon-separated list in order of preference, such as
+     * `"X25519:P-256:P-384"`. OpenSSL curve names such as `"prime256v1"` are
+     * also accepted. A list with an unknown name is an error. The handshake
+     * fails when the peer supports none of the groups.
+     *
+     * The default is `X25519MLKEM768`, `X25519`, `P-256` and `P-384`. `"auto"`
+     * is the same as not setting the option. `X25519MLKEM768` is a
+     * post-quantum hybrid group. Its key share makes a client's first
+     * handshake message about 1500 bytes, which is more than one TCP segment
+     * on most networks. If a server or a network device resets such
+     * connections, pass a list without that group.
+     */
+    ecdhCurve?: string | undefined;
   }
 
   interface SocketAddress {

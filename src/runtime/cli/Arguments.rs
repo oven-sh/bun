@@ -2681,6 +2681,7 @@ fn parse_build_command_options(
                             Global::exit(1);
                         }
                         opts.target = Some(api::Target::Bun);
+                        opts.target_is_explicit = true;
                         break 'brk;
                     }
                 }
@@ -2704,6 +2705,9 @@ fn parse_build_command_options(
                         _ => cli::invalid_target(diag, target),
                     }),
             );
+            // Only `--target` sets this: `--format=cjs` below and `--bytecode` above pick a
+            // target nobody asked for, and a `#!/usr/bin/env bun` entry still outranks those.
+            opts.target_is_explicit = true;
 
             if opts.target.unwrap() == api::Target::Bun {
                 ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;

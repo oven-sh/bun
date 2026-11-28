@@ -348,6 +348,7 @@ error: Hello World`,
   });
   itBundled("bun/UnknownBunSpecifierInShebangEntry", {
     // No `target`: the "#!/usr/bin/env bun" line makes the entry point a file for bun.
+    target: null,
     files: {
       "/entry.js": `#!/usr/bin/env bun\nimport fromImport from "bun:not-a-builtin";\nconsole.log(fromImport);`,
     },
@@ -355,6 +356,30 @@ error: Hello World`,
       expect(api.readFile("/out.js")).toContain(`import fromImport from "bun:not-a-builtin";`);
     },
   });
+  for (const backend of ["cli", "api"] as const) {
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`bun/HashbangEntryWithExplicitTarget-${backend}-${format}`, {
+        backend,
+        target: "node",
+        format,
+        files: {
+          "/entry.ts": `#!/usr/bin/env bun\nif (import.meta.main) console.log("main");\n`,
+        },
+        onAfterBundle(api) {
+          const contents = api.readFile("/out.js");
+          // A bundle for node carries no bun pragma and no bun's CJS wrapper.
+          expect(contents).not.toContain("@bun");
+          if (format === "esm") {
+            // Node gets the createRequire shim that defines `__require`.
+            expect(contents).toContain('import { createRequire } from "node:module";');
+          } else {
+            expect(contents).toContain("require.main == module");
+          }
+        },
+        run: { runtime: "node", stdout: "main\n" },
+      });
+    }
+  }
   itBundled("bun/UnknownBunSpecifierInExecutable", {
     backend: "cli",
     compile: true,

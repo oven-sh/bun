@@ -89,6 +89,9 @@ pub mod api {
         pub main_fields: Vec<Box<[u8]>>,
         /// target
         pub target: Option<Target>,
+        /// Whether `target` was asked for (`--target`, `Bun.build({ target })`) rather than
+        /// defaulted. A `#!/usr/bin/env bun` entry only picks the target when this is false.
+        pub target_is_explicit: bool,
         /// serve
         pub serve: Option<bool>,
         /// env_files

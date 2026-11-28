@@ -2221,7 +2221,9 @@ pub mod parse_worker {
             ..Default::default()
         });
 
-        let target = (if task.source_index.get() == 1 {
+        // A Bun hashbang only picks the target when no target was asked for: an explicit
+        // `--target node` (or `target: "node"`) wins over the entry's own first line.
+        let target = (if task.source_index.get() == 1 && !topts.target_is_explicit {
             target_from_hashbang(contents)
         } else {
             None

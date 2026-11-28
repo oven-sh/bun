@@ -246,8 +246,8 @@ export interface BundlerTestInput {
   outfile?: string;
   /** Defaults to `/out` */
   outdir?: string;
-  /** Defaults to "browser". "bun" is set to "node" when using esbuild. */
-  target?: "bun" | "node" | "browser";
+  /** Defaults to "browser". "bun" is set to "node" when using esbuild. `null` leaves it out so the default applies. */
+  target?: "bun" | "node" | "browser" | null;
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
@@ -605,7 +605,7 @@ function expectBundled(
   }
 
   format ??= "esm";
-  target ??= "browser";
+  target ??= target === null ? null : "browser";
 
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};
@@ -886,7 +886,7 @@ function expectBundled(
               compile && typeof compile === "object" && (compile as any).aot ? "--aot" : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
-              `--target=${target}`,
+              target && `--target=${target}`,
               `--format=${format}`,
               external && external.map(x => ["--external", x]),
               allowUnresolved !== undefined &&
@@ -941,7 +941,7 @@ function expectBundled(
               bundling && "--bundle",
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               `--format=${format}`,
-              `--platform=${target === "bun" ? "node" : target}`,
+              `--platform=${target === "bun" ? "node" : (target ?? "browser")}`,
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
@@ -1290,7 +1290,7 @@ function expectBundled(
           modulePreload,
           minChunkSize,
           ...(foldChunks === undefined ? {} : { foldChunksForTesting: foldChunks }),
-          target,
+          ...(target === null ? {} : { target }),
           reactCompiler,
           reactCompilerOutputMode,
           reactFastRefresh,

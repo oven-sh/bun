@@ -1349,6 +1349,9 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
+    /// A target was asked for rather than defaulted: `--target`, `Bun.build({ target })`, or a
+    /// build tool that sets it. A `#!/usr/bin/env bun` entry only picks the target when this is false.
+    pub target_is_explicit: bool,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
@@ -1617,6 +1620,7 @@ impl<'a> BundleOptions<'a> {
             output_format: self.output_format,
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
+            target_is_explicit: self.target_is_explicit,
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
@@ -1848,6 +1852,7 @@ impl<'a> BundleOptions<'a> {
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
+            target_is_explicit: transform.target_is_explicit,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),

@@ -48,7 +48,38 @@ declare namespace HTMLRewriterTypes {
   }
 
   interface ContentOptions {
-    /** Whether to parse the content as HTML */
+    /**
+     * If `true`, the content is written as raw HTML.
+     *
+     * Otherwise (the default) the content is text: `<`, `>` and `&` are
+     * written as `&lt;`, `&gt;` and `&amp;`, so the content holds no markup.
+     * The page around it is not changed. A bare `<` at the end of the page
+     * text right before the content joins with it into a tag, so start
+     * untrusted content with a space if the page can have one there.
+     *
+     * Text is escaped the same way inside `<script>` and `<style>`, where a
+     * browser does not decode entities. To insert script or style source
+     * there, pass `{ html: true }` and first reject (ASCII
+     * case-insensitively) a string that contains `</style` for a `<style>`,
+     * or any of `</script`, `<script` or `<!--` for a `<script>`. For JSON,
+     * write `JSON.stringify(v).replaceAll("<", "\\u003c")`.
+     *
+     * That check is complete for `setInnerContent`, which replaces the
+     * element's text. Every other insertion inside the element can land
+     * next to existing text or another inserted string, where one of these
+     * sequences can also form: `append`, `prepend`, `before` on the end
+     * tag, and `before`, `after` and `replace` on a text chunk. Join
+     * strings that go into the same element, check the result, and insert
+     * it with one call: `prepend` and `after` put a later call first.
+     *
+     * The advice for script and style source is for HTML elements only
+     * (`el.namespaceURI === "http://www.w3.org/1999/xhtml"`). Inside `<svg>`
+     * or `<math>` the contents of `<style>` and `<script>` are markup to the
+     * HTML parser. `{ html: true }` writes raw content there too and can add
+     * markup, so keep the default escaping there.
+     *
+     * @default false
+     */
     html?: boolean;
   }
 

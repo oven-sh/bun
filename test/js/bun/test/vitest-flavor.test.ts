@@ -5185,6 +5185,281 @@ describe.concurrent("test.extend()", () => {
   });
 });
 
+// Vitest reads the parameters of a callback from what its toString() returns.
+// @effect/vitest wraps every callback in `(...args) => {}` and makes toString() return the text of the wrapped function.
+// The expected logs of the tests that import "vitest" are those of Vitest 5.1.0.
+describe.concurrent("a callback with its own toString()", () => {
+  const wrap = `const wrap = inner => Object.defineProperty((...args) => inner(...args), "toString", { value: () => inner.toString() });`;
+
+  test("a wrapper gets the fixtures of the function it wraps", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, beforeAll, afterAll, aroundAll, beforeEach } from "vitest";
+        ${wrap}
+        const test = base.extend({
+          a: "A",
+          b: wrap(async ({ a }, use) => use(a + "B")),
+          file: [wrap(async ({}, use) => use("FILE")), { scope: "file" }],
+        });
+        beforeAll(wrap(() => console.log("beforeAll")));
+        afterAll(wrap(() => console.log("afterAll")));
+        aroundAll(wrap(async runSuite => { console.log("aroundAll"); await runSuite(); }));
+        test.beforeAll(wrap(({ file }) => console.log("test.beforeAll", file)));
+        test.afterAll(wrap(({ file }) => console.log("test.afterAll", file)));
+        let calls = 0;
+        const counted = ({ file }) => console.log("counted", file);
+        test.beforeAll(Object.defineProperty((...args) => counted(...args), "toString", { value() { calls++; return counted.toString(); } }));
+        test.afterAll(() => console.log("toString() calls:", calls));
+        beforeEach(wrap(({ a }) => console.log("beforeEach", a)));
+        test.beforeEach(wrap(({ b }) => console.log("test.beforeEach", b)));
+        test.afterEach(wrap(({ a }) => console.log("test.afterEach", a)));
+        test.aroundEach(wrap(async (runTest, { b }) => { console.log("test.aroundEach", b); await runTest(); }));
+        test("test", wrap(({ a, b }) => console.log("test", a, b)));
+        test.for([1])("for %i", wrap((n, { b }) => console.log("for", n, b)));
+        const inner = function ({ a }) { console.log("no parameters", a); };
+        test("function", Object.defineProperty(function () { return inner.apply(this, arguments); }, "toString", { value: () => inner.toString() }));
+      `,
+    });
+    const each = (test: string) => [
+      "test.aroundEach AB",
+      "beforeEach A",
+      "test.beforeEach AB",
+      test,
+      "test.afterEach A",
+    ];
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "aroundAll",
+        "beforeAll",
+        "test.beforeAll FILE",
+        "counted FILE",
+        ...each("test A AB"),
+        ...each("for 1 AB"),
+        ...each("no parameters A"),
+        "toString() calls: 1",
+        "test.afterAll FILE",
+        "afterAll",
+      ],
+      results: ["(pass) test", "(pass) for 1", "(pass) function"],
+      exitCode: 0,
+    });
+  });
+
+  test(`a wrapper around the callbacks of an extended test of "bun:test"`, async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, aroundEach } from "bun:test";
+        ${wrap}
+        const test = base.extend({ a: "A", b: wrap(async ({ a }, use) => use(a + "B")) });
+        aroundEach(wrap(async (runTest, { a }) => { console.log("aroundEach", a); await runTest(); }));
+        test.beforeEach(wrap(({ b }) => console.log("test.beforeEach", b)));
+        test("test", wrap(({ a, b }) => console.log("test", a, b)));
+        test.for([1])("for %i", wrap((n, { b }) => console.log("for", n, b)));
+      `,
+      // A default value is read as in a function without a wrapper. Vitest's regular expression stops at its parenthesis.
+      "defaults.test.js": `
+        import { test as base } from "bun:test";
+        const test = base.extend({ a: "A" });
+        const withText = text => Object.defineProperty((...args) => console.log(args[0].a), "toString", { value: () => text });
+        test("a parenthesis in a string", withText("{ Spy }\\n({ a = ')' }) => {}"));
+        test("a call", withText("{ Spy }\\n({ a = f() }) => {}"));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...["aroundEach A", "test.beforeEach AB", "test A AB", "aroundEach A", "test.beforeEach AB", "for 1 AB"],
+        "A",
+        "A",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("the text decides, whatever the parameters of the function are", async () => {
+    // What Vitest 5.1.0 logs for a callback `(...args) => console.log(args[0].a)` with this text, where `a` is the fixture "A".
+    const texts: [text: string, logged: string][] = [
+      ["method({ a }) {}", "A"],
+      ["async function named({ a }) {}", "A"],
+      // mimic-function, which onetime and p-memoize use, puts a comment in front.
+      ["/* Wrapped with onetime() */\n({ a }) => {}", "A"],
+      ["({ a }) => {\n  f(); // [native code]\n}", "A"],
+      // chai-spies puts a line in front.
+      ["{ Spy }\n({ a }) => {}", "A"],
+      ["{ Spy } // f(x)\n({ a }) => {}", "A"],
+      ["{ Spy /* (x) */ }\n({ a }) => {}", "A"],
+      ["({ a }) => { ... }", "A"],
+      ["wrapper of ({ a }) => {}", "A"],
+      ["wrapped({ a })", "A"],
+      ["{ Spy }\n() => {}", "undefined"],
+      ["function () { [native code] }", "undefined"],
+      ["text", "undefined"],
+      ["", "undefined"],
+    ];
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, beforeAll } from "vitest";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        const test = base.extend({ a: "A" });
+        const log = (...args) => console.log(args[0].a);
+        const withToString = (fn, toString) => Object.defineProperty(fn, "toString", { value: toString });
+        const withText = (fn, text) => withToString(fn, () => text);
+        beforeAll(withText(() => console.log("beforeAll"), "{ Spy }\\n() => {}"));
+        beforeAll(withToString((...args) => console.log("beforeAll", args.length), Function.prototype.toString.bind(() => {})));
+        test("the text has the fixture and the function has no parameter", withText(function () { console.log(arguments[0].a); }, "({ a }) => {}"));
+        test("the text has no parameter and the function has the fixture", withText(({ a }) => console.log(a), "() => {}"));
+        test("a getter", Object.defineProperty((...args) => log(...args), "toString", { get: () => () => "({ a }) => {}" }));
+        test("inherited", Object.setPrototypeOf((...args) => log(...args), { __proto__: Function.prototype, toString: () => "({ a }) => {}" }));
+        test("a bound function", withText(log.bind(null), "({ a }) => {}"));
+        test("the built-in, bound to another function", withToString((...args) => log(...args), Function.prototype.toString.bind(({ a }) => {})));
+        test("a bound function that returns the text", withToString((...args) => log(...args), ((name, text) => text).bind(null, "name", "({ a }) => {}")));
+        test("Object.prototype.toString", withToString(({ a }) => console.log(a), Object.prototype.toString));
+        test("a number", withText(({ a }) => console.log(a), 1));
+        new AsyncLocalStorage().run(1, () => test("in AsyncLocalStorage.run()", withText((...args) => log(...args), "({ a }) => {}")));
+        test.for([1])("for", withText((...args) => console.log(args[1].a), "{ Spy }\\n(n, { a }) => {}"));
+        for (const [text] of ${JSON.stringify(texts)}) test(JSON.stringify(text), withText((...args) => log(...args), text));
+      `,
+      "replaced.test.js": `
+        import { test as base } from "vitest";
+        const test = base.extend({ a: "A" });
+        const callback = (...args) => console.log(args[0].a);
+        const builtin = Function.prototype.toString;
+        Function.prototype.toString = function () {
+          return this === callback ? "({ a }) => {}" : builtin.call(this);
+        };
+        test("Function.prototype.toString is replaced", callback);
+        test("and calls the built-in", ({ a }) => console.log(a));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: [
+        "beforeAll",
+        "beforeAll 2",
+        ...["A", "undefined", "A", "A", "A", "A", "A", "undefined", "undefined", "A", "A"],
+        ...texts.map(([, logged]) => logged),
+        "A",
+        "A",
+      ],
+      results: [
+        "(pass) the text has the fixture and the function has no parameter",
+        "(pass) the text has no parameter and the function has the fixture",
+        "(pass) a getter",
+        "(pass) inherited",
+        "(pass) a bound function",
+        "(pass) the built-in, bound to another function",
+        "(pass) a bound function that returns the text",
+        "(pass) Object.prototype.toString",
+        "(pass) a number",
+        "(pass) in AsyncLocalStorage.run()",
+        "(pass) for",
+        ...texts.map(([text]) => `(pass) ${JSON.stringify(text)}`),
+        "(pass) Function.prototype.toString is replaced",
+        "(pass) and calls the built-in",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("one that throws or is not a function fails the callback, and extend() throws", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, describe, beforeAll } from "vitest";
+        const test = base.extend({ a: "A" });
+        const throwing = (fn, message) => Object.defineProperty(fn, "toString", { value() { throw new Error(message); } });
+        describe("beforeAll", () => {
+          beforeAll(throwing(() => console.log("unreachable"), "toString of beforeAll"));
+          test("test", () => console.log("unreachable"));
+        });
+        describe("beforeEach", () => {
+          test.beforeEach(throwing(() => console.log("unreachable"), "toString of beforeEach"));
+          test("test", ({ a }) => console.log("unreachable"));
+        });
+        test("test", throwing(({ a }) => console.log("unreachable"), "toString of test"));
+        test("not a function", Object.defineProperty(({ a }) => console.log("unreachable"), "toString", { value: 1 }));
+        test("the text is not a function", Object.defineProperty(({ a }) => console.log("unreachable"), "toString", { value: () => "not (a function" }));
+        try {
+          base.extend({ b: throwing(async ({ a }, use) => use(a), "toString of a fixture") });
+        } catch (error) {
+          console.log("extend() threw:", error.message);
+        }
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: ["extend() threw: toString of a fixture"],
+      results: [
+        "(fail) beforeAll > (unnamed)",
+        "(fail) beforeEach > test",
+        "(fail) test",
+        "(fail) not a function",
+        "(fail) the text is not a function",
+      ],
+      errors: [
+        "error: toString of beforeAll",
+        "error: toString of beforeEach",
+        "error: toString of test",
+        "TypeError: callback.toString is not a function",
+        "error: test() expects the first parameter of its callback to be an object destructuring pattern: fixtures are chosen by the properties it destructures",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("a lookup of toString that throws when the stack is full", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        import vm from "node:vm";
+        const test = base.extend({ a: "A" });
+        // The lookup goes through the global of a node:vm context, which throws a RangeError when the stack is full.
+        const callback = Object.setPrototypeOf(({ a }) => {}, vm.runInContext("this", vm.createContext({})));
+        let left = 50;
+        function recurse() {
+          try {
+            recurse();
+          } catch (error) {
+            if (left-- > 0) test.skip("out of stack", callback);
+            throw error;
+          }
+        }
+        try {
+          recurse();
+        } catch {}
+        test("after", ({ a }) => console.log("after", a));
+      `,
+    });
+    expect({ log, results: results.filter(result => !result.startsWith("(skip)")), exitCode }).toEqual({
+      log: ["after A"],
+      results: ["(pass) after"],
+      exitCode: 0,
+    });
+  });
+
+  // Vitest calls toString() when the test runs, where test() throws. Bun calls it when the test is registered.
+  test(`one that registers tests, hooks and fixtures, for a test of "bun:test"`, async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base, beforeAll } from "bun:test";
+        const test = base.extend({ a: "A" });
+        let registered = false;
+        const callback = ({ a }) => console.log("test", a);
+        test("test", Object.defineProperty((...args) => callback(...args), "toString", { value() {
+          if (!registered) {
+            registered = true;
+            beforeAll(() => console.log("beforeAll"));
+            test("registered by toString()", ({ a }) => console.log("registered by toString()", a));
+            test.extend({ b: ({ a }, use) => use(a + "B") })("extended by toString()", ({ b }) => console.log("extended by toString()", b));
+          }
+          return callback.toString();
+        }}));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["beforeAll", "registered by toString() A", "extended by toString() AB", "test A"],
+      results: ["(pass) registered by toString()", "(pass) extended by toString()", "(pass) test"],
+      exitCode: 0,
+    });
+  });
+});
+
 describe.concurrent("resolution", () => {
   const probe = `
     const out = {};

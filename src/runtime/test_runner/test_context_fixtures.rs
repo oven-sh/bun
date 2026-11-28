@@ -239,7 +239,7 @@ impl TestFixtures {
             }
             let mut dependencies = Vec::new();
             if value.is_callable() {
-                match ContextParameter::of(value, 0) {
+                match ContextParameter::of(global, value, 0)? {
                     ContextParameter::Absent => {}
                     ContextParameter::Properties(names) => dependencies = names,
                     ContextParameter::RestProperty => errors.push(format!(

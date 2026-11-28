@@ -7,7 +7,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
-    JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
+    JSPromise, JSValue, JsClass as _, JsError, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
 };
 use bun_ptr::CellExt as _;
 use bun_resolver::fs::FileSystem;
@@ -575,17 +575,21 @@ pub(crate) fn suite_hook(
     callback: JSValue,
     context_index: usize,
     has_fixtures: bool,
-) -> JsResult<JSValue> {
+) -> JsResult<(JSValue, ContextParameter)> {
     let (ordinal, hint) = if context_index == 0 {
         ("first", format!("The suite is the second argument: {name}(({{}}, suite) => {{}})"))
     } else {
         ("second", format!("The suite is the third argument: {name}((runSuite, {{}}, suite) => {{}})"))
     };
-    let error = match ContextParameter::of(callback, context_index) {
-        ContextParameter::Absent => return Ok(callback),
-        ContextParameter::TextLeftOut if !has_fixtures => return Ok(callback),
+    let parameter = match parameter_at_registration(global, callback, context_index)? {
+        Ok(parameter) => parameter,
+        Err(rejecting) => return Ok((rejecting, ContextParameter::Absent)),
+    };
+    let error = match &parameter {
+        ContextParameter::Absent => return Ok((callback, parameter)),
+        ContextParameter::TextLeftOut if !has_fixtures => return Ok((callback, parameter)),
         ContextParameter::TextLeftOut => global.create_error_instance(format_args!("{name}(): {TEXT_LEFT_OUT}")),
-        ContextParameter::Properties(names) if has_fixtures || names.is_empty() => return Ok(callback),
+        ContextParameter::Properties(names) if has_fixtures || names.is_empty() => return Ok((callback, parameter)),
         ContextParameter::Properties(names) => {
             let names: Vec<_> = names.iter().map(|name| format!("\"{}\"", bstr::BStr::new(name))).collect();
             global.create_error_instance(format_args!(
@@ -598,13 +602,29 @@ pub(crate) fn suite_hook(
         )),
         ContextParameter::Other(Some(parameter)) => global.create_error_instance(format_args!(
             "{name}() expects the {ordinal} parameter of its callback to be an object destructuring pattern, received \"{}\". {hint}",
-            bstr::BStr::new(&parameter),
+            bstr::BStr::new(parameter),
         )),
         ContextParameter::Other(None) => global.create_error_instance(format_args!(
             "{name}() expects the {ordinal} parameter of its callback to be an object destructuring pattern. {hint}",
         )),
     };
-    rejecting(global, error)
+    Ok((rejecting(global, error)?, ContextParameter::Absent))
+}
+
+/// `Err` is a callback to register in place of `callback`. It rejects with what `toString()` threw, which Vitest reports when the callback runs.
+pub(crate) fn parameter_at_registration(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    index: usize,
+) -> JsResult<Result<ContextParameter, JSValue>> {
+    match ContextParameter::of(global, callback, index) {
+        Ok(parameter) => Ok(Ok(parameter)),
+        Err(JsError::Thrown) if !global.has_pending_termination_exception() => {
+            let exception = global.take_exception(JsError::Thrown);
+            rejecting(global, exception.to_error().unwrap_or(exception)).map(Err)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn rejecting(global: &JSGlobalObject, error: JSValue) -> JsResult<JSValue> {

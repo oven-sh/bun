@@ -54,6 +54,61 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
+  // Vitest reads the parameters from what toString() returns, which a wrapper sets to the text of the function it wraps.
+  const wrapped = `
+    import { test } from "bun:test";
+    const wrap = (inner: (...args: any[]) => unknown) =>
+      Object.defineProperty((...args: unknown[]) => inner(...args), "toString", { value: () => inner.toString() });
+    const local = test.extend<{ state: number }>({ state: 5 });
+    local.beforeEach(wrap(({ state }) => console.log("SAID beforeEach", state)));
+    local("a wrapper", wrap(({ state }) => {
+      console.log("SAID test", state); // --aot keeps this comment in the text: [native code]
+    }));`;
+
+  test.each(ways)("a callback with its own toString() is read from what that returns: %s", async (_, flags, words) => {
+    expect(await runTests({ "wrapped.test.ts": wrapped }, flags, words)).toEqual({
+      said: ["SAID beforeEach 5", "SAID test 5"],
+      results: ["(pass) a wrapper"],
+      errors: [],
+      exitCode: 0,
+    });
+  });
+
+  test("without the text of functions a wrapper with its own toString() fails and says why", async () => {
+    expect(
+      await runTests({ "wrapped.test.ts": wrapped }, ["--aot", "--no-compile-function-source"], "TestRunLayers:0"),
+    ).toEqual({
+      said: [],
+      results: ["(fail) a wrapper"],
+      // Of beforeEach, which runs first.
+      errors: [
+        "error: fixtures are chosen by the properties that a callback destructures, and this build holds no function source to read them from (--no-compile-function-source)",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("without the text of functions a toString() is refused only if it returns native code", async () => {
+    const file = `
+      import { test } from "bun:test";
+      const local = test.extend({ state: 5 });
+      // A wrapper from new Function, as one from a package, is not in the files of the tests.
+      const wrap = new Function("inner", "return Object.defineProperty((...args) => inner(...args), 'toString', { value: () => inner.toString() })");
+      local("the text of a function", wrap(({ state }) => console.log("SAID not reached", state)));
+      const written = Object.defineProperty((...args) => console.log("SAID", args[0].state), "toString", { value: () => "{ Spy }\\n({ state }) => {}" });
+      local("a text that the wrapper wrote", written);`;
+    expect(
+      await runTests({ "texts.test.js": file }, ["--aot", "--no-compile-function-source"], "TestRunLayers:0"),
+    ).toEqual({
+      said: ["SAID 5"],
+      results: ["(fail) the text of a function", "(pass) a text that the wrapper wrote"],
+      errors: [
+        "error: test(): fixtures are chosen by the properties that a callback destructures, and this build holds no function source to read them from (--no-compile-function-source)",
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("without the text of functions a test with fixtures fails and says why", async () => {
     const file = `
       import { test } from "bun:test";

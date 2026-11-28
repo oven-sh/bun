@@ -211,12 +211,15 @@ pub(crate) mod js_fns {
             };
             // An extended `test` binds its `beforeAll` / `afterAll` / `aroundAll` with its `TestFixtures` as `this`.
             let mut fixtures = None;
+            let mut parameter = None;
             if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback))
             | (_, GenericHookTag::AroundAll, Some(callback)) = (flavor, tag, args.callback)
             {
                 fixtures = Some(this_value.to_js()).filter(|this| this.is::<TestFixtures>());
                 let context_index = usize::from(tag.around().is_some());
-                args.callback = Some(test_context::suite_hook(global_this, tag_name, callback, context_index, fixtures.is_some())?);
+                let (callback, read) = test_context::suite_hook(global_this, tag_name, callback, context_index, fixtures.is_some())?;
+                args.callback = Some(callback);
+                parameter = Some(Rc::new(core::cell::OnceCell::from(read)));
             }
 
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
@@ -244,6 +247,7 @@ pub(crate) mod js_fns {
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
+                    parameter,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
                 );
@@ -266,6 +270,7 @@ pub(crate) mod js_fns {
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
+                        parameter,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
                     );
@@ -1211,6 +1216,37 @@ impl BunTest {
         }
     }
 
+    /// The way into the user's code for the entry of `data`. `report_thrown` reports an `Err`.
+    pub(crate) fn enter_callback<R>(
+        this: &BunTestPtr,
+        global_this: &JSGlobalObject,
+        data: &RefDataValue,
+        call: impl FnOnce() -> JsResult<R>,
+    ) -> JsResult<R> {
+        let on_stack = Self::before_callback(this, global_this, data);
+        let vm = global_this.bun_vm();
+        vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(
+            vm.test_isolation_state.file_context.get(),
+            global_this,
+            call,
+            move || drop(on_stack),
+        )
+    }
+
+    fn before_callback<'a>(this: &'a BunTestPtr, global_this: &JSGlobalObject, data: &RefDataValue) -> OnStack<'a> {
+        // An exception left pending by earlier code would make this call fail, so report it first.
+        if global_this.has_exception() {
+            global_this.clear_termination_exception();
+            this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
+        }
+        OnStack::enter(&this.execution.on_stack, data)
+    }
+
+    pub(crate) fn report_thrown(this: &BunTestPtr, global_this: &JSGlobalObject, data: &RefDataValue) {
+        global_this.clear_termination_exception();
+        this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, data);
+    }
+
     /// if sync, the result is returned. if async, None is returned.
     #[optimize(size)]
     pub(crate) fn run_test_callback(
@@ -1242,31 +1278,16 @@ impl BunTest {
             };
         }
 
-        // An exception left pending by earlier code would make this call fail, so report it first.
-        if global_this.has_exception() {
-            global_this.clear_termination_exception();
-            this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
-        }
-
         Self::update_min_timeout(this, timeout);
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
-        let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
-        let result: JSValue = match vm
-            .event_loop()
-            .run_callback_with_result_and_forcefully_drain_microtasks(
-                vm.test_isolation_state.file_context.get(),
-                cfg_callback,
-                global_this,
-                JSValue::UNDEFINED,
-                args_slice,
-                move || drop(on_stack),
-            )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
+        let result: JSValue = match Self::enter_callback(this, global_this, &cfg_data, || {
+            cfg_callback.call(global_this, JSValue::UNDEFINED, args_slice)
+        })
+        .and_then(|returned| Self::promise_of_thenable(global_this, returned))
         {
             Ok(v) => v,
             Err(_) => {
-                global_this.clear_termination_exception();
-                this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data);
+                Self::report_thrown(this, global_this, &cfg_data);
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1956,10 +1977,11 @@ impl DescribeScope {
         tag: HookTag,
         callback: Option<JSValue>,
         cfg: ExecutionEntryCfg,
+        parameter: Option<SharedContextParameter>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) {
-        let mut entry = ExecutionEntry::create(None, callback, cfg, None, Some(self), base, phase);
+        let mut entry = ExecutionEntry::create(None, callback, cfg, parameter, Some(self), base, phase);
         // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
         if !entry.callback.is_some() {
             return;

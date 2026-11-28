@@ -1242,27 +1242,26 @@ impl EventLoop {
 impl EventLoop {
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
-    /// `after_call` runs after `callback` returns and before microtasks drain.
-    pub fn run_callback_with_result_and_forcefully_drain_microtasks(
+    /// `call` is the call of the callback. `after_call` runs after it returns and before microtasks drain.
+    pub fn run_callback_with_result_and_forcefully_drain_microtasks<R>(
         &self,
         context: crate::ContextId,
-        callback: JSValue,
         global_object: &JSGlobalObject,
-        this_value: JSValue,
-        arguments: &[JSValue],
+        call: impl FnOnce() -> JsResult<R>,
         after_call: impl FnOnce(),
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<R> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
-            // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
+            // An exception is already pending and `call` never ran, so don't pretend it returned.
             return Err(crate::JsError::Thrown);
         };
         let result = {
             let _entered = self.enter_scope_without_checkpoint();
-            callback.call(global_object, this_value, arguments)
+            call()
         };
         after_call();
         let result = result?;
-        result.ensure_still_alive();
+        // As `JSValue::ensure_still_alive`.
+        core::hint::black_box(&result);
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)
             .map_err(|stopped| stopped.throw(global_object))?;

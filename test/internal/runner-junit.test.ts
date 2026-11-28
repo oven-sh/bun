@@ -7,9 +7,115 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { parseJunitFileSuites, parseTestStdout } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
+
+describe("parseTestStdout", () => {
+  for (const [emoji, status] of [
+    ["✓", "pass"],
+    ["✗", "fail"],
+    ["»", "skip"],
+    ["✎", "todo"],
+  ]) {
+    for (const name of ["plain name", "name [bracket] continues", "name [literal]"]) {
+      for (const { suffix, duration } of [
+        { suffix: "", duration: undefined },
+        { suffix: " [1.25ms]", duration: 1.25 },
+        { suffix: " [1.25s]", duration: 1250 },
+      ]) {
+        test(`${status}: ${name}${suffix}`, () => {
+          for (const stdout of [
+            `${emoji} ${name}${suffix}`,
+            `\x1b[32m${emoji}\x1b[0m ${name}\x1b[2m${suffix}\x1b[0m`,
+          ]) {
+            expect(parseTestStdout(stdout)).toEqual({
+              tests: [{ url: undefined, file: undefined, test: name, status, errors: [], duration }],
+              errors: [],
+              stdout,
+            });
+          }
+        });
+      }
+    }
+  }
+
+  test("associates annotations with the complete durationless name and ignores the summary", () => {
+    const lines = [
+      "::group::example.test.ts",
+      "✓ passed [literal]",
+      "::error title=Error,line=12,col=3::first%0Astack%25",
+      "::error title=TypeError::second%0D%0Astack",
+      "✗ failed [literal]",
+      "» skipped [literal]",
+      "✎ pending [literal]",
+      "::endgroup::",
+      "✗ failed [literal]",
+      "::error title=Ignored::after summary",
+    ];
+    const result = parseTestStdout(lines.join("\n"));
+    expect(result.errors).toEqual([
+      {
+        url: undefined,
+        file: undefined,
+        line: "12",
+        col: "3",
+        name: "Error",
+        stack: "Error\nfirst\nstack%",
+        test: "failed [literal]",
+      },
+      {
+        url: undefined,
+        file: undefined,
+        line: undefined,
+        col: undefined,
+        name: "TypeError",
+        stack: "TypeError\nsecond\r\nstack",
+        test: "failed [literal]",
+      },
+    ]);
+    expect(result.tests).toEqual([
+      { url: undefined, file: undefined, test: "passed [literal]", status: "pass", errors: [], duration: undefined },
+      {
+        url: undefined,
+        file: undefined,
+        test: "failed [literal]",
+        status: "fail",
+        errors: result.errors,
+        duration: undefined,
+      },
+      { url: undefined, file: undefined, test: "skipped [literal]", status: "skip", errors: [], duration: undefined },
+      { url: undefined, file: undefined, test: "pending [literal]", status: "todo", errors: [], duration: undefined },
+    ]);
+    expect(result.stdout).toBe(
+      "✓ passed [literal]\n✗ failed [literal]\n» skipped [literal]\n✎ pending [literal]\n✗ failed [literal]",
+    );
+  });
+
+  test("shortens consecutive non-failing output without discarding parsed tests", () => {
+    const result = parseTestStdout("✓ first\n✓ second\n✓ third\n» fourth [literal]\n✗ fifth [literal]");
+    expect(result.tests.map(({ test, status }) => [test, status])).toEqual([
+      ["first", "pass"],
+      ["second", "pass"],
+      ["third", "pass"],
+      ["fourth [literal]", "skip"],
+      ["fifth [literal]", "fail"],
+    ]);
+    expect(result.stdout).toBe(
+      "✓ first\n\x1b[90m... omitted 2 tests ...\x1b[0m\n» fourth [literal]\n✗ fifth [literal]",
+    );
+  });
+
+  test("keeps the last 100 lines in a long preview without discarding parsed tests", () => {
+    const lines = ["✓ fast [literal]", ...Array.from({ length: 110 }, (_, i) => `output ${i}`)];
+    const result = parseTestStdout(lines.join("\n"));
+    expect(result.tests).toEqual([
+      { url: undefined, file: undefined, test: "fast [literal]", status: "pass", errors: [], duration: undefined },
+    ]);
+    expect(result.errors).toEqual([]);
+    expect(result.stdout).toBe(`\x1b[90m... omitted 11 lines ...\x1b[0m\n\n${lines.slice(-100).join("\n")}`);
+  });
+});
 
 describe("parseJunitFileSuites", () => {
   test("reports each file from its own suite, not from the describe suites nested in it", () => {

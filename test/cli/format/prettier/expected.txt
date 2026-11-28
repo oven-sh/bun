@@ -95,7 +95,7 @@ json: format 785/785 (0 syntax errors), rejected 191/191, second format 696/696,
 jsx: format 186/186 (0 syntax errors), rejected 19/19, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 236/238 (0 syntax errors), rejected 4/4, second format 189/189, CRLF 234/234, CR 234/234, BOM 236/236
 lwc: format 5/5 (0 syntax errors), rejected 0/0, second format 5/5, CRLF 5/5, CR 5/5, BOM 5/5
-markdown: format 1569/1572 (0 syntax errors), rejected 0/0, second format 946/946, CRLF 1565/1565, CR 1565/1565, BOM 1569/1569
+markdown: format 1565/1568 (0 syntax errors), rejected 0/0, second format 942/942, CRLF 1561/1561, CR 1561/1561, BOM 1565/1565
 mdx: format 32/32 (0 syntax errors), rejected 0/0, second format 22/22, CRLF 32/32, CR 32/32, BOM 32/32
 misc: format 565/565 (0 syntax errors), rejected 7/7, second format 502/502, CRLF 104/104, CR 104/104, BOM 564/564
 mjml: format 9/9 (0 syntax errors), rejected 0/0, second format 8/8, CRLF 9/9, CR 9/9, BOM 9/9
@@ -103,8 +103,9 @@ scss: format 135/136 (0 syntax errors), rejected 1/1, second format 116/116, CRL
 typescript: format 756/756 (0 syntax errors), rejected 355/355, second format 609/609, CRLF 755/755, CR 755/755, BOM 743/743
 vue: format 189/189 (0 syntax errors), rejected 3/3, second format 156/156, CRLF 189/189, CR 189/189, BOM 189/189
 yaml: format 1554/1621 (0 syntax errors), rejected 3/3, second format 1049/1049, CRLF 1547/1547, CR 1547/1547, BOM 1553/1553
-format: 9648/9731 (99.15%)
-all checks: 45692/45778 (99.81%)
+format: 9644/9727 (99.15%)
+all checks: 45672/45758 (99.81%)
+not run: 4: Prettier's output is another document: it prints an empty line in a fenced code block that has no line between its fences, and that line is code
 not run: 2: Prettier's output is another value: it drops the blanks at the end of a block scalar (prettier#19764)
 not run: 3: `babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`

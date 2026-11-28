@@ -127,7 +127,8 @@ pub struct Node {
     pub next: NodeId,
     pub first_child: NodeId,
     pub last_child: NodeId,
-    /// `value`, `url`, or a reference's `label`.
+    /// `value`, `url`, or a reference's `label`. Fenced code with no line between its fences has `null`, with one
+    /// empty line `""`. mdast has `""` for both.
     pub value: Str,
     /// `lang`, `title`, or a definition's `label`.
     pub second: Str,

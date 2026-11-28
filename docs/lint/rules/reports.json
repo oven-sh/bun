@@ -986,7 +986,7 @@
 "vitest/no-hooks": {"0":[[5,1,5,11,"Do not use setup or teardown hooks."]],"2":[[7,1,7,10,"Do not use setup or teardown hooks."]]},
 "vitest/no-identical-title": {"0":[[8,8,8,24,"Test title is used multiple times in the same describe block."]],"1":[[7,10,7,16,"Describe block title is used multiple times in the same describe block."]]},
 "vitest/no-import-node-test": {"0":[[1,30,1,41,"Do not import from `node:test`"]],"1":[[1,22,1,33,"Do not import from `node:test`"]]},
-"vitest/no-importing-vitest-globals": {"0":[[1,10,1,18,"Do not `import`/`require` global functions from 'vitest'."]],"1":[[1,9,1,15,"Do not `import`/`require` global functions from 'vitest'."]]},
+"vitest/no-importing-vitest-globals": {"0":[[1,10,1,18,"Do not `import`/`require` global functions from 'vitest'."]],"1":[[1,9,1,15,"Do not `import`/`require` global functions from 'vitest'."]],"2":[[1,9,1,16,"Do not `import`/`require` global functions from 'vitest'."]]},
 "vitest/no-interpolation-in-snapshots": {"0":[[5,38,10,4,"Do not use string interpolation inside of snapshots"]],"1":[[4,63,4,86,"Do not use string interpolation inside of snapshots"]]},
 "vitest/no-large-snapshots": {"0":[[4,23,4,44,"Snapshot is too long."]],"2":[[4,19,4,40,"Snapshot is too long."]]},
 "vitest/no-mocks-import": {"0":[[2,27,2,47,"Mocks should not be manually imported from a `__mocks__` directory."]],"1":[[1,31,1,52,"Mocks should not be manually imported from a `__mocks__` directory."]]},

@@ -1,11 +1,12 @@
 //! Changes to the source text.
 
-use crate::ast::File;
+use crate::ast::{File, FnKind, Node, Stmt};
 use crate::context::IntoText;
 use crate::span::{Span, Spanned};
-use crate::tokens::{Token, TokenKind};
-use crate::utils::ast_utils::is_on_one_line;
+use crate::tokens::{Token, TokenKind, skip_trivia};
+use crate::utils::ast_utils::{continues_statement, is_on_one_line, is_statement_list_parent};
 use crate::utils::directives::match_directives_pattern;
+use crate::utils::fix_tracker::FixTracker;
 use bun_core::strings;
 
 /// Replaces `span` with `text`.
@@ -264,6 +265,18 @@ fn is_attached_to_next_code(comment: &Token) -> bool {
     comment.text().starts_with(b"/**") || is_next_line_directive(comment)
 }
 
+/// The statements after `statement` in its list, if the list can start with directives like `"use strict"`.
+fn statements_below<'a>(statement: Stmt<'a>) -> impl Iterator<Item = Stmt<'a>> {
+    let siblings = match statement.parent() {
+        Node::File(file) => Some(file.body()),
+        Node::Func(func) if func.kind() != FnKind::StaticBlock => func.body_statements(),
+        Node::Stmt(parent) => parent.as_module().map(|it| it.innermost().body()),
+        _ => None,
+    };
+    let end = statement.span().end;
+    (siblings.into_iter().flatten()).filter(move |it| it.span().start >= end)
+}
+
 /// Creates [`Fix`]es, like ESLint's `fixer`. Each method takes a node, a token, a comment or a [`Span`].
 #[derive(Copy, Clone)]
 pub struct Fixer<'a> {
@@ -420,6 +433,47 @@ impl<'a> Fixer<'a> {
             span: at.span(),
             text: Vec::new(),
         }
+    }
+
+    /// Removes a whole statement. `None` if that loses a comment, or changes what the code around it is.
+    pub fn remove_statement(self, statement: Stmt<'a>) -> Option<Fix> {
+        let (file, span, parent) = (self.file, statement.span(), statement.parent());
+        let is_in_namespace = matches!(parent, Node::Stmt(it) if it.as_module().is_some());
+        // An `if` or a loop would take the next statement for its body, and so would a `// @ts-ignore` above.
+        let is_in_list = is_in_namespace || is_statement_list_parent(parent);
+        // A directive in the header of the file is for another comment there, like `// @ts-nocheck`.
+        let applies = |it: Token<'a>| {
+            is_next_line_directive(&it) && it.end() > self.end_of_file_header().unwrap_or(0)
+        };
+        if !is_in_list || file.comments_before(span).any(applies) {
+            return None;
+        }
+        // A string below could become a directive like `"use strict"`, also below statements that a compiler drops.
+        let is_string = |it: Stmt<'a>| {
+            (it.as_expr()).is_some_and(|e| e.as_string().is_some() && !e.is_parenthesized())
+        };
+        if statements_below(statement).any(is_string) {
+            return None;
+        }
+        let text = file.text();
+        // Nothing else continues the statement before, so most files need no tokens for this.
+        let may_continue = matches!(
+            text.get(skip_trivia(text, span.end) as usize),
+            Some(b'(' | b'[' | b'`' | b'/' | b'+' | b'-' | b'<')
+        );
+        // Bun and esbuild also take a `(` for a call of the `a++` before it.
+        let continues = |previous: Token<'a>, next: Token<'a>| {
+            previous.is("++") || previous.is("--") || continues_statement(file, previous, next)
+        };
+        let fix = match may_continue.then(|| file.token_before(span)).flatten() {
+            Some(previous) if continues(previous, file.token_after(span)?) => return None,
+            // A fix that removes the statement before has to wait for the next pass, which sees what is before then.
+            Some(previous) => FixTracker::new(self)
+                .retain_range(previous.span())
+                .remove(span),
+            None => self.remove(span),
+        };
+        self.keeps_comments(&fix).then_some(fix)
     }
 
     /// `insertTextBefore`, `insertTextBeforeRange`

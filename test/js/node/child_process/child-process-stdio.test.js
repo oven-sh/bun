@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isPosix } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
+import { spawnWithStdioFiles } from "../../bun/spawn/stdio-fd-slots-helpers";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -219,4 +220,67 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     expect(stdout).toBe("spawnSync: ok 0\nspawn: 0\n");
     expect(exitCode).toBe(0);
   });
+});
+
+// Node gives the child the fd that a number in a stdio slot names, at any slot. 0, 1 and 2 are no
+// exception. Node v26.3.0 returns the `expected` of every case below when it runs the same fixture.
+// https://github.com/oven-sh/bun/issues/7845
+describe("fd 0, 1 or 2 of the parent at another stdio slot", () => {
+  // Each case is the spawn options, then what spawnWithStdioFiles must return for them.
+  async function expectCases(api, cases) {
+    const { rows, stillOpen } = await spawnWithStdioFiles(
+      api,
+      cases.map(([options]) => options),
+    );
+    expect(rows).toEqual(cases.map(([, expected]) => expected));
+    expect(stillOpen).toEqual([true, true, true]);
+  }
+
+  // Not concurrent: each case is a chain of bun processes, and in a debug build several chains
+  // at once take more than the default timeout.
+  it("spawnSync", () =>
+    expectCases("spawnSync", [
+      [{ stdio: [0, 0, 0] }, { reaches: [0, 0, 0], status: 0, stdout: null, stderr: null }],
+      [{ stdio: [1, 1, 1] }, { reaches: [1, 1, 1], status: 0, stdout: null, stderr: null }],
+      [{ stdio: [2, 0, 0] }, { reaches: [2, 0, 0], status: 0, stdout: null, stderr: null }],
+      [{ stdio: [1, 2, 0] }, { reaches: [1, 2, 0], status: 0, stdout: null, stderr: null }],
+    ]));
+
+  it("spawnSync, at an extra slot", () =>
+    expectCases("spawnSync", [
+      [
+        { stdio: ["ignore", "inherit", "inherit", 0] },
+        { reaches: [null, 1, 2, 0], status: 0, stdout: null, stderr: null },
+      ],
+      [
+        { stdio: ["ignore", "inherit", "inherit", 0, 1, 2] },
+        { reaches: [null, 1, 2, 0, 1, 2], status: 0, stdout: null, stderr: null },
+      ],
+    ]));
+
+  it("spawn, as a number and as a stream", () =>
+    expectCases("spawn", [
+      [{ stdio: [0, 0, 0] }, { reaches: [0, 0, 0], code: 0, stdio: [null, null, null] }],
+      [{ stdio: [1, 2, 0] }, { reaches: [1, 2, 0], code: 0, stdio: [null, null, null] }],
+      [
+        { stdio: ["process.stdout", "process.stdin", "process.stdin"] },
+        { reaches: [1, 0, 0], code: 0, stdio: [null, null, null] },
+      ],
+      [
+        { stdio: ["inherit", "inherit", "inherit", "process.stdin"] },
+        { reaches: [0, 1, 2, 0], code: 0, stdio: [null, null, null, null] },
+      ],
+    ]));
+
+  it("fork", () =>
+    expectCases("fork", [
+      [
+        { stdio: [0, 0, 0, "ipc"] },
+        { reaches: [0, 0, 0, null], code: 0, message: "written", stdio: [null, null, null, null] },
+      ],
+    ]));
+
+  it.each(["execFileSync", "execSync"])("%s", api =>
+    expectCases(api, [[{ stdio: [1, 1, 1] }, { reaches: [1, 1, 1], returned: null }]]),
+  );
 });

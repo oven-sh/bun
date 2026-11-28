@@ -65,6 +65,8 @@ export const FileInternalReadableStreamSource = b.class({
     isClosed: members.isClosed,
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
+    /** Set by `process.stdin`: see `PosixFlags::LIBUV_READS`. */
+    setLibuvReads: { args: { enable: b.bool.loose } },
     setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
     start: members.start,
     updateRef: members.updateRef,

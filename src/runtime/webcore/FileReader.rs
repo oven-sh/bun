@@ -84,6 +84,9 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// A named FIFO on macOS: kqueue does not report the last close of an empty one.
+    #[cfg(not(windows))]
+    pub(crate) poll_misses_eof: bool,
 }
 
 unsafe extern "C" {
@@ -162,6 +165,8 @@ impl Lazy {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            poll_misses_eof: false,
         };
 
         #[cfg(unix)]
@@ -211,6 +216,10 @@ impl Lazy {
             if this.nonblocking && this.file_type == FileType::Pipe {
                 this.file_type = FileType::NonblockingPipe;
             }
+
+            // pipe(2) leaves `st_dev` 0 there.
+            this.poll_misses_eof =
+                cfg!(target_os = "macos") && sys::S::ISFIFO(mode) && stat.st_dev != 0;
         }
 
         Ok(this)
@@ -285,6 +294,8 @@ impl FileReader {
                             self.reader.update_flags(|f| {
                                 f.set(ReaderFlags::NONBLOCKING, opened.nonblocking);
                                 f.set(ReaderFlags::POLLABLE, pollable);
+                                #[cfg(unix)]
+                                f.set(ReaderFlags::POLL_MISSES_EOF, opened.poll_misses_eof);
                             });
                         }
                     }
@@ -781,6 +792,15 @@ impl FileReader {
             self.reader.pause();
         }
     }
+
+    /// A reader was acquired on the stream: undo `set_flowing(false)` and the unref that came with it.
+    pub(crate) fn resume_for_reader(&self) {
+        if self.flowing.get() || self.done.get() || self.reader.is_done() {
+            return;
+        }
+        self.reader.update_ref(true);
+        self.set_flowing(true);
+    }
 }
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
@@ -935,6 +955,20 @@ impl Source {
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
     }
+
+    /// Set by `process.stdin`: see `PosixFlags::LIBUV_READS`. On Windows libuv reads.
+    pub fn set_libuv_reads(&self, enable: bool) {
+        #[cfg(unix)]
+        self.context.reader.set_libuv_reads(enable);
+        #[cfg(not(unix))]
+        let _ = enable;
+    }
+}
+
+/// For `readableStreamReaderGenericInitialize`, with the `wrapped()` of the stream's file source.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FileReader__resumeForReader(source: &Source) {
+    source.context.resume_for_reader();
 }
 
 // Local shim: `bun_io::ReadState` doesn't derive `IntoStaticStr` (upstream crate);

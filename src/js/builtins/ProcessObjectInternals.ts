@@ -124,6 +124,8 @@ export function getStdinStream(
   $assert(fd === 0);
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
+  // After a short read, EOF gets a poll wakeup of its own, as on a libuv stream.
+  source?.setLibuvReads?.(true);
 
   var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
 
@@ -260,6 +262,8 @@ export function getStdinStream(
       if (value) {
         stream.push(value);
       } else {
+        // Every read in flight resolves at EOF. The first one ends the stream.
+        if (stream_reachedEof) return;
         // EOF. Nothing is left to read, so release the native reader before
         // push(null) runs user 'readable' listeners; the process must be able
         // to exit even if one of them throws or never drains the buffer.
@@ -269,6 +273,8 @@ export function getStdinStream(
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
         stream.push(null);
+        // A net.Socket stdin: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L231-L232
+        if (isTTY || fdType !== BunProcessStdinFdType.file) originalRead.$call(stream, 0);
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);

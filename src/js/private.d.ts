@@ -1068,6 +1068,8 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
+    /** Set by `process.stdin`: after a short read, EOF gets a poll wakeup of its own. */
+    setLibuvReads(enable: boolean): void;
     /** `undefined`, or the system error. */
     setRawMode(enabled: boolean): Error | undefined;
   }

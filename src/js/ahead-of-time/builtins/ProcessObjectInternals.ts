@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a0e2a825e8f33b8bbbf8e99ec88171c15fc49cb62a07e8d2329131b02b690eb1.
+// Written against that file with the SHA-256 49e5371df6c0d2ede6ccf28a49ad74ddf51ebbb9998571940514ee2feb5598be.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -143,6 +143,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   $assert(fd === 0);
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
+  // After a short read, EOF gets a poll wakeup of its own, as on a libuv stream.
+  source?.setLibuvReads?.(true);
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -279,6 +281,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
       if (value) {
         stream.push(value);
       } else {
+        // Every read in flight resolves at EOF. The first one ends the stream.
+        if (stream_reachedEof) return;
         // EOF. Nothing is left to read, so release the native reader before
         // push(null) runs user 'readable' listeners; the process must be able
         // to exit even if one of them throws or never drains the buffer.
@@ -288,6 +292,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
         stream.push(null);
+        // A net.Socket stdin: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L231-L232
+        if (isTTY || fdType !== BunProcessStdinFdType.file) originalRead.$call(stream, 0);
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);

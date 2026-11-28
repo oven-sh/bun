@@ -6,10 +6,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use std::rc::Rc;
 
-use bun_core::{Timespec, TimespecMockMode, WStr, ZStr};
+use bun_core::{WStr, ZStr};
 use bun_iocp::{Completion, OverlappedFile, Request};
 use bun_jsc as jsc;
-use bun_ptr::CellExt as _;
 use bun_sys as sys;
 use bun_sys::Win32ErrorExt as _;
 use bun_sys::windows::{self as w, NT_SUCCESS, NTSTATUS, Win32Error};
@@ -33,7 +32,6 @@ pub(crate) type Handle = Rc<PathWatcher>;
 pub(crate) struct PathWatcher {
     /// The `FSWatcher`, which owns the only [`Handle`].
     owner: *mut c_void,
-    last_event: Cell<ChangeEvent>,
     target: Target,
     recursive: bool,
     /// Owns the only directory handle, which blocks renaming its parents while it is open.
@@ -85,11 +83,10 @@ impl Target {
         match self {
             // The record spells the name as the writer opened it, which can be in 8.3 form.
             Target::Directory(directory)
-                if may_have_short_name(&name)
-                    && !matches!(
-                        action,
-                        w::FILE_ACTION_REMOVED | w::FILE_ACTION_RENAMED_OLD_NAME
-                    ) =>
+                if !matches!(
+                    action,
+                    w::FILE_ACTION_REMOVED | w::FILE_ACTION_RENAMED_OLD_NAME
+                ) =>
             {
                 Some(expand_short_names(directory, &name).unwrap_or(name))
             }
@@ -105,11 +102,6 @@ impl Target {
     }
 }
 
-fn may_have_short_name(path: &[u16]) -> bool {
-    path.split(|&unit| bun_paths::is_sep(unit))
-        .any(|name| name.len() <= "12345678.123".len())
-}
-
 fn expand_short_names(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {
     let path = [directory, bun_core::w!("\\"), name, &[0]].concat();
     let long_path = w::get_long_path_name(WStr::from_slice_with_nul(&path)).ok()?;
@@ -117,46 +109,6 @@ fn expand_short_names(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {
     let depth = name.split(is_separator).count();
     let parent = long_path.rsplitn(depth + 1, is_separator).nth(depth)?;
     Some(long_path[parent.len() + 1..].to_vec())
-}
-
-#[derive(Clone, Copy)]
-struct ChangeEvent {
-    hash: bun_watcher::HashType,
-    event_type: WatchEventKind,
-    timestamp: u64,
-}
-
-impl Default for ChangeEvent {
-    fn default() -> Self {
-        Self {
-            hash: 0,
-            event_type: WatchEventKind::Change,
-            timestamp: 0,
-        }
-    }
-}
-
-impl ChangeEvent {
-    fn emit(
-        &mut self,
-        hash: bun_watcher::HashType,
-        timestamp: u64,
-        event_type: WatchEventKind,
-    ) -> bool {
-        let time_diff = timestamp.saturating_sub(self.timestamp);
-        // skip consecutive exact duplicates (same path and event type) only
-        if self.timestamp == 0
-            || time_diff > 1
-            || self.event_type != event_type
-            || self.hash != hash
-        {
-            self.timestamp = timestamp;
-            self.event_type = event_type;
-            self.hash = hash;
-            return true;
-        }
-        false
-    }
 }
 
 impl PathWatcher {
@@ -183,17 +135,19 @@ impl PathWatcher {
 
     fn on_changes(self: &Rc<Self>, file: &Rc<OverlappedFile>, completion: Completion) {
         let Completion { status, buffer, .. } = completion;
-        let timestamp = Timespec::now(TimespecMockMode::ForceRealTime).ms_unsigned();
         if !NT_SUCCESS(status) {
-            return self.emit_error(file, status, timestamp);
+            return self.emit_error(file, status);
         }
         let records = match status {
             NTSTATUS::SUCCESS => &buffer[..],
             _ => &[],
         };
-        let changes: Vec<_> = directory_changes::parse(records).collect();
+        let mut changes: Vec<_> = directory_changes::parse(records).collect();
+        changes.dedup();
         self.spare_buffer.set(buffer);
         let next_read = self.read_changes(file);
+        // Not kept across reads: the listener may have run before the changes that the next one reports.
+        let mut last_event = None;
         for change in changes {
             let Ok(change) = change else {
                 // Changes were lost. Forward `(event, null)` like node, unsuppressed.
@@ -205,23 +159,28 @@ impl PathWatcher {
                 w::FILE_ACTION_ADDED..=w::FILE_ACTION_RENAMED_NEW_NAME => WatchEventKind::Rename,
                 _ => continue,
             };
-            if let Some(name) = self.target.resolve_filename(change) {
-                self.emit(&name, timestamp, event_type);
+            let Some(name) = self.target.resolve_filename(change) else {
+                continue;
+            };
+            let event = (event_type, name);
+            if last_event.as_ref() != Some(&event) {
+                self.emit(&event.1, event_type);
+                last_event = Some(event);
             }
         }
         if let Err(status) = next_read {
-            self.emit_error(file, status, timestamp);
+            self.emit_error(file, status);
         }
     }
 
-    fn emit_error(&self, file: &OverlappedFile, status: NTSTATUS, timestamp: u64) {
+    fn emit_error(&self, file: &OverlappedFile, status: NTSTATUS) {
         let error = Win32Error::from_ntstatus(status);
         if error == Win32Error::ACCESS_DENIED
             && let Target::Directory(path) = &self.target
         {
             let was_deleted = matches!(status, NTSTATUS::DELETE_PENDING | NTSTATUS::FILE_DELETED);
             if w::is_delete_pending(file.handle().raw()).unwrap_or(was_deleted) {
-                self.emit(path, timestamp, WatchEventKind::Rename);
+                self.emit(path, WatchEventKind::Rename);
                 return self.enqueue_event(Event::Deleted(sys::E::ENOENT), false);
             }
             // The pending delete was cancelled, but the watch does not resume.
@@ -239,25 +198,16 @@ impl PathWatcher {
         FSWatcher::on_update_end(Some(self.owner));
     }
 
-    fn emit(&self, name: &[u16], timestamp: u64, event_type: WatchEventKind) {
+    fn emit(&self, name: &[u16], event_type: WatchEventKind) {
         let path = bun_core::strings::wtf16_to_wtf8(name);
-        let hash = bun_wyhash::hash(&path) as bun_watcher::HashType;
         let is_file = matches!(self.target, Target::File { .. });
         bun_output::scoped_log!(
             fs_watch,
-            "emit({}, {}, {}, at {})",
+            "emit({}, {}, {})",
             bstr::BStr::new(&path),
             if is_file { "file" } else { "dir" },
             <&'static str>::from(event_type),
-            timestamp,
         );
-
-        let should_emit = self
-            .last_event
-            .with_taken(|last| last.emit(hash, timestamp, event_type));
-        if !should_emit {
-            return;
-        }
         self.enqueue_event(event_type.to_event(path.into()), is_file);
     }
 
@@ -297,7 +247,6 @@ pub(crate) fn watch(
     let (target, handle) = Target::open(wide_path).map_err(to_watch_error)?;
     let this = Rc::new(PathWatcher {
         owner,
-        last_event: Cell::default(),
         recursive: recursive && matches!(target, Target::Directory(_)),
         target,
         pending_read: Cell::new(None),

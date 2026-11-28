@@ -1,5 +1,6 @@
 //! Parser for `FILE_NOTIFY_INFORMATION` records.
 
+#[derive(PartialEq, Eq)]
 pub struct Change {
     pub action: u32,
     /// Relative to the watched directory.

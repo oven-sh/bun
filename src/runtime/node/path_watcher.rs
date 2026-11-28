@@ -167,7 +167,7 @@ pub(crate) struct PathWatcher {
     pub(super) is_fifo: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
-    /// for per-handler duplicate suppression (same as `win_watcher.rs`).
+    /// for per-handler duplicate suppression.
     handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
 
     /// The inotify wds or kqueue fds: one for a file or directory, many for a recursive watch.
@@ -187,8 +187,7 @@ pub(crate) struct Handle(WatcherId);
 /// Suppresses only exact duplicates: same path hash *and* same event type
 /// within a 1ms window. Distinct files changed in the same millisecond must
 /// each emit — node delivers both (see test/js/node/test/parallel
-/// fs-watch tests that write two files back-to-back). Kept identical to
-/// `win_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
+/// fs-watch tests that write two files back-to-back).
 ///
 /// Fields are `Cell` so `should_emit` takes `&self` — the emit paths then only
 /// ever need shared access to a `PathWatcher`.

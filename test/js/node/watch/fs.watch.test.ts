@@ -2212,6 +2212,34 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
     expect(await watch.waitForEvent("sentinel")).toEqual(["change f"]);
   });
 
+  // Serial: the write has to follow the previous event within a millisecond.
+  test.serial.each(["directory", "file"])("reports a write right after an event of a watched %s", async target => {
+    using dir = tempDir("watch-rewrite", { "longer-than-8.3": "" });
+    const file = path.join(String(dir), "longer-than-8.3");
+    using watch = watchPath(target === "file" ? file : String(dir));
+    for (let i = 0; i < 50; i++) {
+      fs.appendFileSync(file, "x");
+      expect(await watch.waitForEvent("longer-than-8.3")).toEqual([]);
+    }
+  });
+
+  test("merges the changes that pile up while the thread is busy", async () => {
+    using dir = tempDir("watch-merge", { f: "", sibling: "" });
+    const tmpPath = (name: string) => path.join(String(dir), name);
+    using watch = watchPath(tmpPath("f"));
+    const { promise, resolve } = Promise.withResolvers<void>();
+    watch.watcher.on("change", type => type === "rename" && resolve());
+    // The first change completes the pending read on its own.
+    fs.appendFileSync(tmpPath("sibling"), "x");
+    for (let i = 0; i < 20; i++) {
+      fs.appendFileSync(tmpPath("f"), "x");
+      fs.appendFileSync(tmpPath("sibling"), "x");
+    }
+    fs.unlinkSync(tmpPath("f"));
+    await promise;
+    expect(watch.events).toEqual(["change f", "rename f"]);
+  });
+
   test("reports write, truncate, utimes and chmod as 'change'", async () => {
     using dir = tempDir("watch-changes", { write: "x", truncate: "xx", utimes: "x", chmod: "x" });
     const tmpPath = (name: string) => path.join(String(dir), name);

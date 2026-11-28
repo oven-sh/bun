@@ -315,7 +315,7 @@ test("mock an object", () => {
 });
 ```
 
-With `{ spy: true }`, functions keep their implementation, and `value` is modified in place instead of copied.
+With `{ spy: true }`, functions keep their implementation and arrays keep their elements. Bun modifies plain objects, class instances and the prototypes of classes in place instead of copying them. An element of an array gets the same treatment as a property. An object that Bun keeps, such as a `Date`, gets no spies.
 
 ## Module Mocks with mock.module()
 

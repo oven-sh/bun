@@ -74,6 +74,7 @@ const crates = [
   "bun_test_schedule",
   "bun_text_diff",
   "bun_trim",
+  "bun_type_checker",
   "bun_valkey",
   "bun_webp",
   "bun_websocket",

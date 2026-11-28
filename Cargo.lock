@@ -1732,6 +1732,7 @@ dependencies = [
  "bun_text_diff",
  "bun_threading",
  "bun_trim",
+ "bun_type_checker",
  "bun_url",
  "bun_uws",
  "bun_uws_sys",
@@ -2172,6 +2173,17 @@ dependencies = [
  "bun_trim",
  "strum",
  "thiserror",
+]
+
+[[package]]
+name = "bun_type_checker"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_paths",
+ "bun_sema",
+ "bun_sema_driver",
+ "bun_sema_standalone",
 ]
 
 [[package]]

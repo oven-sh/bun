@@ -101,6 +101,10 @@ const partsOf = (stdout: string) =>
       "a method of a date",
       `${fromTheRun("toLocaleDateString")}try { console.log("made", typeof new Date(0)[key]()); } ${handlers}`,
     ],
+    [
+      "new Bun.TypeChecker() in a --trimmed executable",
+      `try { console.log("made", typeof new Bun.TypeChecker({ cwd: "." })); } ${handlers}`,
+    ],
   ] as const;
   test.skipIf(!canTrim).concurrent(
     "a try block catches the error of an API that --trim removed",
@@ -166,6 +170,16 @@ if (!result.success) throw new AggregateError(result.logs);
       "an async function rejects",
       "glob",
       `async function make() { ${makeGlob("Bun.Glob")} }\ntry { await make(); } ${handlers}`,
+    ],
+    [
+      "new Bun.TypeChecker() in a trimmed executable without the check feature",
+      "check",
+      `try { new Bun.TypeChecker({ cwd: "." }); } catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`,
+    ],
+    [
+      "new Bun.TypeChecker() when its feature is removed by compile.trim.remove",
+      "check",
+      `try { new Bun.TypeChecker({ cwd: "." }); } catch (error) { console.log("caught", error.code); } finally { console.log("finally"); }\nconsole.log("end");\n`,
     ],
   ] as const;
   test.skipIf(!canTrim).concurrent(

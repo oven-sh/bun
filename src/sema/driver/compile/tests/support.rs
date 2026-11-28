@@ -16,7 +16,7 @@ use bun_sema_standalone as _;
 use std::num::NonZeroUsize;
 use std::sync::Once;
 
-pub(super) const PROJECT: &[u8] = b"/project";
+pub(crate) const PROJECT: &[u8] = b"/project";
 
 const TSCONFIG: &str = r#"{
     "compilerOptions": {
@@ -199,7 +199,7 @@ pub(super) fn check_whole_files(program: &TestProgram<'_, '_>) -> CheckedBuild<(
     }
 }
 
-pub(super) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk {
+pub(crate) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk {
     let defaults = [("tsconfig.json", TSCONFIG), ("globals.d.ts", GLOBAL_TYPES)];
     let mut already_read = host::AlreadyRead::default();
     for (path, text) in defaults.iter().chain(files) {
@@ -208,7 +208,7 @@ pub(super) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk
     disk(threads, already_read, PROJECT)
 }
 
-pub(super) fn disk(threads: usize, already_read: host::AlreadyRead, root: &[u8]) -> host::Disk {
+pub(crate) fn disk(threads: usize, already_read: host::AlreadyRead, root: &[u8]) -> host::Disk {
     static OUTPUT: Once = Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
     bun_core::Output::Source::configure_thread_no_js();

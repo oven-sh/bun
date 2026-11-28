@@ -18,6 +18,7 @@ impl Checker<'_, '_> {
         for (_, start, end, problem) in self.files().include_problems_in(file) {
             let at = (file, *start, *end);
             let mut diagnostic = Reported::new(at, problem.code, held(problem.args.clone()));
+            diagnostic.chain_at_error = false;
             let lines = problem
                 .chain
                 .iter()

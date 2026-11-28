@@ -1267,6 +1267,8 @@ fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
         path: Vec::new(),
         start: 0,
         end: 0,
+        utf16_start: None,
+        utf16_end: None,
         has_undefined_range: true,
         line: 0,
         column: 0,
@@ -1284,6 +1286,7 @@ fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
         class: bun_sema::check::aot::DiagnosticClass::Semantic,
         subject: bun_sema::check::aot::DiagnosticSubject::None,
         file: None,
+        chain_at_error: false,
     };
     let (longer, mut shorter) = match before > after {
         true => (pre.diagnostics, post.diagnostics),

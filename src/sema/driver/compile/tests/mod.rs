@@ -1,4 +1,4 @@
-mod support;
+pub(crate) mod support;
 
 mod called_declarations;
 mod check;

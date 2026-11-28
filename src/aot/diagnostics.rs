@@ -289,6 +289,8 @@ pub(crate) fn new_driver_diagnostic(
         path: Vec::new(),
         start: 0,
         end: 0,
+        utf16_start: None,
+        utf16_end: None,
         has_undefined_range: true,
         line: 0,
         column: 0,
@@ -309,6 +311,7 @@ pub(crate) fn new_driver_diagnostic(
         class: COMPILER_DIAGNOSTIC_CLASS,
         subject: DiagnosticSubject::None,
         file: None,
+        chain_at_error: false,
     }
 }
 

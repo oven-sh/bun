@@ -112,6 +112,7 @@ bun_sys_jsc.workspace = true
 bun_libuv_sys.workspace = true
 bun_tcc_sys.workspace = true
 bun_test_schedule.workspace = true
+bun_type_checker.workspace = true
 bun_text_diff.workspace = true
 bun_threading.workspace = true
 bun_trim.workspace = true

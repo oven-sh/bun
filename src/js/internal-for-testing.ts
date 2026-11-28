@@ -115,6 +115,8 @@ export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "th
 
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
+export const typeCheckerSnapshotDataLiveCount = $bindgen("TypeChecker.bind.ts", "snapshotDataLiveCount");
+
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,

@@ -9,7 +9,7 @@ mod queue;
 mod roles;
 mod runtime_json;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod threads;
 
 pub use check::{

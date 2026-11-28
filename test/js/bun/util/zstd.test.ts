@@ -555,13 +555,17 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       /* js */ `
         import { once } from "node:events";
         import { createServer } from "node:net";
-        const plain = Buffer.alloc(11 * 1024 * 1024);
+        // The cap applies to this server too: a socket keeps what the kernel did not take of a
+        // write in a native buffer. So the 11 MiB leave in pieces, each after the one before it.
+        const piece = Buffer.alloc(1024 * 1024);
+        const writePieces = (socket, count) =>
+          count > 0 && socket.write(piece, error => error || writePieces(socket, count - 1));
         const server = createServer(socket =>
           socket.on("error", () => {}).once("data", request => {
             const isPlain = request.includes("/plain");
             const status = request.includes("/error") ? "500 Error" : "200 OK";
             socket.write("HTTP/1.1 " + status + "\\r\\n" + (isPlain ? "" : "Content-Encoding: zstd\\r\\n") + "\\r\\n");
-            if (isPlain) socket.write(plain);
+            if (isPlain) writePieces(socket, 11);
             else socket.end(inputs.zstd);
           }),
         );

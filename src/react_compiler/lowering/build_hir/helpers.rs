@@ -1098,6 +1098,7 @@ fn lower_member_store(
                     object,
                     property: PropertyLiteral::String(StoreStr::new(d.name.slice())),
                     value,
+                    update: None,
                     loc,
                 },
             )
@@ -1128,6 +1129,7 @@ fn lower_member_store(
                         object,
                         property: PropertyLiteral::Number(FloatValue::new(n.value())),
                         value,
+                        update: None,
                         loc,
                     },
                 );
@@ -1139,6 +1141,7 @@ fn lower_member_store(
                     object,
                     property: property_place,
                     value,
+                    update: None,
                     loc,
                 },
             )

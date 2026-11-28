@@ -251,7 +251,7 @@
           {
             "group": "Development Server",
             "icon": "monitor",
-            "pages": ["/bundler/fullstack", "/bundler/hot-reloading"]
+            "pages": ["/bundler/fullstack", "/bundler/bake", "/bundler/hot-reloading"]
           },
           {
             "group": "Asset Processing",

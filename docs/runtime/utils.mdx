@@ -27,7 +27,7 @@ An alias for `process.env`.
 
 ## `Bun.main`
 
-An absolute path to the entrypoint of the current program (the file you executed with `bun run`).
+An absolute path to the entrypoint of the current program (the file you executed with `bun run`). When no file is the entrypoint, as under [`bun bake`](/bundler/bake), `Bun.main` is an empty string.
 
 ```ts script.ts
 Bun.main;

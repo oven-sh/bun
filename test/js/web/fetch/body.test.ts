@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isASAN, isDebug, tempDir, withoutAsanQuarantine } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1292,9 +1292,9 @@ function arrayBuffer(buffer: Bun.BufferSource) {
 // permanently leak the whole body string (the adopted WTF::StringImpl +1 ref
 // was never released), so RSS grew *linearly and never plateaued* across
 // round-trips. The fix mirrors the Zig `defer str.deref()`. This asserts the
-// leak is bounded: after a warmup, a second equal block of round-trips must
-// not keep growing RSS (a linear leak adds ~block-size every block; a bounded
-// impl plateaus). Absolute RSS is intentionally not asserted — only growth.
+// leak is bounded: after a warmup, more round-trips must not grow RSS (a
+// linear leak adds one body per round-trip; a bounded impl plateaus).
+// Absolute RSS is intentionally not asserted — only growth.
 describe.concurrent("string body consumption does not leak", () => {
   // NOTE: `.text()` is intentionally excluded. It produces a large JS string
   // as its result, and discarded large JS strings are currently not reclaimed
@@ -1310,6 +1310,17 @@ describe.concurrent("string body consumption does not leak", () => {
     ["Request.json", "Request", "json"],
   ];
 
+  // Round-trips between forced collections. RSS is read after each collection
+  // and must grow by less than `limit` MB from the first reading to the last.
+  // A leak adds ~2 MB per round-trip.
+  //
+  // ASAN and debug builds are slow, so they do 13 round-trips, not 130. They
+  // collect after each one because libpas (ASAN builds) returns freed pages
+  // to the OS later: RSS after a collection depends on how much it freed.
+  const slow = isASAN || isDebug;
+  const rounds = slow ? Array(13).fill(1) : [90, 40];
+  const limit = slow ? 10 : 50;
+
   for (const [name, ctor, method] of cases) {
     test(name, async () => {
       // We need the *body string* to be large (that's the leaked ref) but the
@@ -1324,31 +1335,28 @@ describe.concurrent("string body consumption does not leak", () => {
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
           : `b => new Response(b)`;
       const src = `
-        const SZ = 2_000_000, WARM = 50, BLOCK = 40;
+        const SZ = 2_000_000;
         const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
         const make = ${make};
         const run = async n => { for (let i = 0; i < n; i++) await make(body())[${JSON.stringify(method)}](); };
-        await run(WARM); Bun.gc(true); const a = mb();
-        await run(BLOCK); Bun.gc(true); const b = mb();
-        await run(BLOCK); Bun.gc(true); const c = mb();
-        console.log("BLOCK1:" + (b - a) + " BLOCK2:" + (c - b));
+        const seen = [];
+        for (const n of ${JSON.stringify(rounds)}) { await run(n); Bun.gc(true); seen.push(mb()); }
+        console.log("GROWTH:" + (seen.at(-1) - seen[0]));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
-        env: bunEnv,
+        env: withoutAsanQuarantine(bunEnv),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
+      const m = stdout.match(/GROWTH:(-?\d+)/);
       expect(m).not.toBeNull();
-      const block2 = Number(m![2]);
-      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ 40 × ~3 MB ≈ 100+ MB
-      // and keeps growing every block. 50 MB cleanly separates the two.
-      expect(block2).toBeLessThan(50);
+      // Bounded: ≈ 0 (plateaued). Leaking: well above `limit`.
+      expect(Number(m![1])).toBeLessThan(limit);
       expect(exitCode).toBe(0);
     });
   }

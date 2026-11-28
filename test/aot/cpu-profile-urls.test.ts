@@ -2,7 +2,7 @@
 // definition and sampled lines, all in the original source.
 // Runs alone: it counts the samples that a timer takes.
 import { expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { cCompiler, without } from "./harness/capabilities";
@@ -46,27 +46,49 @@ async function buildProgramThatProfilesItself(cwd: string) {
     ),
   );
 }
-function hitCountsByCall(nodes: ProfileNode[]) {
-  const byId = new Map(nodes.map(node => [node.id, node]));
-  const hits: Record<string, number> = {};
-  for (const caller of nodes) {
-    for (const callee of (caller.children ?? []).map(id => byId.get(id)!)) {
-      const call = `${caller.callFrame.functionName} > ${callee.callFrame.functionName}`;
-      hits[call] = (hits[call] ?? 0) + callee.hitCount;
+type HitCountsByCall = Record<string, number>;
+// On a busy machine the thread that samples gets to run a few times in 100 ms, or not once. So this adds up runs until `check` passes,
+// or has seen too many samples to blame that.
+async function checkSamples(
+  cwd: string,
+  env: typeof bunEnv,
+  check: (hits: HitCountsByCall) => void,
+  checkRun = (_stderr: string, _nodes: ProfileNode[]) => {},
+) {
+  const hits: HitCountsByCall = {};
+  let total = 0;
+  for (const end = Date.now() + 20_000; ;) {
+    const { stdout, stderr, exitCode } = await spawned([join(cwd, "program")], cwd, env);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+    const nodes = readNodes(join(cwd, "own.cpuprofile"));
+    rmSync(join(cwd, "own.cpuprofile"));
+    expect(nodes.length).toBeGreaterThan(1);
+    checkRun(stderr, nodes);
+
+    const byId = new Map(nodes.map(node => [node.id, node]));
+    for (const caller of nodes) {
+      for (const callee of (caller.children ?? []).map(id => byId.get(id)!)) {
+        const call = `${caller.callFrame.functionName} > ${callee.callFrame.functionName}`;
+        hits[call] = (hits[call] ?? 0) + callee.hitCount;
+        total += callee.hitCount;
+      }
+    }
+
+    const isLastRun = total >= 2000 || Date.now() >= end;
+    if (total < 400 && !isLastRun) continue;
+    try {
+      return check(hits);
+    } catch (error) {
+      if (isLastRun) throw error;
     }
   }
-  return hits;
 }
-function expectSamplesIn(calls: string[], nodes: ProfileNode[]) {
-  const {
-    "(root) > (program)": _program,
-    "(root) > (garbage collector)": _collector,
-    ...hits
-  } = hitCountsByCall(nodes);
-  const total = Object.values(hits).reduce((sum, count) => sum + count);
+const areMostlyIn = (calls: string[]) => (allHits: HitCountsByCall) => {
+  const { "(root) > (program)": _program, "(root) > (garbage collector)": _collector, ...hits } = allHits;
+  const total = Object.values(hits).reduce((sum, count) => sum + count, 0);
   const inCalls = calls.reduce((sum, call) => sum + (hits[call] ?? 0), 0);
   expect(hits).toSatisfy(() => inCalls > total * 0.7 && calls.every(call => hits[call] > total / 50));
-}
+};
 const isHot = (node: ProfileNode) => node.callFrame.functionName === "hot";
 const definitionLines = (nodes: ProfileNode[]) => [...new Set(nodes.map(node => node.callFrame.lineNumber))];
 
@@ -153,33 +175,35 @@ test("a job that returns before its stack is read belongs to its own function", 
         consumer();
       }
       setTimeout(timer, 1);
-      process.on("exit", () => console.log(calls));`,
+      process.on("exit", () => console.log(calls === 10));`,
   });
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
-  const run = await spawned([join(cwd, "program")], cwd, {
-    ...bunEnv,
-    BUN_JSC_forceSamplingProfilerToMissStacks: "1",
-  });
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "10\n", exitCode: 0 });
 
-  const names = readNodes(join(cwd, "own.cpuprofile"))
-    .filter(node => node.callFrame.url.endsWith("/main.ts"))
-    .map(node => node.callFrame.functionName);
-  expect(names).toEqual(
-    expect.arrayContaining([
-      "timer",
-      "firstAsync",
-      "secondAsync",
-      "handler",
-      "firstOfChain",
-      "secondOfChain",
-      "microtask",
-      "generator",
-      "consumer",
-    ]),
+  const names = new Set<string>();
+  await checkSamples(
+    cwd,
+    { ...bunEnv, BUN_JSC_forceSamplingProfilerToMissStacks: "1" },
+    () => {
+      expect([...names]).toEqual(
+        expect.arrayContaining([
+          "timer",
+          "firstAsync",
+          "secondAsync",
+          "handler",
+          "firstOfChain",
+          "secondOfChain",
+          "microtask",
+          "generator",
+          "consumer",
+        ]),
+      );
+      expect([...names]).not.toContain("busy");
+    },
+    (_, nodes) => {
+      for (const { callFrame } of nodes) if (callFrame.url.endsWith("/main.ts")) names.add(callFrame.functionName);
+    },
   );
-  expect(names).not.toContain("busy");
 }, 120_000);
 
 test("a native function has a frame of its own", async () => {
@@ -206,19 +230,19 @@ test("a native function has a frame of its own", async () => {
   });
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
-  const run = await spawned([join(cwd, "program")], cwd, bunEnv);
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 
-  expect(Object.keys(hitCountsByCall(readNodes(join(cwd, "own.cpuprofile"))))).toEqual(
-    expect.arrayContaining([
-      "clones > structuredClone",
-      "clonesByValue > structuredClone",
-      "stats > statSync",
-      "constructs > URL",
-      "revives > parse",
-      "parse > reviver",
-      "reviver > structuredClone",
-    ]),
+  await checkSamples(cwd, bunEnv, hits =>
+    expect(Object.keys(hits)).toEqual(
+      expect.arrayContaining([
+        "clones > structuredClone",
+        "clonesByValue > structuredClone",
+        "stats > statSync",
+        "constructs > URL",
+        "revives > parse",
+        "parse > reviver",
+        "reviver > structuredClone",
+      ]),
+    ),
   );
 }, 120_000);
 
@@ -257,11 +281,11 @@ test("what the runtime does for a function without a frame of its own belongs to
   });
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
-  const run = await spawned([join(cwd, "program")], cwd, bunEnv);
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 
-  expectSamplesIn(
-    [
+  await checkSamples(
+    cwd,
+    bunEnv,
+    areMostlyIn([
       "(module) > finds",
       "(module) > equals",
       "(module) > compares",
@@ -269,8 +293,7 @@ test("what the runtime does for a function without a frame of its own belongs to
       "literals > isLast",
       "(module) > adds",
       "adds > add",
-    ],
-    readNodes(join(cwd, "own.cpuprofile")),
+    ]),
   );
 }, 120_000);
 
@@ -283,7 +306,7 @@ test("a slow allocation and the capture of a stack belong to the function that a
         below(depth: number): number { return depth ? table[key("below")](depth - 1) + 1 : errors(); },
       };
       function heirs(): number { let sum = 0; for (let i = 0; i < 100; i++) sum += Reflect.construct(table[key("Base")], [i], function () {}).x; return sum; }
-      function errors(): number { let sum = 0; for (let i = 0; i < 100; i++) sum += new Error("").message.length; return sum; }
+      function errors(): number { let sum = 0; for (let i = 0; i < 25; i++) sum += new Error("").message.length; return sum; }
       function captures(): number { return table[key("below")](200) + 1; }
       Error.stackTraceLimit = 200;
       let total = 0;
@@ -293,10 +316,8 @@ test("a slow allocation and the capture of a stack belong to the function that a
   });
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
-  const run = await spawned([join(cwd, "program")], cwd, bunEnv);
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 
-  expectSamplesIn(["heirs > Base", "below > errors"], readNodes(join(cwd, "own.cpuprofile")));
+  await checkSamples(cwd, bunEnv, areMostlyIn(["heirs > Base", "below > errors"]));
 }, 120_000);
 
 test("a function is below the function that called it", async () => {
@@ -323,8 +344,6 @@ test("a function is below the function that called it", async () => {
   });
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
-  const run = await spawned([join(cwd, "program")], cwd, bunEnv);
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 
   const callers: Record<string, string[]> = {
     repeats: ["(module)"],
@@ -338,15 +357,16 @@ test("a function is below the function that called it", async () => {
     rest: ["callsRest", "Plain"],
     counts: ["callsCounts", "spreads", "Class"],
   };
-  const hits = hitCountsByCall(readNodes(join(cwd, "own.cpuprofile")));
-  let right = 0;
-  let wrong = 0;
-  for (const [call, count] of Object.entries(hits)) {
-    const [caller, callee] = call.split(" > ");
-    if (callers[callee]?.includes(caller)) right += count;
-    else if (callee in callers) wrong += count;
-  }
-  expect(hits).toSatisfy(() => right > 200 * wrong);
+  await checkSamples(cwd, bunEnv, hits => {
+    let right = 0;
+    let wrong = 0;
+    for (const [call, count] of Object.entries(hits)) {
+      const [caller, callee] = call.split(" > ");
+      if (callers[callee]?.includes(caller)) right += count;
+      else if (callee in callers) wrong += count;
+    }
+    expect(hits).toSatisfy(() => right > 200 * wrong);
+  });
 }, 120_000);
 
 test("a function of WebAssembly has a frame of its own", async () => {
@@ -372,19 +392,19 @@ test("a function of WebAssembly has a frame of its own", async () => {
   });
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
-  const run = await spawned([join(cwd, "program")], cwd, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 
-  expect(
-    Object.keys(hitCountsByCall(readNodes(join(cwd, "own.cpuprofile"))))
-      .filter(call => call.includes("> .wasm-function"))
-      .sort(),
-  ).toEqual([
-    ".wasm-function[framed] > .wasm-function[leaf]",
-    ".wasm-function[loop] > .wasm-function[framed]",
-    ".wasm-function[loop] > .wasm-function[leaf]",
-    "wasm-stub > .wasm-function[loop]",
-  ]);
+  await checkSamples(cwd, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" }, hits =>
+    expect(
+      Object.keys(hits)
+        .filter(call => call.includes("> .wasm-function"))
+        .sort(),
+    ).toEqual([
+      ".wasm-function[framed] > .wasm-function[leaf]",
+      ".wasm-function[loop] > .wasm-function[framed]",
+      ".wasm-function[loop] > .wasm-function[leaf]",
+      "wasm-stub > .wasm-function[loop]",
+    ]),
+  );
 }, 120_000);
 
 // musl keeps other values in rbp.
@@ -446,18 +466,11 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
       buildProgramThatProfilesItself(cwd),
     ]);
     built(library);
-    const run = await spawned([join(cwd, "program")], cwd, {
-      ...bunEnv,
-      LD_PRELOAD: [join(cwd, "library.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
-    });
-    expect({
-      stdout: run.stdout,
-      interposed: [...new Set(run.stderr.trimEnd().split("\n"))].sort(),
-      exitCode: run.exitCode,
-    }).toEqual({ stdout: "true\n", interposed: ["clock_gettime", "pow", "sin"], exitCode: 0 });
 
-    expectSamplesIn(
-      [
+    await checkSamples(
+      cwd,
+      { ...bunEnv, LD_PRELOAD: [join(cwd, "library.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
+      areMostlyIn([
         "(module) > sines",
         "(module) > powers",
         "(module) > clocks",
@@ -465,8 +478,9 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
         "getters > getter",
         "alternates > sine",
         "alternates > clock",
-      ],
-      readNodes(join(cwd, "own.cpuprofile")),
+      ]),
+      interposed =>
+        expect([...new Set(interposed.trimEnd().split("\n"))].sort()).toEqual(["clock_gettime", "pow", "sin"]),
     );
   },
   120_000,

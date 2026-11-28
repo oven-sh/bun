@@ -273,7 +273,7 @@ describe("bun:jsc", () => {
 
     // Keep the JS thread busy for a fixed wall-clock window so the sampler
     // thread is guaranteed time to fire regardless of how fast the JIT makes
-    // fib() or how slowly the sampler thread wakes after start()/pause(). A
+    // fib() or how slowly the sampler thread wakes after start(). A
     // single fib(n) call has no such lower bound: once JIT-compiled, fib(26)
     // can complete inside one 50us sample interval on fast release hardware.
     const work = () => {
@@ -305,7 +305,6 @@ describe("bun:jsc", () => {
     expect(result1.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Second profile call - should work after first one completed
-    // This verifies that shutdown() -> pause() fix works
     const result2 = profileUntilSampled();
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
@@ -326,21 +325,57 @@ describe("bun:jsc", () => {
         bunExe(),
         "-e",
         `const { noInline, profile, samplingProfilerStackTraces, startSamplingProfiler } = require("bun:jsc");
-         const busy = () => { for (const end = performance.now() + 100; performance.now() < end; ); };
-         const functions = [function before() { busy(); }, function inside() { busy(); }, function after() { busy(); }];
+         // At the default interval a debug build takes seconds to write the reports.
+         const interval = 5000;
+         const busy = ms => { for (const end = performance.now() + ms; performance.now() < end; ); };
+         const functions = [function before(ms) { busy(ms); }, function inside(ms) { busy(ms); }, function after(ms) { busy(ms); }];
          functions.forEach(noInline);
          const [before, inside, after] = functions;
          const names = ({ traces }) => functions.map(f => f.name).filter(name => traces.some(trace => trace.frames.some(frame => frame.name === name)));
-         startSamplingProfiler();
-         let inner;
-         const outer = profile(() => (before(), (inner = profile(inside)), after()));
-         console.log(JSON.stringify([inner.stackTraces, outer.stackTraces, samplingProfilerStackTraces()].map(names)));`,
+         startSamplingProfiler(undefined, interval);
+         let result;
+         // On a busy machine the sampler may not run once in the shorter times.
+         for (let ms = 30; ms < 500 && result?.flat().length !== 7; ms *= 4) {
+           let inner;
+           const outer = profile(() => (before(ms), (inner = profile(inside, interval, ms)), after(ms)), interval);
+           result = [inner.stackTraces, outer.stackTraces, samplingProfilerStackTraces()].map(names);
+         }
+         console.log(JSON.stringify(result));`,
       ],
       env: bunEnv,
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual([["inside"], ["before", "inside", "after"], ["before", "inside", "after"]]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.each(["", "async "])("the results of profile(%sfunction) describe the same samples", async kind => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { profile } = require("bun:jsc");
+         const total = report => Number(report.match(/Total samples: (\\d+)/)[1]);
+         let samples = 0;
+         const different = [];
+         // Many times: there are only microseconds between two reports.
+         for (let ms = 0.1, start = performance.now(); performance.now() - start < (samples ? 500 : 2000); ) {
+           const { functions, bytecodes, stackTraces } = await profile(${kind}function () {
+             for (const end = performance.now() + ms; performance.now() < end; );
+           }, 1);
+           const counts = [total(functions), total(bytecodes), stackTraces.traces.length];
+           samples += counts[0];
+           ms = counts[0] ? 0.1 : ms * 2;
+           if (new Set(counts).size > 1) different.push(counts);
+         }
+         console.log(JSON.stringify({ isSampled: samples > 0, different: different.slice(0, 3) }));`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ isSampled: true, different: [] });
     expect(exitCode).toBe(0);
   });
 
@@ -995,5 +1030,27 @@ describe.concurrent("sampling profiler report at exit", () => {
   it("is written on process.exit() when BUN_JSC_samplingProfilerPath is a missing directory", async () => {
     const env = { BUN_JSC_useSamplingProfiler: "1", BUN_JSC_samplingProfilerPath: "missing/profiles" };
     expect(await run(`${work} process.exit(0);`, env)).toEqual(expected);
+  });
+
+  it.skipIf(isWindows)("does not stop the profiler when a signal turns out not to end the process", async () => {
+    const script = `const { samplingProfilerStackTraces, startSamplingProfiler } = require("bun:jsc");
+      startSamplingProfiler("missing/profiles");
+      process.kill(process.pid, "SIGWINCH");
+      samplingProfilerStackTraces();
+      let samples = 0;
+      for (const end = performance.now() + 2000; !samples && performance.now() < end; ) {
+        for (const end = performance.now() + 5; performance.now() < end; );
+        samples = samplingProfilerStackTraces().traces.length;
+      }
+      console.log("done", samples > 0);`;
+    expect(await run(script, { BUN_OPTIONS: "--cpu-prof" })).toEqual(expected);
+  });
+
+  // Builds with assertions aborted.
+  it("is written for a Worker that is terminated", async () => {
+    const worker = `require("bun:jsc").startSamplingProfiler("missing/profiles"); ${work} postMessage(0); for (;;);`;
+    const script = `const worker = new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(worker)}));
+      worker.onmessage = () => worker.terminate();`;
+    expect(await run(script)).toEqual(expected);
   });
 });

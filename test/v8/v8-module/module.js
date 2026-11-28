@@ -54,7 +54,7 @@ module.exports = debugMode => {
       (function next(delay) {
         setTimeout(() => {
           steps.shift()();
-          if (steps.length) next(150);
+          if (steps.length) next(250);
         }, delay);
       })(0);
     },
@@ -64,13 +64,13 @@ module.exports = debugMode => {
       start("outer");
       start("inner");
       // This timer is the wait being profiled.
-      setTimeout(() => (stop("inner"), stop("outer"), nativeModule.dispose_cpu_profiler()), 200);
+      setTimeout(() => (stop("inner"), stop("outer"), nativeModule.dispose_cpu_profiler()), 500);
     },
 
     test_v8_cpu_profiler_max_samples() {
       nativeModule.start_cpu_profile_of_three_samples("profile");
       // This timer is the wait being profiled.
-      setTimeout(() => nativeModule.finish_cpu_profile_and_log_counts(), 300);
+      setTimeout(() => nativeModule.finish_cpu_profile_and_log_counts(), 500);
     },
 
     test_v8_cpu_profiler_program_in_uv_timer() {

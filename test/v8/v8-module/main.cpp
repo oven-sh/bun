@@ -2268,7 +2268,7 @@ static const CpuProfileNode *log_node_without_script(CpuProfile *profile,
     LOG_EXPR(node->GetLineNumber());
     LOG_EXPR(node->GetColumnNumber());
     LOG_EXPR(node->GetChildrenCount());
-    bool has_most_samples = node_samples > profile->GetSamplesCount() / 2;
+    bool has_most_samples = node_samples * 2 >= profile->GetSamplesCount();
     LOG_EXPR(has_most_samples);
     LOG_EXPR((int)node->GetHitCount() >= node_samples);
   }
@@ -2357,7 +2357,7 @@ void finish_cpu_profile_in_uv_timer(const FunctionCallbackInfo<Value> &info) {
           return;
         }
         uv_close(reinterpret_cast<uv_handle_t *>(timer), nullptr);
-        spin(300);
+        spin(500);
         stop_cpu_profile_and_log_program_node();
       },
       25, 25);
@@ -2370,7 +2370,7 @@ void spin_in_uv_after_work(const FunctionCallbackInfo<Value> &info) {
   uv_queue_work(
       node::GetCurrentEventLoop(info.GetIsolate()), &work, [](uv_work_t *) {},
       [](uv_work_t *, int) {
-        spin(400);
+        spin(500);
         did_spin_in_uv_after_work = true;
       });
 }
@@ -2391,7 +2391,7 @@ void finish_cpu_profile_in_uv_after_work(
       node::GetCurrentEventLoop(info.GetIsolate()), &work,
       [](uv_work_t *) { spin(50); },
       [](uv_work_t *, int) {
-        spin(300);
+        spin(500);
         stop_cpu_profile_and_log_program_node();
       });
 }

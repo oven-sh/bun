@@ -913,15 +913,21 @@ test("startCpuProfile() reports the time a worker waits for messages as (idle)",
   });
   try {
     await once(worker, "message");
-    const handle = await worker.startCpuProfile();
-    // The wait being profiled.
-    await Bun.sleep(200);
-    const { nodes, samples, startTime, endTime } = JSON.parse(await handle.stop());
+    let profile, waited;
+    for (let ms = 50; ms < 2000 && !(profile?.samples.length >= 10); ms *= 2) {
+      const handle = await worker.startCpuProfile();
+      const start = performance.now();
+      // The wait being profiled.
+      await Bun.sleep(ms);
+      waited = performance.now() - start;
+      profile = JSON.parse(await handle.stop());
+    }
+    const { nodes, samples, startTime, endTime } = profile;
 
     const idleNode = nodes.find(node => node.callFrame.functionName === "(idle)");
     expect(idleNode?.callFrame).toMatchObject({ functionName: "(idle)", url: "", lineNumber: -1, columnNumber: -1 });
     expect(samples.filter(id => id === idleNode.id).length).toBeGreaterThan(samples.length / 2);
-    expect(endTime - startTime).toBeGreaterThan(190_000);
+    expect((endTime - startTime) / 1000).toBeGreaterThan(waited - 1);
   } finally {
     await worker.terminate();
   }
@@ -930,29 +936,37 @@ test("startCpuProfile() reports the time a worker waits for messages as (idle)",
 test("each handle of startCpuProfile() has a profile and an interval of its own", async () => {
   const worker = new Worker(
     `const { parentPort } = require("worker_threads");
-     const busy = () => { for (const end = performance.now() + 100; performance.now() < end; ); };
-     const functions = { first() { busy(); }, second() { busy(); }, third() { busy(); } };
+     const busy = ms => { for (const end = performance.now() + ms; performance.now() < end; ); };
+     const functions = { first(ms) { busy(ms); }, second(ms) { busy(ms); }, third(ms) { busy(ms); } };
      Object.values(functions).forEach(require("bun:jsc").noInline);
-     parentPort.on("message", name => (functions[name](), parentPort.postMessage(name)));`,
+     parentPort.on("message", ([name, ms]) => (functions[name](ms), parentPort.postMessage(name)));`,
     { eval: true },
   );
-  const call = (name: string) => (worker.postMessage(name), once(worker, "message"));
+  const call = (name: string, ms: number) => (worker.postMessage([name, ms]), once(worker, "message"));
   const names = (profile: string) =>
-    JSON.parse(profile)
-      .nodes.map(node => node.callFrame.functionName)
-      .filter(name => ["first", "second", "third"].includes(name));
+    ["first", "second", "third"].filter(name =>
+      JSON.parse(profile).nodes.some(node => node.callFrame.functionName === name),
+    );
   try {
-    const outer = await worker.startCpuProfile();
-    const slow = await worker.startCpuProfile({ sampleInterval: 60_000 });
-    await call("first");
-    const inner = await worker.startCpuProfile();
-    await call("second");
-    const innerProfile = inner.stop();
-    expect(inner.stop()).toBe(innerProfile);
-    expect([...new Set(names(await innerProfile))]).toEqual(["second"]);
-    await call("third");
-    expect([...new Set(names(await outer.stop()))]).toEqual(["first", "second", "third"]);
-    expect(JSON.parse(await slow.stop()).samples.length).toBeLessThanOrEqual(1);
+    let result;
+    // On a busy machine the sampler may not run once in the shorter times.
+    for (let ms = 30; ms < 500 && !(result?.inner.length && result.outer.length === 3); ms *= 4) {
+      const outer = await worker.startCpuProfile();
+      const slow = await worker.startCpuProfile({ sampleInterval: 60_000 });
+      await call("first", ms);
+      const inner = await worker.startCpuProfile();
+      await call("second", ms);
+      const innerProfile = inner.stop();
+      expect(inner.stop()).toBe(innerProfile);
+      await innerProfile;
+      await call("third", ms);
+      result = {
+        inner: names(await innerProfile),
+        outer: names(await outer.stop()),
+        isSlow: JSON.parse(await slow.stop()).samples.length <= 1,
+      };
+    }
+    expect(result).toEqual({ inner: ["second"], outer: ["first", "second", "third"], isSlow: true });
 
     for (const sampleInterval of [-1, 2 ** 31 / 1000, NaN]) {
       expect(() => worker.startCpuProfile({ sampleInterval })).toThrow(

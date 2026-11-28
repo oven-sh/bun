@@ -1022,8 +1022,11 @@ extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
         JSC::JSLockHolder locker(*vm);
         // A terminated Worker has a pending termination exception, and the report's DeferTermination asserts there isn't one.
         JSC::SuspendExceptionScope suspendExceptions(*vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*vm);
         profiler->reportTopFunctions(report);
         profiler->reportTopBytecodes(report);
+        // That DeferTermination throws on its way out if termination was requested, and SuspendExceptionScope expects none to be left.
+        scope.clearException();
     }
     *out = Bun::toStringRef(report.toString()).leak();
 }

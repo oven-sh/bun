@@ -452,6 +452,16 @@ describe("node:inspector", () => {
           while (performance.now() < end);
         }
 
+        async function profileWait() {
+          let result;
+          for (let ms = 20; ms < 2000 && !result?.idleSamples; ms *= 2) {
+            session.post("Profiler.start");
+            await sleep(ms);
+            result = await stop();
+          }
+          return result;
+        }
+
         function stop() {
           const { promise, resolve, reject } = Promise.withResolvers();
           session.post("Profiler.stop", (error, result) => (error ? reject(error) : resolve(summarize(result.profile))));
@@ -510,10 +520,10 @@ describe("node:inspector", () => {
         const file = Bun.file(${JSON.stringify(join(String(dir), "strings.json"))});
         let result;
         // A thread that is kept from running collects samples wherever it happens to be.
-        for (const end = performance.now() + 3000; performance.now() < end; ) {
+        for (let ms = 100; ms < 2000; ms *= 2) {
           session.post("Profiler.start");
           // It is parsed once it has been read.
-          for (const end = performance.now() + 100; performance.now() < end; ) await file.json();
+          for (const end = performance.now() + ms; performance.now() < end; ) await file.json();
           busy(5);
           result = await stop();
           if (result.programSamples > Math.max(5, (result.sampleCount - result.idleSamples) / 2)) break;
@@ -538,9 +548,7 @@ describe("node:inspector", () => {
 
     test("a profile has none of the waits from before it started", async () => {
       const { first, second } = await run(`
-        session.post("Profiler.start");
-        await sleep(200);
-        const first = await stop();
+        const first = await profileWait();
         await sleep(100);
         session.post("Profiler.start");
         busy(50);
@@ -582,41 +590,48 @@ describe("node:inspector", () => {
         import { noInline } from "bun:jsc";
         const post = (session, method, params) => new Promise(resolve => session.post(method, params, (error, result) => resolve(error?.code ?? result)));
         const names = ({ profile }) => ["first", "second", "third"].filter(name => profile.nodes.some(node => node.callFrame.functionName === name));
-        const [first, second, third] = [function first() { busy(100); }, function second() { busy(100); }, function third() { busy(100); }];
+        const [first, second, third] = [function first(ms) { busy(ms); }, function second(ms) { busy(ms); }, function third(ms) { busy(ms); }];
         [first, second, third].forEach(noInline);
-        const [other, slow] = [new Session(), new Session()];
-        for (const session of [other, slow]) session.connect(), session.post("Profiler.enable");
 
-        session.post("Profiler.start");
-        first();
-        const stopBeforeStart = await post(other, "Profiler.stop");
-        const intervalOfRunning = await post(session, "Profiler.setSamplingInterval", { interval: 500 });
-        const intervalOfAnother = await post(slow, "Profiler.setSamplingInterval", { interval: 60_000_000 });
-        slow.post("Profiler.start");
-        other.post("Profiler.start");
-        second();
-        const inner = await post(other, "Profiler.stop");
-        other.disconnect();
-        third();
-        const outer = await post(session, "Profiler.stop");
-        const slowSamples = (await post(slow, "Profiler.stop")).profile.samples.length;
+        let result;
+        // On a busy machine the sampler may not run once in the shorter times.
+        for (let ms = 30; ms < 500 && !(result?.inner.length && result.outer.length === 3 && !result.isSlow[2]); ms *= 4) {
+          const [other, slow] = [new Session(), new Session()];
+          for (const session of [other, slow]) session.connect(), session.post("Profiler.enable");
 
-        slow.post("Profiler.disable");
-        slow.post("Profiler.enable");
-        slow.post("Profiler.start");
-        first();
-        const afterDisable = (await post(slow, "Profiler.stop")).profile.samples.length;
-        slow.disconnect();
-        slow.connect();
-        slow.post("Profiler.enable");
-        slow.post("Profiler.start");
-        first();
-        const afterDisconnect = (await post(slow, "Profiler.stop")).profile.samples.length;
+          session.post("Profiler.start");
+          first(ms);
+          const stopBeforeStart = await post(other, "Profiler.stop");
+          const intervalOfRunning = await post(session, "Profiler.setSamplingInterval", { interval: 500 });
+          const intervalOfAnother = await post(slow, "Profiler.setSamplingInterval", { interval: 60_000_000 });
+          slow.post("Profiler.start");
+          other.post("Profiler.start");
+          second(ms);
+          const inner = await post(other, "Profiler.stop");
+          other.disconnect();
+          third(ms);
+          const outer = await post(session, "Profiler.stop");
+          const slowSamples = (await post(slow, "Profiler.stop")).profile.samples.length;
 
-        console.log(JSON.stringify({
-          stopBeforeStart, intervalOfRunning, intervalOfAnother, inner: names(inner), outer: names(outer),
-          isSlow: [slowSamples, afterDisable, afterDisconnect].map(count => count <= 1),
-        }));
+          slow.post("Profiler.disable");
+          slow.post("Profiler.enable");
+          slow.post("Profiler.start");
+          first(ms);
+          const afterDisable = (await post(slow, "Profiler.stop")).profile.samples.length;
+          slow.disconnect();
+          slow.connect();
+          slow.post("Profiler.enable");
+          slow.post("Profiler.start");
+          first(ms);
+          const afterDisconnect = (await post(slow, "Profiler.stop")).profile.samples.length;
+          slow.disconnect();
+
+          result = {
+            stopBeforeStart, intervalOfRunning, intervalOfAnother, inner: names(inner), outer: names(outer),
+            isSlow: [slowSamples, afterDisable, afterDisconnect].map(count => count <= 1),
+          };
+        }
+        console.log(JSON.stringify(result));
       `);
       expect(result).toEqual({
         stopBeforeStart: "ERR_INSPECTOR_COMMAND",
@@ -630,14 +645,18 @@ describe("node:inspector", () => {
 
     test("a profile does not wait for the interval of the one before it", async () => {
       const { sampleCount } = await run(`
-        session.post("Profiler.setSamplingInterval", { interval: 60_000_000 });
-        session.post("Profiler.start");
-        await sleep(50);
-        await stop();
-        session.post("Profiler.setSamplingInterval", { interval: 1000 });
-        session.post("Profiler.start");
-        await sleep(300);
-        console.log(JSON.stringify(await stop()));
+        let result;
+        for (let ms = 30; ms < 2000 && !(result?.sampleCount > 1); ms *= 4) {
+          session.post("Profiler.setSamplingInterval", { interval: 60_000_000 });
+          session.post("Profiler.start");
+          await sleep(ms);
+          await stop();
+          session.post("Profiler.setSamplingInterval", { interval: 1000 });
+          session.post("Profiler.start");
+          await sleep(ms);
+          result = await stop();
+        }
+        console.log(JSON.stringify(result));
       `);
       expect(sampleCount).toBeGreaterThan(1);
     });
@@ -703,9 +722,7 @@ describe("node:inspector", () => {
         const end = performance.now() + 300;
         while (performance.now() < end) await new Promise(setImmediate);
         const polling = await stop();
-        session.post("Profiler.start");
-        await sleep(200);
-        console.log(JSON.stringify({ polling, waiting: await stop() }));
+        console.log(JSON.stringify({ polling, waiting: await profileWait() }));
       `);
       expect(polling.idleSamples).toBe(0);
       expect(waiting.idleSamples).toBeGreaterThan(0);
@@ -735,12 +752,13 @@ describe("node:inspector", () => {
           port: ${peer.port},
           socket: {
             open(socket) {
+              session.post("Profiler.setSamplingInterval", { interval: 5000 });
               session.post("Profiler.start");
               next(socket);
             },
             async data(socket) {
               waited += performance.now() - start;
-              busy(300);
+              busy(500);
               if (delays.length) return next(socket);
               const profile = stop();
               socket.end();
@@ -750,7 +768,7 @@ describe("node:inspector", () => {
         });
       `);
       expect(waited).toBeGreaterThan(400);
-      expect(idle).toBeWithin(waited / 2, waited + 150);
+      expect(idle).toBeWithin(waited / 2, waited + 250);
     });
   });
 

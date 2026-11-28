@@ -746,6 +746,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
                             JSC::JSGlobalObject* globalObject) -> JSC::JSValue {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+        {
+            Locker locker { samplingProfiler->getLock() };
+            samplingProfiler->pause();
+        }
+
         StringPrintStream topFunctions;
         samplingProfiler->reportTopFunctions(topFunctions);
 

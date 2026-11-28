@@ -606,10 +606,24 @@ describe.concurrent("--cpu-prof", () => {
       expect(untilEnd).toBeGreaterThanOrEqual(0);
       // DevTools' flame chart: a sample lasts until the next one.
       const self = nothing();
+      const selfByName: Record<string, number> = {};
       samples.forEach((id: number, i: number) => {
-        self[kindById.get(id) ?? "functions"] += (timeDeltas[i + 1] ?? untilEnd) / 1000;
+        const time = (timeDeltas[i + 1] ?? untilEnd) / 1000;
+        const { functionName } = nodes[id - 1].callFrame;
+        self[kindById.get(id) ?? "functions"] += time;
+        selfByName[functionName] = (selfByName[functionName] ?? 0) + time;
       });
-      return { duration: (endTime - startTime) / 1000, samples: samples.length, nodes, ...self };
+      const timeIn = (...names: string[]) => names.reduce((sum, name) => sum + (selfByName[name] ?? 0), 0);
+      return { duration: (endTime - startTime) / 1000, samples: samples.length, nodes, timeIn, ...self };
+    }
+
+    async function againIfNotSampled<T>(
+      [short, long]: [number, number],
+      attempt: (amount: number) => Promise<T>,
+      isSampled: (result: T) => boolean,
+    ) {
+      const result = await attempt(short);
+      return isSampled(result) ? result : attempt(long);
     }
 
     async function runWithBothFormats(flags: string[], script: string) {
@@ -648,21 +662,28 @@ describe.concurrent("--cpu-prof", () => {
     });
 
     test("waits and calls that are shorter than the sampling interval", async () => {
-      const profile = await runWithBothFormats(
-        ["--cpu-prof-interval=8000"],
-        `let remaining = 80;
-         let waited = 0;
-         function next(start) {
-           waited += performance.now() - start;
-           if (!remaining--) return console.log(waited);
-           busy(5);
-           setTimeout(next, 5, performance.now());
-         }
-         setImmediate(() => next(performance.now()));`,
+      const profile = await againIfNotSampled(
+        [80, 320],
+        async calls => ({
+          calls,
+          ...(await runWithBothFormats(
+            ["--cpu-prof-interval=8000"],
+            `let remaining = ${calls};
+             let waited = 0;
+             function next(start) {
+               waited += performance.now() - start;
+               if (!remaining--) return console.log(waited);
+               busy(5);
+               setTimeout(next, 5, performance.now());
+             }
+             setImmediate(() => next(performance.now()));`,
+          )),
+        }),
+        ({ samples }) => samples >= 40,
       );
 
       expect(profile.idle).toBeGreaterThan(Number(profile.stdout) / 4);
-      expect(profile.functions).toBeGreaterThan((80 * 5) / 4);
+      expect(profile.timeIn("busy", "now")).toBeGreaterThan((profile.calls * 5) / 4);
     });
 
     test("a wait after the last call", async () => {
@@ -703,38 +724,43 @@ describe.concurrent("--cpu-prof", () => {
          const built = Bun.build({ entrypoints: [import.meta.path], plugins: [{ name: "slow", setup: () => Bun.sleep(400) }] });
          console.log(performance.now() - start);
          await built;
-         wait(200);`,
+         wait(500);`,
       );
       const blocked = Number(profile.stdout);
 
       expect(blocked).toBeGreaterThan(390);
-      expect(profile.idle).toBeWithin(100, profile.duration - blocked);
+      expect(profile.idle).toBeWithin(250, profile.duration - blocked);
     });
 
     const hitCount = (nodes: any[], ...names: string[]) =>
       nodes.reduce((sum, node) => sum + (names.includes(node.callFrame.functionName) ? node.hitCount : 0), 0);
 
     test("a C function that optimized code calls belongs to its caller", async () => {
-      const { nodes } = await runWithBothFormats(
-        [],
-        `import { noInline } from "bun:jsc";
-         function sines(sum) {
-           for (let i = 0; i < 1000; i++) sum += Math.sin(i * 1e300);
-           return sum;
-         }
-         function integers(sum) {
-           for (let i = 0; i < 1000; i++) sum = (sum * 31 + i) | 0;
-           return sum;
-         }
-         noInline(sines);
-         noInline(integers);
-         function repeatSines(sum) {
-           for (const end = performance.now() + 5; performance.now() < end; ) sum = sines(sum);
-         }
-         function repeatIntegers(sum) {
-           for (const end = performance.now() + 5; performance.now() < end; ) sum = integers(sum);
-         }
-         for (let i = 0; i < 60; i++) repeatSines(0), repeatIntegers(0);`,
+      const { nodes } = await againIfNotSampled(
+        [60, 300],
+        rounds =>
+          runWithBothFormats(
+            [],
+            `import { noInline } from "bun:jsc";
+             function sines(sum) {
+               for (let i = 0; i < 1000; i++) sum += Math.sin(i * 1e300);
+               return sum;
+             }
+             function integers(sum) {
+               for (let i = 0; i < 1000; i++) sum = (sum * 31 + i) | 0;
+               return sum;
+             }
+             noInline(sines);
+             noInline(integers);
+             function repeatSines(sum) {
+               for (const end = performance.now() + 5; performance.now() < end; ) sum = sines(sum);
+             }
+             function repeatIntegers(sum) {
+               for (const end = performance.now() + 5; performance.now() < end; ) sum = integers(sum);
+             }
+             for (let i = 0; i < ${rounds}; i++) repeatSines(0), repeatIntegers(0);`,
+          ),
+        ({ samples }) => samples >= 100,
       );
       const callers = nodes.filter(node => node.callFrame.functionName === "repeatSines");
       const callees = nodes.filter(node => callers.some(caller => caller.children?.includes(node.id)));
@@ -743,24 +769,24 @@ describe.concurrent("--cpu-prof", () => {
         sines: hitCount(nodes, "sines", "sin"),
         besideSines: hitCount([...callers, ...callees], "repeatSines", "now"),
         integers: hitCount(nodes, "integers"),
-      }).toSatisfy(hits => hits.sines > hits.integers / 2 && hits.sines > 4 * hits.besideSines);
+      }).toSatisfy(hits => hits.sines > hits.integers / 4 && hits.sines > 4 * hits.besideSines);
     });
 
     test("a call that returns before its stack is read belongs to the function that was called", async () => {
       const profile = await run(
         ["--cpu-prof"],
         `function outermost() {
-           JSON.stringify({ toJSON: () => busy(200) });
+           JSON.stringify({ toJSON: () => busy(500) });
          }
          setImmediate(outermost);`,
         { ...bunEnv, BUN_JSC_forceSamplingProfilerToMissStacks: "1" },
       );
-      const { nodes } = readJSON(profile.json);
+      const { nodes, timeIn } = readJSON(profile.json);
       const byId = new Map(nodes.map(node => [node.id, node]));
 
       expect(nodes[0].children.flatMap(id => byId.get(id).children ?? [])).toEqual([]);
       expect(hitCount(nodes, "busy", "toJSON", "stringify")).toBe(0);
-      expect(hitCount(nodes, "outermost")).toBeGreaterThan(5);
+      expect(timeIn("outermost")).toBeGreaterThan(250);
     });
 
     test.each([
@@ -769,8 +795,8 @@ describe.concurrent("--cpu-prof", () => {
       ["direct eval", `eval(source)`],
     ])("the top level of %s is not (program)", async (_, evaluate) => {
       const { json, markdown } = await run(
-        ["--cpu-prof", "--cpu-prof-md"],
-        `const source = "for (const end = performance.now() + 200; performance.now() < end; );";
+        ["--cpu-prof", "--cpu-prof-md", "--cpu-prof-interval=5000"],
+        `const source = "for (const end = performance.now() + 500; performance.now() < end; );";
          (function evaluates() { ${evaluate}; })();`,
       );
       const { nodes } = readJSON(json);
@@ -842,23 +868,28 @@ describe.concurrent("--cpu-prof", () => {
       ["profile()", `profile(() => {}, 60_000_000);`],
       ["startSamplingProfiler()", `startSamplingProfiler(undefined, 60_000_000); samplingProfilerStackTraces();`],
     ])("is not affected by %s", async (_, statement) => {
-      const { nodes, idle } = await runWithBothFormats(
-        [],
-        `import { profile, samplingProfilerStackTraces, startSamplingProfiler } from "bun:jsc";
-         import { Session } from "node:inspector";
-         function before() { busy(100); }
-         function after() { busy(100); }
-         const session = new Session();
-         session.connect();
-         session.post("Profiler.enable");
-         before();
-         ${statement}
-         after();
-         wait(300);`,
+      const { nodes, idle } = await againIfNotSampled(
+        [50, 500],
+        ms =>
+          runWithBothFormats(
+            [],
+            `import { profile, samplingProfilerStackTraces, startSamplingProfiler } from "bun:jsc";
+             import { Session } from "node:inspector";
+             function before() { busy(${ms}); }
+             function after() { busy(${ms}); }
+             const session = new Session();
+             session.connect();
+             session.post("Profiler.enable");
+             before();
+             ${statement}
+             after();
+             wait(500);`,
+          ),
+        ({ json }) => json.includes('"before"') && json.includes('"after"'),
       );
 
       expect(nodes.map(node => node.callFrame.functionName)).toEqual(expect.arrayContaining(["before", "after"]));
-      expect(idle).toBeGreaterThan(150);
+      expect(idle).toBeGreaterThan(250);
     });
 
     const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");

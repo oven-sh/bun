@@ -53,17 +53,17 @@ async function checkSamples(
   cwd: string,
   env: typeof bunEnv,
   check: (hits: HitCountsByCall) => void,
-  checkRun = (_stderr: string, _nodes: ProfileNode[]) => {},
+  onRun = (_: ProfileNode[]) => {},
 ) {
   const hits: HitCountsByCall = {};
   let total = 0;
   for (const end = Date.now() + 20_000; ;) {
-    const { stdout, stderr, exitCode } = await spawned([join(cwd, "program")], cwd, env);
+    const { stdout, exitCode } = await spawned([join(cwd, "program")], cwd, env);
     expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
     const nodes = readNodes(join(cwd, "own.cpuprofile"));
     rmSync(join(cwd, "own.cpuprofile"));
     expect(nodes.length).toBeGreaterThan(1);
-    checkRun(stderr, nodes);
+    onRun(nodes);
 
     const byId = new Map(nodes.map(node => [node.id, node]));
     for (const caller of nodes) {
@@ -83,12 +83,21 @@ async function checkSamples(
     }
   }
 }
-const areMostlyIn = (calls: string[]) => (allHits: HitCountsByCall) => {
-  const { "(root) > (program)": _program, "(root) > (garbage collector)": _collector, ...hits } = allHits;
-  const total = Object.values(hits).reduce((sum, count) => sum + count, 0);
-  const inCalls = calls.reduce((sum, call) => sum + (hits[call] ?? 0), 0);
-  expect(hits).toSatisfy(() => inCalls > total * 0.7 && calls.every(call => hits[call] > total / 50));
-};
+// The steps take about as long as one another. A sample whose stack could not be read goes to (module).
+const areMostlyIn =
+  (...steps: string[][]) =>
+  (allHits: HitCountsByCall) => {
+    const { "(root) > (program)": _program, "(root) > (garbage collector)": _collector, ...hits } = allHits;
+    const sum = (calls: string[]) => calls.reduce((sum, call) => sum + (hits[call] ?? 0), 0);
+    const total = sum(Object.keys(hits));
+    expect(hits).toSatisfy(
+      () =>
+        sum(steps.flat()) > total * 0.7 &&
+        sum(["(root) > (module)"]) < total / 10 &&
+        steps.every(calls => sum(calls) > total / steps.length / 3) &&
+        steps.flat().every(call => hits[call] > total / 50),
+    );
+  };
 const isHot = (node: ProfileNode) => node.callFrame.functionName === "hot";
 const definitionLines = (nodes: ProfileNode[]) => [...new Set(nodes.map(node => node.callFrame.lineNumber))];
 
@@ -200,7 +209,7 @@ test("a job that returns before its stack is read belongs to its own function", 
       );
       expect([...names]).not.toContain("busy");
     },
-    (_, nodes) => {
+    nodes => {
       for (const { callFrame } of nodes) if (callFrame.url.endsWith("/main.ts")) names.add(callFrame.functionName);
     },
   );
@@ -265,7 +274,7 @@ test("what the runtime does for a function without a frame of its own belongs to
       function equals(): number { let sum = 0; const a = table[key("text")], b = table[key("same")]; for (let i = 0; i < 100; i++) sum += +(a === b); return sum; }
       function compares(): number { let sum = 0; const a = table[key("text")], b = table[key("other")]; for (let i = 0; i < 100; i++) sum += +(a < b); return sum; }
       function getters(): number { let sum = 0; for (let i = 0; i < 100; i++) sum += table[key("getter")]; return sum; }
-      function literals(): number { let sum = 0; const isLast = table[key("isLast")]; for (const item of names) sum += +isLast(item); return sum; }
+      function literals(): number { let sum = 0; const isLast = table[key("isLast")]; for (let i = 0; i < 10; i++) for (const item of names) sum += +isLast(item); return sum; }
       function adds(): number {
         let sum = 0;
         for (let i = 0; i < 10; i++) {
@@ -275,8 +284,9 @@ test("what the runtime does for a function without a frame of its own belongs to
         return sum;
       }
       let total = 0;
+      // Where the clock is a system call, a signal that is on its way is delivered at the end of it.
       for (const step of [finds, equals, compares, getters, literals, adds])
-        for (const end = Date.now() + 200; Date.now() < end; ) total += step();
+        for (const end = Date.now() + 200; Date.now() < end; ) for (let i = 0; i < 8; i++) total += step();
       console.log(total > 0);`,
   });
   const cwd = String(dir);
@@ -285,15 +295,14 @@ test("what the runtime does for a function without a frame of its own belongs to
   await checkSamples(
     cwd,
     bunEnv,
-    areMostlyIn([
-      "(module) > finds",
-      "(module) > equals",
-      "(module) > compares",
-      "getters > getter",
-      "literals > isLast",
-      "(module) > adds",
-      "adds > add",
-    ]),
+    areMostlyIn(
+      ["(module) > finds"],
+      ["(module) > equals"],
+      ["(module) > compares"],
+      ["getters > getter"],
+      ["literals > isLast"],
+      ["(module) > adds", "adds > add"],
+    ),
   );
 }, 120_000);
 
@@ -317,7 +326,7 @@ test("a slow allocation and the capture of a stack belong to the function that a
   const cwd = String(dir);
   await buildProgramThatProfilesItself(cwd);
 
-  await checkSamples(cwd, bunEnv, areMostlyIn(["heirs > Base", "below > errors"]));
+  await checkSamples(cwd, bunEnv, areMostlyIn(["heirs > Base"], ["below > errors"]));
 }, 120_000);
 
 test("a function is below the function that called it", async () => {
@@ -329,7 +338,7 @@ test("a function is below the function that called it", async () => {
         counts() { return arguments.length; },
         Plain: function Plain(this: any, x: number) { this.x = table[key("rest")](x); },
         Class: class Class { x: number; constructor(x: number) { this.x = table[key("counts")](x); } },
-        repeats(step: (x: number) => number) { let sum = 0; for (let i = 0; i < 1000; i++) sum += step(i); return sum; },
+        repeats(step: (x: number) => number) { let sum = 0; for (let i = 0; i < 10_000; i++) sum += step(i); return sum; },
       };
       const list = [1, 2];
       function callsRest(x: number): number { return table[key("rest")](x, x) + 1; }
@@ -417,16 +426,15 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
         #include <dlfcn.h>
         #include <math.h>
         #include <time.h>
-        #include <unistd.h>
 
         static void spin(void) {
-          long count = 2000;
+          long count = 20000;
           __asm__ volatile("xor %%ebp, %%ebp\\n1: dec %0\\njnz 1b" : "+b"(count) : : "rbp", "cc");
         }
 
         #define SPIN_AND_CALL(name, ...) \\
           static __typeof__(name) *next; \\
-          if (!next) next = dlsym(RTLD_NEXT, #name), write(2, #name "\\n", sizeof #name); \\
+          if (!next) next = dlsym(RTLD_NEXT, #name); \\
           spin(); \\
           return next(__VA_ARGS__)
 
@@ -452,9 +460,13 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
           return sum;
         }
         let total = 0;
-        for (const step of [sines, powers, clocks, dates, getters, alternates])
-          for (const end = Date.now() + 100; Date.now() < end; ) total += step();
-        console.log(total > 0);`,
+        let spinsInEveryStep = true;
+        for (const step of [sines, powers, clocks, dates, getters, alternates]) {
+          let rounds = 0;
+          for (const end = Date.now() + 100; Date.now() < end; rounds++) total += step();
+          spinsInEveryStep &&= rounds < 1000;
+        }
+        console.log(total > 0 && spinsInEveryStep);`,
     });
     const cwd = String(dir);
     const [library] = await Promise.all([
@@ -470,17 +482,14 @@ test.skipIf(!isLinux || process.arch !== "x64" || !!without("a C compiler"))(
     await checkSamples(
       cwd,
       { ...bunEnv, LD_PRELOAD: [join(cwd, "library.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
-      areMostlyIn([
-        "(module) > sines",
-        "(module) > powers",
-        "(module) > clocks",
-        "dates > Date",
-        "getters > getter",
-        "alternates > sine",
-        "alternates > clock",
-      ]),
-      interposed =>
-        expect([...new Set(interposed.trimEnd().split("\n"))].sort()).toEqual(["clock_gettime", "pow", "sin"]),
+      areMostlyIn(
+        ["(module) > sines"],
+        ["(module) > powers"],
+        ["(module) > clocks"],
+        ["dates > Date"],
+        ["getters > getter"],
+        ["alternates > sine", "alternates > clock"],
+      ),
     );
   },
   120_000,

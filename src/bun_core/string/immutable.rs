@@ -2340,6 +2340,7 @@ pub fn decode_utf8_alloc(bytes: &[u8], fail_if_invalid: bool) -> Result<DecodedU
     }
 }
 
+#[inline(always)]
 fn non_ascii_to_utf16_alloc(
     bytes: &[u8],
     fail_if_invalid: bool,

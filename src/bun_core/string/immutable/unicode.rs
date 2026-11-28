@@ -666,16 +666,64 @@ pub enum DecodedUtf8 {
 }
 
 /// `None` unless `bytes` is valid UTF-8 without a code point above U+00FF, and there is memory for the result.
+#[inline(always)]
 pub(super) fn utf8_to_latin1(bytes: &[u8], first_non_ascii_idx: usize) -> Option<Vec<u8>> {
+    debug_assert!(bytes[..first_non_ascii_idx].is_ascii());
+    match bytes.get(first_non_ascii_idx) {
+        // `None` if the caller has cut the lead byte off.
+        None | Some(0xC2 | 0xC3) => non_ascii_utf8_to_latin1(bytes, first_non_ascii_idx),
+        Some(_) => None,
+    }
+}
+
+#[inline(never)]
+fn non_ascii_utf8_to_latin1(bytes: &[u8], first_non_ascii_idx: usize) -> Option<Vec<u8>> {
     const FIRST_LEAD_BYTE_ABOVE_LATIN1: u8 = 0xC4;
+    /// Up to here a loop is faster than the calls of simdutf.
+    const MAX_SHORT: usize = 64;
     let fits =
         |chunk: &[u8]| chunk.iter().fold(0u8, |a, &b| a.max(b)) < FIRST_LEAD_BYTE_ABOVE_LATIN1;
-    if !bytes[first_non_ascii_idx..].chunks(256).all(fits) {
+    let (ascii, rest) = bytes.split_at(first_non_ascii_idx);
+    if !rest.chunks(256).all(fits) {
         return None;
     }
-    let input = WithUtf16Len::utf8(bytes);
     let mut out = Vec::new();
-    out.try_reserve_exact(input.utf16_len().max(1)).ok()?;
+    if rest.len() <= MAX_SHORT {
+        let mut decoded = [0u8; MAX_SHORT];
+        let mut len = 0;
+        let mut at = 0;
+        while at < rest.len() {
+            if let Some(word) = rest[at..].first_chunk::<8>()
+                && u64::from_ne_bytes(*word) & 0x8080_8080_8080_8080 == 0
+            {
+                decoded[len..len + 8].copy_from_slice(word);
+                at += 8;
+                len += 8;
+                continue;
+            }
+            let byte = rest[at];
+            at += 1;
+            decoded[len] = if byte < 0x80 {
+                byte
+            } else {
+                let next = rest.get(at).copied().unwrap_or(0);
+                if byte < 0xC2 || next & 0xC0 != 0x80 {
+                    return None;
+                }
+                at += 1;
+                (byte << 6) | (next & 0x3F)
+            };
+            len += 1;
+        }
+        out.try_reserve_exact(ascii.len() + len).ok()?;
+        out.extend_from_slice(ascii);
+        out.extend_from_slice(&decoded[..len]);
+        return Some(out);
+    }
+    let input = WithUtf16Len::utf8(rest);
+    out.try_reserve_exact(ascii.len() + input.utf16_len())
+        .ok()?;
+    out.extend_from_slice(ascii);
     crate::vec::append_with(&mut out, usize::MAX, |out| {
         simdutf::convert::utf8::to::latin1_with_errors(input, out)
     })
@@ -686,10 +734,9 @@ pub(super) fn utf8_to_latin1(bytes: &[u8], first_non_ascii_idx: usize) -> Option
 pub fn decode_utf8_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
 ) -> Result<(DecodedUtf8, [u8; 3], u8), ToUTF16Error> {
-    let Some(first_non_ascii_idx) = first_non_ascii(bytes) else {
+    let Some(first_non_ascii_idx) = super::first_non_ascii_usize(bytes) else {
         return Ok((DecodedUtf8::Ascii, [0; 3], 0));
     };
-    let first_non_ascii_idx = first_non_ascii_idx as usize;
     let (whole, buffered, buffered_len) = match bytes {
         [whole @ .., lead @ (0xC2 | 0xC3)] if !FLUSH => (whole, [*lead, 0, 0], 1),
         _ => (bytes, [0; 3], 0),

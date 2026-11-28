@@ -1105,20 +1105,11 @@ pub mod waiter_thread_posix {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                // SAFETY: sigaction with a valid handler.
-                unsafe {
-                    let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut current_mask);
-                    libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
-                    let act = libc::sigaction {
-                        sa_sigaction: wakeup as *const () as usize,
-                        sa_mask: current_mask,
-                        // Not everything retries after EINTR: an addon, `bun:ffi`, LeakSanitizer.
-                        sa_flags: libc::SA_NOCLDSTOP | libc::SA_RESTART,
-                        sa_restorer: None,
-                    };
-                    libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());
-                }
+                // Not everything retries after EINTR: an addon, `bun:ffi`, LeakSanitizer.
+                let flags = libc::SA_NOCLDSTOP | libc::SA_RESTART;
+                let action = bun_core::signal::Action::call(wakeup, flags).blocking(libc::SIGCHLD);
+                // SAFETY: the handler only writes to an eventfd.
+                unsafe { action.install(libc::SIGCHLD) };
             }
         }
     }
@@ -1162,13 +1153,8 @@ pub mod waiter_thread_posix {
             }
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
-                // SAFETY: sigwait with a valid (empty) mask.
-                unsafe {
-                    let mut mask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut mask);
-                    let mut signal: c_int = libc::SIGCHLD;
-                    let _rc = libc::sigwait(&raw const mask, &raw mut signal);
-                }
+                let mut signal = libc::SIGCHLD;
+                let _rc = bun_core::signal::sigwait(&bun_core::signal::empty_set(), &mut signal);
             }
         }
     }
@@ -2180,6 +2166,8 @@ mod spawn_process_body {
         };
         #[cfg(any(target_os = "linux", target_os = "android"))]
         use bun_sys::linux::{PrctlOp, prctl};
+        #[cfg(unix)]
+        use bun_sys::posix::{getpgrp, tcgetpgrp, tcsetpgrp};
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
@@ -2218,22 +2206,9 @@ mod spawn_process_body {
             script_pgid: libc::pid_t,
         }
 
-        #[cfg(unix)]
-        unsafe extern "C" {
-            // All by-value c_int/pid_t args; the kernel validates fd/pid/signal —
-            // no memory-safety preconditions, so `safe fn` (Rust 2024) discharges
-            // the link-time proof here and callers need no unsafe block.
-            safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
-            safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
-            safe fn getpgrp() -> libc::pid_t;
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-            safe fn getppid() -> libc::pid_t;
-            safe fn isatty(fd: c_int) -> c_int;
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-            safe fn raise(sig: c_int) -> c_int;
-            /// No args; returns -1/errno on failure. macOS-only caller below.
-            #[cfg(target_os = "macos")]
-            safe fn kqueue() -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        fn getppid() -> libc::pid_t {
+            std::os::unix::process::parent_id().cast_signed()
         }
 
         #[cfg(unix)]
@@ -2245,10 +2220,10 @@ mod spawn_process_body {
 
             fn give(&mut self, pgid: libc::pid_t) {
                 self.script_pgid = pgid;
-                if isatty(0) == 0 {
+                if !bun_sys::isatty(Fd::stdin()) {
                     return;
                 }
-                let fg = tcgetpgrp(0);
+                let fg = tcgetpgrp(Fd::stdin());
                 // Only take the terminal if we *are* the foreground pgroup.
                 // `bun run --no-orphans dev &` from an interactive shell leaves
                 // stdin as the TTY (shells rely on SIGTTIN, not redirection), so
@@ -2284,9 +2259,9 @@ mod spawn_process_body {
                 Self::ttou_blocked(self.prev);
                 // SIGTSTP is not in `Bun__registerSignalsForForwarding`'s set, so
                 // default disposition (stop) applies and we suspend right here.
-                let _ = raise(libc::SIGTSTP);
+                let _ = bun_core::signal::raise(libc::SIGTSTP);
                 // — resumed by the shell's SIGCONT —
-                if tcgetpgrp(0) == getpgrp() {
+                if tcgetpgrp(Fd::stdin()) == getpgrp() {
                     Self::ttou_blocked(self.script_pgid);
                 }
                 let _ = kill(-self.script_pgid, libc::SIGCONT);
@@ -2295,17 +2270,8 @@ mod spawn_process_body {
             /// `tcsetpgrp` from a background pgroup raises SIGTTOU (default: stop);
             /// block it for the call per the standard job-control idiom.
             fn ttou_blocked(pgid: libc::pid_t) {
-                // SAFETY: signal mask manipulation
-                unsafe {
-                    let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                    let mut old: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut set);
-                    libc::sigemptyset(&raw mut old);
-                    libc::sigaddset(&raw mut set, libc::SIGTTOU);
-                    libc::sigprocmask(libc::SIG_BLOCK, &raw const set, &raw mut old);
-                    let _ = tcsetpgrp(0, pgid);
-                    libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
-                }
+                let _blocked = bun_core::signal::block(libc::SIGTTOU);
+                let _ = tcsetpgrp(Fd::stdin(), pgid);
             }
         }
 
@@ -2395,10 +2361,7 @@ mod spawn_process_body {
             let mut no_orphans_kq: Option<File> = None;
             #[cfg(target_os = "macos")]
             if no_orphans {
-                let kq = kqueue();
-                if kq >= 0 {
-                    no_orphans_kq = Some(File::from_fd(Fd::from_native(kq)));
-                }
+                no_orphans_kq = bun_sys::kqueue().ok().map(File::from_fd);
             }
             // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
             // its NOTE_FORK-drain rescan), before `no_orphans_kq` drops/closes.
@@ -2894,34 +2857,10 @@ mod spawn_process_body {
             // (gVisor, ancient kernels). Subreaper means orphaned grandchildren
             // also reparent to us and fire SIGCHLD here — drain them with
             // waitpid(-1, WNOHANG) and only stop when *our* child is reaped.
-            // signalfd takes the *kernel* sigset_t (1 word), sigprocmask the libc
-            // one (16 words) — block via libc, build a separate kernel mask for
-            // signalfd.
-            // SAFETY: signal mask manipulation
-            let (_restore_mask, chld_fd) = unsafe {
-                let mut libc_mask: libc::sigset_t = bun_core::ffi::zeroed();
-                let mut old_mask: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut libc_mask);
-                libc::sigemptyset(&raw mut old_mask);
-                libc::sigaddset(&raw mut libc_mask, libc::SIGCHLD);
-                libc::sigprocmask(libc::SIG_BLOCK, &raw const libc_mask, &raw mut old_mask);
-                let restore = scopeguard::guard(old_mask, |old| {
-                    libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
-                });
-                let fd = {
-                    let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut kmask);
-                    libc::sigaddset(&raw mut kmask, libc::SIGCHLD);
-                    let rc = libc::signalfd(
-                        -1,
-                        &raw const kmask,
-                        libc::SFD_CLOEXEC | libc::SFD_NONBLOCK,
-                    );
-                    (rc >= 0).then(|| File::from_fd(Fd::from_native(rc)))
-                };
-                // Bound in this order: the signalfd closes, then the signal mask is restored.
-                (restore, fd)
-            };
+            let _blocked = bun_core::signal::block(libc::SIGCHLD);
+            let chld_fd = bun_sys::linux::signalfd(libc::SIGCHLD)
+                .map(File::from_fd)
+                .ok();
 
             // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
             // pending — i.e. is blocked on *every* thread. PackageManager / HTTP

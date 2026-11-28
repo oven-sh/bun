@@ -5,6 +5,9 @@ use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
+#[cfg(unix)]
+use bun_core::signal::{self, Action};
+
 use crate::{Write, stderr_writer};
 
 /// Writes whole lines into the buffer and returns their length. It is called where the process stops, in a signal
@@ -144,11 +147,9 @@ const INTERRUPTIONS: [c_int; 5] = [
 
 #[cfg(unix)]
 fn raise_with_default_action(signal: c_int) {
-    // SAFETY: both are async-signal-safe. The signal is delivered when the handler returns.
-    unsafe {
-        libc::signal(signal, libc::SIG_DFL);
-        libc::raise(signal);
-    }
+    signal::signal_default(signal);
+    // It is delivered when the handler returns.
+    signal::raise(signal);
 }
 
 #[cfg(unix)]
@@ -160,27 +161,14 @@ extern "C" fn handle_interruption(signal: c_int) {
 /// A signal that the program handles or ignores stays as it is.
 #[cfg(unix)]
 fn set_reports_interruptions(reports: bool) {
-    let ours = handle_interruption as extern "C" fn(c_int) as usize;
-    let (from, to) = if reports {
-        (libc::SIG_DFL, ours)
-    } else {
-        (ours, libc::SIG_DFL)
-    };
+    let ours = Action::call(handle_interruption, libc::SA_RESTART);
     for signal in INTERRUPTIONS {
-        let mut current: libc::sigaction = bun_core::ffi::zeroed();
-        // SAFETY: a null new action only reads the current one into valid memory.
-        if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0
-            || current.sa_sigaction != from
-        {
-            continue;
-        }
-        let mut action: libc::sigaction = bun_core::ffi::zeroed();
-        action.sa_sigaction = to;
-        action.sa_flags = libc::SA_RESTART;
-        // SAFETY: both point to valid memory, and the handler is never unloaded.
-        unsafe {
-            libc::sigemptyset(&raw mut action.sa_mask);
-            libc::sigaction(signal, &raw const action, core::ptr::null_mut());
+        let current = Action::of(signal).map(|action| action.handler());
+        if reports && current == Some(libc::SIG_DFL) {
+            // SAFETY: the handler reads what `current_work` keeps for it, takes no lock and ends the process.
+            unsafe { ours.install(signal) };
+        } else if !reports && current == Some(ours.handler()) {
+            signal::reset(signal, libc::SA_RESTART);
         }
     }
 }
@@ -210,7 +198,6 @@ fn report_what_the_sanitizer_leaves() {
     extern "C" fn write_at_death() {
         write_where_this_thread_stopped(&mut stderr_writer());
     }
-    type Handler = unsafe extern "C" fn(c_int, &libc::siginfo_t, *mut c_void);
     /// # Safety
     /// Only the kernel calls this, for a signal.
     unsafe extern "C" fn handle_crash(signal: c_int, info: &libc::siginfo_t, context: *mut c_void) {
@@ -219,8 +206,7 @@ fn report_what_the_sanitizer_leaves() {
         let code = info.si_code;
         // SAFETY: both are words of the record. Which of them holds goes by the code.
         let (address, sender) = unsafe { (info.si_addr() as usize, info.si_pid()) };
-        // SAFETY: it has no conditions.
-        let this_process = unsafe { libc::getpid() };
+        let this_process = std::process::id().cast_signed();
         let is_raised_by_instruction = (1..0x10000).contains(&code);
         let _ = if is_raised_by_instruction {
             write!(
@@ -259,18 +245,10 @@ fn report_what_the_sanitizer_leaves() {
         unsafe { __sanitizer_set_death_callback(Some(write_at_death)) };
     }
     for signal in [libc::SIGABRT, libc::SIGILL, libc::SIGTRAP] {
-        let mut current: libc::sigaction = bun_core::ffi::zeroed();
-        // SAFETY: a null new action only reads the current one into valid memory.
-        if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0
-            || current.sa_sigaction != libc::SIG_DFL
-        {
-            continue;
+        if Action::of(signal).is_some_and(|action| action.handler() == libc::SIG_DFL) {
+            // SAFETY: the process is crashing, and the handler ends it.
+            unsafe { Action::call_with_info(handle_crash, 0).install(signal) };
         }
-        let mut action: libc::sigaction = bun_core::ffi::zeroed();
-        action.sa_sigaction = handle_crash as Handler as usize;
-        action.sa_flags = libc::SA_SIGINFO;
-        // SAFETY: the handler has the signature that SA_SIGINFO asks for and is never unloaded.
-        unsafe { libc::sigaction(signal, &raw const action, core::ptr::null_mut()) };
     }
 }
 
@@ -280,41 +258,174 @@ fn report_what_the_sanitizer_leaves() {}
 #[cfg(all(test, unix))]
 mod tests {
     use bun_core::current_work::{Step, set_step_of_build, working_on};
+    use bun_core::signal::lacks_alternate_stack;
     use core::ffi::c_void;
 
+    /// The step is that of the process.
+    static STEP_OF_BUILD: bun_threading::Mutex = bun_threading::Mutex::new();
+
     extern "C" fn work(_: *mut c_void) -> *mut c_void {
-        // SAFETY: all-zero is a valid `stack_t`.
-        let mut current: libc::stack_t = unsafe { core::mem::zeroed() };
-        // SAFETY: `current` is a valid out-pointer.
-        let ask = || unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) };
-        assert_eq!(working_on(Step::Check, b"/project/checked.ts", ask), 0);
-        core::ptr::without_provenance_mut(usize::from(current.ss_flags & libc::SS_DISABLE == 0))
+        let lacks = working_on(Step::Check, b"/project/checked.ts", lacks_alternate_stack);
+        core::ptr::without_provenance_mut(usize::from(!lacks))
     }
 
     /// Not a thread of `std`, which gives its own a stack for signals in a test.
-    fn has_signal_stack_at_work() -> bool {
+    fn on_new_thread(
+        start: extern "C" fn(*mut c_void) -> *mut c_void,
+        argument: *mut c_void,
+    ) -> *mut c_void {
         // SAFETY: all-zero is a valid `pthread_t` to write over.
         let mut thread: libc::pthread_t = unsafe { core::mem::zeroed() };
         let mut answer = core::ptr::null_mut();
         // SAFETY: the thread is joined before either place goes.
         unsafe {
-            let (attributes, argument) = (core::ptr::null(), core::ptr::null_mut());
             assert_eq!(
-                libc::pthread_create(&raw mut thread, attributes, work, argument),
+                libc::pthread_create(&raw mut thread, core::ptr::null(), start, argument),
                 0
             );
             assert_eq!(libc::pthread_join(thread, &raw mut answer), 0);
         }
-        !answer.is_null()
+        answer
+    }
+
+    fn has_signal_stack_at_work() -> bool {
+        !on_new_thread(work, core::ptr::null_mut()).is_null()
     }
 
     /// The handler that says where a build ran out of stack runs on that stack. `bun check` starts its threads without one.
     #[test]
     fn a_thread_at_work_has_a_stack_for_signals_in_a_build_alone() {
+        let _alone = STEP_OF_BUILD.lock_guard();
         assert!(!has_signal_stack_at_work());
         set_step_of_build(Some(Step::Check));
         let has_in_build = has_signal_stack_at_work();
         set_step_of_build(None);
         assert!(has_in_build);
+    }
+
+    /// glibc runs the destructor of a key after those of `thread_local!`.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    mod end_of_thread {
+        use super::*;
+        use core::cell::Cell;
+        use core::ffi::c_int;
+
+        thread_local! {
+            static SMALLEST_SIZE: Cell<usize> = const { Cell::new(0) };
+            static REFUSED: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
+            static IS_REFUSED_UNMAPPED: Cell<bool> = const { Cell::new(false) };
+        }
+
+        /// macOS compares the size also where `SS_DISABLE` makes it mean nothing.
+        ///
+        /// SAFETY: as that of libc, which it replaces in this program.
+        #[unsafe(no_mangle)]
+        unsafe extern "C" fn sigaltstack(
+            new: *const libc::stack_t,
+            old: *mut libc::stack_t,
+        ) -> c_int {
+            // SAFETY: the caller's contract.
+            unsafe {
+                if let Some(new) = new.as_ref()
+                    && new.ss_size < SMALLEST_SIZE.get()
+                {
+                    if !new.ss_sp.is_null() {
+                        REFUSED.set(new.ss_sp);
+                    }
+                    return -1;
+                }
+                libc::syscall(libc::SYS_sigaltstack, new, old) as c_int
+            }
+        }
+
+        /// SAFETY: as that of libc, which it replaces in this program.
+        #[unsafe(no_mangle)]
+        unsafe extern "C" fn munmap(address: *mut c_void, length: usize) -> c_int {
+            if address == REFUSED.get() {
+                IS_REFUSED_UNMAPPED.set(true);
+            }
+            // SAFETY: the caller's contract.
+            unsafe { libc::syscall(libc::SYS_munmap, address, length) as c_int }
+        }
+
+        #[derive(Debug, PartialEq)]
+        enum Left {
+            NotAsked,
+            Nothing,
+            Mapped,
+            Unmapped,
+        }
+
+        struct Case {
+            key: libc::pthread_key_t,
+            smallest_size: usize,
+            left: Left,
+        }
+
+        extern "C" fn work_and_end(case: *mut c_void) -> *mut c_void {
+            assert!(!work(case).is_null());
+            // SAFETY: `left_at_the_end` keeps it until this thread is joined.
+            unsafe {
+                SMALLEST_SIZE.set((*case.cast::<Case>()).smallest_size);
+                assert_eq!(
+                    libc::pthread_setspecific((*case.cast::<Case>()).key, case),
+                    0
+                );
+            }
+            core::ptr::null_mut()
+        }
+
+        extern "C" fn look_at_what_is_left(case: *mut c_void) {
+            // SAFETY: as in `work_and_end`. `stack_t` may be all zeroes, and `msync` only looks the address up.
+            unsafe {
+                let mut stack: libc::stack_t = core::mem::zeroed();
+                assert_eq!(sigaltstack(core::ptr::null(), &raw mut stack), 0);
+                (*case.cast::<Case>()).left = if stack.ss_flags & libc::SS_DISABLE != 0 {
+                    Left::Nothing
+                } else if libc::msync(stack.ss_sp, stack.ss_size, libc::MS_ASYNC) == 0 {
+                    Left::Mapped
+                } else {
+                    Left::Unmapped
+                };
+            }
+        }
+
+        fn left_at_the_end(smallest_size: usize) -> Left {
+            let mut case = Case {
+                key: 0,
+                smallest_size,
+                left: Left::NotAsked,
+            };
+            // SAFETY: it writes `key`.
+            let rc =
+                unsafe { libc::pthread_key_create(&raw mut case.key, Some(look_at_what_is_left)) };
+            assert_eq!(rc, 0);
+            on_new_thread(work_and_end, (&raw mut case).cast());
+            case.left
+        }
+
+        #[test]
+        fn a_thread_never_has_a_stack_for_signals_that_is_unmapped() {
+            let _alone = STEP_OF_BUILD.lock_guard();
+            set_step_of_build(Some(Step::Check));
+            let left = [libc::MINSIGSTKSZ, usize::MAX].map(left_at_the_end);
+            set_step_of_build(None);
+            assert_eq!(left, [Left::Nothing, Left::Mapped]);
+        }
+
+        extern "C" fn work_with_every_stack_refused(_: *mut c_void) -> *mut c_void {
+            SMALLEST_SIZE.set(usize::MAX);
+            assert!(work(core::ptr::null_mut()).is_null());
+            core::ptr::without_provenance_mut(usize::from(IS_REFUSED_UNMAPPED.get()))
+        }
+
+        #[test]
+        fn a_stack_for_signals_that_is_refused_is_unmapped() {
+            let _alone = STEP_OF_BUILD.lock_guard();
+            set_step_of_build(Some(Step::Check));
+            let is_unmapped = on_new_thread(work_with_every_stack_refused, core::ptr::null_mut());
+            set_step_of_build(None);
+            assert!(!is_unmapped.is_null());
+        }
     }
 }

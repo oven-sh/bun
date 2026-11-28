@@ -1042,15 +1042,8 @@ impl<'a> Repl<'a> {
                 .tty_state
                 .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
 
-            // Install SIGINT handler
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
-            // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = sigint_handler as *const () as usize;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
+            // SAFETY: the handler only uses atomics.
+            unsafe { bun_core::signal::Action::call(sigint_handler, 0).install(libc::SIGINT) };
         }
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
         SignalsEnabled(self)
@@ -2707,15 +2700,7 @@ impl Drop for SignalsEnabled<'_, '_> {
                 .tty_state
                 .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
 
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
+            bun_core::signal::reset(libc::SIGINT, 0);
         }
     }
 }

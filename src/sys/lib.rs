@@ -885,7 +885,7 @@ pub(crate) extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::f
 // the canonical name so callers can write `bun_sys::UV_E::NOENT`.
 pub use bun_errno::uv_e as UV_E;
 // `bun_errno::posix` is the small move-down stub (mode_t/E/S/errno). The full
-// `std.posix` surface dependents need (`Sigaction`, `getrlimit`, `tcgetattr`,
+// `std.posix` surface dependents need (`getrlimit`, `tcgetattr`,
 // raw `read`/`write`/`poll`, …) is widened below in this crate's own `posix`
 // module which re-exports the errno stub and layers libc on top.
 
@@ -1439,6 +1439,9 @@ mod safe_libc {
         pub(crate) safe fn close(fd: c_int) -> c_int;
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
+        pub(crate) safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
+        pub(crate) safe fn tcsetpgrp(fd: c_int, group: libc::pid_t) -> c_int;
+        pub safe fn getpgrp() -> libc::pid_t;
         pub(crate) safe fn fsync(fd: c_int) -> c_int;
         // `libc` does not have it for Darwin.
         pub(crate) safe fn fdatasync(fd: c_int) -> c_int;
@@ -4905,6 +4908,17 @@ pub mod linux {
     pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: Option<&mut i64>, count: usize) -> isize {
         super::linux_syscall::sendfile(out_fd, in_fd, offset, count)
     }
+    /// A new non-blocking descriptor that is readable while `signal` is pending.
+    pub fn signalfd(signal: c_int) -> super::Maybe<super::Fd> {
+        let set = bun_core::signal::set_of(signal);
+        // SAFETY: it reads one `sigset_t`.
+        let fd =
+            unsafe { libc::signalfd(-1, &raw const set, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK) };
+        if fd < 0 {
+            return Err(super::err_with(super::Tag::open));
+        }
+        Ok(super::Fd::from_native(fd))
+    }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
     #[inline]
     pub fn ppoll(
@@ -6933,7 +6947,7 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 // ──────────────────────────────────────────────────────────────────────────
 // `std.posix` — wider surface than `bun_errno::posix` (which only has
 // mode_t/E/S/errno). Dependents (`bun_resolver`, `bun_md`, `bun_crash`,
-// `bun_threading`) reach for `Sigaction`, `getrlimit`, `tcgetattr`, raw
+// `bun_threading`) reach for `getrlimit`, `tcgetattr`, raw
 // `poll`, `dl_iterate_phdr` etc. We re-export the errno stub
 // and layer the libc bits on top so `bun_sys::posix::*` is the single import.
 // ──────────────────────────────────────────────────────────────────────────
@@ -7113,20 +7127,20 @@ pub mod posix {
         (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 
-    // ── signals ──
+    // ── job control ──
     #[cfg(unix)]
-    pub use libc::sigaction as Sigaction;
+    pub use crate::safe_libc::getpgrp;
+    /// The foreground process group of a terminal, or -1.
     #[cfg(unix)]
-    pub use libc::siginfo_t;
+    pub fn tcgetpgrp(fd: super::Fd) -> libc::pid_t {
+        crate::safe_libc::tcgetpgrp(fd.native())
+    }
     #[cfg(unix)]
-    pub use libc::sigset_t;
-    /// `sigaction(sig, &act, *oact)`.
-    #[cfg(unix)]
-    #[inline]
-    pub unsafe fn sigaction(sig: c_int, act: *const Sigaction, oact: *mut Sigaction) -> c_int {
-        // SAFETY: caller contract — `act`/`oact` are each null or point to a
-        // valid `sigaction` struct for the call's duration.
-        unsafe { libc::sigaction(sig, act, oact) }
+    pub fn tcsetpgrp(fd: super::Fd, group: libc::pid_t) -> super::Maybe<()> {
+        if crate::safe_libc::tcsetpgrp(fd.native(), group) < 0 {
+            return Err(super::err_with(super::Tag::ioctl));
+        }
+        Ok(())
     }
 
     // ── time ──

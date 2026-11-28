@@ -23,6 +23,8 @@ pub mod error;
 pub mod hint;
 pub mod result;
 pub mod scoped;
+#[cfg(unix)]
+pub mod signal;
 pub mod thread_id;
 pub mod tty;
 pub mod util;

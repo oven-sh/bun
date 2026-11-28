@@ -169,15 +169,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     use_mimalloc_in_dependencies();
 
-    // SIGPIPE/SIGXFSZ → SIG_IGN.
-    // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
-    // valid disposition; called once on the main thread before any other
-    // thread is spawned, so there is no concurrent sigaction.
     #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-        libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
-    }
+    bun_core::signal::ignore_for_failed_writes();
 
     // Windows-only startup. Must run before anything reads
     // `Bun.env`/`process.env` (env conversion).

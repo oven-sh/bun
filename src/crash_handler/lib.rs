@@ -433,6 +433,8 @@ mod draft {
 
     use bun_base64::VLQ;
     use bun_collections::BoundedArray;
+    #[cfg(unix)]
+    use bun_core::signal;
     use bun_core::strings;
     use bun_core::{Environment, Global, Output, env_var, fmt as bun_fmt};
 
@@ -463,18 +465,9 @@ mod draft {
             bun_sys::windows::kernel32::ExitProcess(3)
         }
         #[cfg(not(windows))]
-        // SAFETY: libc::abort has no preconditions; never returns.
-        unsafe {
-            libc::abort()
-        }
+        std::process::abort()
     }
 
-    #[cfg(not(windows))]
-    unsafe extern "C" {
-        // safe: by-value `c_int` only; no memory-safety preconditions.
-        safe fn _exit(code: c_int) -> !;
-        safe fn raise(sig: c_int) -> c_int;
-    }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
@@ -786,7 +779,7 @@ mod draft {
         #[cfg(windows)]
         bun_sys::windows::kernel32::ExitProcess(1);
         #[cfg(not(windows))]
-        _exit(1)
+        Global::_exit(1)
     }
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
@@ -1699,37 +1692,26 @@ mod draft {
         IS_RELOADING_PROCESS.load(Ordering::Relaxed)
     }
 
+    /// `SA_ONSTACK` if this call registered it.
     #[cfg(unix)]
-    fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
-        if let Some(act_) = act.as_deref_mut() {
-            // SAFETY: single global; only mutated during signal-handler setup
-            if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
-                let stack = libc::stack_t {
-                    ss_flags: 0,
-                    ss_size: 512 * 1024,
-                    // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
-                    ss_sp: SIGALTSTACK.get().cast(),
-                };
-
-                // SAFETY: stack points to a valid static buffer
-                if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
-                    act_.sa_flags |= libc::SA_ONSTACK;
-                    // SAFETY: single global; only mutated during signal-handler setup
-                    DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
-                }
-            }
+    fn register_sigaltstack() -> c_int {
+        if DID_REGISTER_SIGALTSTACK.swap(true, Ordering::Relaxed) {
+            return 0;
         }
+        // SAFETY: a static that nothing else names, and the swap gives it to one thread.
+        let is_registered = unsafe { signal::set_alternate_stack(SIGALTSTACK.get()) };
+        DID_REGISTER_SIGALTSTACK.store(is_registered, Ordering::Relaxed);
+        if is_registered { libc::SA_ONSTACK } else { 0 }
+    }
 
-        let act_ptr: *const libc::sigaction = act
-            .map(|a| std::ptr::from_ref(a))
-            .unwrap_or(core::ptr::null());
+    #[cfg(unix)]
+    fn install_posix_segfault_handler(flags: c_int) {
+        register_sigaltstack();
+        let action = crash_action(flags);
         for signal in bun_core::CRASH_HANDLER_SIGNALS {
-            // SAFETY: valid sigaction pointer or null; null oldact is permitted.
-            unsafe {
-                libc::sigaction(signal, act_ptr, core::ptr::null_mut());
-            }
+            // SAFETY: not in full, a report needs more than is async-signal-safe. The handler ends the process.
+            unsafe { action.install(signal) };
         }
-        Ok(())
     }
 
     // Windows VEH handle storage lives at T0 (`bun_core::WINDOWS_SEGFAULT_HANDLE`,
@@ -1744,15 +1726,7 @@ mod draft {
         if Environment::ENABLE_ASAN {
             return;
         }
-        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-        let mut act: libc::sigaction = bun_core::ffi::zeroed();
-        act.sa_sigaction = handle_segfault_posix as *const () as usize;
-        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
-        let _ = update_posix_segfault_handler(Some(&mut act));
+        install_posix_segfault_handler(libc::SA_RESETHAND);
     }
 
     /// For a process whose threads may crash at the same moment, as the threads of a build do that meet the same broken
@@ -1763,38 +1737,29 @@ mod draft {
         if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
             return;
         }
-        let _ = update_posix_segfault_handler(Some(&mut repeated_crash_action()));
+        install_posix_segfault_handler(0);
     }
 
     #[cfg(unix)]
-    fn repeated_crash_action() -> libc::sigaction {
-        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-        let mut act: libc::sigaction = bun_core::ffi::zeroed();
-        act.sa_sigaction = handle_segfault_posix as *const () as usize;
-        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
+    fn crash_action(mut flags: c_int) -> signal::Action {
         if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
-            act.sa_flags |= libc::SA_ONSTACK;
+            flags |= libc::SA_ONSTACK;
         }
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
-        act
+        signal::Action::call_with_info(handle_segfault_posix, flags | libc::SA_RESTART)
     }
 
-    /// # Safety
-    /// `action` must be valid for a write.
     #[cfg(unix)]
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__getAction(action: *mut libc::sigaction) -> bool {
+    extern "C" fn CrashHandler__getAction(
+        action: &mut core::mem::MaybeUninit<signal::Action>,
+    ) -> bool {
         if Environment::ENABLE_ASAN
             || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed)
             || PANIC_STAGE.with(|stage| stage.get()) != 0
         {
             return false;
         }
-        // SAFETY: caller contract.
-        unsafe { action.write(repeated_crash_action()) };
+        action.write(crash_action(0));
         true
     }
 
@@ -1900,7 +1865,7 @@ mod draft {
 
     /// One-shot state registration into lower-tier crates. Storage moved down:
     /// `bun_core::CRASH_HANDLER_INSTALLED` is a plain `AtomicBool`; T0's
-    /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
+    /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself.
     fn install_hooks() {
         bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
         // T0 `bun_alloc::out_of_memory()` and `bun_core::dump_current_stack_trace()`
@@ -2136,15 +2101,10 @@ mod draft {
 
         #[cfg(unix)]
         {
-            // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
-            let mut act: libc::sigaction = bun_core::ffi::zeroed();
-            act.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
+            let flags = register_sigaltstack();
+            for signal in bun_core::CRASH_HANDLER_SIGNALS {
+                signal::reset(signal, flags);
             }
-            // To avoid a double-panic, do nothing if an error happens here.
-            let _ = update_posix_segfault_handler(Some(&mut act));
         }
     }
 
@@ -3060,7 +3020,7 @@ mod draft {
                     unsafe {
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
-                    _exit(0);
+                    Global::_exit(0);
                 }
                 // success and failure cases: ignore the result
                 _ => {}
@@ -3078,14 +3038,6 @@ mod draft {
             let sig = reason.terminal_signal();
 
             // Install default handler so that the raise below will terminate.
-            // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
-            // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
-            let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
-            sigact.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-            unsafe {
-                libc::sigemptyset(&raw mut sigact.sa_mask);
-            }
             for s in [
                 libc::SIGSEGV,
                 libc::SIGILL,
@@ -3100,26 +3052,17 @@ mod draft {
                 // `signal-exit` package does).
                 libc::SIGTRAP,
             ] {
-                // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
-                unsafe {
-                    libc::sigaction(s, &raw const sigact, core::ptr::null_mut());
-                }
+                signal::reset(s, 0);
             }
 
             // We may be running inside the signal handler for `sig`, in which
             // case the kernel added it to this thread's mask and a re-raise
             // would sit pending forever. Unblock it so the raise below is
-            // delivered. pthread_sigmask is async-signal-safe.
-            // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
-            unsafe {
-                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut set);
-                libc::sigaddset(&raw mut set, sig);
-                libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
-            }
+            // delivered.
+            signal::unblock(sig);
 
             // With SIG_DFL installed and the signal unblocked this terminates the process.
-            raise(sig);
+            signal::raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
             core::intrinsics::abort_immediate();
         }

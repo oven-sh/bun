@@ -664,20 +664,14 @@ impl<'a> State<'a> {
     }
 }
 
-struct AbortHandler;
+pub(crate) struct AbortHandler;
 
-static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 // Atomic because it is set from a signal handler.
 
 impl AbortHandler {
     #[cfg(unix)]
-    extern "C" fn posix_signal_handler(
-        sig: i32,
-        info: *const bun_sys::posix::siginfo_t,
-        _: *const c_void,
-    ) {
-        let _ = sig;
-        let _ = info;
+    extern "C" fn posix_signal_handler(_: i32, _: &libc::siginfo_t, _: *mut c_void) {
         SHOULD_ABORT.store(true, Ordering::SeqCst);
     }
 
@@ -692,18 +686,14 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    fn install() {
+    pub(crate) fn install() {
         #[cfg(unix)]
         {
-            // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-            let mut act: libc::sigaction = bun_core::ffi::zeroed();
-            act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-            // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
-                libc::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
+            let flags = libc::SA_RESTART | libc::SA_RESETHAND;
+            let action =
+                bun_core::signal::Action::call_with_info(Self::posix_signal_handler, flags);
+            // SAFETY: the handler only stores to an atomic.
+            unsafe { action.install(libc::SIGINT) };
         }
         #[cfg(not(unix))]
         {
@@ -719,7 +709,7 @@ impl AbortHandler {
         }
     }
 
-    fn uninstall() {
+    pub(crate) fn uninstall() {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {

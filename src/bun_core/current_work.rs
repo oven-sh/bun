@@ -114,15 +114,9 @@ struct SignalStack(core::ptr::NonNull<core::ffi::c_void>);
 #[cfg(unix)]
 impl Drop for SignalStack {
     fn drop(&mut self) {
-        let none = libc::stack_t {
-            ss_sp: core::ptr::null_mut(),
-            ss_flags: libc::SS_DISABLE,
-            ss_size: 0,
-        };
-        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
-        unsafe {
-            libc::sigaltstack(&raw const none, core::ptr::null_mut());
-            libc::munmap(self.0.as_ptr(), GivesRecordBack::SIGNAL_STACK_SIZE);
+        if crate::signal::remove_alternate_stack() || crate::signal::lacks_alternate_stack() {
+            // SAFETY: the thread takes no signal on the mapping any more, and nobody else knows it.
+            unsafe { libc::munmap(self.0.as_ptr(), GivesRecordBack::SIGNAL_STACK_SIZE) };
         }
     }
 }
@@ -132,17 +126,7 @@ impl GivesRecordBack {
     const SIGNAL_STACK_SIZE: usize = 512 * 1024;
 
     fn ensure_signal_stack(&self) {
-        if self.signal_stack.get().is_some() {
-            return;
-        }
-        let mut current = libc::stack_t {
-            ss_sp: core::ptr::null_mut(),
-            ss_flags: 0,
-            ss_size: 0,
-        };
-        // SAFETY: `current` is a valid out-pointer.
-        let is_asked = unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) } == 0;
-        if !is_asked || current.ss_flags & libc::SS_DISABLE == 0 {
+        if self.signal_stack.get().is_some() || !crate::signal::lacks_alternate_stack() {
             return;
         }
         // SAFETY: a private mapping of its own.
@@ -162,13 +146,10 @@ impl GivesRecordBack {
         else {
             return;
         };
-        let stack = libc::stack_t {
-            ss_sp: memory.0.as_ptr(),
-            ss_flags: 0,
-            ss_size: Self::SIGNAL_STACK_SIZE,
-        };
+        let stack =
+            core::ptr::slice_from_raw_parts_mut(memory.0.as_ptr().cast(), Self::SIGNAL_STACK_SIZE);
         // SAFETY: `memory` is not unmapped before the thread has stopped using it.
-        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
+        if unsafe { crate::signal::set_alternate_stack(stack) } {
             let _ = self.signal_stack.set(memory);
         }
     }

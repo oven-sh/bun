@@ -147,8 +147,7 @@ fn send_unseen_signals_again() {
         UNSEEN_SIGNALS.load(Ordering::SeqCst) & !SIGNALS_SENT_BY_SCRIPT.load(Ordering::SeqCst);
     for number in END_SIGNALS {
         if unseen & (1 << number) != 0 {
-            // SAFETY: both are async-signal-safe and take no pointers.
-            unsafe { libc::kill(libc::getpid(), number) };
+            bun_spawn::ffi::kill(std::process::id().cast_signed(), number);
         }
     }
 }

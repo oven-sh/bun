@@ -854,7 +854,6 @@ dependencies = [
  "bun_core",
  "bun_icu_macros",
  "bun_paths",
- "bun_ptr",
  "bun_sema_standalone",
  "bun_sys",
  "bun_wyhash",

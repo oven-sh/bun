@@ -4,11 +4,6 @@ use core::ptr::NonNull;
 #[repr(transparent)]
 pub struct AliasableBox<T>(NonNull<T>);
 
-// SAFETY: it owns a `T`, like `Box`.
-unsafe impl<T: Send> Send for AliasableBox<T> {}
-// SAFETY: `&self` gives access to `&T` only, like `Box`. `as_ptr` returns a raw pointer.
-unsafe impl<T: Sync> Sync for AliasableBox<T> {}
-
 impl<T> AliasableBox<T> {
     pub fn new(value: T) -> Self {
         Self(bun_core::heap::alloc_nn(value))

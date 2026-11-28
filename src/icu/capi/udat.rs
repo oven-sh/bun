@@ -11,8 +11,8 @@ use crate::i18n::fphdlimp::FieldPositionIteratorHandler;
 use crate::i18n::gregoimp::UDate;
 use crate::i18n::smpdtfmt::SimpleDateFormat;
 use crate::i18n::unicode::udat::*;
+use crate::sys::ptr::AliasableBox;
 use bun_icu_macros::capi;
-use bun_ptr::AliasableBox;
 use std::mem::offset_of;
 use std::ptr::null;
 

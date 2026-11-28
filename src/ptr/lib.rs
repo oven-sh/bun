@@ -13,6 +13,9 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
+#[cfg(test)]
+extern crate self as bun_ptr;
+
 mod cell_ext;
 pub use cell_ext::{CellExt, OptionCellExt, RefPtrCellExt, VecCellExt};
 

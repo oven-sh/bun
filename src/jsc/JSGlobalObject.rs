@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::fmt::Arguments;
 
 use crate::EncodedSliceJsc as _;
@@ -223,22 +223,18 @@ impl JSGlobalObject {
     fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: bool) -> GregorianDateTime {
         crate::mark_binding();
         let mut dt = GregorianDateTime::default();
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
-        // stack locals (`dt` fields) and remain valid for the duration of the call.
-        unsafe {
-            crate::cpp::raw::Bun__msToGregorianDateTime(
-                self.as_ptr(),
-                ms,
-                local,
-                &raw mut dt.year,
-                &raw mut dt.month,
-                &raw mut dt.day,
-                &raw mut dt.hour,
-                &raw mut dt.minute,
-                &raw mut dt.second,
-                &raw mut dt.weekday,
-            );
-        }
+        crate::cpp::Bun__msToGregorianDateTime(
+            self,
+            ms,
+            local,
+            &mut dt.year,
+            &mut dt.month,
+            &mut dt.day,
+            &mut dt.hour,
+            &mut dt.minute,
+            &mut dt.second,
+            &mut dt.weekday,
+        );
         dt
     }
 
@@ -285,29 +281,24 @@ impl JSGlobalObject {
         tz_id: u32,
     ) -> f64 {
         crate::mark_binding();
-        // SAFETY: FFI — &self is a valid JSGlobalObject*.
-        unsafe {
-            crate::cpp::raw::Bun__gregorianDateTimeToMSInZone(
-                self.as_ptr(),
-                year,
-                month,
-                day,
-                hour,
-                minute,
-                second,
-                millisecond,
-                tz_id,
-            )
-        }
+        crate::cpp::Bun__gregorianDateTimeToMSInZone(
+            self,
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            tz_id,
+        )
     }
 
     /// Resolve an IANA time-zone name to a `TimeZoneID` suitable for
     /// `*_in_zone`. Returns `None` if the name is not recognised.
     pub fn resolve_time_zone_id(name: &[u8]) -> Option<u32> {
         crate::mark_binding();
-        // SAFETY: FFI — `name` is a valid byte slice; len matches. The C++ side reads
-        // only `len` bytes and does not retain the pointer.
-        let id = unsafe { crate::cpp::raw::Bun__resolveTimeZoneID(name.as_ptr(), name.len()) };
+        let id = crate::cpp::Bun__resolveTimeZoneID(name);
         if id == u32::MAX { None } else { Some(id) }
     }
 
@@ -516,17 +507,7 @@ impl JSGlobalObject {
         bun_boringssl::c::ERR_clear_error();
         if err != 0 {
             let mut buf = [0u8; 256];
-            // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;
-            // ERR_error_string_n NUL-terminates within `len` bytes.
-            unsafe {
-                bun_boringssl::c::ERR_error_string_n(
-                    err,
-                    buf.as_mut_ptr().cast::<c_char>(),
-                    buf.len(),
-                )
-            };
-            // Slice up to the NUL terminator.
-            let msg = bun_core::slice_to_nul(&buf);
+            let msg = bun_boringssl::c::error_string(err, &mut buf);
             return self
                 .err(
                     JscError::CRYPTO_INVALID_SCRYPT_PARAMS,

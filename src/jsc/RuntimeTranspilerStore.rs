@@ -29,7 +29,7 @@ use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
-use crate::event_loop::{ConcurrentTask, EventLoop};
+use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{ModuleType as CacheModuleType, RuntimeTranspilerCache};
@@ -197,11 +197,12 @@ impl Default for RuntimeTranspilerStore {
 
 impl Taskable for RuntimeTranspilerStore {
     const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
-    /// The "a job has finished" ping owns nothing (`this` is the VM's
-    /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
-    unsafe fn release_unrun(_: *mut Self) {}
+    /// The "a job has finished" ping owns nothing.
+    type Payload = ();
+    /// The jobs are released by `release_queued_jobs_for_teardown`.
+    fn release_unrun((): ()) {}
     /// A ping to the VM's own store.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context((): &()) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -239,7 +240,7 @@ impl RuntimeTranspilerStore {
             return Ok(());
         };
         for _ in 0..self.tasks_without_job.take() {
-            event_loop.enqueue_task(Task::init(ptr::from_ref(self).cast_mut()));
+            event_loop.enqueue_task(Task::new::<Self>(()));
         }
         // SAFETY: `job` is a live job popped from the intrusive queue.
         let fulfilled = unsafe { job.as_mut().run_from_js_thread(vm) };
@@ -459,12 +460,9 @@ impl TranspilerJob {
     /// first — the JS thread may reuse the slot the moment it is queued.
     fn dispatch_to_main_thread(&mut self, ticket: &crate::Ticket) {
         let vm = self.vm;
-        // SAFETY: the VM outlives the ticket (it owns the store).
-        let transpiler_store = unsafe { &raw const (*vm).transpiler_store };
-        let job = NonNull::from(&mut *self);
-        // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
-        unsafe { (*transpiler_store).queue.push(job) };
-        ticket.post(ConcurrentTask::create_from(transpiler_store.cast_mut()));
+        // SAFETY: the VM outlives the ticket, and any thread may push to the queue.
+        unsafe { (*vm).transpiler_store.queue.push(NonNull::from(self)) };
+        ticket.post(ConcurrentTask::create::<RuntimeTranspilerStore>(()));
     }
 
     fn run_from_js_thread(&mut self, vm: &VirtualMachine) -> JsResult<()> {

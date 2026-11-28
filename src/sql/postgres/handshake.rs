@@ -555,18 +555,6 @@ fn hmac(key: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 fn pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> Option<[u8; 32]> {
     let mut out = [0; 32];
     boringssl::ERR_clear_error();
-    // SAFETY: each pointer is valid for the length after it.
-    let rc = unsafe {
-        boringssl::PKCS5_PBKDF2_HMAC(
-            password.as_ptr(),
-            password.len(),
-            salt.as_ptr(),
-            salt.len(),
-            iterations,
-            boringssl::EVP_sha256(),
-            out.len(),
-            out.as_mut_ptr(),
-        )
-    };
-    (rc > 0).then_some(out)
+    let digest = boringssl::EVP_sha256();
+    boringssl::pbkdf2_hmac(password, salt, iterations, digest, &mut out).then_some(out)
 }

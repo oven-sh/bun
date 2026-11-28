@@ -9,18 +9,21 @@
 
 use crate::{JSGlobalObject, VM};
 
-use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID};
+use analyze::{
+    ModuleInfoDeserialized, ModuleInfoString, RecordKind, RequestedModuleValue, StringID,
+};
 use bun_bundler::analyze_transpiled_module as analyze;
+use handles::{Identifier, IdentifierSlot, JSModuleRecord};
 
 #[unsafe(no_mangle)]
-extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
-    global_object: &JSGlobalObject,
+extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord<'a>(
+    global_object: &'a JSGlobalObject,
     vm: &VM,
-    module_loader: *mut JSModuleLoader,
-    module_key: &IdentifierArray,
+    module_loader: &JSModuleLoader,
+    module_key: &Identifier,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
-) -> *mut JSModuleRecord {
+) -> Option<&'a JSModuleRecord> {
     // Ownership of `res` stays with the caller; this function only reads it.
     // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
     // immediately or keep it alive on the SourceProvider for the isolation
@@ -33,51 +36,55 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         source_code,
         res,
     )
-    .unwrap_or(core::ptr::null_mut())
+    .ok()
 }
 
 /// Walks the serialized body in place (layout documented on the printer's
 /// `ModuleInfoDeserialized::serialize_body`) and feeds JSC's module record.
 /// Any out-of-range id or truncated region yields `Err` → null → a clean
 /// "parseFromSourceCode failed" rejection in the caller.
-fn to_js_module_record(
-    global_object: &JSGlobalObject,
+fn to_js_module_record<'a>(
+    global_object: &'a JSGlobalObject,
     vm: &VM,
-    module_loader: *mut JSModuleLoader,
-    module_key: &IdentifierArray,
+    module_loader: &JSModuleLoader,
+    module_key: &Identifier,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
-) -> Result<*mut JSModuleRecord, analyze::ModuleInfoError> {
+) -> Result<&'a JSModuleRecord, analyze::ModuleInfoError> {
     let body = *res.body();
     let identifier_count = res.strings_count();
 
     // Identifier slots the ids index, filled on first use: the VM-wide slots
     // for an executable's shared table, else a throwaway array for this record.
     let mut owned_identifiers: Option<OwnedIdentifierArray> = None;
-    let identifiers: *mut IdentifierArray = if res.shared() {
-        IdentifierArray::shared(vm, identifier_count)
+    let identifiers = if res.shared() {
+        Bun__VM__sharedModuleInfoIdentifiers(vm, identifier_count)
     } else {
         owned_identifiers
             .insert(OwnedIdentifierArray::new(identifier_count))
             .ptr
     };
-    // Every id handed to JSC goes through here: in range (or a sentinel, which
+    // SAFETY: either array has `identifier_count` slots and stays where it is until this returns:
+    // only the call above grows the VM's, and nothing below loads another module.
+    let identifiers = unsafe { bun_opaque::ffi::slice(identifiers, identifier_count) };
+    // Every id goes through here: in range (or a sentinel, which
     // `IdCursor` already vetted) and materialized.
-    let ready = |id: StringID| -> Result<StringID, analyze::ModuleInfoError> {
-        if (id.0 as usize) < identifier_count {
-            // SAFETY: `identifiers` has at least `identifier_count` slots.
-            if unsafe { IdentifierArray::is_null(identifiers, id.0 as usize) } {
-                let string = res
-                    .string(id.0)
-                    .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
-                // SAFETY: as above.
-                let ok = unsafe { IdentifierArray::set(identifiers, id.0 as usize, vm, string) };
-                if !ok {
-                    return Err(analyze::ModuleInfoError::BadModuleInfo);
-                }
-            }
+    let ready = |id: StringID| -> Result<&Identifier, analyze::ModuleInfoError> {
+        let Some(target) = identifiers.get(id.0 as usize) else {
+            return Ok(JSC__VM__starPrivateName(vm, id == StringID::STAR_DEFAULT));
+        };
+        if let Some(identifier) = JSC__Identifier__nonNull(target) {
+            return Ok(identifier);
         }
-        Ok(id)
+        match res.string(id.0) {
+            // SAFETY: 16-bit `chars` start at an even offset of a heap block, so they are aligned.
+            Some(ModuleInfoString::Chars { chars, is_8bit }) => Some(unsafe {
+                JSC__Identifier__setFromChars(target, vm, chars.as_ptr(), chars.len(), is_8bit)
+            }),
+            Some(ModuleInfoString::Slot(slot)) => JSC__Identifier__setFromSlot(target, vm, slot),
+            None => None,
+        }
+        .ok_or(analyze::ModuleInfoError::BadModuleInfo)
     };
     // `ScriptFetchParameters::Type`, pinned by the static_asserts in BunAnalyzeTranspiledModule.cpp.
     let request_type = |fetch| -> Result<u32, analyze::ModuleInfoError> {
@@ -85,10 +92,7 @@ fn to_js_module_record(
             RequestedModuleValue::None | RequestedModuleValue::Javascript => 1,
             RequestedModuleValue::Webassembly => 2,
             RequestedModuleValue::Json => 3,
-            // SAFETY: `ready` has filled the slot.
-            host => unsafe {
-                JSC__ScriptFetchParameters__hostDefinedType(identifiers, ready(StringID(host.0))?)
-            },
+            host => JSC__ScriptFetchParameters__hostDefinedType(ready(StringID(host.0))?),
         })
     };
 
@@ -105,19 +109,23 @@ fn to_js_module_record(
             )
         })
         .count();
-    let module_record = JSModuleRecord::create(
-        global_object,
-        vm,
-        module_loader,
-        module_key,
-        source_code,
-        res.flags.contains_import_meta(),
-        res.flags.is_typescript(),
-        res.flags.has_tla(),
-        u32::try_from(body.requested_tags.len()).expect("int cast"),
-        u32::try_from(import_count).expect("int cast"),
-        u32::try_from(body.record_tags.len() - import_count).expect("int cast"),
-    );
+    // SAFETY: the record is held on the stack only, which the collector scans. The printer wrote `res`
+    // together with `source_code`.
+    let module_record = unsafe {
+        JSC_JSModuleRecord__create(
+            global_object,
+            vm,
+            module_loader,
+            module_key,
+            source_code,
+            res.flags.contains_import_meta(),
+            res.flags.is_typescript(),
+            res.flags.has_tla(),
+            u32::try_from(body.requested_tags.len()).expect("int cast"),
+            u32::try_from(import_count).expect("int cast"),
+            u32::try_from(body.record_tags.len() - import_count).expect("int cast"),
+        )
+    };
 
     let mut ids = res.ids();
     for &tag in body.requested_tags {
@@ -125,22 +133,22 @@ fn to_js_module_record(
         let phase_defer = tag & 1 != 0;
         let key = ready(ids.next_id()?)?;
         match ids.next_fetch(tag >> 1)? {
-            RequestedModuleValue::None => module_record.add_requested_module_null_attributes_ptr(
-                identifiers,
+            RequestedModuleValue::None => JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
+                module_record,
                 key,
                 phase_defer,
             ),
             RequestedModuleValue::Javascript => {
-                module_record.add_requested_module_java_script(identifiers, key, phase_defer)
+                JSC_JSModuleRecord__addRequestedModuleJavaScript(module_record, key, phase_defer)
             }
             RequestedModuleValue::Webassembly => {
-                module_record.add_requested_module_web_assembly(identifiers, key, phase_defer)
+                JSC_JSModuleRecord__addRequestedModuleWebAssembly(module_record, key, phase_defer)
             }
             RequestedModuleValue::Json => {
-                module_record.add_requested_module_json(identifiers, key, phase_defer)
+                JSC_JSModuleRecord__addRequestedModuleJSON(module_record, key, phase_defer)
             }
-            host => module_record.add_requested_module_host_defined(
-                identifiers,
+            host => JSC_JSModuleRecord__addRequestedModuleHostDefined(
+                module_record,
                 key,
                 request_type(host)?,
                 phase_defer,
@@ -165,16 +173,16 @@ fn to_js_module_record(
                 };
                 let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 if kind == RecordKind::ImportInfoSingle {
-                    module_record.add_import_entry_single(
-                        identifiers,
+                    JSC_JSModuleRecord__addImportEntrySingle(
+                        module_record,
                         import_name,
                         local_name,
                         module_name,
                         ty,
                     )
                 } else {
-                    module_record.add_import_entry_single_type_script(
-                        identifiers,
+                    JSC_JSModuleRecord__addImportEntrySingleTypeScript(
+                        module_record,
                         import_name,
                         local_name,
                         module_name,
@@ -187,17 +195,15 @@ fn to_js_module_record(
                 let local_name = ready(ids.next_id()?)?;
                 let ty = request_type(ids.next_fetch(fetch_kind)?)?;
                 if kind == RecordKind::ImportInfoNamespace {
-                    module_record.add_import_entry_namespace(
-                        identifiers,
-                        StringID::STAR_NAMESPACE,
+                    JSC_JSModuleRecord__addImportEntryNamespace(
+                        module_record,
                         local_name,
                         module_name,
                         ty,
                     )
                 } else {
-                    module_record.add_import_entry_namespace_defer(
-                        identifiers,
-                        StringID::STAR_NAMESPACE,
+                    JSC_JSModuleRecord__addImportEntryNamespaceDefer(
+                        module_record,
                         local_name,
                         module_name,
                         ty,
@@ -206,14 +212,20 @@ fn to_js_module_record(
             }
             RecordKind::ExportInfoIndirect => {
                 let export_name = ready(ids.next_id()?)?;
-                let import_name = ready(ids.next_id()?)?;
+                let import_id = ids.next_id()?;
+                let import_name = ready(import_id)?;
                 let module_name = ready(ids.next_id()?)?;
                 let ty = request_type(ids.next_fetch(fetch_kind)?)?;
-                if import_name == StringID::STAR_NAMESPACE {
-                    module_record.add_namespace_export(identifiers, export_name, module_name, ty)
+                if import_id == StringID::STAR_NAMESPACE {
+                    JSC_JSModuleRecord__addNamespaceExport(
+                        module_record,
+                        export_name,
+                        module_name,
+                        ty,
+                    )
                 } else {
-                    module_record.add_indirect_export(
-                        identifiers,
+                    JSC_JSModuleRecord__addIndirectExport(
+                        module_record,
                         export_name,
                         import_name,
                         module_name,
@@ -225,18 +237,18 @@ fn to_js_module_record(
                 let export_name = ready(ids.next_id()?)?;
                 let local_name = ready(ids.next_id()?)?;
                 ids.next_fetch(fetch_kind)?;
-                module_record.add_local_export(identifiers, export_name, local_name)
+                JSC_JSModuleRecord__addLocalExport(module_record, export_name, local_name)
             }
             RecordKind::ExportInfoNamespace => {
                 let export_name = ready(ids.next_id()?)?;
                 let module_name = ready(ids.next_id()?)?;
                 let ty = request_type(ids.next_fetch(fetch_kind)?)?;
-                module_record.add_namespace_export(identifiers, export_name, module_name, ty)
+                JSC_JSModuleRecord__addNamespaceExport(module_record, export_name, module_name, ty)
             }
             RecordKind::ExportInfoStar => {
                 let module_name = ready(ids.next_id()?)?;
                 let ty = request_type(ids.next_fetch(fetch_kind)?)?;
-                module_record.add_star_export(identifiers, module_name, ty)
+                JSC_JSModuleRecord__addStarExport(module_record, module_name, ty)
             }
             _ => return Err(analyze::ModuleInfoError::BadModuleInfo),
         }
@@ -250,39 +262,44 @@ fn to_js_module_record(
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
 
-bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
+/// Not `opaque_ffi!`, whose `opaque_ref` takes any pointer: only C++ can make these.
+mod handles {
+    use core::cell::UnsafeCell;
+    use core::ffi::c_void;
+
+    /// A `JSC::Identifier` that is null until C++ sets it, and not null after that.
+    #[repr(transparent)]
+    pub(super) struct IdentifierSlot(UnsafeCell<*const c_void>);
+    /// A `JSC::Identifier` that is not null.
+    #[repr(transparent)]
+    pub(super) struct Identifier(IdentifierSlot);
+    /// Pointer-aligned, so `bun_opaque::opaque_deref` rejects it.
+    #[repr(C)]
+    pub(super) struct JSModuleRecord(UnsafeCell<[*const c_void; 0]>);
+}
 unsafe extern "C" {
-    fn Bun__VM__sharedModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
-    safe fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
-    fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierArray, count: usize);
-    fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
-    fn JSC__IdentifierArray__setFromChars(
-        identifier_array: *mut IdentifierArray,
-        n: usize,
-        vm: *const VM,
+    /// Grows the VM's slots to at least `count`, which can move them.
+    safe fn Bun__VM__sharedModuleInfoIdentifiers(vm: &VM, count: usize) -> *mut IdentifierSlot;
+    safe fn JSC__VM__starPrivateName(vm: &VM, is_default: bool) -> &Identifier;
+    safe fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierSlot;
+    fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierSlot, count: usize);
+    safe fn JSC__Identifier__nonNull(identifier: &IdentifierSlot) -> Option<&Identifier>;
+    fn JSC__Identifier__setFromChars<'a>(
+        identifier: &'a IdentifierSlot,
+        vm: &VM,
         chars: *const u8,
         len: usize,
         is_8bit: bool,
-    );
-    fn JSC__IdentifierArray__setFromSlot(
-        identifier_array: *mut IdentifierArray,
-        n: usize,
-        vm: *const VM,
+    ) -> &'a Identifier;
+    safe fn JSC__Identifier__setFromSlot<'a>(
+        identifier: &'a IdentifierSlot,
+        vm: &VM,
         slot: u32,
-    ) -> bool;
-}
-impl IdentifierArray {
-    /// The VM's slots for the executable's shared module-info string table,
-    /// grown to at least `count`; null until filled.
-    #[inline]
-    pub(crate) fn shared(vm: &VM, count: usize) -> *mut IdentifierArray {
-        // SAFETY: FFI call; the vector lives on the VM's client data.
-        unsafe { Bun__VM__sharedModuleInfoIdentifiers(vm, count) }
-    }
+    ) -> Option<&'a Identifier>;
 }
 /// `count` identifier slots owned by this value (fastMalloc'd on the C++ side).
 struct OwnedIdentifierArray {
-    ptr: *mut IdentifierArray,
+    ptr: *mut IdentifierSlot,
     count: usize,
 }
 impl OwnedIdentifierArray {
@@ -299,169 +316,19 @@ impl Drop for OwnedIdentifierArray {
         unsafe { JSC__IdentifierArray__destroy(self.ptr, self.count) }
     }
 }
-impl IdentifierArray {
-    /// # Safety
-    /// `this` must be live; `n` must be in-bounds for the array's length.
-    #[inline]
-    pub(crate) unsafe fn is_null(this: *mut IdentifierArray, n: usize) -> bool {
-        // SAFETY: caller contract.
-        unsafe { JSC__IdentifierArray__isNull(this, n) }
-    }
-    /// # Safety
-    /// `this` must be live; `n` must be in-bounds for the array's length.
-    #[inline]
-    pub(crate) unsafe fn set(
-        this: *mut IdentifierArray,
-        n: usize,
-        vm: &VM,
-        string: analyze::ModuleInfoString<'_>,
-    ) -> bool {
-        // SAFETY: caller contract — `this` is live, `n` is in bounds; `chars` is a valid slice for the call.
-        unsafe {
-            match string {
-                analyze::ModuleInfoString::Chars { chars, is_8bit } => {
-                    JSC__IdentifierArray__setFromChars(
-                        this,
-                        n,
-                        vm,
-                        chars.as_ptr(),
-                        chars.len(),
-                        is_8bit,
-                    );
-                    true
-                }
-                analyze::ModuleInfoString::Slot(slot) => {
-                    JSC__IdentifierArray__setFromSlot(this, n, vm, slot)
-                }
-            }
-        }
-    }
-}
 
 bun_opaque::opaque_ffi! {
     pub(crate) struct SourceCode;
-    pub(crate) struct JSModuleRecord;
     pub(crate) struct JSModuleLoader;
 }
 unsafe extern "C" {
-    fn JSC_JSModuleRecord__create(
-        global_object: *const JSGlobalObject,
-        vm: *const VM,
-        module_loader: *mut JSModuleLoader,
-        module_key: *const IdentifierArray,
-        source_code: *const SourceCode,
-        has_import_meta: bool,
-        is_typescript: bool,
-        has_tla: bool,
-        requested_module_count: u32,
-        import_count: u32,
-        export_count: u32,
-    ) -> *mut JSModuleRecord;
-
-    fn JSC_JSModuleRecord__addIndirectExport(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        export_name: StringID,
-        import_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-    fn JSC_JSModuleRecord__addLocalExport(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        export_name: StringID,
-        local_name: StringID,
-    );
-    fn JSC_JSModuleRecord__addNamespaceExport(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        export_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-    fn JSC_JSModuleRecord__addStarExport(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-
-    fn JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    );
-    fn JSC_JSModuleRecord__addRequestedModuleJavaScript(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    );
-    fn JSC_JSModuleRecord__addRequestedModuleWebAssembly(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    );
-    fn JSC_JSModuleRecord__addRequestedModuleJSON(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    );
-    fn JSC__ScriptFetchParameters__hostDefinedType(
-        identifier_array: *mut IdentifierArray,
-        name: StringID,
-    ) -> u32;
-    fn JSC_JSModuleRecord__addRequestedModuleHostDefined(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        module_name: StringID,
-        host_defined_import_type: u32,
-        phase_defer: bool,
-    );
-
-    fn JSC_JSModuleRecord__addImportEntrySingle(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-    fn JSC_JSModuleRecord__addImportEntrySingleTypeScript(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-    fn JSC_JSModuleRecord__addImportEntryNamespace(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-    fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
-        module_record: *mut JSModuleRecord,
-        identifier_array: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    );
-}
-impl JSModuleRecord {
-    #[inline]
-    fn create(
-        global_object: &JSGlobalObject,
+    /// SAFETY: the record is kept alive for `'a`. By the time it is linked, each entry that was added names a
+    /// module that it requests, or a variable of `source_code`: JSC does not check.
+    fn JSC_JSModuleRecord__create<'a>(
+        global_object: &'a JSGlobalObject,
         vm: &VM,
-        module_loader: *mut JSModuleLoader,
-        module_key: &IdentifierArray,
+        module_loader: &JSModuleLoader,
+        module_key: &Identifier,
         source_code: &SourceCode,
         has_import_meta: bool,
         is_typescript: bool,
@@ -469,335 +336,84 @@ impl JSModuleRecord {
         requested_module_count: u32,
         import_count: u32,
         export_count: u32,
-    ) -> *mut JSModuleRecord {
-        // SAFETY: all pointer args derive from valid references.
-        unsafe {
-            JSC_JSModuleRecord__create(
-                global_object,
-                vm,
-                module_loader,
-                module_key,
-                source_code,
-                has_import_meta,
-                is_typescript,
-                has_tla,
-                requested_module_count,
-                import_count,
-                export_count,
-            )
-        }
-    }
-}
+    ) -> &'a JSModuleRecord;
 
-// Thin method shims over the raw `*mut JSModuleRecord` returned by `create`.
-// These take `*mut Self` raw-ptr receivers to avoid materializing `&mut` aliases.
-trait JSModuleRecordExt {
-    fn add_indirect_export(
-        self,
-        ia: *mut IdentifierArray,
-        export_name: StringID,
-        import_name: StringID,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addIndirectExport(
+        module_record: &JSModuleRecord,
+        export_name: &Identifier,
+        import_name: &Identifier,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-    fn add_local_export(
-        self,
-        ia: *mut IdentifierArray,
-        export_name: StringID,
-        local_name: StringID,
+    safe fn JSC_JSModuleRecord__addLocalExport(
+        module_record: &JSModuleRecord,
+        export_name: &Identifier,
+        local_name: &Identifier,
     );
-    fn add_namespace_export(
-        self,
-        ia: *mut IdentifierArray,
-        export_name: StringID,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addNamespaceExport(
+        module_record: &JSModuleRecord,
+        export_name: &Identifier,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-    fn add_star_export(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addStarExport(
+        module_record: &JSModuleRecord,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-    fn add_requested_module_null_attributes_ptr(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
+
+    safe fn JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
+        module_record: &JSModuleRecord,
+        module_name: &Identifier,
         phase_defer: bool,
     );
-    fn add_requested_module_java_script(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addRequestedModuleJavaScript(
+        module_record: &JSModuleRecord,
+        module_name: &Identifier,
         phase_defer: bool,
     );
-    fn add_requested_module_web_assembly(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addRequestedModuleWebAssembly(
+        module_record: &JSModuleRecord,
+        module_name: &Identifier,
         phase_defer: bool,
     );
-    fn add_requested_module_json(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addRequestedModuleJSON(
+        module_record: &JSModuleRecord,
+        module_name: &Identifier,
         phase_defer: bool,
     );
-    fn add_requested_module_host_defined(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
+    safe fn JSC__ScriptFetchParameters__hostDefinedType(name: &Identifier) -> u32;
+    safe fn JSC_JSModuleRecord__addRequestedModuleHostDefined(
+        module_record: &JSModuleRecord,
+        module_name: &Identifier,
         host_defined_import_type: u32,
         phase_defer: bool,
     );
-    fn add_import_entry_single(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
+
+    safe fn JSC_JSModuleRecord__addImportEntrySingle(
+        module_record: &JSModuleRecord,
+        import_name: &Identifier,
+        local_name: &Identifier,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-    fn add_import_entry_single_type_script(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addImportEntrySingleTypeScript(
+        module_record: &JSModuleRecord,
+        import_name: &Identifier,
+        local_name: &Identifier,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-    fn add_import_entry_namespace(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addImportEntryNamespace(
+        module_record: &JSModuleRecord,
+        local_name: &Identifier,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-    fn add_import_entry_namespace_defer(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
+    safe fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
+        module_record: &JSModuleRecord,
+        local_name: &Identifier,
+        module_name: &Identifier,
         module_request_type: u32,
     );
-}
-impl JSModuleRecordExt for *mut JSModuleRecord {
-    // SAFETY (all below): `self` is the non-null pointer returned by JSC_JSModuleRecord__create;
-    // `ia` is either the VM's shared identifier slots or the caller's `OwnedIdentifierArray`; both outlive every call below.
-    #[inline]
-    fn add_indirect_export(
-        self,
-        ia: *mut IdentifierArray,
-        export_name: StringID,
-        import_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addIndirectExport(
-                self,
-                ia,
-                export_name,
-                import_name,
-                module_name,
-                module_request_type,
-            )
-        }
-    }
-    #[inline]
-    fn add_local_export(
-        self,
-        ia: *mut IdentifierArray,
-        export_name: StringID,
-        local_name: StringID,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
-    }
-    #[inline]
-    fn add_namespace_export(
-        self,
-        ia: *mut IdentifierArray,
-        export_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addNamespaceExport(
-                self,
-                ia,
-                export_name,
-                module_name,
-                module_request_type,
-            )
-        }
-    }
-    #[inline]
-    fn add_star_export(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name, module_request_type) }
-    }
-    #[inline]
-    fn add_requested_module_null_attributes_ptr(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
-                self,
-                ia,
-                module_name,
-                phase_defer,
-            )
-        }
-    }
-    #[inline]
-    fn add_requested_module_java_script(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name, phase_defer)
-        }
-    }
-    #[inline]
-    fn add_requested_module_web_assembly(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name, phase_defer)
-        }
-    }
-    #[inline]
-    fn add_requested_module_json(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
-        phase_defer: bool,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name, phase_defer) }
-    }
-    #[inline]
-    fn add_requested_module_host_defined(
-        self,
-        ia: *mut IdentifierArray,
-        module_name: StringID,
-        host_defined_import_type: u32,
-        phase_defer: bool,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addRequestedModuleHostDefined(
-                self,
-                ia,
-                module_name,
-                host_defined_import_type,
-                phase_defer,
-            )
-        }
-    }
-    #[inline]
-    fn add_import_entry_single(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addImportEntrySingle(
-                self,
-                ia,
-                import_name,
-                local_name,
-                module_name,
-                module_request_type,
-            )
-        }
-    }
-    #[inline]
-    fn add_import_entry_single_type_script(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addImportEntrySingleTypeScript(
-                self,
-                ia,
-                import_name,
-                local_name,
-                module_name,
-                module_request_type,
-            )
-        }
-    }
-    #[inline]
-    fn add_import_entry_namespace(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addImportEntryNamespace(
-                self,
-                ia,
-                import_name,
-                local_name,
-                module_name,
-                module_request_type,
-            )
-        }
-    }
-    #[inline]
-    fn add_import_entry_namespace_defer(
-        self,
-        ia: *mut IdentifierArray,
-        import_name: StringID,
-        local_name: StringID,
-        module_name: StringID,
-        module_request_type: u32,
-    ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe {
-            JSC_JSModuleRecord__addImportEntryNamespaceDefer(
-                self,
-                ia,
-                import_name,
-                local_name,
-                module_name,
-                module_request_type,
-            )
-        }
-    }
 }

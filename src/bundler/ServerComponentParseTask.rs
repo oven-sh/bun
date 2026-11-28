@@ -59,7 +59,7 @@ pub struct ClientEntryWrapper {
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
+// `post_result` (MPSC). Reads `ctx: &BundleV2` shared.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of the boxed
     // `ServerComponentParseTask` that BundleV2 gave to the pool, which runs it once.

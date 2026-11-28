@@ -1168,7 +1168,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
             let sni = Self::configured_hostname(this);
             if !sni.is_empty()
                 && !bun_core::ip_address::is_ip_host(sni)
-                && let Some(ssl) = socket.ssl_mut()
+                // SAFETY: the socket has just opened, and `ssl` is used for one call.
+                && let Some(ssl) = unsafe { socket.ssl_mut() }
             {
                 ssl.set_servername(&bun_core::ZBox::from_bytes(sni));
             }
@@ -1245,7 +1246,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
         let handshake_success = success == 1;
         let _update = UpdatePollRefOnDrop(this, hold.object());
-        let ssl_ptr: *mut boringssl::c::SSL = socket.ssl().unwrap_or(core::ptr::null_mut());
         if handshake_success {
             if this.tls.reject_unauthorized(this.vm) {
                 // only reject the connection if reject_unauthorized == true
@@ -1257,18 +1257,15 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // Certificate chain is valid; verify the hostname matches the
                 // certificate.
                 let hostname = Self::configured_hostname(this);
+                // SAFETY: the socket that reports its handshake is open, and both checks last use `ssl` before user code runs.
+                let ssl = unsafe { socket.ssl_mut() };
                 if let Some(callback) = js::check_server_identity_get_cached(hold.object().to_js())
                 {
-                    return Self::ask_about_identity(hold, callback, socket, hostname);
+                    return Self::ask_about_identity(hold, callback, ssl, hostname);
                 }
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()
-                    || (!ssl_ptr.is_null()
-                        && uws::check_server_identity(
-                            // SAFETY: non-null, so the dispatched socket's live `SSL*`.
-                            unsafe { &mut *ssl_ptr },
-                            hostname,
-                        ));
+                    || ssl.is_some_and(|ssl| uws::check_server_identity(ssl, hostname));
                 if !identity_ok {
                     return Self::fail_handshake_with_altname_error(this, hostname);
                 }
@@ -1302,7 +1299,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     fn ask_about_identity(
         hold: &Hold,
         callback: JSValue,
-        socket: SocketType<SSL>,
+        ssl: Option<&mut boringssl::c::SSL>,
         hostname: &[u8],
     ) -> JsResult<()> {
         let this = &hold.client;
@@ -1316,8 +1313,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         } else {
             hostname
         };
-        let socket = Self::socket(socket);
-        let verdict = server_identity::check(&this.global_object, callback, &socket, hostname);
+        let verdict = server_identity::check(&this.global_object, callback, ssl, hostname);
         // It closed this socket, and may have dialed the next.
         if !(this.dial.hold()).is_some_and(|current| core::ptr::eq(Rc::as_ptr(&current), hold)) {
             return Ok(());

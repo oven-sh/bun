@@ -424,7 +424,7 @@ impl<'a> ModuleInfoStringTable<'a> {
 }
 
 /// The executable's module-info string table: `u32 count` then one `u32`
-/// slot per string, each resolved by `JSC__IdentifierArray__setFromSlot`
+/// slot per string, each resolved by `JSC__Identifier__setFromSlot`
 /// exactly as the bytecode cache resolves its own string slots — up to three
 /// Latin-1 characters inline (tag 1), an ordinal into the executable's
 /// bytecode string table (tag 2), or the empty string (tag 3). Built by
@@ -526,7 +526,7 @@ impl ModuleInfoExt for ModuleInfo {
 }
 
 // zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
-// JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
+// JSModuleRecord/Identifier handles: see bun_bundler_jsc::analyze_jsc
 
 /// C++ gives back the `Box` it took from `ResolvedSource.module_info`, never null.
 #[unsafe(no_mangle)]

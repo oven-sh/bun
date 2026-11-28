@@ -810,20 +810,13 @@ pub mod waiter_thread_posix {
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
     /// drained on the waiter thread.
     pub struct TaskQueueEntry<T: ProcessLike> {
-        pub(crate) process: RefPtr<T>,
+        process: SendPtr<T>,
         pub(crate) next: bun_threading::Link<TaskQueueEntry<T>>,
     }
 
-    // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
-    unsafe impl<T: ProcessLike> bun_threading::Linked for TaskQueueEntry<T> {
-        #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
-        }
-    }
+    bun_core::intrusive_field!([T: ProcessLike] TaskQueueEntry<T>, next: bun_threading::Link<Self>);
 
-    pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
+    pub type ConcurrentQueue<T> = UnboundedQueue<Box<TaskQueueEntry<T>>>;
 
     /// Posted to the JS event loop from the waiter thread when a `wait4()`
     /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
@@ -917,29 +910,15 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: RefPtr<T>) {
             self.watched.fetch_add(1, Ordering::SeqCst);
-            self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
-                process,
+            self.queue.push(Box::new(TaskQueueEntry {
+                process: SendPtr(process),
                 next: bun_threading::Link::new(),
             }));
         }
 
         /// `active` is the waiter thread's list of the processes it has taken off the queue and not reaped yet.
         fn loop_(&self, active: &mut Vec<RefPtr<T>>) {
-            {
-                let batch = self.queue.pop_batch();
-                active.reserve(batch.count);
-                let mut iter = batch.iterator();
-                loop {
-                    let task = iter.next();
-                    if task.is_null() {
-                        break;
-                    }
-                    // SAFETY: task was heap-allocated in append(). Its process crosses threads here: this one
-                    // reads what never changes, and drops a ref only if there is no loop to post to.
-                    let task = unsafe { bun_core::heap::take(task) };
-                    active.push(task.process);
-                }
-            }
+            active.extend(self.queue.pop_batch().map(|task| task.process.get()));
 
             let mut i: usize = 0;
             while i < active.len() {
@@ -989,18 +968,15 @@ pub mod waiter_thread_posix {
         }
     }
 
-    /// The ref that [`reap_on_thread`] moves to its thread.
-    #[cfg(target_os = "macos")]
-    struct SendPtr(RefPtr<Process>);
-    // SAFETY: the pointee is refcounted (`ThreadSafeRefCount`) and the thread touches it only through
-    // `post_wait_result`, as the shared waiter thread does with the pointers in its queue.
-    #[cfg(target_os = "macos")]
-    unsafe impl Send for SendPtr {}
+    /// The ref that moves to a thread that waits for the process.
+    struct SendPtr<T: ProcessLike>(RefPtr<T>);
+    // SAFETY: the pointee is refcounted (`ThreadSafeRefCount`). The thread reads what never changes, and
+    // drops the ref only if there is no loop to post to.
+    unsafe impl Send for SendPtr<Process> {}
 
-    #[cfg(target_os = "macos")]
-    impl SendPtr {
+    impl<T: ProcessLike> SendPtr<T> {
         /// By value, so that a closure captures the `Send` wrapper and not its field.
-        fn get(self) -> RefPtr<Process> {
+        fn get(self) -> RefPtr<T> {
             self.0
         }
     }

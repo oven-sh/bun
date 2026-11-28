@@ -549,7 +549,7 @@ impl<S, R> Suspended<S, R> {
     #[inline]
     pub fn resume(self) {
         // SAFETY: the pool is done with the task of a job that it has called, and owns the job now.
-        WorkPool::schedule(unsafe { &raw mut (*self.job.hand_on()).task });
+        unsafe { WorkPool::schedule(&raw mut (*self.job.hand_on()).task) };
     }
 }
 

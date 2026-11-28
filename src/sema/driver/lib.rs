@@ -131,18 +131,19 @@ impl ThreadCaches {
 /// The allocator retains a thread's free pages for that thread, and only that thread can release them. Each thread of
 /// `pool` does so when it's next idle, like the bundler's `ThreadPool::drop`.
 fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
-    use bun_threading::thread_pool::{Node, Task};
-    unsafe fn release(task: *mut Task) {
-        // SAFETY: `task` was allocated below and queued once.
-        drop(unsafe { bun_core::heap::take(task) });
-        bun_core::Global::mimalloc_cleanup(true);
+    use bun_threading::work_pool::{Batch, OwnedTask, Task};
+    #[derive(Default)]
+    struct Release {
+        task: Task,
     }
-    pool.push_idle_task_to_each_thread(|| {
-        bun_core::heap::into_raw(Box::new(Task {
-            node: Node::default(),
-            callback: release,
-        }))
-    });
+    bun_threading::intrusive_work_task!(Release, task);
+    impl OwnedTask for Release {
+        fn run(self: Box<Self>) {
+            drop(self);
+            bun_core::Global::mimalloc_cleanup(true);
+        }
+    }
+    pool.push_idle_task_to_each_thread(|| Batch::from_owned(Box::<Release>::default()));
 }
 
 /// The buffers of the parser and the binder

@@ -1126,7 +1126,8 @@ impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
             .collect();
         let mut batch = ThreadPoolLib::Batch::default();
         for task in &mut self.tasks {
-            batch.push(ThreadPoolLib::Batch::from(&raw mut task.task.task));
+            // SAFETY: `tasks` is left alone until the wait group is done, which `drop` waits for.
+            batch.push(unsafe { ThreadPoolLib::Batch::from(&raw mut task.task.task) });
         }
         batch
     }

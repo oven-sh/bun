@@ -61,7 +61,7 @@ pub(crate) struct StatWatcherScheduler {
     /// Held while the periodic stat pass is out on the pool (set in
     /// `timer_callback`, moved out by `work_pool_callback`).
     ticket: Cell<Option<bun_jsc::Ticket>>,
-    watchers: WatcherQueue,
+    watchers: UnboundedQueue<Appended>,
 
     pub(crate) event_loop_timer: EventLoopTimer,
 
@@ -76,42 +76,29 @@ struct StatPass {
     ticket: bun_jsc::Ticket,
 }
 
-/// Holds a ref on each watcher in it.
-#[derive(Default)]
-struct WatcherQueue(UnboundedQueue<StatWatcher>);
+/// The ref that [`StatWatcherScheduler::append`] keeps.
+struct Appended(RefPtr<StatWatcher>);
 
-impl WatcherQueue {
-    fn push(&self, watcher: RefPtr<StatWatcher>) {
-        self.0.push(watcher.into_non_null());
+// SAFETY: only the hop of the initial stat appends, and a watcher has one.
+unsafe impl bun_ptr::IntrusivePtr for Appended {
+    type Target = StatWatcher;
+
+    fn into_raw(self) -> *mut StatWatcher {
+        self.0.into_raw()
     }
 
-    fn pop_all(&self) -> impl Iterator<Item = RefPtr<StatWatcher>> {
-        let mut batch = self.0.pop_batch().iterator();
-        core::iter::from_fn(move || {
-            let watcher = batch.next();
-            // SAFETY: the ref `push` gave up.
-            (!watcher.is_null()).then(|| unsafe { RefPtr::from_raw(watcher) })
-        })
+    unsafe fn from_raw(ptr: *mut StatWatcher) -> Self {
+        // SAFETY: fn contract.
+        Self(unsafe { RefPtr::from_raw(ptr) })
     }
 }
 
-// Intrusive `next`-link accessors for `UnboundedQueue<StatWatcher>`.
-//
-// SAFETY: all four route through the same `next: *mut StatWatcher` field; the
-// atomic variants reinterpret it as `AtomicPtr<StatWatcher>` (same size/align,
-// `addr_of!` preserves provenance).
-unsafe impl bun_threading::Linked for StatWatcher {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(StatWatcher, next: bun_threading::Link<Self>);
 
 impl Drop for StatWatcherScheduler {
     fn drop(&mut self) {
         assert!(
-            self.watchers.0.is_empty(),
+            self.watchers.is_empty(),
             "destroying StatWatcherScheduler while it still has watchers",
         );
     }
@@ -139,7 +126,7 @@ impl StatWatcherScheduler {
             main_thread: thread::current().id(),
             vm: BackRef::new(vm),
             ticket: Cell::new(None),
-            watchers: WatcherQueue::default(),
+            watchers: UnboundedQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
         })
@@ -156,7 +143,7 @@ impl StatWatcherScheduler {
         let this = watcher.scheduler.clone();
         let interval = watcher.interval;
         debug_assert_eq!(this.main_thread, thread::current().id());
-        this.watchers.push(watcher);
+        this.watchers.push(Appended(watcher));
         let current = this.get_interval();
         if current == 0 || current > interval {
             // we are not running or the new watcher has a smaller interval
@@ -220,8 +207,8 @@ impl StatWatcherScheduler {
         }
 
         self.ticket.set(Some(self.vm().ticket()));
-        // SAFETY: a field projection of the live scheduler, whose ref `work_pool_callback` adopts.
-        WorkPool::schedule(unsafe { &raw mut (*self.into_raw()).task });
+        // SAFETY: not in flight, and `work_pool_callback` adopts the ref.
+        unsafe { WorkPool::schedule(&raw mut (*self.into_raw()).task) };
     }
 
     /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
@@ -242,7 +229,7 @@ impl StatWatcherScheduler {
         let mut min_interval: i32 = i32::MAX;
         let mut closest_next_check: u64 = u64::try_from(min_interval).expect("int cast");
         let mut contain_watchers = false;
-        for w in this.watchers.pop_all() {
+        for Appended(w) in this.watchers.pop_batch() {
             if w.closed.load(Ordering::Relaxed) {
                 continue;
             }
@@ -259,7 +246,7 @@ impl StatWatcherScheduler {
                 closest_next_check = (interval - time_since).min(closest_next_check);
             }
             min_interval = min_interval.min(w.interval);
-            this.watchers.push(w);
+            this.watchers.push(Appended(w));
         }
 
         let rearm = contain_watchers && !this.is_shutdown.load(Ordering::Relaxed);
@@ -308,7 +295,7 @@ impl StatWatcherScheduler {
             core::hint::spin_loop();
         }
 
-        for w in this.watchers.pop_all() {
+        for Appended(w) in this.watchers.pop_batch() {
             if !w.closed.load(Ordering::Relaxed) {
                 // Downgrade the `JsRef` Strong so the JS wrapper becomes
                 // collectible at `lastChanceToFinalize`.

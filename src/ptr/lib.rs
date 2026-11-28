@@ -33,6 +33,9 @@ pub use bun_core::{RawSlice, cast_fn_ptr};
 mod aliasable_box;
 pub use aliasable_box::AliasableBox;
 
+mod intrusive_ptr;
+pub use intrusive_ptr::{IntrusivePtr, Unique};
+
 pub mod raw_ref_count;
 pub mod weak_ptr;
 

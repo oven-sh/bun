@@ -125,7 +125,7 @@ impl Batch {
         let raw = Box::into_raw(task);
         // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
         // projected from the raw pointer, so that it covers the whole allocation.
-        Batch::from(unsafe { T::field_of(raw) })
+        unsafe { Batch::from(T::field_of(raw)) }
     }
 }
 
@@ -145,8 +145,10 @@ impl WorkPool {
         POOL.get_or_init(create)
     }
 
-    pub fn schedule(task: *mut Task) {
-        Self::get().schedule(Batch::from(task));
+    /// SAFETY: as [`Batch::from`].
+    pub unsafe fn schedule(task: *mut Task) {
+        // SAFETY: fn contract.
+        Self::get().schedule(unsafe { Batch::from(task) });
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of

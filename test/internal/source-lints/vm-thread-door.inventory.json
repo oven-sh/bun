@@ -1,4 +1,9 @@
 {
+  "src/event_loop/ConcurrentTask.rs": {
+    "unsafe impl Sync": [
+      "Shared"
+    ]
+  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [

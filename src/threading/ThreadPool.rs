@@ -369,7 +369,7 @@ impl ThreadPool {
 
     /// Queues a task from `new_task` for every thread the pool has spawned, to run on that thread
     /// when it is next idle, and wakes them. Does not wait for any of them.
-    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> *mut Task) {
+    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> Batch) {
         let mut next = self.threads.load(Ordering::Acquire);
         while let Some(thread) = NonNull::new(next) {
             // A registered worker stays in the list, and alive, until the pool shuts down:
@@ -501,11 +501,13 @@ pub struct Batch {
 
 impl Batch {
     /// Create a batch from a single task.
-    pub fn from(task: *mut Task) -> Batch {
+    /// SAFETY: `task` is in no queue, and is live and left alone until its callback is called, on any thread
+    /// that the batch is given to.
+    pub unsafe fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
         if let Some(task) = task {
             // A rescheduled task may still carry the link from its last batch.
-            // SAFETY: caller passes a live Task that is not currently queued.
+            // SAFETY: fn contract.
             unsafe { (*Task::node_of(task).as_ptr()).next = ptr::null_mut() };
         }
         Batch {
@@ -543,13 +545,13 @@ impl Batch {
         }
         let mut first = Batch::default();
         for _ in 0..count {
-            let task = self.head.expect("`len` counts it");
-            // SAFETY: a task of this batch, which isn't queued.
-            let next = unsafe { (*Task::node_of(task).as_ptr()).next };
-            self.head = NonNull::new(Task::from_node(next));
-            self.len -= 1;
-            let task: *mut Task = task.as_ptr();
-            first.push(Batch::from(task));
+            let task = self.head.expect("`len` counts it").as_ptr();
+            // SAFETY: a task of this batch, which it leaves.
+            unsafe {
+                self.head = NonNull::new(Task::from_node((*task).node.next));
+                self.len -= 1;
+                first.push(Batch::from(task));
+            }
         }
         first
     }
@@ -694,7 +696,8 @@ impl ThreadPool {
         group.add(tasks.len());
         let mut batch = Batch::default();
         for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(&raw mut runner_task.task.task));
+            // SAFETY: `tasks` is left alone until `wait` returns, and the bounds let any thread run `call`.
+            batch.push(unsafe { Batch::from(&raw mut runner_task.task.task) });
         }
         self.schedule_all_at_once(batch);
         on_calling_thread();
@@ -1404,11 +1407,10 @@ impl Thread {
         CURRENT.with(|c| c.get())
     }
 
-    pub fn push_idle_task(&self, task: *mut Task) {
-        let node_ptr = Task::node_of(NonNull::new(task).expect("non-null task"));
+    pub fn push_idle_task(&self, Batch { head, tail, .. }: Batch) {
         let list = node::List {
-            head: node_ptr,
-            tail: node_ptr,
+            head: Task::node_of(head.expect("not empty")),
+            tail: Task::node_of(tail.expect("not empty")),
         };
         self.idle_queue.push(&list);
     }

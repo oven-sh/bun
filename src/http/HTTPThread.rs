@@ -211,7 +211,7 @@ pub struct LibdeflateState {
     pub(crate) shared_buffer: Box<[u8; LIBDEFLATE_SHARED_BUFFER_LEN]>,
 }
 
-pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
+pub(crate) type Queue = UnboundedQueue<Box<AsyncHttp<'static>>>;
 
 #[derive(Clone)]
 pub struct InitOpts {
@@ -719,7 +719,7 @@ impl HttpThread {
             }
         }
 
-        while let Some(http) = pop_queued_task() {
+        while let Some(http) = self.pop_queued_task() {
             let aborted = http.client.signals.get(crate::signals::Field::Aborted);
             if !aborted && active >= max {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
@@ -817,7 +817,7 @@ impl HttpThread {
         for http in core::mem::take(&mut self.deferred_tasks) {
             http.release_at_shutdown();
         }
-        while let Some(http) = pop_queued_task() {
+        while let Some(http) = self.pop_queued_task() {
             http.release_at_shutdown();
         }
         for http in core::mem::take(&mut self.in_flight) {
@@ -839,7 +839,7 @@ impl HttpThread {
     pub fn schedule(requests: impl IntoIterator<Item = Box<AsyncHttp<'static>>>) {
         let mut any = false;
         for http in requests {
-            INBOX.tasks.push(bun_core::heap::into_raw_nn(http));
+            INBOX.tasks.push(http);
             any = true;
         }
         if any {
@@ -847,12 +847,11 @@ impl HttpThread {
             Self::wakeup();
         }
     }
-}
 
-fn pop_queued_task() -> Option<Box<AsyncHttp<'static>>> {
-    let http = NonNull::new(INBOX.tasks.pop())?;
-    // SAFETY: a box that `schedule` leaked; a pop hands it to one caller.
-    Some(unsafe { bun_core::heap::take(http.as_ptr()) })
+    fn pop_queued_task(&mut self) -> Option<Box<AsyncHttp<'static>>> {
+        // SAFETY: there is one `HttpThread`, and nothing else pops.
+        unsafe { INBOX.tasks.pop() }
+    }
 }
 
 /// Evict the least-recently-used SSL context cache entry.

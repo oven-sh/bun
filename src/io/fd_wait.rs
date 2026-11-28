@@ -5,10 +5,11 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 
 use bun_collections::hashbrown::{HashMap, hash_map};
+use bun_ptr::IntrusivePtr;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::linux::EPOLL;
 use bun_sys::{self as sys, E, Fd, FdExt as _};
-use bun_threading::{Guarded, Link, Linked, UnboundedQueue};
+use bun_threading::{Guarded, Link, UnboundedQueue};
 use rustc_hash::FxBuildHasher;
 #[cfg(all(test, target_os = "linux"))]
 use tests::{epoll_ctl, epoll_del};
@@ -119,12 +120,24 @@ enum Request<J> {
 // SAFETY: `request` has one user at a time. The queue, `armed` and handing the job on order them.
 unsafe impl<J: Waiter> Sync for Parking<J> {}
 
-// SAFETY: always the same field.
-unsafe impl<J: Waiter> Linked for Parking<J> {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const Link<Self> {
-        // SAFETY: fn contract.
-        unsafe { &raw const (*item).next }
+bun_core::intrusive_field!([J: Waiter] Parking<J>, next: Link<Self>);
+
+/// From the owner of the job, or from whoever got the poller out of `armed`.
+struct Sent<J: Waiter>(*const Parking<J>);
+
+// SAFETY: as `&Parking<J>`.
+unsafe impl<J: Waiter> Send for Sent<J> {}
+
+// SAFETY: there is one at a time, and meanwhile the job is in the request or in the table.
+unsafe impl<J: Waiter> IntrusivePtr for Sent<J> {
+    type Target = Parking<J>;
+
+    fn into_raw(self) -> *mut Parking<J> {
+        self.0.cast_mut()
+    }
+
+    unsafe fn from_raw(ptr: *mut Parking<J>) -> Self {
+        Self(ptr)
     }
 }
 
@@ -204,7 +217,7 @@ pub struct Poller<J: Waiter> {
     /// The epoll or kqueue.
     watcher: Fd,
     waker: Waker,
-    queue: UnboundedQueue<Parking<J>>,
+    queue: UnboundedQueue<Sent<J>>,
 }
 
 impl<J: Waiter> Poller<J> {
@@ -217,7 +230,7 @@ impl<J: Waiter> Poller<J> {
     }
 
     fn send(&self, parking: NonNull<Parking<J>>) {
-        self.queue.push(parking);
+        self.queue.push(Sent(parking.as_ptr()));
         self.wake();
     }
 
@@ -317,12 +330,11 @@ impl<J: Waiter> IoThread<J> {
     }
 
     fn run_queue(&mut self) {
-        let mut batch = self.poller.queue.pop_batch().iterator();
-        while let Some(parking) = NonNull::new(batch.next()) {
+        for Sent(parking) in self.poller.queue.pop_batch() {
             self.last.0 += 1;
             let key = self.last;
             // SAFETY: its job is in the request or in the table, so it is live and this thread's.
-            match unsafe { parking.as_ref().request.get().replace(Request::Disarm(key)) } {
+            match unsafe { (*parking).request.get().replace(Request::Disarm(key)) } {
                 Request::Arm(mut job) => {
                     log!("arm({}, {:?})", job.wait().fd(), job.wait().interest);
                     if !job.parking().armed.put(self.poller) {

@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -22,6 +21,7 @@ use bun_event_loop::{self, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::{DELIMITER, Path, without_trailing_sep};
+use bun_ptr::Unique;
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -248,8 +248,7 @@ pub use self::progress_strings::ProgressStrings;
 pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
-    flush_dependency_queue, flush_network_queue, generate_network_task_for_tarball,
-    get_network_task, schedule_tasks,
+    flush_dependency_queue, flush_network_queue, generate_network_task_for_tarball, schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -268,7 +267,7 @@ pub(crate) type TaskDependencyQueue =
 
 type PreallocatedTaskStore = HiveArrayFallback<Task::Task, 64>;
 type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
-type ResolveTaskQueue = UnboundedQueue<Task::Task /* , .next */>;
+type ResolveTaskQueue = UnboundedQueue<Unique<Task::Task>>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 /// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
@@ -284,10 +283,10 @@ pub(crate) type FolderResolutionMap = HashMap<FolderResolutionKey, FolderResolut
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
 
-type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
+type NetworkQueue = LinearFifo<Unique<NetworkTask>, StaticBuffer<Unique<NetworkTask>, 32>>;
 
-pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
-pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
+pub type PatchTaskQueue = UnboundedQueue<Box<PatchTask>>;
+pub type AsyncNetworkTaskQueue = UnboundedQueue<Unique<NetworkTask>>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 
@@ -547,7 +546,7 @@ pub struct PackageManager {
     pub(crate) git_repositories: RepositoryMap,
     pub(crate) git_commits: GitCommitMap,
     /// Git tasks queued by `enqueue_git_task` and not yet started.
-    pub(crate) git_tasks: VecDeque<NonNull<Task::Task>>,
+    pub(crate) git_tasks: VecDeque<Unique<Task::Task>>,
     /// Git tasks whose `git_runner::GitSubprocess` is alive.
     pub(crate) running_git_tasks: AtomicU32,
     /// Set by the first git task.

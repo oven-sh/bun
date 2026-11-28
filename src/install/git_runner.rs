@@ -2,7 +2,6 @@
 
 use core::cell::Cell;
 use core::ffi::CStr;
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::ffi::CString;
 
@@ -15,12 +14,11 @@ use bun_io::PosixFlags;
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_paths as Path;
-use bun_ptr::{BackRef, JsCell, RefPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr, Unique};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{ProcessHandle, Rusage, SpawnOptions, Status};
 use bun_sys::Fd;
-use bun_threading::thread_pool as ThreadPool;
 
 use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
@@ -32,7 +30,7 @@ use crate::{Error, PackageManager};
 
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
-    pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task>) {
+    pub(crate) fn enqueue_git_task(&mut self, task: Unique<Task::Task>) {
         debug_assert!(
             !self.options.runtime_auto_install,
             "a git child exits through this thread's event loop"
@@ -749,8 +747,8 @@ pub struct GitSubprocess {
     /// Held until `release`.
     owner: Cell<Option<RefPtr<GitSubprocess>>>,
     manager: BackRef<PackageManager, bun_ptr::Mut>,
-    /// Ours alone until `finish_on_pool` / `finish_commit` hands it on.
-    task: NonNull<Task::Task>,
+    /// Ours alone until `release` hands it on.
+    task: *mut Task::Task,
     name: Box<[u8]>,
     event_loop: EventLoopHandle,
     cache_dir: &'static CacheDirectory,
@@ -780,11 +778,10 @@ impl Drop for GitSubprocess {
 }
 
 impl GitSubprocess {
-    fn start(manager: &mut PackageManager, task: NonNull<Task::Task>) {
+    fn start(manager: &mut PackageManager, task: Unique<Task::Task>) {
         let cache_dir = manager.get_cache_directory();
         let event_loop = manager.event_loop;
-        // SAFETY: a queued git task is live and idle until its runner hands it on.
-        let name = match unsafe { &task.as_ref().job } {
+        let name = match &task.job {
             Job::GitClone { request, .. } => &request.name,
             Job::GitCommit { request, .. } => &request.name,
             Job::GitCheckout { request, .. } => &request.name,
@@ -795,8 +792,8 @@ impl GitSubprocess {
             ref_count: Cell::new(1),
             owner: Cell::new(None),
             manager: BackRef::new_mut(manager),
-            task,
             name: name.slice().into(),
+            task: task.into_raw(),
             event_loop,
             cache_dir,
             step: JsCell::new(Step::Config),
@@ -846,7 +843,7 @@ impl GitSubprocess {
     fn task(&self) -> &mut Task::Task {
         // SAFETY: the task is owned by `preallocated_resolve_tasks` and touched by
         // nothing else while this runner holds it; every borrow here is call-scoped.
-        unsafe { &mut *self.task.as_ptr() }
+        unsafe { &mut *self.task }
     }
 
     /// A clone or commit lookup that only optional dependencies wait for fails with warnings.
@@ -1453,40 +1450,36 @@ impl GitSubprocess {
 
     /// Drops the owning ref: the process handle and readers are torn down on
     /// this (the event loop's) thread, and the git slot is free again.
-    fn release(&self) {
+    fn release(&self) -> Unique<Task::Task> {
+        let task = self.task;
         drop(self.owner.take().expect("git runner finished twice"));
+        // SAFETY: the one that `start` got, and this line is reached once.
+        unsafe { Unique::from_raw(task) }
     }
 
     /// Hands a clone or checkout task to the thread pool for `finalize`.
     /// `Task::callback` pushes the task onto `resolve_tasks`.
     fn finish_on_pool(&self, finalize: Finalize) {
-        debug_assert!(!matches!(self.task().job, Job::GitCommit { .. }));
-        let task = self.task;
-        self.task().git_finalize = Some(finalize);
-        self.release();
-        // SAFETY: the task is idle until the pool runs it.
-        let batch = ThreadPool::Batch::from(unsafe { &raw mut (*task.as_ptr()).threadpool_task });
-        THREAD_POOL.schedule(batch);
+        let mut task = self.release();
+        debug_assert!(!matches!(task.job, Job::GitCommit { .. }));
+        task.git_finalize = Some(finalize);
+        THREAD_POOL.schedule(task.into_batch());
     }
 
     /// Hands the finished commit lookup to `resolve_tasks`.
     fn finish_commit(&self, found: Option<Vec<u8>>) {
-        let task_ptr = self.task;
-        {
-            let task = self.task();
-            let Job::GitCommit { sha, .. } = &mut task.job else {
-                unreachable!("not a commit task");
-            };
-            match found {
-                Some(found) => {
-                    *sha = found;
-                    task.status = Task::Status::Success;
-                }
-                None => task.status = Task::Status::Fail,
+        let mut task = self.release();
+        let Job::GitCommit { sha, .. } = &mut task.job else {
+            unreachable!("not a commit task");
+        };
+        match found {
+            Some(found) => {
+                *sha = found;
+                task.status = Task::Status::Success;
             }
+            None => task.status = Task::Status::Fail,
         }
-        self.release();
-        INBOX.resolve_tasks.push(task_ptr);
+        INBOX.resolve_tasks.push(task);
         INBOX.wake();
     }
 }

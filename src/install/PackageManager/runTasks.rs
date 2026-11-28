@@ -6,7 +6,7 @@ use std::io::Write as _;
 use bun_core::strings;
 use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
-use bun_threading::thread_pool::Batch as ThreadPoolBatch;
+use bun_ptr::{IntrusivePtr as _, Unique};
 
 use crate::bun_fs::FileSystem;
 use crate::extract_tarball;
@@ -137,32 +137,32 @@ impl Drop for FinishPass<'_> {
     }
 }
 
+/// Returns the task, and its network task if it has one, to their pools.
 struct ReturnResolveTask<'a> {
     manager: &'a mut PackageManager,
-    task: *mut Task::Task,
+    task: Unique<Task::Task>,
 }
 
 impl Drop for ReturnResolveTask<'_> {
     fn drop(&mut self) {
-        // SAFETY: `task` is the sole live handle to this pool slot.
-        unsafe { self.manager.preallocated_resolve_tasks.put(self.task) };
-    }
-}
-
-/// Null if the resolve task doesn't own a network task.
-struct ReturnNetworkTask<'a> {
-    manager: &'a mut PackageManager,
-    task: *mut NetworkTask,
-}
-
-impl Drop for ReturnNetworkTask<'_> {
-    fn drop(&mut self) {
-        if self.task.is_null() {
-            return;
+        // SAFETY: each type is only made in its pool, and `task` goes with this guard.
+        unsafe {
+            if let Task::Job::PackageManifest { network, .. }
+            | Task::Job::Extract {
+                source: Task::TarballSource::Network(Some(network)),
+                ..
+            } = &self.task.job
+            {
+                (self.manager.preallocated_network_tasks).put(network.as_ptr());
+            }
+            (self.manager.preallocated_resolve_tasks).put(self.task.as_ptr());
         }
-        // SAFETY: see `ReturnResolveTask`.
-        unsafe { self.manager.preallocated_network_tasks.put(self.task) };
     }
+}
+
+fn return_network_task(manager: &mut PackageManager, task: Unique<NetworkTask>) {
+    // SAFETY: only made in this pool.
+    unsafe { (manager.preallocated_network_tasks).put(task.into_raw()) };
 }
 
 /// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
@@ -228,19 +228,7 @@ pub(crate) fn run_tasks(
             manager.set_node_name(manager.downloads_node(), name, emoji.as_bytes());
         }
     };
-    let return_network_task = |manager: &mut PackageManager, task: *mut NetworkTask| {
-        drop(ReturnNetworkTask { manager, task })
-    };
-
-    let patch_tasks_batch = INBOX.patch_tasks.pop_batch();
-    let mut patch_tasks_iter = patch_tasks_batch.iterator();
-    loop {
-        let ptask_ptr = patch_tasks_iter.next();
-        if ptask_ptr.is_null() {
-            break;
-        }
-        // SAFETY: the `Box` that `PatchTask::run` pushed; `next` read its link before returning it.
-        let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
+    for mut ptask in INBOX.patch_tasks.pop_batch() {
         debug_assert!(manager.pending_task_count() > 0);
         INBOX.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
@@ -281,15 +269,9 @@ pub(crate) fn run_tasks(
 
     if let Caller::IsolatedLinker(installer) = &mut caller {
         let installer_ptr: *mut Store::Installer<'_> = &raw mut **installer;
-        let batch = installer.task_queue.pop_batch();
-        let mut iter = batch.iterator();
-        loop {
-            let task_ptr = iter.next();
-            if task_ptr.is_null() {
-                break;
-            }
-            // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-            let task = unsafe { &mut *task_ptr };
+        for task in installer.task_queue.pop_batch() {
+            // SAFETY: it is not running, and each arm is done with it before it starts it again.
+            let task = unsafe { &mut *task.into_raw() };
             match &task.result {
                 store_installer::Result::None => {
                     if Environment::CI_ASSERT {
@@ -361,15 +343,8 @@ pub(crate) fn run_tasks(
         }
     }
 
-    let network_tasks_batch = INBOX.network_tasks.pop_batch();
-    let mut network_tasks_iter = network_tasks_batch.iterator();
-    loop {
-        let task_ptr = network_tasks_iter.next();
-        if task_ptr.is_null() {
-            break;
-        }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-        let task = unsafe { &mut *task_ptr };
+    for mut network_task in INBOX.network_tasks.pop_batch() {
+        let task = &mut *network_task;
         debug_assert!(manager.pending_task_count() > 0);
         INBOX.decrement_pending_tasks();
         // We cannot free the network task at the end of this scope.
@@ -407,8 +382,7 @@ pub(crate) fn run_tasks(
                         < manifest_retry_count(manager, task.task_id, name, task.response.fail)
                     {
                         task.retried += 1;
-                        let wait =
-                            retry_timer::retry(manager, task_ptr, task.retried, &task.response);
+                        let armed = retry_timer::arm(manager, task.retried, &task.response);
                         // `notify` keeps the metadata it finds here if the next attempt gets none.
                         task.response = Default::default();
 
@@ -422,10 +396,11 @@ pub(crate) fn run_tasks(
                                 bun_core::fmt::escape_control_chars(name),
                                 task.retried,
                                 manager.options.max_retry_count,
-                                wait.as_millis(),
+                                armed.wait.as_millis(),
                             );
                         }
 
+                        armed.enqueue(manager, network_task);
                         continue;
                     }
 
@@ -433,8 +408,8 @@ pub(crate) fn run_tasks(
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
                         let scope = manager.scope_for_package_name(name);
                         let is_optional = !manager.is_network_task_required(task.task_id);
-                        task.retry_with_abbreviated_manifest(scope, is_optional)?;
-                        enqueue::enqueue_network_task(manager, task_ptr);
+                        task.retry_with_abbreviated_manifest(manager, scope, is_optional)?;
+                        enqueue::enqueue_network_task(manager, network_task);
                         continue;
                     }
                 }
@@ -468,7 +443,7 @@ pub(crate) fn run_tasks(
                         fail_update_requests(manager, task.task_id, name, None, is_required);
                     }
 
-                    return_network_task(manager, task_ptr);
+                    return_network_task(manager, network_task);
                     continue;
                 };
 
@@ -490,7 +465,7 @@ pub(crate) fn run_tasks(
                     {
                         manager.mark_network_task_failed(task.task_id);
                         if !manager.task_queue.contains_key(&task.task_id) {
-                            return_network_task(manager, task_ptr);
+                            return_network_task(manager, network_task);
                             continue;
                         }
                     }
@@ -538,7 +513,7 @@ pub(crate) fn run_tasks(
                         fail_update_requests(manager, task.task_id, name, None, is_unanswered);
                     }
 
-                    return_network_task(manager, task_ptr);
+                    return_network_task(manager, network_task);
                     continue;
                 }
 
@@ -598,24 +573,14 @@ pub(crate) fn run_tasks(
                             process_dependency_list(manager, &dependency_list, install_peer)?;
                         }
 
-                        return_network_task(manager, task_ptr);
+                        return_network_task(manager, network_task);
                         continue;
                     }
                 }
 
-                // reshaped for borrowck — split the nested `&mut
-                // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
-                // and exclusively owned by this batch; `manager` is the live PackageManager.
-                let queued = unsafe {
-                    enqueue::enqueue_parse_npm_package(
-                        manager,
-                        task.task_id,
-                        *stored_name,
-                        task_ptr,
-                    )
-                };
-                manager.task_batch.push(ThreadPoolBatch::from(queued));
+                let (id, name) = (task.task_id, *stored_name);
+                let queued = enqueue::enqueue_parse_npm_package(manager, id, name, network_task);
+                manager.task_batch.push(queued.into_batch());
             }
             NetworkTaskCallback::Extract(_) => {
                 // A committed stream publishes its result through the extract
@@ -639,8 +604,7 @@ pub(crate) fn run_tasks(
                 if retry {
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        let wait =
-                            retry_timer::retry(manager, task_ptr, task.retried, &task.response);
+                        let armed = retry_timer::arm(manager, task.retried, &task.response);
                         task.reset_streaming_for_retry();
 
                         if manager.options.log_level.is_verbose() {
@@ -659,10 +623,11 @@ pub(crate) fn run_tasks(
                                 ),
                                 task.retried,
                                 manager.options.max_retry_count,
-                                wait.as_millis(),
+                                armed.wait.as_millis(),
                             );
                         }
 
+                        armed.enqueue(manager, network_task);
                         continue;
                     }
                 }
@@ -789,28 +754,17 @@ pub(crate) fn run_tasks(
 
                 name_progress(manager, extract.name.slice(), EXTRACT);
 
-                let queued = enqueue::enqueue_extract_npm_package(manager, task_ptr);
-                manager.task_batch.push(ThreadPoolBatch::from(queued));
+                let queued = enqueue::enqueue_extract_npm_package(manager, network_task);
+                manager.task_batch.push(queued.into_batch());
             }
             _ => unreachable!(),
         }
     }
 
-    let resolve_tasks_batch = INBOX.resolve_tasks.pop_batch();
-    let mut resolve_tasks_iter = resolve_tasks_batch.iterator();
-    loop {
-        let task_ptr = resolve_tasks_iter.next();
-        if task_ptr.is_null() {
-            break;
-        }
+    for task in INBOX.resolve_tasks.pop_batch() {
         debug_assert!(manager.pending_task_count() > 0);
-        // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
-        let task = unsafe { &mut *task_ptr };
-        let task_guard = ReturnResolveTask {
-            manager,
-            task: task_ptr,
-        };
-        let manager = &mut *task_guard.manager;
+        let mut guard = ReturnResolveTask { manager, task };
+        let (manager, task) = (&mut *guard.manager, &mut *guard.task);
         INBOX.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
@@ -825,17 +779,7 @@ pub(crate) fn run_tasks(
         }
 
         match &mut task.job {
-            Task::Job::PackageManifest {
-                name,
-                network,
-                manifest,
-                ..
-            } => {
-                let network_task_guard = ReturnNetworkTask {
-                    manager,
-                    task: &raw mut **network,
-                };
-                let manager = &mut *network_task_guard.manager;
+            Task::Job::PackageManifest { name, manifest, .. } => {
                 let Some(manifest) = manifest.take() else {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
@@ -899,15 +843,6 @@ pub(crate) fn run_tasks(
                 source,
                 data,
             } => {
-                let network_task_guard = ReturnNetworkTask {
-                    manager,
-                    task: match source {
-                        Task::TarballSource::Network(network) => &raw mut **network,
-                        Task::TarballSource::Local { .. } => core::ptr::null_mut(),
-                    },
-                };
-                let manager = &mut *network_task_guard.manager;
-
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
                 let alias = tarball.name.slice();
@@ -917,8 +852,10 @@ pub(crate) fn run_tasks(
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
                     let fail_url: &[u8] = match source {
-                        Task::TarballSource::Network(network) => &network.url_buf,
-                        Task::TarballSource::Local { .. } => tarball.url.slice(),
+                        Task::TarballSource::Network(Some(network)) => &network.url_buf,
+                        Task::TarballSource::Network(None) | Task::TarballSource::Local { .. } => {
+                            tarball.url.slice()
+                        }
                     };
                     // A linker's task for a local tarball is not in the map, so it gets no mark.
                     let Some(is_required) = caller.dispatch_tarball_error(
@@ -1304,15 +1241,12 @@ pub fn flush_network_queue(this: &mut PackageManager) {
         .read_item()
         .or_else(|| this.retry_queue.pop_due())
     {
-        // SAFETY: both queues store live `*mut NetworkTask` pushed by
-        // `enqueue_network_task` / `retry_timer::retry`; exclusive ownership transferred here.
-        let nt = unsafe { &mut *network_task };
-        let batch = if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
+        let batch = if matches!(network_task.callback, NetworkTaskCallback::Extract(_)) {
             &mut this.network_tarball_batch
         } else {
             &mut this.network_resolve_batch
         };
-        batch.push(nt.take_request());
+        batch.push(network_task.into_request());
     }
 }
 
@@ -1343,14 +1277,6 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     // Git tasks were counted as pending when they were queued.
     manager.start_git_tasks();
     count
-}
-
-pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    // Forget the slot token so its `Drop` does not release the slot — the
-    // caller owns the slot until a later `put()`.
-    core::mem::ManuallyDrop::new(this.preallocated_network_tasks.claim())
-        .addr()
-        .as_ptr()
 }
 
 pub(crate) fn alloc_github_url_for_ref(
@@ -1586,14 +1512,14 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     }
 }
 
-pub fn generate_network_task_for_tarball<'a>(
-    this: &'a mut PackageManager,
+pub fn generate_network_task_for_tarball(
+    this: &mut PackageManager,
     task_id: Task::Id,
     github_url: Option<&[u8]>,
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
-) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
+) -> Result<Option<Unique<NetworkTask>>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
         enqueue::offline_miss(this, task_id, "", package.name, is_required);
@@ -1603,11 +1529,6 @@ pub fn generate_network_task_for_tarball<'a>(
         return Ok(None);
     }
 
-    // reshaped for borrowck —
-    // all `&mut this` uses (cache/temp dir, pool slot) happen
-    // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
-    // live only through `for_tarball`, leaving `this` free for the streaming
-    // tail.
     let temp_dir = match directories::try_get_temporary_directory(this) {
         Ok(temp_dir) => temp_dir,
         Err(why) => {
@@ -1620,19 +1541,7 @@ pub fn generate_network_task_for_tarball<'a>(
         }
     };
 
-    // Take the pool slot as a raw pointer so borrowck releases `this` for the
-    // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = get_network_task(this);
-    // Full struct overwrite that resets
-    // every other field (`retried`, `response`, `streaming_committed`,
-    // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
-    // `signal_store`) to its struct default. The slot may be uninitialized
-    // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
-    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, bun_ptr::ParentRef::new(this)) };
-    // SAFETY: `write_init` populated every field.
-    let network_task = unsafe { &mut *net_ptr };
+    let mut network_task = NetworkTask::create(this, task_id);
 
     let pkg_name = this.lockfile.str(&package.name);
     let url = match (github_url, package.resolution.tag) {
@@ -1678,7 +1587,7 @@ pub fn generate_network_task_for_tarball<'a>(
         },
     };
 
-    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+    if let Err(err) = network_task.for_tarball(this, extract_tarball, scope, authorization) {
         // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
         this.mark_network_task_failed(task_id);
         return Err(err);
@@ -1689,18 +1598,14 @@ pub fn generate_network_task_for_tarball<'a>(
         // main thread: `preallocated_resolve_tasks` is not thread-safe,
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
-        let extract_task = enqueue::create_extract_task_for_streaming(this, net_ptr);
-        // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
-        // (see `write_init` above).
-        unsafe {
-            (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr));
-        }
+        let extract_task =
+            enqueue::create_extract_task_for_streaming(this, &network_task).into_raw();
+        network_task.streaming_extract_task = extract_task;
+        network_task.tarball_stream =
+            Some(TarballStream::init(extract_task, network_task.as_ptr()));
     }
 
-    // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
-    // sole live handle (see above) and outlives nothing past this return.
-    Ok(Some(unsafe { &mut *net_ptr }))
+    Ok(Some(network_task))
 }
 
 impl PackageManager {

@@ -2137,8 +2137,8 @@ pub(crate) struct ShellTask {
     pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
 }
 
-// SAFETY: pool threads write the node and copy `event_loop` and `interp`. The task is run and dropped
-// on its loop's thread.
+// SAFETY: pool threads write the node, copy `event_loop` and `interp`, and post through `poster`. The task
+// is run and dropped on its loop's thread.
 unsafe impl Send for ShellTask {}
 
 impl Drop for ShellTask {

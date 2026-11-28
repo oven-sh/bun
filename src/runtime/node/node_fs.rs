@@ -2312,8 +2312,8 @@ mod _async_tasks {
                 shelltask,
             });
 
-            let raw = bun_core::heap::release(task);
-            WorkPool::schedule(&raw mut raw.task);
+            // SAFETY: a field of the box, which `on_subtask_done` takes back.
+            unsafe { WorkPool::schedule(&raw mut (*bun_core::heap::into_raw(task)).task) };
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
@@ -2706,7 +2706,7 @@ mod _async_tasks {
         /// A lockless queue of result lists.
         ///
         /// Using a lockless queue instead of mutex + joining the lists as we go was a meaningful performance improvement
-        pub(crate) result_list_queue: UnboundedQueue<ResultListEntry>,
+        pub(crate) result_list_queue: UnboundedQueue<Box<ResultListEntry>>,
 
         /// `ReaddirState::root_dir`, for the subtasks to open files with.
         pub(crate) root_fd: FD,
@@ -2796,17 +2796,7 @@ mod _async_tasks {
         pub value: ResultListEntryValue,
     }
 
-    // SAFETY: all four accessors route through the same `next` field; the atomic
-    // variants reinterpret it in-place as `AtomicPtr<Self>` (identical layout/
-    // alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
-    // live, properly aligned `*mut ResultListEntry` it previously had pushed.
-    unsafe impl bun_threading::Linked for ResultListEntry {
-        #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-            // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
-        }
-    }
+    bun_core::intrusive_field!(ResultListEntry, next: bun_threading::Link<Self>);
 
     pub(super) struct ReaddirSubtask {
         pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
@@ -2951,12 +2941,10 @@ mod _async_tasks {
                 self.result_list_count
                     .fetch_add(clone.len(), Ordering::Relaxed);
                 // `IntoResultListEntry::into_variant` (trait dispatch on `T`).
-                let list = Box::new(ResultListEntry {
+                self.result_list_queue.push(Box::new(ResultListEntry {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
-                });
-                self.result_list_queue
-                    .push(bun_core::heap::into_raw_nn(list));
+                }));
             }
         }
 
@@ -2969,14 +2957,7 @@ mod _async_tasks {
                 let count = self.result_list_count.load(Ordering::Relaxed);
                 state.result_list.reserve_exact(count);
             }
-            let mut iter = self.result_list_queue.pop_batch().iterator();
-            loop {
-                let val = iter.next();
-                if val.is_null() {
-                    break;
-                }
-                // SAFETY: boxed in `write_results`; `next` read its link before returning it.
-                let mut entry = unsafe { bun_core::heap::take(val) };
+            for mut entry in self.result_list_queue.pop_batch() {
                 if success {
                     state.result_list.append_from(&mut entry.value);
                 }

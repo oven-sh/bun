@@ -1,11 +1,10 @@
 //! Schedule long-running callbacks for a task
 //! Slow stuff is broken into tasks, each can run independently without locks
 
-use core::ptr::NonNull;
-
 use bun_ast::{Loc, Log};
 use bun_core::Output;
 use bun_core::StringOrTinyString;
+use bun_ptr::Unique;
 use bun_semver as semver;
 use bun_sys::{Fd, File};
 use bun_threading::thread_pool;
@@ -18,15 +17,12 @@ use crate::{
     DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
 };
 
-/// TODO: lifetime — Task lives in an intrusive cross-thread queue
-/// (`next`). A `&'static mut NetworkTask` cannot soundly
-/// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task {
     pub(crate) job: Job,
     /// default: `Status::Waiting`
     pub(crate) status: Status,
     /// default: `thread_pool::Task { callback: Task::callback }`
-    pub(crate) threadpool_task: thread_pool::Task,
+    threadpool_task: thread_pool::Task,
     pub(crate) log: Log,
     pub(crate) id: Id,
     /// default: `None`
@@ -38,15 +34,7 @@ pub struct Task {
     pub(crate) next: bun_threading::Link<Task>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
-// `link()` always projects to it.
-unsafe impl bun_threading::Linked for Task {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(Task, next: bun_threading::Link<Self>);
 
 /// An ID that lets us register a callback without keeping the same pointer around
 #[repr(transparent)]
@@ -118,7 +106,7 @@ impl Id {
 
 impl Task {
     /// In a slot of `manager.preallocated_resolve_tasks`.
-    pub(crate) fn create(manager: &mut PackageManager, id: Id, job: Job) -> NonNull<Self> {
+    pub(crate) fn create(manager: &mut PackageManager, id: Id, job: Job) -> Unique<Self> {
         let task = Task {
             job,
             log: Log::init(),
@@ -132,7 +120,13 @@ impl Task {
             git_finalize: None,
             next: bun_threading::Link::new(),
         };
-        manager.preallocated_resolve_tasks.get_init(task)
+        // SAFETY: a new slot, which stays until `put`. The manager is never freed.
+        unsafe { Unique::from_raw(manager.preallocated_resolve_tasks.get_init(task).as_ptr()) }
+    }
+
+    pub(crate) fn into_batch(self: Unique<Self>) -> thread_pool::Batch {
+        // SAFETY: a field of the task that `callback` takes back.
+        unsafe { thread_pool::Batch::from(&raw mut (*self.into_raw()).threadpool_task) }
     }
 
     pub(crate) fn tarball(&self) -> &ExtractTarball {
@@ -165,20 +159,13 @@ impl Task {
 }
 
 impl Task {
-    pub(crate) unsafe fn callback(task: *mut thread_pool::Task) {
+    unsafe fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();
 
-        // SAFETY: `task` points to the `threadpool_task` field of a `Task`
-        // (this is the only place this `thread_pool::Task` callback is registered).
-        let this_raw: *mut Task = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
-        // The terminal `resolve_tasks.push` hands the task to the main thread
-        // (which may recycle it while this fn still runs `Output::flush()`),
-        // so the pushed pointer is derived from the raw receiver, not from the
-        // `&mut` below, and nothing touches `this` after the push.
-        // SAFETY: derived from `task`, which is not null.
-        let task = unsafe { NonNull::new_unchecked(this_raw) };
-        // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task = unsafe { &mut *this_raw };
+        // SAFETY: the field that `into_batch` handed to the pool.
+        let mut task =
+            unsafe { Unique::from_raw(bun_core::from_field_ptr!(Task, threadpool_task, task)) };
+        let this: &mut Task = &mut task;
 
         // Body of the switch; arms exit via `break 'body;` so the
         // trailing block (patch + push + wake) and `Output::flush()` run
@@ -191,6 +178,7 @@ impl Task {
                     temp_dir,
                     manifest,
                 } => {
+                    let network = &mut **network;
                     // Take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
                     // instead of staying live on the NetworkTask until recycle.
@@ -265,7 +253,7 @@ impl Task {
                 }
                 Job::Extract {
                     tarball,
-                    source: TarballSource::Network(network),
+                    source: TarballSource::Network(Some(network)),
                     data,
                 } => {
                     // Streaming extraction never reaches this callback: the
@@ -298,6 +286,10 @@ impl Task {
                 Job::GitCommit { .. } => {
                     unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
+                Job::Extract {
+                    source: TarballSource::Network(None),
+                    ..
+                } => unreachable!("`TarballStream::finish` completes it"),
                 Job::Extract {
                     tarball,
                     source: TarballSource::Local { path, normalize },
@@ -377,7 +369,7 @@ pub enum Status {
 pub(crate) enum Job {
     PackageManifest {
         name: StringOrTinyString,
-        network: &'static mut NetworkTask,
+        network: Unique<NetworkTask>,
         /// `None` if the manifest cache is off or cannot be written.
         temp_dir: Option<&'static TemporaryDirectory>,
         manifest: Option<npm::PackageManifest>,
@@ -403,7 +395,8 @@ pub(crate) enum Job {
 }
 
 pub(crate) enum TarballSource {
-    Network(&'static mut NetworkTask),
+    /// `None` while it is streamed, until `TarballStream::finish`.
+    Network(Option<Unique<NetworkTask>>),
     Local {
         /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
         path: StringOrTinyString,

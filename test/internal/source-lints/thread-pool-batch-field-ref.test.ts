@@ -58,8 +58,7 @@ const tracked: Set<string> | null = (() => {
 })();
 
 // `Batch::from(`, however the type is reached: `thread_pool::Batch::from(`,
-// `ThreadPoolLib::Batch::from(`, and the `use .. Batch as PoolBatch` /
-// `ThreadPoolBatch` aliases in the tree.
+// `ThreadPoolLib::Batch::from(`, or an alias such as `PoolBatch`.
 const BATCH_FROM = /\b\w*Batch::from\s*\(/g;
 
 // A method-call chain rooted at a receiver (`(*task).task()`, `this.task()`,

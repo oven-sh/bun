@@ -225,7 +225,7 @@ pub(crate) struct FSEventsLoop {
     loop_: AtomicPtr<c_void>,
     mutex: Guarded<FSEventsLoopState>,
     sem: Semaphore,
-    tasks: UnboundedQueue<ConcurrentTask>,
+    tasks: UnboundedQueue<Box<ConcurrentTask>>,
     thread: UnsafeCell<Option<std::thread::JoinHandle<()>>>,
 }
 
@@ -300,14 +300,7 @@ pub(crate) struct ConcurrentTask {
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
-unsafe impl bun_threading::Linked for ConcurrentTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(ConcurrentTask, next: bun_threading::Link<Self>);
 
 impl FSEventsLoop {
     fn cf_thread_loop(&'static self) {
@@ -341,21 +334,8 @@ impl FSEventsLoop {
         // SAFETY: `arg` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `init()`.
         let this: &FSEventsLoop = unsafe { &*arg.cast::<FSEventsLoop>() };
 
-        let concurrent = this.tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
-            return;
-        }
-
-        let mut iter = concurrent.iterator();
-        loop {
-            let task = iter.next();
-            if task.is_null() {
-                break;
-            }
-            // SAFETY: heap-allocated in `enqueue_task_concurrent`; this thread
-            // owns it exclusively once popped.
-            unsafe { bun_core::heap::take(task) }.task.run();
+        for mut concurrent in this.tasks.pop_batch() {
+            concurrent.task.run();
         }
     }
 
@@ -423,7 +403,7 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&self, task: Task) {
         let cf = CoreFoundation::get();
-        self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
+        self.tasks.push(Box::new(ConcurrentTask {
             task,
             next: bun_threading::Link::new(),
         }));

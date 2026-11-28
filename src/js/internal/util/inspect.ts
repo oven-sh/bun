@@ -1953,8 +1953,10 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
   const name = err.name != null ? String(err.name) : "Error";
   let stack = getStackString(err);
 
-  //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
+  // JavaScriptCore can make the stack before the name is set, and it does not find every inherited name.
+  if (name !== "Error" && name !== "" && StringPrototypeStartsWith.$call(stack, "Error: ")) {
+    stack = `${name}${StringPrototypeSlice.$call(stack, "Error".length)}`;
+  }
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 

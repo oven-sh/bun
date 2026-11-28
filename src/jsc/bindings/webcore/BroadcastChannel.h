@@ -103,7 +103,7 @@ private:
     // never takes a lock.
     enum State : uint64_t {
         Closed = 1ull << 0,
-        HasMessageListener = 1ull << 1,
+        HasMessageOrMessageErrorListener = 1ull << 1,
     };
 
     const String m_name;

@@ -979,6 +979,23 @@ export function randomLoneLowSurrogate() {
   return String.fromCharCode(numeric.random.between(0xdc00, 0xdfff, { domain: "integral" }));
 }
 
+/** A value that structured clone serializes and then fails to deserialize, so its receiver gets `messageerror`
+ *  and not `message`: the getter grows the buffer after its length was written. It closes over nothing, so
+ *  `${undeserializable}` puts it into the source of a spawned script. */
+export function undeserializable() {
+  const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
+  return {
+    buffer,
+    get grow() {
+      buffer.resize(65536);
+      return 1;
+    },
+    get view() {
+      return new DataView(buffer, 4096, 16);
+    },
+  };
+}
+
 export function runWithError(cb: () => unknown): Error | undefined {
   try {
     cb();

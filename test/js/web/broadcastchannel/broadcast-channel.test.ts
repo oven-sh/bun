@@ -1,5 +1,5 @@
-import { bunEnv, bunExe, tempDir } from "harness";
-import type { BroadcastChannelEventMap } from "node:worker_threads";
+import { bunEnv, bunExe, tempDir, undeserializable } from "harness";
+import { Worker as NodeWorker, type BroadcastChannelEventMap } from "node:worker_threads";
 import util from "util";
 
 test("postMessage results in correct event", done => {
@@ -275,21 +275,326 @@ const collect = (create: string) => `
   (() => { for (let i = 0; i < 20; i++) ${create}; })();
   Bun.gc(true);
   if (require("bun:jsc").heapStats().objectTypeCounts.BroadcastChannel >= 20) console.log("nothing was collected");`;
+const inDroppedRealm = (source: string) => `
+  let realm = new ShadowRealm();
+  realm.evaluate(${JSON.stringify(source + "; 0")});
+  realm = null;
+  Bun.gc(true);`;
 test.concurrent.each([
   ["a closed channel does not", `const channel = new BroadcastChannel("x"); channel.close(); channel.ref();`, ""],
   ["an open channel that was collected does", collect(`new BroadcastChannel("x")`), "alive\n"],
   ["an open channel that was collected with unref() does not", collect(`new BroadcastChannel("x").unref()`), ""],
+  ["an open channel of a realm that was collected does not", inDroppedRealm(`new BroadcastChannel("x")`), ""],
+  // A listener for message or for messageerror keeps an open channel alive, and the channel keeps its realm.
   [
-    "an open channel of a realm that was collected does not",
-    `let realm = new ShadowRealm();
-     realm.evaluate('new BroadcastChannel("x"); 0');
-     realm = null;
-     Bun.gc(true);`,
+    "a channel with onmessage in a realm that script dropped does",
+    inDroppedRealm(`new BroadcastChannel("x").onmessage = () => {}`),
+    "alive\n",
+  ],
+  [
+    "a channel with onmessageerror in a realm that script dropped does",
+    inDroppedRealm(`new BroadcastChannel("x").onmessageerror = () => {}`),
+    "alive\n",
+  ],
+  [
+    "a channel with onmessage and unref() in a realm that script dropped does not",
+    inDroppedRealm(`const channel = new BroadcastChannel("x"); channel.onmessage = () => {}; channel.unref()`),
+    "",
+  ],
+  [
+    "a channel with onmessageerror and unref() in a realm that script dropped does not",
+    inDroppedRealm(`const channel = new BroadcastChannel("x"); channel.onmessageerror = () => {}; channel.unref()`),
     "",
   ],
 ])("%s keep the process alive", async (_, code, expected) => {
   const whenAlive = expected ? `setTimeout(() => (console.log("alive"), process.exit()), 1).unref();` : "";
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code + whenAlive], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});
+
+// unref() lets the process exit. It does not let go of the realm: that takes close().
+test.concurrent.each(["message", "messageerror"])(
+  "a realm that script dropped stays, and hears, until its channel that listens for %s closes",
+  async type => {
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const realms = () => (Bun.gc(true), heapStats().objectTypeCounts.GlobalObject - 1);
+      ${undeserializable}
+      (() => {
+        new ShadowRealm().evaluate(\`heard => {
+          const channel = new BroadcastChannel("x");
+          channel.on${type} = event => {
+            channel.close();
+            heard(event.type);
+          };
+          channel.unref();
+        }\`)(type => console.log("the realm heard " + type));
+      })();
+      console.log("realms before the post: " + realms());
+
+      const sender = new BroadcastChannel("x");
+      const last = new BroadcastChannel("x");
+      last.onmessage = event => {
+        if (event.data !== "last") return;
+        sender.close();
+        last.close();
+        let turns = 0;
+        (function settle() {
+          if (realms() > 0 && ++turns < 20) return setImmediate(settle);
+          console.log("realms after close(): " + realms());
+        })();
+      };
+      sender.postMessage(${type === "message" ? `"to the realm"` : "undeserializable()"});
+      sender.postMessage("last");`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `realms before the post: 1\nthe realm heard ${type}\nrealms after close(): 0\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// An open channel with a listener for `message` or for `messageerror` stays alive:
+// https://html.spec.whatwg.org/multipage/web-messaging.html#broadcasting-to-other-browsing-contexts
+describe("a channel that script reaches only through its messageerror listener", () => {
+  // Resolves when every channel of this name has heard of the message.
+  async function post(name: string, message: unknown) {
+    const sender = new BroadcastChannel(name);
+    const last = new BroadcastChannel(name);
+    try {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      last.onmessage = event => {
+        if (event.data === "last") resolve();
+      };
+      sender.postMessage(message);
+      sender.postMessage("last");
+      await promise;
+    } finally {
+      sender.close();
+      last.close();
+    }
+  }
+
+  test.each([
+    [
+      "onmessageerror",
+      (channel: BroadcastChannel, listener: (event: MessageEvent) => void) => void (channel.onmessageerror = listener),
+    ],
+    [
+      "addEventListener('messageerror')",
+      (channel: BroadcastChannel, listener: (event: MessageEvent) => void) =>
+        channel.addEventListener("messageerror", listener),
+    ],
+  ])("hears messageerror after a collection: %s", async (how, listen) => {
+    const name = `messageerror only: ${how}`;
+    const heard: string[] = [];
+    (() => {
+      for (let i = 0; i < 8; i++) {
+        const channel = new BroadcastChannel(name);
+        listen(channel, event => {
+          heard.push(`${i}: ${event.type} ${event.data}`);
+          channel.close();
+        });
+      }
+    })();
+    Bun.gc(true);
+
+    await post(name, undeserializable());
+    expect(heard).toEqual(Array.from({ length: 8 }, (_, i) => `${i}: messageerror null`));
+  });
+
+  test("hears messageerror after its last message listener is gone", async () => {
+    const name = "messageerror outlives message";
+    const heard: string[] = [];
+    const controller = new AbortController();
+    (() => {
+      const listening = (how: string) => {
+        const channel = new BroadcastChannel(name);
+        channel.onmessageerror = () => {
+          heard.push(how);
+          channel.close();
+        };
+        return channel;
+      };
+      const listener = () => {};
+
+      const removed = listening("removeEventListener");
+      removed.addEventListener("message", listener);
+      removed.removeEventListener("message", listener);
+
+      const cleared = listening("onmessage = null");
+      cleared.onmessage = listener;
+      cleared.onmessage = null;
+
+      listening("once").addEventListener("message", listener, { once: true });
+      listening("signal").addEventListener("message", listener, { signal: controller.signal });
+    })();
+    await post(name, "fires the once listener");
+    controller.abort();
+    Bun.gc(true);
+
+    await post(name, undeserializable());
+    expect(heard).toEqual(["removeEventListener", "onmessage = null", "once", "signal"]);
+  });
+
+  test("hears messageerror for a post from another thread", async () => {
+    const name = "messageerror only: worker";
+    const worker = new NodeWorker(
+      `const heard = [];
+       (() => {
+         for (let i = 0; i < 8; i++) {
+           const channel = new BroadcastChannel(${JSON.stringify(name)});
+           channel.onmessageerror = () => {
+             heard.push(i);
+             channel.close();
+           };
+         }
+       })();
+       Bun.gc(true);
+
+       const last = new BroadcastChannel(${JSON.stringify(name)});
+       last.onmessage = () => {
+         last.close();
+         require("node:worker_threads").parentPort.postMessage(heard);
+       };
+       require("node:worker_threads").parentPort.postMessage("ready");`,
+      { eval: true },
+    );
+    const sender = new BroadcastChannel(name);
+    try {
+      const nextMessage = () => {
+        const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it posted`)));
+        return promise;
+      };
+      const ready = await nextMessage();
+      sender.postMessage(undeserializable());
+      sender.postMessage("last");
+      const heard = await nextMessage();
+
+      expect({ ready, heard }).toEqual({ ready: "ready", heard: [0, 1, 2, 3, 4, 5, 6, 7] });
+    } finally {
+      sender.close();
+      await worker.terminate();
+    }
+  });
+});
+
+test.concurrent("only a listener for message or for messageerror keeps an open channel from collection", async () => {
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const count = () => heapStats().objectTypeCounts.BroadcastChannel ?? 0;
+    const listener = () => {};
+    const shapes = {
+      "no listener": channel => {},
+      "a listener for another event": channel => channel.addEventListener("other", listener),
+      "onmessageerror, then null": channel => {
+        channel.onmessageerror = listener;
+        channel.onmessageerror = null;
+      },
+      "a messageerror listener, then removed": channel => {
+        channel.addEventListener("messageerror", listener);
+        channel.removeEventListener("messageerror", listener);
+      },
+      "a messageerror listener, then its signal aborted": channel => {
+        const controller = new AbortController();
+        channel.addEventListener("messageerror", listener, { signal: controller.signal });
+        controller.abort();
+      },
+      "onmessageerror, then close()": channel => {
+        channel.onmessageerror = listener;
+        channel.close();
+      },
+      "onmessage": channel => (channel.onmessage = listener),
+      "onmessageerror": channel => (channel.onmessageerror = listener),
+      "a messageerror listener": channel => channel.addEventListener("messageerror", listener),
+    };
+    const result = {};
+    for (const [shape, listen] of Object.entries(shapes)) {
+      Bun.gc(true);
+      const before = count();
+      (() => {
+        for (let i = 0; i < 20; i++) {
+          const channel = new BroadcastChannel("x");
+          listen(channel);
+          channel.unref();
+        }
+      })();
+      Bun.gc(true);
+      result[shape] = count() - before >= 10 ? "kept" : "collected";
+    }
+    console.log(JSON.stringify(result));`;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "no listener": "collected",
+    "a listener for another event": "collected",
+    "onmessageerror, then null": "collected",
+    "a messageerror listener, then removed": "collected",
+    "a messageerror listener, then its signal aborted": "collected",
+    "onmessageerror, then close()": "collected",
+    "onmessage": "kept",
+    "onmessageerror": "kept",
+    "a messageerror listener": "kept",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// fullGC() collects and does not sweep. A channel whose wrapper it collected is still subscribed then, and
+// making another channel would sweep it.
+test.concurrent.each([
+  [
+    "a channel whose only listener is for messageerror hears a post",
+    `let heard = 0;
+     (() => {
+       for (let i = 0; i < 50; i++) {
+         const channel = new BroadcastChannel("x");
+         channel.onmessageerror = () => {
+           heard++;
+           channel.close();
+         };
+         channel.unref();
+       }
+     })();
+     const sender = new BroadcastChannel("x");
+     const last = new BroadcastChannel("x");
+     last.onmessage = () => {
+       console.log("heard by " + heard + " of 50");
+       sender.close();
+       last.close();
+     };
+     ${undeserializable}
+     const message = undeserializable();
+     require("bun:jsc").fullGC();
+     sender.postMessage(message);
+     sender.postMessage("last");`,
+    "heard by 50 of 50\n",
+  ],
+  [
+    "a post does not reach a channel without a listener in a realm that script dropped",
+    `(() => {
+       for (let i = 0; i < 20; i++) new ShadowRealm().evaluate('new BroadcastChannel("x").unref(); 0');
+     })();
+     const sender = new BroadcastChannel("x");
+     const last = new BroadcastChannel("x");
+     last.onmessage = event => {
+       console.log("the channel that listens heard " + event.data.map.get("date").getTime());
+       sender.close();
+       last.close();
+     };
+     const message = { map: new Map([["date", new Date(0)]]) };
+     require("bun:jsc").fullGC();
+     sender.postMessage(message);`,
+    "the channel that listens heard 0\n",
+  ],
+])("between a collection and its sweep, %s", async (_, script, expected) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });

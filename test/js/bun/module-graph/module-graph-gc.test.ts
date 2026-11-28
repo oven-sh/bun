@@ -3,7 +3,7 @@
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls, undeserializable } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
@@ -48,6 +48,11 @@ const dir = String(
       }
       export function tick() {
         const interval = setInterval(() => { control.ticks++; if (control.stop) clearInterval(interval); }, 1);
+      }
+      // An open channel with a listener for message or messageerror is a GC root, and the listener is the graph's.
+      export function listenOnChannel(type) {
+        const channel = new BroadcastChannel("module-graph-gc " + type);
+        channel.addEventListener(type, event => { channel.close(); control.hear(event.type); });
       }
       // A cron job whose tick waits for something that never comes.
       export function cronTickThatParks() {
@@ -412,6 +417,30 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     state.stop = true;
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
+
+  test.each(["message", "messageerror"])(
+    "a BroadcastChannel that listens for %s keeps its graph alive and listening after the host dropped the graph; closing it lets the graph go",
+    async type => {
+      const lifetimes = new Lifetimes();
+      const heard = Promise.withResolvers<string>();
+      const state = { ...control(), hear: heard.resolve };
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.listenOnChannel(type));
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+
+      const sender = new BroadcastChannel("module-graph-gc " + type);
+      try {
+        sender.postMessage(type === "message" ? "to the graph" : undeserializable());
+        expect(await heard.promise).toBe(type);
+      } finally {
+        sender.close();
+      }
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    },
+  );
 
   // The job holds a ref on itself while a tick's promise is pending; nothing settles it once the graph is disposed.
   test("a Bun.cron() job whose tick is waiting when its graph is disposed goes with the graph", async () => {

@@ -296,7 +296,9 @@ us_fd_t bsd_create_udp_socket(const char *host, int port, int options, int *err)
 
 us_fd_t bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
 
-us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
+/* *connected becomes 1 when connect() itself returned 0: the connection is
+ * then established before this returns. */
+us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options, int *connected);
 #endif
 
 #ifndef MSG_DONTWAIT

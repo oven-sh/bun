@@ -75,7 +75,10 @@ ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObjec
 
 void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
 {
-    if (isClosed())
+    // The collector keeps only the wrapper of a channel with pending activity.
+    // Any other channel stays subscribed after its wrapper is collected, until
+    // the sweep. The global of a realm that script dropped can be dead by then.
+    if (!virtualHasPendingActivity())
         return;
 
     auto* context = scriptExecutionContext();
@@ -131,8 +134,8 @@ bool BroadcastChannel::virtualHasPendingActivity() const
     // An open channel with a `message` or `messageerror` listener stays alive:
     // https://html.spec.whatwg.org/multipage/web-messaging.html#broadcasting-to-other-browsing-contexts
     // A message in flight is not counted. The registry's task holds only a
-    // ThreadSafeWeakPtr, and a channel with neither listener has nothing to
-    // tell script.
+    // ThreadSafeWeakPtr, and dispatchMessage() drops the message of a channel
+    // that this does not keep.
     uint64_t s = m_state.load(std::memory_order_acquire);
     return !(s & Closed) && (s & HasMessageOrMessageErrorListener);
 }

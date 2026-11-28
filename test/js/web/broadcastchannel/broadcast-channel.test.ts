@@ -329,6 +329,50 @@ function undeserializable() {
   };
 }
 
+// unref() lets the process exit. It does not let go of the realm: that takes close().
+test.concurrent.each(["message", "messageerror"])(
+  "a realm that script dropped stays, and hears, until its channel that listens for %s closes",
+  async type => {
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const realms = () => (Bun.gc(true), heapStats().objectTypeCounts.GlobalObject - 1);
+      ${undeserializable}
+      (() => {
+        new ShadowRealm().evaluate(\`heard => {
+          const channel = new BroadcastChannel("x");
+          channel.on${type} = event => {
+            channel.close();
+            heard(event.type);
+          };
+          channel.unref();
+        }\`)(type => console.log("the realm heard " + type));
+      })();
+      console.log("realms before the post: " + realms());
+
+      const sender = new BroadcastChannel("x");
+      const last = new BroadcastChannel("x");
+      last.onmessage = event => {
+        if (event.data !== "last") return;
+        sender.close();
+        last.close();
+        let turns = 0;
+        (function settle() {
+          if (realms() > 0 && ++turns < 20) return setImmediate(settle);
+          console.log("realms after close(): " + realms());
+        })();
+      };
+      sender.postMessage(${type === "message" ? `"to the realm"` : "undeserializable()"});
+      sender.postMessage("last");`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `realms before the post: 1\nthe realm heard ${type}\nrealms after close(): 0\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 // An open channel with a listener for `message` or for `messageerror` stays alive:
 // https://html.spec.whatwg.org/multipage/web-messaging.html#broadcasting-to-other-browsing-contexts
 describe("a channel that script reaches only through its messageerror listener", () => {
@@ -503,4 +547,57 @@ test("only a listener for message or for messageerror keeps an open channel from
     "a messageerror listener": "kept",
   });
   expect(exitCode).toBe(0);
+});
+
+// fullGC() collects and does not sweep. A channel whose wrapper it collected is still subscribed then, and
+// making another channel would sweep it.
+test.concurrent.each([
+  [
+    "a channel whose only listener is for messageerror hears a post",
+    `let heard = 0;
+     (() => {
+       for (let i = 0; i < 50; i++) {
+         const channel = new BroadcastChannel("x");
+         channel.onmessageerror = () => {
+           heard++;
+           channel.close();
+         };
+         channel.unref();
+       }
+     })();
+     const sender = new BroadcastChannel("x");
+     const last = new BroadcastChannel("x");
+     last.onmessage = () => {
+       console.log("heard by " + heard + " of 50");
+       sender.close();
+       last.close();
+     };
+     ${undeserializable}
+     const message = undeserializable();
+     require("bun:jsc").fullGC();
+     sender.postMessage(message);
+     sender.postMessage("last");`,
+    "heard by 50 of 50\n",
+  ],
+  [
+    "a post does not reach a channel without a listener in a realm that script dropped",
+    `(() => {
+       for (let i = 0; i < 20; i++) new ShadowRealm().evaluate('new BroadcastChannel("x").unref(); 0');
+     })();
+     const sender = new BroadcastChannel("x");
+     const last = new BroadcastChannel("x");
+     last.onmessage = event => {
+       console.log("the channel that listens heard " + event.data.map.get("date").getTime());
+       sender.close();
+       last.close();
+     };
+     const message = { map: new Map([["date", new Date(0)]]) };
+     require("bun:jsc").fullGC();
+     sender.postMessage(message);`,
+    "the channel that listens heard 0\n",
+  ],
+])("between a collection and its sweep, %s", async (_, script, expected) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });

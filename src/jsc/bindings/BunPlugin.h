@@ -160,6 +160,12 @@ public:
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
+        // Modules whose move back from the key of the original (packagesToRestore) is owed, because a load held their own key when
+        // the mock ended. Each is in modulesToEvictOnceLoaded too. The first pass that finds the key free moves the module back,
+        // and so does a fetch or a require() that needs it before (payOwedModule).
+        WTF::UncheckedKeyHashSet<String> modulesToRestoreOnceLoaded = {};
+        // Such modules over which a later mock was made. Each moves back when a mock of its key ends, or when the test file ends.
+        WTF::UncheckedKeyHashSet<String> modulesToRestoreOnceUnmocked = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepInFlightModuleMock).
@@ -334,6 +340,7 @@ class GlobalObject;
 } // namespace Zig
 
 namespace JSC {
+class AbstractModuleRecord;
 class JSModuleNamespaceObject;
 class JSSourceCode;
 }
@@ -345,6 +352,14 @@ JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
 JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, bool synchronous);
 // False if the mock was replaced or removed before its factory was called.
 bool isModuleMockInUse(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+// For a fetch of `key` that waited for a mock which is not in use any more. Moves what the mock set aside back under the key, which
+// also gives it to the registry entry that the fetch fills. Returns the module that the key has then, or null if the fetch has to go on.
+JSC::AbstractModuleRecord* loadedModuleOfReleasedFetch(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key);
+// For a require() of `key`, or of a module that imports `key`. It cannot wait for the load that holds the key of a module that
+// a mock had set aside. Returns the key under which it finds that module.
+String requireKeyOfOwedModule(Zig::GlobalObject*, const String& key);
+// User code deletes `key` from require.cache. A module that a mock had set aside for the key is not moved back after that.
+void didDeleteModuleFromRequireCache(Zig::GlobalObject*, const String& key);
 // The exports, or a JSCommonJSModule that has them as `module.exports`. Null until the factory settles.
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 // The factory is an async function that is running, or that nothing has called. require() can't wait for it, and calling it
@@ -368,7 +383,7 @@ JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* modu
 std::optional<ASCIILiteral> builtinModuleOfOriginalKey(const String& key);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
-bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
+bool moduleMockImportsByKey(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& key);
 // Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);

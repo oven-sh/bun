@@ -1520,7 +1520,8 @@ JSValue fetchESMSourceCodeAsync(
     return fetchESMSourceCode<true>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
 }
 
-// Returns the JSSourceCode or a promise for it. Empty without an exception means it's waiting on the next onLoad callback's promise.
+// Returns the JSSourceCode, a promise for it, or the module record if the module is loaded (Bun::loadedModuleOfReleasedFetch).
+// Empty without an exception means it's waiting on the next onLoad callback's promise.
 static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, PendingVirtualModuleResult* pendingModule, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1572,8 +1573,15 @@ static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, P
     const ModuleFetch fetch { graph ? uncheckedDowncast<Bun::JSModuleGraph>(graph) : nullptr, specifierJS, typeAttributeWtf.isNull() ? nullptr : &typeAttribute, matches };
     ErrorableResolvedSource res;
 
-    if (!value)
+    if (!value) {
+        if (fetchesAgain && fetch.graph == Bun::testFileModuleGraph(globalObject) && !fetch.typeAttribute) {
+            auto* loaded = Bun::loadedModuleOfReleasedFetch(globalObject, moduleMock.getObject(), specifierWtf);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (loaded)
+                return loaded;
+        }
         RELEASE_AND_RETURN(scope, fetchESMSourceCode<true>(globalObject, fetch.graph, specifierJS, &res, &specifier, &referrer, fetch.typeAttribute, !fetchesAgain));
+    }
 
     JSValue result = handleVirtualModuleResult<false>(globalObject, value, &res, &specifier, &referrer, fetch, !!moduleMock);
     RETURN_IF_EXCEPTION(scope, {});

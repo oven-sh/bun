@@ -422,6 +422,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         String given = Bun::packageImportKey(globalObject, key, fromString, false);
         if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
             given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
+        if (!globalObject->onLoadPlugins.modulesToRestoreOnceLoaded.isEmpty()) [[unlikely]] {
+            given = Bun::requireKeyOfOwedModule(globalObject, given);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         if (given != key)
             return JSC::JSValue::encode(jsString(vm, given));
     } else if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {

@@ -104,6 +104,8 @@ test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > w
 ~ASAN test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > writes and deletes aren't cached by the JIT
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > a load that imports the module as text gets the text
+test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > as a mock of a loaded module that ends while a load waits for its factory > the next test file gets the loaded package after vi.doUnmock(), then mock.module() of the package, then Bun.plugin.clearAll()
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself

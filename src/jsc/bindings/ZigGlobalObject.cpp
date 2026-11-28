@@ -1177,6 +1177,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto* moduleLoader = moduleLoaderOfRequirer(globalObject, callFrame->argument(1));
     if (!moduleLoader)
         return JSValue::encode(jsBoolean(false));
+    if (auto* zigGlobalObject = defaultGlobalObject(globalObject); moduleLoader == Bun::testFileModuleLoader(zigGlobalObject)) {
+        Bun::didDeleteModuleFromRequireCache(zigGlobalObject, key.string());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     // A module whose load is in flight is not in require.cache and is not evicted.
     for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
         if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
@@ -4251,7 +4255,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     // Not implied by hasVirtualModules(), since a factory keeps running after Bun.plugin.clearAll() removes every mock.
     bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
-    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]]
+    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, loader, referrerString)) [[unlikely]]
         return Identifier::fromString(vm, moduleMocksRun ? Bun::keyOfImportWhileModuleMocksRun(globalObject, keyString.substring(1), referrerString, true) : keyString.substring(1));
     WTF::String resolved;
     bool hasModuleMocks = globalObject->onLoadPlugins.hasVirtualModules();
@@ -4284,6 +4288,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
+    // An import of a module that require() loads cannot wait for a load either.
+    if (hasModuleMocks && !isImportCall && vm.m_synchronousModuleQueue && !globalObject->onLoadPlugins.modulesToRestoreOnceLoaded.isEmpty()) [[unlikely]] {
+        resolved = Bun::requireKeyOfOwedModule(globalObject, resolved);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);

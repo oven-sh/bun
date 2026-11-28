@@ -1,5 +1,5 @@
 use core::fmt;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use bun_core::env_var;
@@ -11,64 +11,21 @@ use bun_core::slice_to_nul;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Enables analytics. This is used by:
-/// - crash_handler's `report` function to anonymously report crashes
-///
-/// Since this field can be `Unknown`, it makes more sense to call `is_enabled`
-/// instead of processing this field directly.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum TriState {
-    Yes = 0,
-    No = 1,
-    Unknown = 2,
+static CONFIG_OPT_OUT: AtomicBool = AtomicBool::new(false);
+
+/// For a `telemetry` in a bunfig that is not `true`. Nothing clears it: no config turns reporting back on.
+#[inline]
+pub fn opt_out_by_config() {
+    CONFIG_OPT_OUT.store(true, Ordering::Relaxed);
 }
 
-impl TriState {
-    #[inline]
-    const fn from_u8(v: u8) -> Self {
-        match v {
-            0 => TriState::Yes,
-            1 => TriState::No,
-            _ => TriState::Unknown,
-        }
-    }
-}
-
-static ENABLED: AtomicU8 = AtomicU8::new(TriState::Unknown as u8);
-
-fn enabled() -> TriState {
-    TriState::from_u8(ENABLED.load(Ordering::Relaxed))
-}
-pub fn set_enabled(v: TriState) {
-    ENABLED.store(v as u8, Ordering::Relaxed);
-}
-
+/// Whether the crash handler may upload a report. Any one opt-out is enough to say no.
 pub fn is_enabled() -> bool {
-    match enabled() {
-        TriState::Yes => !env_var::DO_NOT_TRACK.get().unwrap_or(false),
-        TriState::No => false,
-        TriState::Unknown => {
-            let detected = 'detect: {
-                // `env_var::*.get()` returns `Option<ValueType>` even when a
-                // default exists; `DO_NOT_TRACK` has `default: false`, hence
-                // `.unwrap_or(false)`.
-                if env_var::DO_NOT_TRACK.get().unwrap_or(false) {
-                    break 'detect TriState::No;
-                }
-                if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET
-                    .get()
-                    .is_some()
-                {
-                    break 'detect TriState::No;
-                }
-                TriState::Yes
-            };
-            set_enabled(detected);
-            debug_assert!(matches!(enabled(), TriState::Yes | TriState::No));
-            enabled() == TriState::Yes
-        }
-    }
+    !CONFIG_OPT_OUT.load(Ordering::Relaxed)
+        && !env_var::DO_NOT_TRACK.get().unwrap_or(false)
+        && env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET
+            .get()
+            .is_none()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

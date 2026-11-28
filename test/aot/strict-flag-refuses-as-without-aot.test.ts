@@ -6,7 +6,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 raiseDefaultTimeout(240_000);

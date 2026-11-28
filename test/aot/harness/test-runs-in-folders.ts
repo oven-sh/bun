@@ -85,7 +85,7 @@ function layPackages(folder: string) {
 // bunEnv drops each BUN_DEBUG_ variable of whoever runs this file.
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
-// CI runs three of these files at once, and each of their tests starts two runs, so that six runs stand beside one another for each processor. The files count their runs together.
+// CI runs three of these files at once, and each of their tests starts two runs, so that more runs stand beside one another than there are processors. The files count their runs together.
 const runsUnderWay = join(dirname(bunExe()), "test-runs-under-way");
 
 async function outcomeOf(dir: string, words: string, ...flags: string[]) {

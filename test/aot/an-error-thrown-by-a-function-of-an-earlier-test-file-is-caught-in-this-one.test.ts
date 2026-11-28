@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { testOneByOne as test } from "./supported";
 
 // `bun test --isolate` gives each test file a fresh realm of one VM, and each realm runs an instance of the compiled program of its own.

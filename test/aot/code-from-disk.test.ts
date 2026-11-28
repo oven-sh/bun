@@ -20,7 +20,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
 import { built, spawned } from "./harness/commands";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 type Case = {

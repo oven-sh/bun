@@ -5,7 +5,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isGlibc, tempDir } from "harness";
 import { join } from "node:path";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { describe, testOneByOne as test } from "./supported";
 
 // REFUSE=<call>:<n> makes the n-th such call fail, REFUSE=<call>:<n>+ that one and every later one. Mappings count on the threads that the process starts: those do the compiling.

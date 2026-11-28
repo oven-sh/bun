@@ -1,6 +1,8 @@
-// CI runs several test files at once, and each of them counts every processor as its own. That is fine for a file that mostly
-// waits. A file whose work keeps every processor busy takes its slots here instead: a slot is a file in a folder that all such
-// test files name, so together they run no more at once than one of them would alone, and one that runs alone still gets them all.
+// CI runs several test files at once, and each of them counts every processor as its own. With a sanitizer the runner gives a
+// file its share of them as tests at once (scripts/runner.node.ts), and what one test starts is still not counted. That is fine
+// for a file that mostly waits. A file whose work keeps every processor busy takes its slots here instead: a slot is a file in a
+// folder that all such test files name, so together they run no more at once than one of them would alone, and one that runs
+// alone still gets them all.
 import {
   accessSync,
   closeSync,

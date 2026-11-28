@@ -753,6 +753,11 @@ fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
         return Some((read, property_span));
     }
     while let Some(member) = enclosing_member(read) {
+        // In `variable.a.b()` the chain is `variable.a`, as in oxc.
+        let is_called = member.parent().as_expr().and_then(|it| it.as_call());
+        if is_called.is_some_and(|call| call.callee() == member) {
+            break;
+        }
         read = member;
     }
     Some((read, read.span()))

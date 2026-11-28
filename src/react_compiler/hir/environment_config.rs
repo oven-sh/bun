@@ -46,6 +46,17 @@ pub enum ExhaustiveEffectDepsMode {
     ExtraOnly,
 }
 
+/// Where the dependency of a nested function ends. The cache guard reads it on each render, the function later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NestedFunctionDependencies {
+    /// `x.current.y`, as upstream unless it knows `x` to be a ref. The guard throws while `x.current` is null.
+    Whole,
+    /// `x`: before the first `.current`. From oxc-project/oxc#27423.
+    BeforeCurrent,
+    /// As `BeforeCurrent`, but `x.current` if the `useMemo` or `useCallback` around the function lists `x.current`.
+    BeforeCurrentUnlessListed,
+}
+
 /// Compiler environment configuration. Contains feature flags and settings.
 ///
 /// Fields that would require passing JS functions across the JS/Rust boundary
@@ -106,6 +117,8 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
+    /// Unless `Whole`, a scope with such a function is not run again when `x.current` is assigned and `x` stays.
+    pub nested_function_dependencies: NestedFunctionDependencies,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -164,6 +177,7 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
+            nested_function_dependencies: NestedFunctionDependencies::BeforeCurrentUnlessListed,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

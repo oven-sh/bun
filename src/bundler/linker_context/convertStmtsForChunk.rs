@@ -593,6 +593,13 @@ pub(crate) fn convert_stmts_for_chunk(
                                 }
                             }
                             bun_ast::StmtOrExpr::Expr(e) => {
+                                // refresh already declared this default function binding.
+                                if matches!(
+                                    e.data,
+                                    bun_ast::ExprData::EIdentifier(id) if id.ref_ == s.default_name.ref_
+                                ) {
+                                    continue 'stmt_loop;
+                                }
                                 stmt = Stmt::alloc(
                                     S::Local {
                                         decls: G::DeclList::from_slice(&[G::Decl {

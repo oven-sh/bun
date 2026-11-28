@@ -131,7 +131,7 @@ declare module "vitest" {
     mockClear(): this;
     /**
      * Clears the recorded calls and resets the implementation to the original one. That's the function passed to
-     * `vi.fn()`, or the method that `vi.spyOn()` replaced.
+     * `vi.fn()`, or the method, getter or setter that `vi.spyOn()` replaced.
      */
     mockReset(): this;
     /** Like `mockReset()`. A `vi.spyOn()` spy also restores the original property on the object. */
@@ -267,7 +267,8 @@ declare module "vitest" {
      */
     fn<T extends Procedure | Constructable = Procedure>(implementation?: T): Mock<T>;
     /**
-     * Replaces a method, getter or setter on `object` with a mock that still calls the original.
+     * Replaces a method, getter or setter on `object` with a mock that still calls the original. Under a `"get"` or
+     * `"set"` spy, a plain property still reads its value, where in Vitest it reads `undefined`.
      *
      * @example
      * ```ts

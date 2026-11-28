@@ -300,7 +300,7 @@ impl Socket {
 }
 
 /// The answers wait until all polls of this turn have been dispatched.
-extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, count: c_int) {
+fn on_data(udp: *mut udp::Socket, packets: udp::Packets<'_>) {
     let socket = Socket::of(udp);
     let (engine, now) = (socket.owner.engine(), now());
     let Some(binding) = socket.binding.get() else {
@@ -313,8 +313,7 @@ extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, cou
             socket.owner.on_incoming(now, incoming);
         }
     };
-    // SAFETY: they are our arguments.
-    let read = unsafe { binding.for_each_datagram(buffer, count, receive) };
+    let read = binding.for_each_datagram(packets, receive);
     engine.registration.forget_timeout();
     (engine.outbox.borrow_mut()).reads_on(&read, &engine.endpoint.borrow());
 }

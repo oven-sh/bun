@@ -56,7 +56,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__destroy(WTF::StringI
     WTF::StringImpl::destroy(impl);
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, [[ZIG_NONNULL]] BunString* bunString)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toStringRef(globalObject, value).leak();
@@ -82,7 +82,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char
     return { BunStringTag::Dead, {} };
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, [[ZIG_NONNULL]] const char* ptr, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -167,7 +167,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject) &&
     return jsString(vm, WTF::move(str));
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS([[ZIG_NONNULL]] BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(WTF::move(*bunString).transferToJS(globalObject));
 }
@@ -389,7 +389,7 @@ std::optional<UTF8View> UTF8View::tryCreate(JSC::JSGlobalObject* globalObject, J
 
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, [[ZIG_NONNULL]] const BunString* bunString)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -548,7 +548,7 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
-    const BunString* bunString)
+    [[ZIG_NONNULL]] const BunString* bunString)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     // toWTFString() is null for an empty string, and JSONParseWithException throws nothing for null.
@@ -564,9 +564,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue BunString__createArray(
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createArray(
     JSC::JSGlobalObject* globalObject,
-    const BunString* ptr, size_t length)
+    [[ZIG_NONNULL]] const BunString* ptr, size_t length)
 {
     if (length == 0)
         return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));

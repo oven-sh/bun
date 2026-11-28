@@ -1,7 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use bun_boringssl_sys::OwnedSslCtx;
-use bun_core::ZStr;
+use bun_core::{CStrRef, ZStr};
 
 use crate::{SslCtx, us_socket_t};
 
@@ -83,7 +83,7 @@ impl ListenSocket {
         &mut self,
         cb: extern "C" fn(
             *mut ListenSocket,
-            *const c_char,
+            CStrRef<'_>,
             Option<&mut c_int>,
             *mut c_void,
         ) -> *mut c_void,
@@ -109,7 +109,7 @@ unsafe extern "C" {
         ls: &mut ListenSocket,
         cb: extern "C" fn(
             *mut ListenSocket,
-            *const c_char,
+            CStrRef<'_>,
             Option<&mut c_int>,
             *mut c_void,
         ) -> *mut c_void,

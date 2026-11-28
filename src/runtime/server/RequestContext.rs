@@ -1866,9 +1866,6 @@ where
                     if let Some(response) = self.response_mut() {
                         if let Some(mut headers_) = response.swap_init_headers() {
                             self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
-                            // call `.deref()` explicitly (would double-free).
-                            drop(headers_);
                         }
                     }
                     let cr = RangeRequest::format_content_range(
@@ -2263,7 +2260,6 @@ where
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !MUX {
-                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
                 request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
             }
         }
@@ -3637,11 +3633,6 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
-            drop(headers_);
         } else if needs_content_range {
             status = 206;
             self.do_write_status(status);

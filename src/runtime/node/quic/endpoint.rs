@@ -329,11 +329,7 @@ const VERNEG_PROBE_CID_LEN: usize = 8;
 /// 1200 bytes, so the probe pads to the minimum.
 const VERNEG_PROBE_LEN: usize = 1200;
 
-extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
-    packets: c_int,
-) {
+fn on_data(socket: *mut uws::udp::Socket, packets: uws::udp::Packets<'_>) {
     let this = QuicEndpoint::of(socket);
     let Some(binding) = this.binding.get() else {
         return;
@@ -355,8 +351,7 @@ extern "C" fn on_data(
             this.receive(now, from, payload);
         }
     };
-    // SAFETY: they are our arguments.
-    let read = unsafe { binding.for_each_datagram(buf, packets, receive) };
+    let read = binding.for_each_datagram(packets, receive);
     let reads_on = this.outbox.borrow_mut().reads_on(&read, &this.quic());
     // The more is acknowledged, the more can be sent together.
     if reads_on {

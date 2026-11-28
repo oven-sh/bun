@@ -129,7 +129,7 @@ impl Message {
 }
 
 unsafe extern "C" {
-    fn us_quic_read_envelope(buffer: &mut udp::PacketBuffer, index: c_int, out: &mut Envelope);
+    fn us_quic_read_envelope(buffer: &udp::PacketBuffer, index: c_int, out: &mut Envelope);
     safe fn us_quic_local_address(socket: &mut udp::Socket, out: &mut Address);
     safe fn us_quic_set_dontfrag(socket: &mut udp::Socket);
     safe fn us_quic_ignore_receive_errors(socket: &mut udp::Socket);
@@ -177,28 +177,25 @@ impl Binding {
                 || address.ip().is_unspecified() && address.is_ipv6() == local.is_ipv6())
     }
 
-    /// # Safety
-    /// `buffer` and `count` are those of the callback for data.
     #[inline]
-    pub unsafe fn for_each_datagram(
+    pub fn for_each_datagram(
         &self,
-        buffer: *mut udp::PacketBuffer,
-        count: c_int,
+        packets: udp::Packets<'_>,
         mut f: impl FnMut(&Addresses, &mut [u8]),
     ) -> Read {
-        let (buffer, local) = (udp::PacketBuffer::opaque_mut(buffer), self.address.into());
+        let local = self.address.into();
         let mut read = Read {
             socket: self.socket,
             len: 0,
             may_be_more: false,
         };
-        for at in 0..count {
+        packets.for_each_mut(|buffer, at, payload| {
             let mut envelope = Envelope {
                 local,
                 peer: Address::default(),
                 segment_len: 0,
             };
-            // SAFETY: the caller's.
+            // SAFETY: there is a packet at this index.
             unsafe { us_quic_read_envelope(buffer, at, &mut envelope) };
             let from = Addresses {
                 local: envelope.local.into(),
@@ -208,12 +205,11 @@ impl Binding {
                 ..=0 => usize::MAX,
                 len => len as usize,
             };
-            let payload = buffer.get_payload(at);
             read.len += payload.len().div_ceil(len.min(LARGE_DATAGRAM_LEN)).max(1);
-            read.may_be_more = (FULL_DATAGRAM_LEN..len).contains(&payload.len());
+            read.may_be_more =
+                at + 1 == DATAGRAMS_PER_READ || (FULL_DATAGRAM_LEN..len).contains(&payload.len());
             payload.chunks_mut(len).for_each(|it| f(&from, it));
-        }
-        read.may_be_more |= count == DATAGRAMS_PER_READ;
+        });
         read
     }
 }

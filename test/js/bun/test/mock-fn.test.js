@@ -3128,6 +3128,416 @@ if (isBun) {
         expect(vi.isMockFunction(sub.kept)).toBe(true);
       });
 
+      // The keys of the mocks that an instance has of its own.
+      const ownMocks = instance =>
+        Reflect.ownKeys(instance).filter(key =>
+          vi.isMockFunction(Object.getOwnPropertyDescriptor(instance, key).value),
+        );
+
+      // With `{ spy: true }` an instance has its own mock for the methods that its class defines. Without it, also for the ones that the class inherits.
+      test.each(modes)("%s: the methods that an instance has its own mock for", (_, options) => {
+        class Base {
+          inherited() {
+            return "inherited";
+          }
+          overridden() {
+            return "Base";
+          }
+        }
+        class Klass extends Base {
+          method() {}
+          overridden() {
+            return "Klass";
+          }
+          [Symbol.for("symbol")]() {}
+          static make() {
+            return new this();
+          }
+        }
+        const real = value => (options ? value : undefined);
+        const own = options
+          ? ["method", "overridden", Symbol.for("symbol")]
+          : ["method", "overridden", "inherited", Symbol.for("symbol")];
+        const Mocked = vi.mockObject(Klass, options);
+        class Sub extends Mocked {}
+        const { constructor } = new Mocked();
+        const made = {
+          "new": new Mocked(),
+          "Reflect.construct()": Reflect.construct(Mocked, []),
+          "a subclass": new Sub(),
+          "new instance.constructor()": new constructor(),
+        };
+        if (options) made["new this() in a static method"] = Mocked.make();
+        for (const [how, instance] of Object.entries(made)) {
+          expect([how, ownMocks(instance)]).toEqual([how, own]);
+        }
+
+        const [a, b] = [new Mocked(), new Mocked()];
+        expect(a.method).not.toBe(b.method);
+        expect(vi.isMockFunction(a.inherited)).toBe(true);
+        expect([a.inherited === Mocked.prototype.inherited, a.inherited === b.inherited]).toEqual([
+          !!options,
+          !!options,
+        ]);
+        expect([a.inherited(), b.inherited(), a.overridden()]).toEqual([
+          real("inherited"),
+          real("inherited"),
+          real("Klass"),
+        ]);
+        expect(Mocked.prototype.inherited.mock.contexts).toEqual([a, b]);
+        expect(vi.isMockFunction(Base.prototype.inherited)).toBe(false);
+      });
+
+      test.each(modes)("%s: a class and its base class give the same instances in either order", (_, options) => {
+        for (const order of [
+          ["Base", "Klass"],
+          ["Klass", "Base"],
+        ]) {
+          class Base {
+            inherited() {}
+          }
+          class Klass extends Base {
+            method() {}
+          }
+          const classes = { Base, Klass };
+          const mocked = vi.mockObject(Object.fromEntries(order.map(name => [name, classes[name]])), options);
+          expect([order, ownMocks(new mocked.Klass()), ownMocks(new mocked.Base())]).toEqual([
+            order,
+            options ? ["method"] : ["method", "inherited"],
+            ["inherited"],
+          ]);
+          expect(mocked.Klass.prototype.inherited).toBe(mocked.Base.prototype.inherited);
+        }
+      });
+
+      test.each(modes)(
+        "%s: an instance keeps its own mocks after the class mock is cleared, reset or restored",
+        (_, options) => {
+          const between = {
+            "mockClear()": Mocked => Mocked.mockClear(),
+            "mockReset()": Mocked => Mocked.mockReset(),
+            "mockRestore()": Mocked => Mocked.mockRestore(),
+            "mockImplementation()": Mocked => Mocked.mockImplementation(class {}),
+            "mockImplementation(), then vi.resetAllMocks()": Mocked => (
+              Mocked.mockImplementation(class {}),
+              vi.resetAllMocks()
+            ),
+            "mockReturnValueOnce(), then jest.resetAllMocks()": Mocked => (
+              Mocked.mockReturnValueOnce(1),
+              jest.resetAllMocks()
+            ),
+            "vi.clearAllMocks()": () => vi.clearAllMocks(),
+            "vi.restoreAllMocks()": () => vi.restoreAllMocks(),
+            "Bun.gc()": () => Bun.gc(true),
+          };
+          for (const [how, run] of Object.entries(between)) {
+            class Base {
+              inherited() {}
+            }
+            class Klass extends Base {
+              method() {}
+            }
+            const own = options ? ["method"] : ["method", "inherited"];
+            const Mocked = vi.mockObject(Klass, options);
+            new Mocked();
+            run(Mocked);
+            const [a, b] = [new Mocked(), new Mocked()];
+            a.method(1);
+            expect([how, ownMocks(a), ownMocks(b), b.method.mock.calls]).toEqual([how, own, own, []]);
+          }
+        },
+      );
+
+      test("{ spy: true }: the mock of an inherited method is one for all instances", () => {
+        class Base {
+          inherited() {
+            return "inherited";
+          }
+        }
+        class Klass extends Base {
+          method() {}
+        }
+        const Mocked = vi.mockObject(Klass, { spy: true });
+        const [a, b] = [new Mocked(), new Mocked()];
+        const spy = vi.spyOn(a, "inherited");
+        expect(spy).toBe(Mocked.prototype.inherited);
+        expect(Object.hasOwn(a, "inherited")).toBe(false);
+
+        spy.mockReturnValue("stub");
+        expect([a.inherited(), b.inherited()]).toEqual(["stub", "stub"]);
+        expect(spy.mock.contexts).toEqual([a, b]);
+        spy.mockReset();
+        expect(b.inherited()).toBe("inherited");
+
+        // A mock that the test assigns is of one instance.
+        a.inherited = vi.fn(() => "assigned");
+        expect([a.inherited(), b.inherited()]).toEqual(["assigned", "inherited"]);
+      });
+
+      test("{ spy: true }: the methods of a class are those that its prototype has when it is mocked", () => {
+        class Base {
+          inherited() {}
+          watched() {}
+        }
+        class Klass extends Base {
+          method() {}
+        }
+        // A function of the base class that the class has under a name of its own.
+        Klass.prototype.alias = Base.prototype.inherited;
+        using spy = vi.spyOn(Klass.prototype, "watched");
+        const spied = vi.mockObject({ Klass }, { spy: true });
+        spied.Klass.prototype.later = vi.fn();
+
+        // A mock of the class that writes nothing to it changes nothing.
+        vi.mockObject(Klass);
+        vi.mockObject({ Klass });
+        const instance = new spied.Klass();
+        expect(ownMocks(instance)).toEqual(["method", "alias", "watched"]);
+        instance.watched(1);
+        expect(spy).toHaveBeenCalledWith(1);
+        expect(instance.later).toBe(spied.Klass.prototype.later);
+      });
+
+      // The prototype of such a class gets no spy of an inherited method. Its methods are still those of the time when it is mocked.
+      test("{ spy: true }: the methods of a class without a base class of its own are those that its prototype has when it is mocked", () => {
+        class Solo {
+          method() {}
+        }
+        function Old() {}
+        Old.prototype.method = function method() {};
+        // The automocker puts no method of RegExp.prototype on the prototype of a class.
+        class Pattern extends RegExp {
+          own() {}
+        }
+        const spied = vi.mockObject({ Solo, Old, Pattern }, { spy: true });
+        for (const Spied of Object.values(spied)) Spied.prototype.later = vi.fn();
+
+        const instances = { Solo: new spied.Solo(), Old: new spied.Old(), Pattern: new spied.Pattern("a") };
+        expect(
+          Object.fromEntries(Object.entries(instances).map(([name, instance]) => [name, ownMocks(instance)])),
+        ).toEqual({ Solo: ["method"], Old: ["method"], Pattern: ["own"] });
+        expect(instances.Solo.later).toBe(spied.Solo.prototype.later);
+      });
+
+      test("{ spy: true }: an instance of a class with a built-in base class has its own mock for the methods of the class only", () => {
+        const classes = {
+          Array: class extends Array {
+            own() {}
+          },
+          Uint8Array: class extends Uint8Array {
+            own() {}
+          },
+          RegExp: class extends RegExp {
+            own() {}
+          },
+          Error: class extends Error {
+            own() {}
+          },
+          Date: class extends Date {
+            own() {}
+          },
+          NoMethods: class extends Array {},
+        };
+        const spied = vi.mockObject({ ...classes }, { spy: true });
+        expect(Object.fromEntries(Object.entries(spied).map(([name, Spied]) => [name, ownMocks(new Spied())]))).toEqual(
+          {
+            Array: ["own"],
+            Uint8Array: ["own"],
+            RegExp: ["own"],
+            Error: ["own"],
+            Date: ["own"],
+            NoMethods: [],
+          },
+        );
+      });
+
+      test("{ spy: true }: an instance of a built-in class has its own mock for each method of that class", () => {
+        // The class of another realm, so that no spy is left on a prototype of this one.
+        const OtherDate = vm.runInNewContext("Date");
+        const methods = vm.runInNewContext(`
+          Reflect.ownKeys(Date.prototype).filter(key => {
+            const { value, writable } = Object.getOwnPropertyDescriptor(Date.prototype, key);
+            return key !== "constructor" && typeof value === "function" && writable;
+          })
+        `);
+        const spied = vi.mockObject({ Date: OtherDate }, { spy: true });
+        const date = new spied.Date(0);
+        expect(ownMocks(date).map(String).sort()).toEqual(Array.from(methods, String).sort());
+        expect(date.getTime()).toBe(0);
+        expect(vi.isMockFunction(Date.prototype.getTime)).toBe(false);
+      });
+
+      test("{ spy: true }: an instance of a class that extends Array has its own mock for the methods of the class only", () => {
+        class List extends Array {
+          sum() {
+            return this.reduce((a, b) => a + b, 0);
+          }
+        }
+        class NoMethods extends Array {}
+        const spied = vi.mockObject({ List, NoMethods }, { spy: true });
+        const list = new spied.List(1, 2, 3);
+        expect(Reflect.ownKeys(list)).toEqual(["0", "1", "2", "length", "sum"]);
+        expect(list).toEqual(Object.assign([1, 2, 3], { sum: expect.any(Function) }));
+        expect(list.sum()).toBe(6);
+        expect(list.sum).toHaveBeenCalledTimes(1);
+
+        // An instance of a class without methods of its own compares and clones like an array.
+        const plain = new spied.NoMethods(1, 2, 3);
+        expect(plain).toEqual([1, 2, 3]);
+        expect(structuredClone(plain)).toEqual([1, 2, 3]);
+
+        // Array.from() and Array.of() construct with the class that they are called on.
+        expect(Reflect.ownKeys(spied.List.from([1, 2]))).toEqual(["0", "1", "length", "sum"]);
+        expect(Reflect.ownKeys(spied.List.of(1, 2))).toEqual(["0", "1", "length", "sum"]);
+
+        // The methods of Array are spied on the prototype of the class.
+        expect(list.includes(2)).toBe(true);
+        expect(list.includes).toBe(spied.List.prototype.includes);
+        expect(spied.List.prototype.includes).toHaveBeenCalledWith(2);
+        expect(vi.isMockFunction(Array.prototype.includes)).toBe(false);
+      });
+
+      test("{ spy: true }: what a method of Array constructs has no mock of its own for a method of Array", () => {
+        class List extends Array {
+          sum() {}
+        }
+        const spied = vi.mockObject({ List }, { spy: true });
+        const list = new spied.List(1, 2, 3);
+        const results = [list.map(x => x * 2), list.filter(x => x > 1), list.slice(1), list.concat([4])];
+        expect(results.map(result => Array.from(result))).toEqual([
+          [2, 4, 6],
+          [2, 3],
+          [2, 3],
+          [1, 2, 3, 4],
+        ]);
+        for (const result of results) {
+          expect(result).toBeInstanceOf(spied.List);
+          expect(ownMocks(result).filter(key => key !== "sum")).toEqual([]);
+        }
+      });
+
+      test("{ spy: true } again: every mock of the class gives an instance the methods that the class has then", () => {
+        class List extends Array {
+          sum() {}
+        }
+        // Methods of the class that are functions of the base class, one of them under the name that the base class has for it.
+        List.prototype.all = Array.prototype.every;
+        List.prototype.includes = Array.prototype.includes;
+        const first = vi.mockObject({ List }, { spy: true });
+        expect(ownMocks(new first.List())).toEqual(["sum", "all", "includes"]);
+
+        List.prototype.added = function added() {};
+        List.prototype.mocked = vi.fn();
+        const second = vi.mockObject({ List }, { spy: true });
+        List.prototype.late = function late() {};
+        const third = vi.mockObject({ List }, { spy: true });
+
+        const own = ["sum", "all", "includes", "added", "mocked", "late"];
+        expect({
+          first: ownMocks(new first.List()),
+          second: ownMocks(new second.List()),
+          third: ownMocks(new third.List()),
+          "what map() constructs": ownMocks(new second.List(1, 2).map(x => x)),
+        }).toEqual({ first: own, second: own, third: own, "what map() constructs": own });
+      });
+
+      // A later mock finds the first one as the `constructor` of the prototype. Where that is not a mock of the class, the later mock cannot
+      // tell which spies the first one left there for inherited methods, and gives what a mock without the option gives.
+      test.each(
+        Object.entries({
+          "no constructor of its own (Object.create(Base.prototype))": Base => {
+            function Klass() {}
+            Klass.prototype = Object.create(Base.prototype);
+            Klass.prototype.method = function method() {};
+            return Klass;
+          },
+          "no constructor of its own (new Base())": Base => {
+            function Klass() {}
+            Klass.prototype = new Base();
+            Klass.prototype.method = function method() {};
+            return Klass;
+          },
+          "a constructor of its own that is another function": Base => {
+            function Other() {}
+            class Klass extends Base {
+              method() {}
+            }
+            Klass.prototype.constructor = Other;
+            return Klass;
+          },
+          "a constructor of its own that is read-only": Base => {
+            function Klass() {}
+            Klass.prototype = Object.create(Base.prototype, { constructor: { value: Klass } });
+            Klass.prototype.method = function method() {};
+            return Klass;
+          },
+        }),
+      )("{ spy: true } again: a class whose prototype has %s", (_, make) => {
+        function Base() {}
+        Base.prototype.inherited = function inherited() {};
+        const Klass = make(Base);
+
+        const first = vi.mockObject({ Klass }, { spy: true });
+        expect(ownMocks(new first.Klass())).toEqual(["method"]);
+        const second = vi.mockObject({ Klass }, { spy: true });
+        expect({ first: ownMocks(new first.Klass()), second: ownMocks(new second.Klass()) }).toEqual({
+          first: ["method"],
+          second: ["method", "inherited"],
+        });
+      });
+
+      test("{ spy: true } again: a mock that the test puts on the prototype between two mocks of the class is a method of the class", () => {
+        class Base {
+          inherited() {}
+        }
+        class Klass extends Base {
+          method() {}
+        }
+        const first = vi.mockObject({ Klass }, { spy: true });
+        // Mocks that the automocker made, as the spies of the inherited methods are.
+        Klass.prototype.spied = vi.mockObject(() => 1, { spy: true });
+        Klass.prototype.borrowed = vi.mockObject({ serialize() {} }, { spy: true }).serialize;
+        Klass.prototype.mocked = vi.mockObject(function mocked() {});
+        const second = vi.mockObject({ Klass }, { spy: true });
+
+        const own = ["method", "spied", "borrowed", "mocked"];
+        const [a, b] = [new second.Klass(), new second.Klass()];
+        expect({ first: ownMocks(new first.Klass()), second: ownMocks(a) }).toEqual({ first: own, second: own });
+        a.spied.mockReturnValue(2);
+        expect([a.spied(), b.spied()]).toEqual([2, 1]);
+      });
+
+      // A later mock tells the spies that the first one left for inherited methods by what the class inherits then.
+      test.each(
+        Object.entries({
+          "spyOn() of the method on the base class": [Base => spyOn(Base.prototype, "inherited"), ["method"]],
+          "vi.spyOn() of the method on the base class": [Base => vi.spyOn(Base.prototype, "inherited"), ["method"]],
+          "{ spy: true } of the base class": [Base => vi.mockObject({ Base }, { spy: true }), ["method"]],
+          "another function in the place of the method on the base class": [
+            Base => (Base.prototype.inherited = function () {}),
+            ["method"],
+          ],
+          // A mock of the automocker that the test puts under the name of an inherited method is not told from the spy of that method.
+          "a mock of the automocker in the place of the spy on the class": [
+            (Base, Klass) => (Klass.prototype.inherited = vi.mockObject(() => 1, { spy: true })),
+            ["method"],
+          ],
+          // The spy that the first mock left is of a method that the class inherits no more. It counts as a method of the class.
+          "the method deleted from the base class": [Base => delete Base.prototype.inherited, ["method", "inherited"]],
+        }),
+      )("{ spy: true } again, after %s", (_, [change, own]) => {
+        class Base {
+          inherited() {}
+        }
+        class Klass extends Base {
+          method() {}
+        }
+        vi.mockObject({ Klass }, { spy: true });
+        change(Base, Klass);
+        const second = vi.mockObject({ Klass }, { spy: true });
+        expect(ownMocks(new second.Klass())).toEqual(own);
+      });
+
       test("mockImplementation on an automocked class", () => {
         const Mocked = vi.mockObject(Klass);
         Mocked.mockImplementation(
@@ -3310,6 +3720,282 @@ if (isBun) {
         expect(stderr).toContain(" 2 pass\n 0 fail\n");
         expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
+
+      test.concurrent(
+        "{ spy: true } gives an instance its own mock for the methods of its class only, whichever function mocks the module",
+        async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          const classes = `
+          class Base { inherited() { return "inherited"; } }
+          class Klass extends Base { method() { return "method"; } }
+          class List extends Array { sum() { return this.reduce((a, b) => a + b, 0); } }
+          module.exports = { Klass, List };
+        `;
+          using dir = tempDir("mock-object-instance-methods", {
+            "vi-mock.cjs": classes,
+            "vi-mock-spy.cjs": classes,
+            "vi-do-mock.cjs": classes,
+            "vi-do-mock-spy.cjs": classes,
+            "jest-mock.cjs": classes,
+            "jest-mock-spy.cjs": classes,
+            "jest-do-mock.cjs": classes,
+            "jest-do-mock-spy.cjs": classes,
+            "unmocked.cjs": classes,
+            "instances.test.js": `
+            import { expect, jest, test, vi } from "bun:test";
+            vi.mock("./vi-mock.cjs");
+            vi.mock("./vi-mock-spy.cjs", { spy: true });
+            jest.mock("./jest-mock.cjs");
+            jest.mock("./jest-mock-spy.cjs", { spy: true });
+
+            test("the own keys of an instance", async () => {
+              vi.doMock("./vi-do-mock.cjs");
+              vi.doMock("./vi-do-mock-spy.cjs", { spy: true });
+              jest.doMock("./jest-do-mock.cjs");
+              jest.doMock("./jest-do-mock-spy.cjs", { spy: true });
+              const modules = {
+                "vi.mock()": require("./vi-mock.cjs"),
+                "vi.mock({ spy: true })": require("./vi-mock-spy.cjs"),
+                "vi.doMock()": require("./vi-do-mock.cjs"),
+                "vi.doMock({ spy: true })": require("./vi-do-mock-spy.cjs"),
+                "vi.importMock()": await vi.importMock("./unmocked.cjs"),
+                "jest.mock()": require("./jest-mock.cjs"),
+                "jest.mock({ spy: true })": require("./jest-mock-spy.cjs"),
+                "jest.doMock()": require("./jest-do-mock.cjs"),
+                "jest.doMock({ spy: true })": require("./jest-do-mock-spy.cjs"),
+                "jest.requireMock()": jest.requireMock("./unmocked.cjs"),
+                "jest.createMockFromModule()": jest.createMockFromModule("./unmocked.cjs"),
+              };
+              const keys = {};
+              for (const [how, { Klass, List }] of Object.entries(modules)) {
+                const instance = new Klass();
+                expect([how, jest.isMockFunction(instance.inherited)]).toEqual([how, true]);
+                keys[how] = [Object.keys(instance)];
+                // Only a spied class constructs an array.
+                if (how.includes("spy")) keys[how].push(Reflect.ownKeys(new List(1, 2, 3)));
+              }
+              const spied = [["method"], ["0", "1", "2", "length", "sum"]];
+              const mocked = [["method", "inherited"]];
+              expect(keys).toEqual({
+                "vi.mock()": mocked,
+                "vi.mock({ spy: true })": spied,
+                "vi.doMock()": mocked,
+                "vi.doMock({ spy: true })": spied,
+                "vi.importMock()": mocked,
+                "jest.mock()": mocked,
+                "jest.mock({ spy: true })": spied,
+                "jest.doMock()": mocked,
+                "jest.doMock({ spy: true })": spied,
+                "jest.requireMock()": mocked,
+                "jest.createMockFromModule()": mocked,
+              });
+            });
+          `,
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", "instances.test.js"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(" 1 pass\n 0 fail\n");
+          expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        },
+      );
+
+      test.concurrent(
+        "vi.mock(package, { spy: true }) over a loaded package: an instance has its own mock for the methods of its class only",
+        async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          using dir = tempDir("mock-object-instance-methods-loaded", {
+            "node_modules/lists/package.json": JSON.stringify({ name: "lists", version: "1.0.0", main: "index.js" }),
+            "node_modules/lists/index.js": `
+            class List extends Array {
+              sum() { return this.reduce((a, b) => a + b, 0); }
+            }
+            module.exports = { List };
+          `,
+            // The test file has linked the package when this runs, so the mock leaves the package's own objects alone.
+            "mock-lists.js": `
+            import { vi } from "bun:test";
+            vi.mock("lists", { spy: true });
+          `,
+            "loaded.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import { List } from "lists";
+            import "./mock-lists.js";
+
+            const ownMocks = instance =>
+              Reflect.ownKeys(instance).filter(key => vi.isMockFunction(Object.getOwnPropertyDescriptor(instance, key).value));
+
+            test("the spies are on an object that inherits from the prototype of the class", async () => {
+              const { List: Original } = (await vi.importActual("lists")).default;
+              expect(Object.getPrototypeOf(List.prototype)).toBe(Original.prototype);
+              expect(Reflect.ownKeys(Original.prototype)).toEqual(["constructor", "sum"]);
+
+              const list = new List(1, 2, 3);
+              expect(Reflect.ownKeys(list)).toEqual(["0", "1", "2", "length", "sum"]);
+              expect(list.sum()).toBe(6);
+
+              const mapped = list.map(x => x * 2);
+              expect(mapped).toBeInstanceOf(List);
+              expect(Array.from(mapped)).toEqual([2, 4, 6]);
+              expect(ownMocks(mapped).filter(key => key !== "sum")).toEqual([]);
+              expect(List.prototype.map).toHaveBeenCalledTimes(1);
+            });
+          `,
+            "spy-in-place.js": `
+            import { vi } from "bun:test";
+            import { List } from "lists";
+            export const inPlace = vi.mockObject({ List }, { spy: true });
+            List.prototype.later = vi.fn();
+          `,
+            "in-place-first.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import { List } from "lists";
+            import { inPlace } from "./spy-in-place.js";
+            import "./mock-lists.js";
+
+            const ownMocks = instance =>
+              Reflect.ownKeys(instance).filter(key => vi.isMockFunction(Object.getOwnPropertyDescriptor(instance, key).value));
+
+            test("a mock that leaves the class alone changes no instance of the mock that spied the class in place", () => {
+              expect(List).not.toBe(inPlace.List);
+              expect(Object.getPrototypeOf(List.prototype)).toBe(inPlace.List.prototype);
+              expect(ownMocks(new List())).toEqual(["sum", "later"]);
+              expect(ownMocks(new inPlace.List())).toEqual(["sum"]);
+            });
+          `,
+          });
+          // A process for each file: the second one writes to the class of the package.
+          for (const file of ["loaded.test.js", "in-place-first.test.js"]) {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "test", file],
+              env: bunEnv,
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect(stderr).toContain(" 1 pass\n 0 fail\n");
+            expect({ file, stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({
+              file,
+              stdout: "",
+              exitCode: 0,
+            });
+          }
+        },
+      );
+
+      // Every `{ spy: true }` mock of a module spies the same classes: the spies of the mock before are still on them.
+      test.concurrent(
+        "vi.mock(path, { spy: true }) of a module that was spied before: an instance has the same mocks, and the mock of an inherited method is the one from before",
+        async () => {
+          const { bunEnv, bunExe, tempDir } = require("harness");
+          const classes = `
+          class Base { inherited() { return "inherited"; } }
+          class Klass extends Base { method() { return "method"; } }
+          class List extends Array { sum() { return this.reduce((a, b) => a + b, 0); } }
+          module.exports = { Klass, List };
+        `;
+          using dir = tempDir("mock-object-instance-methods-again", {
+            "classes.cjs": classes,
+            "preloaded.cjs": classes,
+            "cycle.cjs": classes,
+            "preload.js": `
+            import { vi } from "bun:test";
+            vi.mock("./preloaded.cjs", { spy: true });
+          `,
+            "first.test.js": `
+            import { expect, test, vi } from "bun:test";
+            vi.mock("./classes.cjs", { spy: true });
+
+            test("the first file that spies the module", () => {
+              const instance = new (require("./classes.cjs").Klass)();
+              expect(Object.keys(instance)).toEqual(["method"]);
+              // second.test.js finds these.
+              instance.inherited.mockReturnValue("stub of the first file");
+              new (require("./preloaded.cjs").Klass)().inherited.mockReturnValue("stub of the first file");
+            });
+          `,
+            "second.test.js": `
+            import { expect, test, vi } from "bun:test";
+            vi.mock("./classes.cjs", { spy: true });
+
+            test("a later file that spies the module", () => {
+              const { Klass, List } = require("./classes.cjs");
+              const instance = new Klass();
+              const list = new List(1, 2, 3);
+              expect({
+                Klass: Object.keys(instance),
+                List: Reflect.ownKeys(list),
+                "what map() constructs": Reflect.ownKeys(list.map(x => x)),
+              }).toEqual({
+                Klass: ["method"],
+                List: ["0", "1", "2", "length", "sum"],
+                "what map() constructs": ["0", "1", "2", "length", "sum"],
+              });
+              // The mock of an inherited method is on the class, and the class outlives the file that spied it.
+              // Not as in Vitest, where each file has modules of its own.
+              expect(instance.inherited()).toBe("stub of the first file");
+              // The mock that a preload made is one for all files.
+              expect(new (require("./preloaded.cjs").Klass)().inherited()).toBe("stub of the first file");
+            });
+          `,
+            "third.test.js": `
+            import { afterEach, beforeEach, expect, test, vi } from "bun:test";
+
+            let first;
+            beforeEach(() => {
+              vi.doMock("./cycle.cjs", { spy: true });
+            });
+            afterEach(() => {
+              vi.doUnmock("./cycle.cjs");
+            });
+
+            test("the first mock of the module", () => {
+              const { Klass } = require("./cycle.cjs");
+              first = Klass;
+              const instance = new Klass();
+              expect(Object.keys(instance)).toEqual(["method"]);
+              expect(instance.constructor).toBe(Klass);
+              instance.inherited.mockReturnValue("stub of the first test");
+            });
+
+            test("a second mock of the module, after vi.doUnmock()", () => {
+              const { Klass } = require("./cycle.cjs");
+              expect(Klass).not.toBe(first);
+              const instance = new Klass();
+              expect(Object.keys(instance)).toEqual(["method"]);
+              // The first mock of the class is still the "constructor" of the prototype.
+              expect(instance.constructor).toBe(first);
+              // Not as in Vitest, which evaluates the module again for each mock.
+              expect(instance.inherited()).toBe("stub of the first test");
+            });
+          `,
+          });
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "test",
+              "--preload",
+              "./preload.js",
+              "./first.test.js",
+              "./second.test.js",
+              "./third.test.js",
+            ],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(" 4 pass\n 0 fail\n");
+          expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        },
+      );
 
       test("vi.mock(builtin) mocks the exports that are accessors", async () => {
         const { bunEnv, bunExe, tempDir } = require("harness");

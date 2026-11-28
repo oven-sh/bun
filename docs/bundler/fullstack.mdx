@@ -323,7 +323,9 @@ serve({
         const user = await updateUser(userData);
         return Response.json(user);
       },
+    },
 
+    "/api/users/:id": {
       async DELETE(req) {
         // Handle DELETE requests
         await deleteUser(req.params.id);
@@ -357,7 +359,11 @@ serve({
 
     // Wildcard routes
     "/api/files/*": async req => {
-      const filePath = req.params["*"];
+      // A wildcard is not a parameter, so read the rest of the path from the URL
+      const { pathname } = new URL(req.url);
+      // The pathname is normalized: "/api/files/../x" matches this route and becomes "/api/x"
+      if (!pathname.startsWith("/api/files/")) return new Response("Not Found", { status: 404 });
+      const filePath = pathname.slice("/api/files/".length);
       const file = await getFile(filePath);
       return new Response(file);
     },
@@ -370,7 +376,7 @@ serve({
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 serve({
   routes: {
-    "/api/data": {
+    "/api/data/:id": {
       async POST(req) {
         // Parse JSON body
         const body = await req.json();

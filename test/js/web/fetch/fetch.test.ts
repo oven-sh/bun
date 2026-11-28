@@ -201,6 +201,27 @@ describe("fetch data urls", () => {
       await fetch(req);
     }).toThrow("failed to fetch the data URL");
   });
+  // The data: URL processor's failure is a network error, and fetch() rejects a network error with a TypeError.
+  it.each([
+    ["a string with no comma", () => fetch("data:font/ttf;base64")],
+    ["a string with a base64 body that does not decode", () => fetch("data:text/plain;base64,@@@")],
+    ["a URL", () => fetch(new URL("data:font/ttf;base64"))],
+    ["a Request", () => fetch(new Request("data:font/ttf;base64"))],
+    ["Bun.fetch", () => Bun.fetch("data:font/ttf;base64")],
+  ])("malformed data: URL rejects with a TypeError: %s", async (_, run) => {
+    const promise = run();
+    expect(promise).toBeInstanceOf(Promise);
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(TypeError);
+    expect({ name: err.name, message: err.message, code: err.code }).toEqual({
+      name: "TypeError",
+      message: "failed to fetch the data URL",
+      code: undefined,
+    });
+  });
 });
 
 describe("AbortSignal", () => {

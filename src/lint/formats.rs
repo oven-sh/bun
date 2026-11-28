@@ -53,6 +53,8 @@ pub enum Reason {
     PluginNotFound,
     /// A Prettier plugin that isn't built in may print the file.
     Plugin,
+    /// The same, for a plugin that `[fmt]` or `[[fmt.overrides]]` of bunfig.toml lists.
+    ListedPlugin,
     /// `bun fmt` doesn't have its own printer for the language.
     Language,
     /// An option that `bun fmt` doesn't support.
@@ -77,6 +79,7 @@ impl Reason {
             Reason::PluginVersion => "the installed eslint-plugin-prettier is not version 5",
             Reason::PluginNotFound => "eslint-plugin-prettier was not found",
             Reason::Plugin => "the Prettier config uses a plugin that bun fmt does not include",
+            Reason::ListedPlugin => "bunfig.toml lists a plugin that bun fmt does not include",
             Reason::Language => "bun fmt does not support the language",
             Reason::Option => "bun fmt does not support one of the options",
             Reason::Configuration => "the Prettier config cannot be read",

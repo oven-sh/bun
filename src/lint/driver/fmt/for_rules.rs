@@ -86,7 +86,8 @@ fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options
         (options.format).retain(|default| !rule_flags.iter().any(|it| it.0 == default.0));
         options.format.extend(rule_flags);
     }
-    options.plugins = plugin_names(request.options)?;
+    // The plugins of `[fmt]` stay. One that isn't included is found for each file, where `allowUnsupported` applies.
+    options.plugins.extend(plugin_names(request.options)?);
     options
         .plugins
         .extend(plugin_names(request.file_info_options)?);
@@ -257,14 +258,20 @@ impl<'e> ForRules<'e> {
         if is_prettier && configs.is_oxfmt_for(&scope) {
             return Err(Reason::Configuration);
         }
-        if !allows_unsupported && !configs.missing_plugins(&scope, Some(path)).is_empty() {
-            return Err(Reason::Plugin);
+        // `bun fmt` skips the file for a plugin it doesn't include, whether the Prettier config or `[fmt]` lists it.
+        let view = configs.plugin_view(&scope, Some(path));
+        if !allows_unsupported && view.has_missing() {
+            // Rule options with such a plugin are refused in `command_line`, so these flags are all from `[fmt]`.
+            return Err(match view.has_missing_from_flags() {
+                true => Reason::ListedPlugin,
+                false => Reason::Plugin,
+            });
         }
         match language_of(configs, &scope, path) {
             Language::Supported => {}
             // `parser: inferredParser ?? 'babel'`
             Language::Unknown if is_prettier => {}
-            Language::Unknown | Language::Other => return Err(Reason::Language),
+            Language::Unknown | Language::Plugin | Language::Other => return Err(Reason::Language),
         }
         let mut resolved = configs.options_for(&scope, path).map_err(unreadable)?;
         if !allows_unsupported && resolved.has_unsupported_option {

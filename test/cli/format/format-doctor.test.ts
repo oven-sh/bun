@@ -521,6 +521,79 @@ Not checked:    other tools' configs, CI files, Git hooks
     });
   });
 
+  test("a plugin in [[fmt.overrides]] with its parser is one that uses the installed Prettier", async () => {
+    const { stdout, stderr, exitCode, isUntouched } = await doctor({
+      ...installed("prettier"),
+      ...installed("prettier-plugin-foo"),
+      "package.json": dependencies("prettier", "prettier-plugin-foo"),
+      "bunfig.toml": `[[fmt.overrides]]\nfiles = ["*.tpl.html"]\noptions = { plugins = ["prettier-plugin-foo"], parser = "foo" }\n`,
+      "a.js": ugly,
+      "b.tpl.html": "b\n",
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`Using bunfig.toml ([fmt], on top of Prettier's defaults)
+
+    3 files are formatted natively
+    1 file goes to your installed Prettier: 1 *.html
+
+Plugins that use your installed Prettier: prettier-plugin-foo
+
+Still needed:   prettier, prettier-plugin-foo (some files go to them)
+`);
+    expect(isUntouched).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // The files of an entry alone don't send a file to Prettier, so the plugin does nothing there.
+  test("a plugin in [[fmt.overrides]] without its parser is not one that uses the installed Prettier", async () => {
+    const { stdout, stderr, exitCode } = await doctor({
+      ...installed("prettier"),
+      ...installed("prettier-plugin-foo"),
+      "package.json": dependencies("prettier", "prettier-plugin-foo"),
+      "bunfig.toml": `[[fmt.overrides]]\nfiles = ["*.foo"]\noptions = { plugins = ["prettier-plugin-foo"] }\n`,
+      "a.js": ugly,
+      "b.foo": "b\n",
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith(`Using bunfig.toml ([fmt], on top of Prettier's defaults)
+
+    3 files are formatted natively
+
+Plugins that are not supported: prettier-plugin-foo
+`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The list of those that are not supported is the one to act on, so a plugin that Prettier also loads is only there.
+  test("a plugin is in one list, also if one of its files goes to Prettier and another is skipped for it", async () => {
+    const project = {
+      ...installed("prettier"),
+      ...installed("prettier-plugin-foo"),
+      "package.json": dependencies("prettier", "prettier-plugin-foo"),
+      "bunfig.toml": `[fmt]\nplugins = ["prettier-plugin-foo"]\n\n[[fmt.overrides]]\nfiles = ["*.foo"]\noptions = { plugins = ["prettier-plugin-foo"], parser = "foo" }\n`,
+      "a.js": ugly,
+      "b.foo": "b\n",
+    };
+    const [text, json] = await Promise.all([doctor(project), doctor(project, ["-f", "json"])]);
+    expect(text.stdout).toStartWith(`Using bunfig.toml ([fmt], on top of Prettier's defaults)
+
+    0 files are formatted natively
+    1 file goes to your installed Prettier: 1 *.foo
+    3 files are skipped because a plugin is not supported
+        Use --allow-unsupported to format them without it
+
+Plugins that are not supported: prettier-plugin-foo
+`);
+    expect(text.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout).plugins).toEqual({
+      built_in: [],
+      by_prettier: [],
+      not_supported: ["prettier-plugin-foo"],
+      not_installed: [],
+    });
+    expect(json.exitCode).toBe(0);
+  });
+
   test("without a config file, suggests --init", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor({ "a.js": ugly });
     expect(stderr).toBe("");

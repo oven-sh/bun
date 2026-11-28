@@ -27,7 +27,19 @@ pub(crate) struct Prettier<'e> {
     cwd: Vec<u8>,
     /// The settings shared by all files, in the shape that `formatWithPrettier` in `worker/prettier.js` reads.
     run: Vec<(Vec<u8>, Json)>,
+    /// The options of Prettier's that the command line and `[fmt]` set. Each file's `flags` start with them.
+    flags: Vec<(Vec<u8>, Json)>,
     written_files: fs::WrittenFiles,
+}
+
+/// What `bunfig.toml` and the command line say for one file that is handed over.
+pub(crate) struct ForFile<'a> {
+    /// [`Configs::bunfig_overrides_for`](super::config::Configs::bunfig_overrides_for)
+    pub(crate) overrides: &'a [(&'a [u8], &'a [u8])],
+    /// [`Configs::passthrough_for`](super::config::Configs::passthrough_for)
+    pub(crate) passthrough: &'a super::config::Passthrough<'a>,
+    /// The plugins that `--plugin` and `bunfig.toml` list for the file. A path among them is absolute.
+    pub(crate) plugins: &'a [Vec<u8>],
 }
 
 impl<'e> Prettier<'e> {
@@ -40,19 +52,10 @@ impl<'e> Prettier<'e> {
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
         host.expect(files, size, threads);
-        // A string flag's value has no quotes, so it isn't valid JSON.
-        let value = |text: &[u8]| match bun_lint::json::parse(text) {
-            Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
-            _ => Json::String(text.to_vec()),
-        };
-        let mut flags: Vec<(Vec<u8>, Json)> = (options.format.iter())
+        let flags: Vec<(Vec<u8>, Json)> = (options.format.iter())
             .filter(|it| is_prettier_option(it.0))
-            .map(|it| (it.0.to_vec(), value(&it.1)))
+            .map(|it| (it.0.to_vec(), flag_value(&it.1)))
             .collect();
-        if !options.plugins.is_empty() {
-            let plugins = options.plugins.iter().cloned().map(Json::String);
-            flags.push((b"plugins".to_vec(), Json::Array(plugins.collect())));
-        }
         let precedence: &[u8] = match options.config_precedence {
             Precedence::CliOverride => b"cli-override",
             Precedence::FileOverride => b"file-override",
@@ -64,13 +67,13 @@ impl<'e> Prettier<'e> {
             (b"looksAtStdin".to_vec(), Json::Bool(looks_at_stdin)),
             (b"usesConfig".to_vec(), Json::Bool(options.config_lookup)),
             (b"editorconfig".to_vec(), Json::Bool(options.editorconfig)),
-            (b"flags".to_vec(), Json::Object(flags)),
             (b"precedence".to_vec(), Json::String(precedence.to_vec())),
         ];
         Prettier {
             host,
             cwd: environment.cwd.clone(),
             run,
+            flags,
             written_files: fs::WrittenFiles::default(),
         }
     }
@@ -85,21 +88,24 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. With `writes`, the file is written if it changes. Returns whether it changed. `Err`
-    /// is the message to print.
+    /// Formats the file at `path`, and with `writes` writes it if it changes. Returns whether it changed.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),
-        config: Option<&[u8]>,
+        (config, file): (Option<&[u8]>, &ForFile),
         writes: bool,
         only: Option<&git::Files>,
-    ) -> Result<bool, Vec<u8>> {
-        let fail =
-            |what: &[u8], why: &[u8]| [what, b" file \"", display_name, b"\":\n", why].concat();
+    ) -> Result<bool, Left> {
+        let fail = |what: &[u8], why: &[u8]| {
+            Left::Failed([what, b" file \"", display_name, b"\":\n", why].concat())
+        };
         let text = git::read(only, path)
             .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
-        let formatted = (self.format(Some(path), config, &text))
-            .map_err(|why| [display_name, b": ", &describe(why)].concat())?;
+        let formatted =
+            (self.format(Some(path), config, file, &text)).map_err(|why| match why {
+                Unformatted::NoParser => Left::NoParser,
+                why => Left::Failed([display_name, b": ", &describe(why)].concat()),
+            })?;
         if formatted == text {
             return Ok(false);
         }
@@ -116,9 +122,21 @@ impl<'e> Prettier<'e> {
         &self,
         path: Option<&[u8]>,
         config: Option<&[u8]>,
+        file: &ForFile,
         text: &[u8],
     ) -> Result<Vec<u8>, Unformatted> {
         let mut how = self.run.clone();
+        // The worker keeps the last value of a name that is set twice, so an override wins over `[fmt]` and the flags.
+        let mut flags = self.flags.clone();
+        flags.extend((file.overrides.iter()).map(|it| (it.0.to_vec(), flag_value(it.1))));
+        let of_plugins = &file.passthrough;
+        let of_plugins = of_plugins.earlier.iter().chain(&of_plugins.current);
+        flags.extend(of_plugins.map(|it| (it.0.to_vec(), passthrough_value(it.1))));
+        how.push((b"flags".to_vec(), Json::Object(flags)));
+        let plugins = strings(file.plugins.iter().map(|it| &it[..]));
+        how.push((b"plugins".to_vec(), plugins));
+        let names = strings(file.passthrough.current.iter().map(|it| it.0));
+        how.push((b"passThrough".to_vec(), names));
         let or_null = |it: Option<&[u8]>| it.map_or(Json::Null, |it| Json::String(it.to_vec()));
         how.push((b"path".to_vec(), or_null(path)));
         how.push((b"config".to_vec(), or_null(config)));
@@ -135,10 +153,36 @@ impl<'e> Prettier<'e> {
     }
 }
 
+/// A flag's value as JSON. A string's has no quotes, so it isn't valid JSON.
+fn flag_value(text: &[u8]) -> Json {
+    match bun_lint::json::parse(text) {
+        Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
+        _ => Json::String(text.to_vec()),
+    }
+}
+
+fn strings<'a>(all: impl Iterator<Item = &'a [u8]>) -> Json {
+    Json::Array(all.map(|it| Json::String(it.to_vec())).collect())
+}
+
+/// The value of a pass-through key. It's stored as JSON text, so a string keeps its quotes.
+fn passthrough_value(text: &[u8]) -> Json {
+    bun_lint::json::parse(text).unwrap_or_else(|| Json::String(text.to_vec()))
+}
+
+/// Why [`Prettier::format_file`] left a file as it was.
+pub(crate) enum Left {
+    /// [`Unformatted::NoParser`]. The file is in a language that nothing here supports.
+    NoParser,
+    /// The message to print.
+    Failed(Vec<u8>),
+}
+
 /// The message to print after the file name.
 pub(crate) fn describe(why: Unformatted) -> Vec<u8> {
     match why {
         Unformatted::NotInstalled => b"prettier is not installed".to_vec(),
+        Unformatted::NoParser => b"no listed plugin has a parser for it".to_vec(),
         Unformatted::Message(why) | Unformatted::Thrown(why) => why,
     }
 }

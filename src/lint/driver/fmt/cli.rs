@@ -135,7 +135,9 @@ const PRETTIER_COMPAT: &[Param] = &[
     clap::param!(
         "--parser <name>                 Read every file with this parser. Without files, format standard input"
     ),
-    clap::param!("--plugin <name>...              Load these plugins"),
+    clap::param!(
+        "--plugin <name>...              Prettier plugins. The installed <b>prettier<r> formats the files of one that adds a language"
+    ),
     clap::param!(
         "--require-pragma                Only format files that start with a <b>@format<r> or <b>@prettier<r> comment"
     ),
@@ -271,9 +273,37 @@ pub struct Override {
     pub excluded: Vec<Vec<u8>>,
     /// Same format as [`Options::format`].
     pub format: Vec<(&'static [u8], Vec<u8>)>,
+    /// `None` without a `plugins` key. An empty list replaces the one of `[fmt]` with nothing.
+    pub plugins: Option<Vec<Vec<u8>>>,
+    /// The options of plugins, each with its value as JSON. Only the installed Prettier reads them.
+    pub passthrough: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+/// Bun's own key for `name`, if it's an option of a built-in plugin. Bun reads those from a Prettier config only.
+pub(crate) fn own_key_for_plugin_option(name: &[u8]) -> Option<&'static [u8]> {
+    match name {
+        name if super::tailwind::is_plugin_option(name) => Some(b"sortTailwindcss"),
+        name if name.starts_with(b"importOrder") || name.starts_with(b"organizeImports") => {
+            Some(b"sortImports")
+        }
+        b"packageSortOrder" => Some(b"sortPackageJson"),
+        b"svelteSortOrder"
+        | b"svelteAllowShorthand"
+        | b"svelteIndentScriptAndStyle"
+        | b"svelte5CompilerPath" => Some(b"svelte"),
+        _ => None,
+    }
 }
 
 impl Override {
+    /// True if it lists a plugin that isn't built in, or sets a `parser` that Prettier doesn't have.
+    pub(crate) fn may_use_plugin(&self) -> bool {
+        let mut plugins = self.plugins.iter().flatten();
+        let parser = self.format.iter().rfind(|it| it.0 == b"parser");
+        plugins.any(|it| !super::config::is_built_in_plugin(it))
+            || parser.is_some_and(|it| super::files::Kind::from_parser(&it.1).is_none())
+    }
+
     /// Drops the options that the command-line flag `name` replaces. A flag that only turns a feature on keeps the
     /// override's options for it.
     fn drop_overridden(&mut self, name: &[u8], value: &[u8]) {
@@ -650,6 +680,17 @@ impl Options {
                 if !paths::is_absolute(&portable) {
                     *it = paths::join_normalized(&directory, &portable);
                 }
+            }
+            let overrides = self.overrides.iter_mut();
+            let of_overrides = overrides.filter_map(|it| it.plugins.as_mut()).flatten();
+            let plugins = self.plugins.iter_mut().chain(of_overrides);
+            for it in plugins.filter(|it| it.starts_with(b".")) {
+                let joined = paths::join_normalized(&directory, &paths::from_native(it));
+                // A name without a leading `.` is a package, so `sub/plugin.js` becomes `./sub/plugin.js`.
+                *it = match joined.starts_with(b".") || paths::is_absolute(&joined) {
+                    true => joined,
+                    false => [&b"./"[..], &joined[..]].concat(),
+                };
             }
         }
         self

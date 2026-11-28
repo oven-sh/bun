@@ -305,6 +305,11 @@ const PLUGIN_OPTIONS: [(&[u8], &[u8]); 8] = [
     (b"tailwindPreserveDuplicates", b"preserveDuplicates"),
 ];
 
+/// True for an option of `prettier-plugin-tailwindcss`.
+pub(crate) fn is_plugin_option(name: &[u8]) -> bool {
+    PLUGIN_OPTIONS.iter().any(|it| it.0 == name)
+}
+
 /// Converts the Prettier config option `name`, set to the JSON `value`, to a `sortTailwindcss` entry. `None` if it
 /// isn't one of the plugin's options. `Err` is Prettier's message for a value of the wrong type.
 pub(crate) fn plugin_option(name: &[u8], value: &[u8]) -> Option<Result<(Vec<u8>, Json), Vec<u8>>> {

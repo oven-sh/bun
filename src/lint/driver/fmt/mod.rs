@@ -1232,23 +1232,76 @@ struct Run<'r> {
     has_skipped_files: bool,
 }
 
-/// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
-fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
-    language_with(configs.parser_for(scope, path), configs, scope, path)
+/// The files that are skipped because they're listed with plugins that `bun fmt` doesn't include.
+#[derive(Default)]
+struct LeftForPlugins<'a> {
+    count: usize,
+    /// The files that are skipped for a plugin of the Prettier config, and those plugins.
+    for_config: LeftForSide<'a>,
+    /// The same for a plugin of `--plugin`, `[fmt]` or `[[fmt.overrides]]`. A file can be in both.
+    for_flags: LeftForSide<'a>,
 }
 
+#[derive(Default)]
+struct LeftForSide<'a> {
+    count: usize,
+    /// Each plugin once.
+    names: Vec<&'a [u8]>,
+}
+
+impl<'a> LeftForSide<'a> {
+    /// Who lists the plugins of the flags, and what to do: only an override with a `parser` gives a plugin files.
+    const FLAGS: (&'static str, &'static str) = (
+        "--plugin or [fmt] plugins lists",
+        "Put the plugin in a [[fmt.overrides]] entry with \"files\" and the plugin's \"parser\" to send those files to your installed Prettier, or use",
+    );
+
+    /// Counts a file that is skipped for `names`, if there are any.
+    fn add(&mut self, names: impl Iterator<Item = &'a [u8]>) {
+        let mut names = names.peekable();
+        self.count += usize::from(names.peek().is_some());
+        for name in names {
+            if !self.names.contains(&name) {
+                self.names.push(name);
+            }
+        }
+    }
+}
+
+impl<'a> LeftForPlugins<'a> {
+    /// Counts a file whose plugins are `view`.
+    fn add(&mut self, view: &config::PluginView<'a>) {
+        self.count += 1;
+        self.for_config.add(view.missing_from_config());
+        self.for_flags.add(view.missing_from_flags());
+    }
+}
+
+/// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
+fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
+    let view = configs.plugin_view(scope, Some(path));
+    language_with(configs.parser_for(scope, path), &view, configs, scope, path)
+}
+
+/// Like [`language_of`], for a file whose `parser` option and plugin lists are already known.
 fn language_with(
     parser: Option<Box<[u8]>>,
+    view: &config::PluginView,
     configs: &Configs,
     scope: &config::Scope,
     path: &[u8],
 ) -> Language {
-    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
+    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin, whatever the file is named.
     match parser {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
+        Some(parser) if Kind::from_parser(&parser).is_none() => {
+            match configs.plugin_may_have_parser(scope, view) {
+                true => Language::Plugin,
+                false => Language::Other,
+            }
+        }
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
@@ -1259,7 +1312,7 @@ fn language_with(
             {
                 Language::Supported
             }
-            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Other,
+            Language::Unknown if view.has_ending_of(path) => Language::Plugin,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1489,20 +1542,17 @@ impl Run<'_> {
             Ok(scope) => scope,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
-        let language = language_of(configs, &scope, &path);
+        let view = configs.plugin_view(&scope, Some(&path));
+        let parser = configs.parser_for(&scope, &path);
+        let language = language_with(parser, &view, configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.config_ignores(&scope));
-        let is_plugin_language = configs.is_formatted_by_plugin(&scope, &path);
-        let not_installed = match language == Language::Other && is_plugin_language {
+        let not_installed = match language == Language::Plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
             false => Vec::new(),
         };
-        if language == Language::Other
-            && !is_ignored
-            && is_plugin_language
-            && not_installed.is_empty()
-        {
-            let config = configs.config_file_path(&scope);
-            return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
+        if language == Language::Plugin && !is_ignored && not_installed.is_empty() {
+            let named = (name, extension_or_name(&path), &text[..]);
+            return self.format_stdin_with_prettier(configs, &scope, Some(&path), named);
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1518,17 +1568,17 @@ impl Run<'_> {
         }
         // Same as for a file. A caller that gets the text back with exit code 0 would assume it's formatted.
         let allows = self.options.allow_unsupported;
-        if language == Language::Other {
+        if matches!(language, Language::Plugin | Language::Other) {
             self.report_unsupported(&mut [(extension_or_name(&path), 1)], &not_installed);
             if allows && !is_read_only {
                 self.out.stdout = text;
             }
             return self.out;
         }
-        let missing_plugins = configs.missing_plugins(&scope, Some(&path));
-        if language == Language::Supported && !allows && !missing_plugins.is_empty() {
-            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
-            self.report_skipped_for_plugins(1, &names);
+        if language == Language::Supported && !allows && view.has_missing() {
+            let mut left = LeftForPlugins::default();
+            left.add(&view);
+            self.report_skipped_for_plugins(&left);
             return self.out;
         }
         if Kind::with_options(&path, &options.options).is_none() {
@@ -1542,6 +1592,7 @@ impl Run<'_> {
             }
             return out;
         }
+        view.note_formatted_here();
         let kind = Kind::with_options(&path, &options.options);
         tailwind::only_where_sorted(&mut options.options, kind);
         let piped = Piped {
@@ -1584,10 +1635,11 @@ impl Run<'_> {
             }
             return self.out;
         };
+        let view = configs.plugin_view(&scope, None);
         let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
         let Some(kind) = Kind::from_parser(&parser).filter(is_formatted) else {
             // Without the plugin, Prettier has no `svelte` parser either.
-            if &*parser == b"svelte" || !configs.lists_unknown_plugins(&scope, None) {
+            if &*parser == b"svelte" || !configs.plugin_may_have_parser(&scope, &view) {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, exits_zero_on_error) {
                     (true, _) => 2,
@@ -1599,8 +1651,8 @@ impl Run<'_> {
             // The parser can only come from a plugin.
             let not_installed = self.not_installed(configs, &scope, None);
             if not_installed.is_empty() {
-                let config = configs.config_file_path(&scope);
-                return self.format_stdin_with_prettier((None, config), (b"stdin", &text));
+                let unnamed = (&b"stdin"[..], &parser[..], &text[..]);
+                return self.format_stdin_with_prettier(configs, &scope, None, unnamed);
             }
             self.report_unsupported(&mut [(&parser, 1)], &not_installed);
             if self.options.allow_unsupported && !is_read_only {
@@ -1608,12 +1660,13 @@ impl Run<'_> {
             }
             return self.out;
         };
-        let missing_plugins = configs.missing_plugins(&scope, None);
-        if !self.options.allow_unsupported && !missing_plugins.is_empty() {
-            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
-            self.report_skipped_for_plugins(1, &names);
+        if !self.options.allow_unsupported && view.has_missing() {
+            let mut left = LeftForPlugins::default();
+            left.add(&view);
+            self.report_skipped_for_plugins(&left);
             return self.out;
         }
+        view.note_formatted_here();
         tailwind::only_where_sorted(&mut options.options, Some(kind));
         let paths = syntaxes_to_try(&parser, &text);
         let piped = Piped {
@@ -1631,37 +1684,51 @@ impl Run<'_> {
         scope: &'s config::Scope,
         path: Option<&[u8]>,
     ) -> Vec<&'s [u8]> {
-        let mut missing: Vec<&[u8]> = Vec::new();
-        for package in [&b"prettier"[..]]
-            .into_iter()
-            .chain(configs.plugin_packages(scope, path))
-        {
-            if !prettier::is_installed(&self.environment.cwd, package)
-                && !missing.contains(&package)
-            {
-                missing.push(package);
+        let mut packages: Vec<&[u8]> = vec![&b"prettier"[..]];
+        for package in configs.plugin_view(scope, path).packages() {
+            if !packages.contains(&package) {
+                packages.push(package);
             }
         }
-        missing
+        packages.retain(|it| !prettier::is_installed(&self.environment.cwd, it));
+        packages
     }
 
-    /// Formats standard input in a plugin's language. See `prettier.rs`. `display_name` is its name in error messages.
+    /// Formats standard input in a plugin's language. `language` is its name for [`Run::report_unsupported`].
     fn format_stdin_with_prettier(
         mut self,
-        (path, config): (Option<&[u8]>, Option<&[u8]>),
-        (display_name, text): (&[u8], &[u8]),
+        configs: &Configs,
+        scope: &config::Scope,
+        path: Option<&[u8]>,
+        (display_name, language, text): (&[u8], &[u8], &[u8]),
     ) -> Outcome {
         let is_read_only = self.options.check || self.options.list_different;
         let size = (1, text.len() as u64);
         let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
-        match bridge.format(path, config, text) {
+        let config = configs.config_file_path(scope);
+        let view = configs.plugin_view(scope, path);
+        // No entry of `[[fmt.overrides]]` matches text without a file name.
+        let overrides = path.map_or_else(Vec::new, |it| configs.bunfig_overrides_for(it));
+        let passthrough = path.map_or_else(Default::default, |it| configs.passthrough_for(it));
+        let for_file = prettier::ForFile {
+            overrides: &overrides,
+            passthrough: &passthrough,
+            plugins: view.flag_names(),
+        };
+        match bridge.format(path, config, &for_file, text) {
             // Prettier's `listDifferent` prints the `error.message` of what `check` throws and does nothing else.
             Err(Unformatted::Message(message)) if is_read_only => {
                 self.error(&message);
                 self.out.exit_code = 0;
             }
-            // For a `ConfigError`, such as a parser that no plugin provides, Prettier's `handleError` prints only
-            // `error.message`.
+            // Same as for a file whose language no listed plugin adds.
+            Err(Unformatted::NoParser) => {
+                self.report_unsupported(&mut [(language, 1)], &[]);
+                if self.options.allow_unsupported && !is_read_only {
+                    self.out.stdout = text.to_vec();
+                }
+            }
+            // For a `ConfigError`, Prettier's `handleError` prints only `error.message`.
             Err(Unformatted::Thrown(why)) if why.starts_with(b"ConfigError: ") => {
                 let message = &why[b"ConfigError: ".len()..];
                 let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
@@ -1690,6 +1757,7 @@ impl Run<'_> {
         } = piped;
         let is_read_only = self.options.check || self.options.list_different;
         let exits_zero_on_error = configs.flavor == Flavor::Prettier && is_read_only;
+        configs.warn_about_unused_flag_plugins();
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }
@@ -1903,10 +1971,6 @@ impl Run<'_> {
             // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
             false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
         };
-        let missing_plugins = |target: &'_ Target| match options.allow_unsupported {
-            true => false,
-            false => !(configs.missing_plugins(&target.scope, Some(&target.path))).is_empty(),
-        };
         let size_meanwhile = AtomicU64::new(0);
         let meanwhile = files::Meanwhile {
             when: &|target| {
@@ -1914,22 +1978,27 @@ impl Run<'_> {
                     return When::Never;
                 }
                 let (scope, path) = (&*target.scope, &target.path[..]);
+                let view = configs.plugin_view(scope, Some(path));
                 let language = match configs.may_set_parser(scope) {
                     true => (configs.sound_options_for(scope, path, May::Nothing))
                         .map_or(Language::Other, |it| {
-                            language_with(it.options.parser, configs, scope, path)
+                            language_with(it.options.parser, &view, configs, scope, path)
                         }),
-                    false => language_with(None, configs, scope, path),
+                    false => language_with(None, &view, configs, scope, path),
                 };
+                let lacks_plugins = || !options.allow_unsupported && view.has_missing();
                 match language {
-                    Language::Supported if target.linked.is_some() || missing_plugins(target) => {
+                    Language::Supported if target.linked.is_some() || lacks_plugins() => {
                         When::AfterSearch
                     }
-                    Language::Supported => When::Now,
+                    Language::Supported => {
+                        view.note_formatted_here();
+                        When::Now
+                    }
                     Language::Unknown if target.ignores_unknown || options.ignore_unknown => {
                         When::Never
                     }
-                    Language::Unknown | Language::Other => When::AfterSearch,
+                    Language::Unknown | Language::Plugin | Language::Other => When::AfterSearch,
                 }
             },
             start: &|| {
@@ -2000,8 +2069,7 @@ impl Run<'_> {
 
         // Extensions of files in unsupported languages, with how many files have each.
         let mut others: Vec<(&[u8], usize)> = Vec::new();
-        // How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
-        let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
+        let mut left_for_plugins = LeftForPlugins::default();
         // Keyed by the file's index in `expanded`.
         let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         let mut done: Vec<Option<Done>> = (expanded.iter_mut().enumerate())
@@ -2032,46 +2100,40 @@ impl Run<'_> {
             let Expanded::File(target) = it else {
                 return None;
             };
-            let language = language_of(configs, &target.scope, &target.path);
-            is_included(ignored, target).then_some(language)
+            let (scope, path) = (&*target.scope, &target.path[..]);
+            let view = configs.plugin_view(scope, Some(path));
+            let language =
+                language_with(configs.parser_for(scope, path), &view, configs, scope, path);
+            let lacks_plugins = !options.allow_unsupported && view.has_missing();
+            if !is_included(ignored, target) {
+                return None;
+            }
+            if language == Language::Supported && !lacks_plugins {
+                view.note_formatted_here();
+            }
+            Some((language, lacks_plugins))
         };
         let classified = configs.with_warnings_in_order(
             || pool.map(&expanded, &classify),
             || expanded.iter().map(classify).collect(),
         );
         for (index, it) in expanded.iter().zip(classified).enumerate() {
-            let (Expanded::File(target), Some(language)) = it else {
+            let (Expanded::File(target), Some((language, lacks_plugins))) = it else {
                 continue;
             };
-            let missing_plugins = match options.allow_unsupported {
-                true => &[][..],
-                false => configs.missing_plugins(&target.scope, Some(&target.path)),
-            };
+            // Only a file that isn't formatted here asks again.
+            let view = || configs.plugin_view(&target.scope, Some(&target.path));
+            // What must be installed before the project's own Prettier can format the file.
+            let needed = || [&b"prettier"[..]].into_iter().chain(view().packages());
             match language {
-                Language::Supported if !missing_plugins.is_empty() => {
-                    left_for_plugins.0 += 1;
-                    for name in missing_plugins {
-                        if !left_for_plugins.1.contains(&&name[..]) {
-                            left_for_plugins.1.push(name);
-                        }
-                    }
-                }
+                Language::Supported if lacks_plugins => left_for_plugins.add(&view()),
                 Language::Supported => work.push((index, target)),
-                Language::Other
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
-                        && [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                            .all(&mut has_package) =>
-                {
+                Language::Plugin if needed().all(&mut has_package) => {
                     handed_over.push((index, target));
                 }
-                Language::Other => {
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
-                        for package in [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                        {
+                Language::Plugin | Language::Other => {
+                    if language == Language::Plugin {
+                        for package in needed() {
                             if !has_package(package) && !not_installed.contains(&package) {
                                 not_installed.push(package);
                             }
@@ -2096,7 +2158,7 @@ impl Run<'_> {
                 formatted: &work,
                 handed_over: &handed_over,
                 others: &others,
-                left_for_plugins: left_for_plugins.0,
+                left_for_plugins: left_for_plugins.count,
                 not_installed: &not_installed,
             };
             let how = crate::doctor::How {
@@ -2118,6 +2180,12 @@ impl Run<'_> {
                     .extend_from_slice(&paths::relative(cwd, &target.path));
                 self.out.stdout.push(b'\n');
             }
+            // Only the flags' side: files left out for a plugin of the Prettier config have never been reported here.
+            self.report_skipped_for(
+                &left_for_plugins.for_flags,
+                LeftForSide::FLAGS.0,
+                LeftForSide::FLAGS.1,
+            );
             return self.out;
         }
         // Largest first, so no thread starts a big file when the others are nearly done.
@@ -2200,7 +2268,10 @@ impl Run<'_> {
                 }
             }
         }
+        let mut by_prettier = handed_over.len();
         if let Some(bridge) = &bridge {
+            // The files among `handed_over` that no plugin has a parser for, by their place in it.
+            let mut without_parser: Guarded<Vec<usize>> = Guarded::new(Vec::new());
             let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
             bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
@@ -2208,16 +2279,38 @@ impl Run<'_> {
                 let began = Instant::now();
                 let display_name = paths::relative(cwd, &target.path);
                 let config = configs.config_file_path(&target.scope);
+                let view = configs.plugin_view(&target.scope, Some(&target.path));
+                let overrides = configs.bunfig_overrides_for(&target.path);
+                let passthrough = configs.passthrough_for(&target.path);
+                let for_file = prettier::ForFile {
+                    overrides: &overrides,
+                    passthrough: &passthrough,
+                    plugins: view.flag_names(),
+                };
                 let file = (&target.path[..], &display_name[..]);
                 let writes = !is_read_only && !is_partly_staged(target);
-                let formatted = bridge.format_file(file, config, writes, only.as_ref());
-                results.lock()[index] = Some(match formatted {
-                    Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
-                    Ok(true) => Done::Different(began.elapsed()),
-                    Ok(false) => Done::Unchanged,
-                    Err(error) => Done::Failed(error),
-                });
+                let formatted =
+                    bridge.format_file(file, (config, &for_file), writes, only.as_ref());
+                results.lock()[index] = match formatted {
+                    Ok(true) if !is_read_only && !writes => Some(Done::PartlyStaged),
+                    Ok(true) => Some(Done::Different(began.elapsed())),
+                    Ok(false) => Some(Done::Unchanged),
+                    Err(prettier::Left::Failed(error)) => Some(Done::Failed(error)),
+                    Err(prettier::Left::NoParser) => {
+                        without_parser.lock().push(at);
+                        None
+                    }
+                };
             });
+            // Such a file is in a language that nothing here supports, like one that was never handed over.
+            for &at in without_parser.get_mut().iter() {
+                by_prettier -= 1;
+                let kind = extension_or_name(&handed_over[at].1.path);
+                match others.iter_mut().find(|it| it.0 == kind) {
+                    Some(entry) => entry.1 += 1,
+                    None => others.push((kind, 1)),
+                }
+            }
         }
         let formatting = started.elapsed();
         let scratches = std::mem::take(&mut *scratches.lock());
@@ -2337,6 +2430,7 @@ impl Run<'_> {
                 self.error(&error);
             }
         }
+        configs.warn_about_unused_flag_plugins();
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }
@@ -2348,7 +2442,7 @@ impl Run<'_> {
             }
         };
         // The reason is printed at the end.
-        self.has_skipped_files = left_for_plugins.0 > 0
+        self.has_skipped_files = left_for_plugins.count > 0
             || !others.is_empty()
             || (classes_are_unknown.is_some() && !options.allow_unsupported);
         // oxfmt has no `--debug-check`, so that flag behaves as it does without a config.
@@ -2409,16 +2503,11 @@ impl Run<'_> {
                 took
             );
         }
-        if options.log_level >= LogLevel::Log && !handed_over.is_empty() {
-            let noun = if handed_over.len() == 1 {
-                "file"
-            } else {
-                "files"
-            };
+        if options.log_level >= LogLevel::Log && by_prettier > 0 {
+            let noun = if by_prettier == 1 { "file" } else { "files" };
             let _ = writeln!(
                 self.out.stderr,
-                "Used your installed Prettier for {} {noun} in a language that needs a plugin",
-                handed_over.len(),
+                "Used your installed Prettier for {by_prettier} {noun} in a language that needs a plugin",
             );
         }
         if options.timing {
@@ -2451,8 +2540,8 @@ impl Run<'_> {
             Some(error) => self.error(&error),
             None => {}
         }
-        if let (count @ 1.., names) = &left_for_plugins {
-            self.report_skipped_for_plugins(*count, names);
+        if left_for_plugins.count > 0 {
+            self.report_skipped_for_plugins(&left_for_plugins);
         }
         // The emulated tool would have formatted or checked these files, so this is an error and is printed last.
         if !others.is_empty() {
@@ -2461,18 +2550,26 @@ impl Run<'_> {
         self.out
     }
 
-    /// Reports that `count` files were skipped because the config uses the plugins `names`, which `bun fmt` doesn't
-    /// include.
-    fn report_skipped_for_plugins(&mut self, count: usize, names: &[&[u8]]) {
+    /// Reports the files of `left`, and what to do about them. The plugins of each side get an error of their own.
+    fn report_skipped_for_plugins(&mut self, left: &LeftForPlugins) {
+        self.report_skipped_for(&left.for_config, "the Prettier config uses", "Use");
+        self.report_skipped_for(&left.for_flags, LeftForSide::FLAGS.0, LeftForSide::FLAGS.1);
+    }
+
+    /// Reports the files of `side`, if any. `who` lists the plugins. `advice` starts the `--allow-unsupported` line.
+    fn report_skipped_for(&mut self, side: &LeftForSide, who: &str, advice: &str) {
+        let count = side.count;
         let (noun, it) = match count {
+            0 => return,
             1 => ("file was", "it"),
             _ => ("files were", "them"),
         };
         let text = format!(
-            "{count} {noun} not formatted because the Prettier config uses plugins that bun fmt does not include: "
+            "{count} {noun} not formatted because {who} plugins that bun fmt does not include: "
         );
-        let end = format!("\n  Use --allow-unsupported to format {it} without the plugins.");
-        self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
+        let end = format!("\n  {advice} --allow-unsupported to format {it} without the plugins.");
+        let names = side.names.join(&b", "[..]);
+        self.error(&[text.as_bytes(), &names, end.as_bytes()].concat());
     }
 
     /// Warns about the packages that must be installed before more files can go to the project's own Prettier.
@@ -2536,21 +2633,6 @@ impl Run<'_> {
         }
         let configs = Configs::new(options, environment);
         self.is_native = configs.is_native();
-        if let Some(name) = (options.plugins.iter()).find(|it| config::is_missing_plugin(it))
-            && !options.allow_unsupported
-        {
-            return self.fail(
-                &[
-                    b"bun fmt does not include the plugin ",
-                    &name[..],
-                    b"\n  Use --allow-unsupported to format without it.",
-                ]
-                .concat(),
-            );
-        }
-        if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
-            self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
-        }
         if configs.requests_svelte_parser()
             && (configs.for_directory(&environment.cwd))
                 .is_ok_and(|own| configs.turns_svelte_off(&own, &environment.cwd))

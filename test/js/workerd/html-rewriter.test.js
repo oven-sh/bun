@@ -3980,3 +3980,92 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+describe("SVG/MathML integration-point elements reach handlers after a sibling integration point", () => {
+  // A stale dispatcher flag made the second consecutive integration-point
+  // sibling skip selector matching: https://github.com/cloudflare/lol-html/pull/329
+
+  async function census(doc) {
+    const tags = [];
+    await new HTMLRewriter()
+      .on("*", {
+        element(el) {
+          tags.push(el.tagName);
+        },
+      })
+      .transform(new Response(doc))
+      .text();
+    return tags;
+  }
+
+  it("matches consecutive SVG html-integration-point siblings", async () => {
+    expect(await census(`<svg><desc>d</desc><title>t</title></svg>`)).toEqual(["svg", "desc", "title"]);
+    expect(await census(`<svg><desc>d</desc><title>t</title><foreignObject>f</foreignObject></svg>`)).toEqual([
+      "svg",
+      "desc",
+      "title",
+      "foreignobject",
+    ]);
+    // intervening whitespace/text must not mask the bug
+    expect(await census(`<svg><desc>d</desc> <title>t</title></svg>`)).toEqual(["svg", "desc", "title"]);
+    // a self-closing sibling is always lexed, which re-armed matching even
+    // before the fix (regression guard)
+    expect(await census(`<svg><desc>d</desc><circle/><title>t</title></svg>`)).toEqual([
+      "svg",
+      "desc",
+      "circle",
+      "title",
+    ]);
+  });
+
+  it("matches consecutive MathML text-integration-point siblings", async () => {
+    expect(await census(`<math><mi>x</mi><mo>+</mo><mn>1</mn></math>`)).toEqual(["math", "mi", "mo", "mn"]);
+    expect(await census(`<math><mi>x</mi><ms>s</ms><mtext>t</mtext></math>`)).toEqual(["math", "mi", "ms", "mtext"]);
+  });
+
+  it("sanitizer rules on foreignObject are not bypassed by a preceding sibling", async () => {
+    const strip = doc =>
+      new HTMLRewriter()
+        .on("foreignobject", {
+          element(el) {
+            el.remove();
+          },
+        })
+        .transform(new Response(doc))
+        .text();
+
+    // Baseline: element is first child, handler fires.
+    expect(await strip(`<svg><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(`<svg></svg>`);
+    // Previously bypassed: preceded by another integration-point element.
+    expect(await strip(`<svg><title>x</title><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><title>x</title></svg>`,
+    );
+    expect(await strip(`<svg><desc>d</desc><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><desc>d</desc></svg>`,
+    );
+    // Previously bypassed too: any preceding sibling the selector does not
+    // match leaves the parser in scan mode, so its end-tag hint re-armed the
+    // stale flag. A self-closing sibling is lexed and did not.
+    expect(await strip(`<svg><g></g><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><g></g></svg>`,
+    );
+    expect(await strip(`<svg><circle/><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><circle/></svg>`,
+    );
+  });
+
+  it("matches annotation-xml html-integration-point after a sibling text-integration-point", async () => {
+    const handlers = [];
+    await new HTMLRewriter()
+      .on("annotation-xml", {
+        element(el) {
+          handlers.push(el.tagName);
+        },
+      })
+      .transform(
+        new Response(`<math><mi>x</mi><annotation-xml encoding="text/html"><span>y</span></annotation-xml></math>`),
+      )
+      .text();
+    expect(handlers).toEqual(["annotation-xml"]);
+  });
+});

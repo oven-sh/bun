@@ -1,5 +1,4 @@
-import { bunEnv, bunExe, tempDir } from "harness";
-import { once } from "node:events";
+import { bunEnv, bunExe, tempDir, undeserializable } from "harness";
 import { Worker as NodeWorker, type BroadcastChannelEventMap } from "node:worker_threads";
 import util from "util";
 
@@ -314,21 +313,6 @@ test.concurrent.each([
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });
 
-// Serializes, then fails to deserialize: the getter grows the buffer after its length was written.
-function undeserializable() {
-  const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
-  return {
-    buffer,
-    get grow() {
-      buffer.resize(65536);
-      return 1;
-    },
-    get view() {
-      return new DataView(buffer, 4096, 16);
-    },
-  };
-}
-
 // unref() lets the process exit. It does not let go of the realm: that takes close().
 test.concurrent.each(["message", "messageerror"])(
   "a realm that script dropped stays, and hears, until its channel that listens for %s closes",
@@ -476,11 +460,18 @@ describe("a channel that script reaches only through its messageerror listener",
        require("node:worker_threads").parentPort.postMessage("ready");`,
       { eval: true },
     );
-    const [ready] = await once(worker, "message");
+    const nextMessage = () => {
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it posted`)));
+      return promise;
+    };
+    const ready = await nextMessage();
     const sender = new BroadcastChannel(name);
     sender.postMessage(undeserializable());
     sender.postMessage("last");
-    const [heard] = await once(worker, "message");
+    const heard = await nextMessage();
     sender.close();
     await worker.terminate();
 
@@ -488,7 +479,7 @@ describe("a channel that script reaches only through its messageerror listener",
   });
 });
 
-test("only a listener for message or for messageerror keeps an open channel from collection", async () => {
+test.concurrent("only a listener for message or for messageerror keeps an open channel from collection", async () => {
   const script = `
     const { heapStats } = require("bun:jsc");
     const count = () => heapStats().objectTypeCounts.BroadcastChannel ?? 0;

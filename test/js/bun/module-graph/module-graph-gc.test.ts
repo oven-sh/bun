@@ -3,7 +3,7 @@
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls, undeserializable } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
@@ -432,19 +432,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       expect(await lifetimes.survives("graph")).toBe(true);
 
       const sender = new BroadcastChannel("module-graph-gc " + type);
-      // Only a message that cannot be deserialized fires messageerror: the getter grows the buffer after its length was written.
-      const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
-      const undeserializable = {
-        buffer,
-        get grow() {
-          buffer.resize(65536);
-          return 1;
-        },
-        get view() {
-          return new DataView(buffer, 4096, 16);
-        },
-      };
-      sender.postMessage(type === "message" ? "to the graph" : undeserializable);
+      sender.postMessage(type === "message" ? "to the graph" : undeserializable());
       expect(await heard.promise).toBe(type);
       sender.close();
       expect(await lifetimes.stillAlive("graph")).toEqual([]);

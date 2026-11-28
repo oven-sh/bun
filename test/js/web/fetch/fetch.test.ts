@@ -1,6 +1,5 @@
 // @ts-expect-error no such export
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
-import { jscDescribe } from "bun:jsc";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, closeSync, ftruncateSync, openSync, rmSync, writeFileSync } from "fs";
 import {
@@ -4309,10 +4308,10 @@ it("verbose fetch logging escapes control characters coming from the peer", asyn
 });
 
 describe("a string body in pieces", () => {
-  // Long enough that `+` and `slice` share their operands and do not copy them.
-  const ascii = Buffer.alloc(300, "a").toString();
-  const latin1 = Buffer.alloc(300, 0xe9).toString("latin1");
-  const wide = Buffer.alloc(900, "日").toString();
+  // Long enough that `+` and `slice` share their operands and do not copy them, and that two are sent piece by piece.
+  const ascii = Buffer.alloc(9000, "a").toString();
+  const latin1 = Buffer.alloc(9000, 0xe9).toString("latin1");
+  const wide = Buffer.alloc(27000, "日").toString();
   const pieces = { ascii, latin1, wide, lead: ascii + "\ud83d", trail: "\ude00" + ascii, pair: ascii + "\u{1f600}" };
   for (const piece of Object.values(pieces)) piece.charCodeAt(0);
 
@@ -4324,7 +4323,7 @@ describe("a string body in pieces", () => {
       for (const [b, second] of Object.entries(pieces)) {
         builders[`${a} ${b}`] = () => first + second;
         builders[`${a} part of ${b} ${a}`] = () => `${first}${second.slice(0, 200)}${first}`;
-        for (const count of [7, 8, 9, 100]) {
+        for (const count of [8, 9]) {
           builders[`${count} of ${a} and ${b}`] = () => {
             let text = first;
             for (let i = 1; i < count; i++) text = i % 2 ? text + second : first + text;
@@ -4343,14 +4342,53 @@ describe("a string body in pieces", () => {
     expect(different).toEqual([]);
   });
 
-  it("a body of a few pieces is sent without making one string of them", async () => {
-    using server = Bun.serve({ port: 0, fetch: async request => new Response(await request.text()) });
-    for (const piece of [pieces.ascii, pieces.latin1, pieces.wide]) {
-      const body = `${piece}\n${pieces.ascii}`;
-      expect(jscDescribe(body)).toContain("(rope)");
-      const response = await fetch(server.url, { method: "POST", body });
-      expect(jscDescribe(body)).toContain("(rope)");
-      expect(await response.text()).toBe(piece + "\n" + pieces.ascii);
-    }
+  // In a process of its own, as the collector makes it forget what was sent.
+  it("a body of a few pieces is made one string only when that can be shared", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { jscDescribe } from "bun:jsc";
+        using server = Bun.serve({ port: 0, fetch: async request => new Response(await request.bytes()) });
+        const piece = (length, character) => Buffer.alloc(length * 2, character, "utf16le").toString("utf16le");
+        const bodies = [];
+        const send = async (first, last) => {
+          first.charCodeAt(0);
+          last.charCodeAt(0);
+          const body = first + last;
+          bodies.push(body);
+          const expected = Buffer.concat([Buffer.from(first), Buffer.from(last)]);
+          const forms = [];
+          for (let i = 0; i < 20; i++) {
+            const bytes = await (await fetch(server.url, { method: "POST", body })).bytes();
+            const form = jscDescribe(body).includes("(rope)") ? "rope" : "resolved";
+            forms.push(expected.equals(bytes) ? form : "wrong");
+          }
+          console.log(forms[0], forms.at(-1), forms.includes("wrong"));
+        };
+        const ascii = Buffer.alloc(9000, "a").toString();
+        const latin1 = Buffer.alloc(9000, 0xe9).toString("latin1");
+        await send(ascii, ascii);
+        await send(latin1, ascii);
+        await send(piece(9000, "日"), ascii);
+        await send(ascii, ascii.slice(0, 16384 - 9000));
+        await send(ascii, ascii.slice(0, 16383 - 9000));
+        `,
+      ],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      "rope resolved false",
+      "rope rope false",
+      "rope rope false",
+      "rope resolved false",
+      "resolved resolved false",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });

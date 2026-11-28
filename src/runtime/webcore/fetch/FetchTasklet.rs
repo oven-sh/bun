@@ -277,7 +277,7 @@ impl HTTPRequestBody {
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
         if value.is_string_literal()
-            && let Some(bytes) = value.as_string().short_rope_to_utf8()
+            && let Some(bytes) = value.as_string().rope_to_utf8(cx.global())
         {
             return Ok(HTTPRequestBody::AnyBlob(AnyBlob::InternalBlob(
                 InternalBlob {

@@ -1,4 +1,4 @@
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
@@ -245,6 +245,7 @@ pub struct RareData {
     spawn_sync_event_loop_: OnceCell<Box<SpawnSyncEventLoop>>,
 
     pub path_buf: JsCell<PathBuf>,
+    pub(crate) last_ropes: LastRopes,
 }
 
 #[cfg(not(windows))]
@@ -275,7 +276,26 @@ impl Default for RareData {
             tls_default_ciphers: JsCell::new(None),
             spawn_sync_event_loop_: OnceCell::new(),
             path_buf: JsCell::default(),
+            last_ropes: LastRopes::default(),
         }
+    }
+}
+
+/// Some of the strings that [`Self::remember`] was called for. Keeps none of them alive.
+pub(crate) struct LastRopes([Cell<(usize, u32)>; 64]);
+
+impl Default for LastRopes {
+    fn default() -> Self {
+        Self([const { Cell::new((0, 0)) }; 64])
+    }
+}
+
+impl LastRopes {
+    /// Whether `string` was remembered. False if a string with the same place took over, or after a collection.
+    pub(crate) fn remember(&self, string: &crate::JSString) -> bool {
+        let key = string.address_and_version();
+        // A rope takes 32 bytes.
+        self.0[key.0 / 32 % self.0.len()].replace(key) == key
     }
 }
 

@@ -4008,6 +4008,12 @@ extern "C" uint32_t JSC__JSString__leavesOfRope(const JSC::JSString* string, Bun
     return count;
 }
 
+// Another one after each collection. Until then, no string is made at the address of another.
+extern "C" uint32_t JSC__JSString__addressVersion(const JSC::JSString* string)
+{
+    return string->vm().heap.objectSpace().newlyAllocatedVersion();
+}
+
 extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
 {
     return JSC::JSValue::encode(JSC::jsSingleCharacterString(JSC::getVM(globalObject), Latin1Character { character }));

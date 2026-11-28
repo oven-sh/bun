@@ -1017,8 +1017,7 @@ static constexpr bool hasWideCodepoint(char32_t first, char32_t last)
     return false;
 }
 
-// How many of the code units are two terminal columns wide. Half a surrogate pair is not, so an astral character
-// counts as its two units.
+// How many of the code units are two terminal columns wide. Half a surrogate pair never is.
 extern "C" size_t Bun__wideUnitCount_utf16(const uint16_t* ptr, size_t len)
 {
     static_assert(!hasWideCodepoint(0, 0x10FF) && !hasWideCodepoint(0xD800, 0xDFFF));

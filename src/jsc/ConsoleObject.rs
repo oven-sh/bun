@@ -2636,11 +2636,9 @@ pub mod formatter {
             }
         }
 
-        /// [`Self::write_json_string_utf16`] for a value, whose length is counted already: a wide character
-        /// counts for the two columns it takes. No 8-bit string has one.
+        /// [`Self::write_json_string_utf16`] for a value, whose length is counted: a wide character counts one more.
         pub(crate) fn write_string_value_utf16(&mut self, units: &[u16]) {
-            // Above the limit the line breaks with or without this count, so only a string that still fits is
-            // searched.
+            // Above the limit the line breaks with or without this count.
             if *self.estimated_line_length <= MAX_ESTIMATED_LINE_LENGTH {
                 self.add_for_new_line(strings::visible::width::wide_units_utf16(units));
             }

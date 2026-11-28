@@ -12,8 +12,7 @@ pub mod visible {
             fn Bun__wideUnitCount_utf16(ptr: *const u16, len: usize) -> usize;
         }
 
-        /// How many of the UTF-16 units are two terminal columns wide. Half a surrogate pair is not, so an
-        /// astral character counts as its two units.
+        /// How many of the UTF-16 units are two terminal columns wide. Half a surrogate pair never is.
         pub fn wide_units_utf16(input: &[u16]) -> usize {
             // SAFETY: `input` is a live slice for the duration of the call.
             unsafe { Bun__wideUnitCount_utf16(input.as_ptr(), input.len()) }

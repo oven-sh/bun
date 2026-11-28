@@ -2260,9 +2260,7 @@ pub mod printer {
     static JSON_PLAIN: strings::ByteSet =
         strings::ByteSet::new(&[0x20..=0x21, 0x23..=0x5B, 0x5D..=0xFF]);
 
-    /// What [`write_json_string_utf16`] writes for a byte of UTF-8: the bytes from the low end, and how many in the
-    /// top byte. For a C0 control, `"` and `\` it is what the Latin-1 arm of [`write_pre_quoted_string`] writes
-    /// in JSON mode.
+    /// What [`write_json_string_utf16`] writes for a byte of UTF-8: the bytes from the low end, their count on top.
     static JSON_BYTES: [u64; 256] = {
         let mut table = [0; 256];
         let mut byte = 0;
@@ -2289,8 +2287,7 @@ pub mod printer {
         table
     };
 
-    /// Writes what [`JSON_BYTES`] has for `byte` at `out[len..]`, where 8 bytes are free, and returns how many
-    /// bytes that is.
+    /// Writes the [`JSON_BYTES`] entry of `byte` at `out[len..]`, which needs 8 free bytes, and returns its length.
     #[inline(always)]
     fn json_byte(out: &mut [u8], len: usize, byte: u8) -> usize {
         let entry = JSON_BYTES[usize::from(byte)];
@@ -2298,8 +2295,7 @@ pub mod printer {
         (entry >> 56) as usize
     }
 
-    /// Where unpaired surrogates are this many units apart or less, a unit at a time costs less than a call of
-    /// the transcoder for each stretch between two of them.
+    /// Unpaired surrogates this close go a unit at a time: a transcoder call for each stretch between two costs more.
     const NEAR: usize = 16;
 
     /// How many bytes of UTF-8 go through [`JSON_BYTES`] at a time.
@@ -2324,8 +2320,7 @@ pub mod printer {
     }
 
     impl JsonPieces<'_> {
-        /// Room for a piece of at most `room` bytes. The buffer goes to the writer between two pieces, and a
-        /// piece is whole characters, so that each buffer is UTF-8 on its own: the writer can be a `fmt::Write`.
+        /// Room for a piece. Pieces are whole characters, so each buffer is UTF-8 alone, as a `fmt::Write` needs.
         fn reserve(&mut self, room: usize) -> crate::CrateResult<()> {
             if self.buffer.len() - self.len < room {
                 self.flush()?;
@@ -2347,8 +2342,7 @@ pub mod printer {
             Ok(())
         }
 
-        /// At most `BLOCK` bytes of whole characters, each byte through [`JSON_BYTES`]. Returns how many bytes
-        /// longer that is.
+        /// At most `BLOCK` bytes of whole characters through [`JSON_BYTES`]. Returns how many bytes longer they get.
         fn push_block(&mut self, text: &[u8]) -> crate::CrateResult<usize> {
             debug_assert!(text.len() <= BLOCK && strings::is_valid_utf8(text));
             // A byte is at most six, and `json_byte` writes eight at a time.
@@ -2379,8 +2373,7 @@ pub mod printer {
                     dense = 2;
                     continue;
                 }
-                // The next escape is near. Where escapes are dense, the table costs less than the search for
-                // each short run between two of them: a block at a time, while a block grows by `dense` bytes.
+                // An escape is near: the table beats a search per short run, while a block grows by `dense` bytes.
                 loop {
                     let head = strings::truncate_to_char_boundary(text, BLOCK);
                     let longer = self.push_block(head)?;
@@ -2389,15 +2382,13 @@ pub mod printer {
                         break;
                     }
                 }
-                // Back at the table with no long run since the last turn: from now on one escape in a block
-                // is dense enough, as in lines that are shorter than a block.
+                // No long run since the last turn, as in short lines: now one escape in a block is dense enough.
                 dense = 1;
             }
             Ok(())
         }
 
-        /// Text near an unpaired surrogate, which the transcoder refuses: one unit at a time, until `NEAR`
-        /// units in a row have none. Returns how many units that is.
+        /// Near an unpaired surrogate: a unit at a time until `NEAR` in a row have none. Returns the units taken.
         fn push_units(&mut self, text: &[u16]) -> crate::CrateResult<usize> {
             let (mut at, mut clean) = (0, 0);
             while at < text.len() && clean < NEAR {
@@ -2457,17 +2448,13 @@ pub mod printer {
         }
     }
 
-    /// `text` as a quoted string in UTF-8. A unit up to U+00FF is written as the Latin-1 arm of
-    /// [`write_pre_quoted_string`] writes that byte in JSON mode, so a string prints the same in either
-    /// storage. Above it, as `JSON.stringify` does: a character as it is, an unpaired surrogate as a `\u`
-    /// escape in lower case.
+    /// Quotes `text`: units up to U+00FF as the Latin-1 JSON arm of [`write_pre_quoted_string`], others as `JSON.stringify`.
     #[inline(never)]
     pub fn write_json_string_utf16(
         text: &[u16],
         writer: &mut dyn PrinterWriter,
     ) -> crate::CrateResult<()> {
-        // 32 KB at a time: the writer of a file descriptor hands a write that is as large as its own
-        // buffer straight to the descriptor, so a long string takes few write(2).
+        // 32 KB at a time: a descriptor's writer passes a write that large straight on, so few write(2) for long text.
         crate::fmt::with_shared_temp_buffer(|buffer| {
             let mut pieces = JsonPieces {
                 writer,

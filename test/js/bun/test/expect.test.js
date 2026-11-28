@@ -5061,7 +5061,104 @@ describe("expect()", () => {
         expect(new Thing()).not.toEqual(expect.not.any(Thing));
         expect({}).toEqual(expect.not.any(Thing));
       });
+
+      // A matcher that threw gave no answer for `.not` to turn around. The matcher revokes the received Proxy
+      // before it throws, so a compare that goes on to the next key throws a TypeError of its own.
+      describe("expect.not.any with a class whose Symbol.hasInstance throws", () => {
+        const setup = (/** @type {(notAny: any) => object} */ target = () => ({ a: 1, b: 1, c: 1 })) => {
+          class RevokesThenThrows {
+            static [Symbol.hasInstance]() {
+              revocable.revoke();
+              throw new Error("thrown by Symbol.hasInstance");
+            }
+          }
+          const notAny = expect.not.any(RevokesThenThrows);
+          const revocable = Proxy.revocable(target(notAny), {});
+          return { received: revocable.proxy, notAny };
+        };
+
+        test("toMatchObject()", () => {
+          const { received, notAny } = setup();
+          expect(() => expect(received).toMatchObject({ b: notAny, c: 1 })).toThrow("thrown by Symbol.hasInstance");
+        });
+
+        test(".not.toMatchObject()", () => {
+          const { received, notAny } = setup();
+          expect(() => expect(received).not.toMatchObject({ b: notAny, c: 1 })).toThrow("thrown by Symbol.hasInstance");
+        });
+
+        test("toMatchObject() with the matcher in the received value", () => {
+          const { received } = setup(notAny => ({ a: 1, b: notAny, c: 1 }));
+          expect(() => expect(received).toMatchObject({ b: 1, c: 1 })).toThrow("thrown by Symbol.hasInstance");
+        });
+
+        test("toMatchSnapshot() with property matchers", () => {
+          const { received, notAny } = setup();
+          expect(() => expect(received).toMatchSnapshot({ b: notAny, c: expect.any(Number) })).toThrow(
+            "thrown by Symbol.hasInstance",
+          );
+        });
+
+        test.each(
+          /** @type {[string, (received: any, expected: any) => void][]} */ ([
+            ["toEqual", (received, expected) => expect(received).toEqual(expected)],
+            ["toStrictEqual", (received, expected) => expect(received).toStrictEqual(expected)],
+            ["toContainEqual", (received, expected) => expect([received]).toContainEqual(expected)],
+            ["toHaveProperty", (received, expected) => expect({ value: received }).toHaveProperty("value", expected)],
+            [
+              "toHaveBeenCalledWith",
+              (received, expected) => {
+                const fn = jest.fn();
+                fn(received);
+                expect(fn).toHaveBeenCalledWith(expected);
+              },
+            ],
+          ]),
+        )("expect.objectContaining() in %s()", (_, assert) => {
+          const { received, notAny } = setup();
+          expect(() => assert(received, expect.objectContaining({ b: notAny, c: 1 }))).toThrow(
+            "thrown by Symbol.hasInstance",
+          );
+        });
+      });
     }
+
+    test("expect.not.objectContaining and expect.not.arrayContaining throw what their compare throws", () => {
+      /** @type {{ proxy: any, revoke: () => void }} */
+      let revocable;
+      const throws = {
+        get x() {
+          revocable.revoke();
+          throw new Error("thrown by getter");
+        },
+      };
+
+      revocable = Proxy.revocable({ a: 1, b: throws, c: 1 }, {});
+      expect(() => expect(revocable.proxy).toMatchObject({ b: expect.not.objectContaining({ x: 1 }), c: 1 })).toThrow(
+        "thrown by getter",
+      );
+
+      revocable = Proxy.revocable({ a: 1, b: [throws], c: 1 }, {});
+      expect(() => expect(revocable.proxy).toMatchObject({ b: expect.not.arrayContaining([{ x: 1 }]), c: 1 })).toThrow(
+        "thrown by getter",
+      );
+    });
+
+    test("an error keeps its stack when a negated matcher on the key before it throws", () => {
+      const error = Object.assign(new Error("message"), {
+        b: {
+          get x() {
+            throw new Error("thrown by getter");
+          },
+        },
+      });
+      expect(() =>
+        expect(error).toEqual(
+          expect.objectContaining({ b: expect.not.objectContaining({ x: 1 }), stack: expect.any(String) }),
+        ),
+      ).toThrow("thrown by getter");
+      expect(typeof error.stack).toBe("string");
+    });
 
     test("Anything matches any type", () => {
       expect(expect.anything()).toEqual("jest");
@@ -5610,6 +5707,10 @@ describe("expect()", () => {
         // a non-promise value should not match
         await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
 
+        // expect.not.rejectsTo matches both of them
+        await expect(Promise.resolve("a")).toEqual(expect.not.rejectsTo.stringContaining("a"));
+        await expect("a").toEqual(expect.not.rejectsTo.stringContaining("a"));
+
         // Different task
         await expect(
           new Promise((_, reject) => {
@@ -5634,6 +5735,10 @@ describe("expect()", () => {
 
         // a non-promise value should not match
         await expect("a").not.toEqual(expect.rejectsTo.stringContaining("a"));
+
+        // expect.not.resolvesTo matches both of them
+        await expect(Promise.reject("a")).toEqual(expect.not.resolvesTo.stringContaining("a"));
+        await expect("a").toEqual(expect.not.resolvesTo.stringContaining("a"));
 
         // Different task
         await expect(

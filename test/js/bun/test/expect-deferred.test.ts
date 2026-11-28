@@ -1303,6 +1303,27 @@ describe.concurrent("matchers that have to wait for a promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
+  test("expect.not.resolvesTo waits for its promise before the compare reads the next key", async () => {
+    // An error makes its stack on the first read. A read that happens while the matcher waits leaves `stack` undefined.
+    const source = `
+      const received = () => Object.assign(new Error("message"), { pending: later("one") });
+      const expected = () => ({ pending: expect.not.resolvesTo.stringContaining("two"), stack: expect.any(String) });
+      test("passes", async () => {
+        const error = received();
+        await expect(error).toMatchObject(expected());
+        console.log(typeof error.stack);
+      });
+      test("fails", async () => {
+        await expect(received()).not.toMatchObject(expected());
+      });
+    `;
+    const { stdout, stderr, results, exitCode, signalCode } = await runTests(source);
+    expect(stdout).toEqual(["string"]);
+    expect(results).toEqual(["(pass) passes", "(fail) fails"]);
+    expect(failingLines(stderr, source)).toEqual(["await expect(received()).not.toMatchObject(expected());"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
   test("a matcher that re-runs after a wait reuses the values from its first run", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       const calls = {};

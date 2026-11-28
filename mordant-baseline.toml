@@ -16,9 +16,6 @@
 "unsafe_send_covers_more_than_pointers:src/bundler/LinkerContext.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/bundler/LinkerGraph.rs" = 1
 
-[bun_collections]
-"unused_pub:src/collections/StaticHashMap.rs" = 4
-
 [bun_core]
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 "generic_body_not_generic:src/bun_core/fmt.rs" = 1

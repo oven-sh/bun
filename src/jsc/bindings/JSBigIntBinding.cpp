@@ -16,39 +16,6 @@ extern "C" JSBigInt* JSC__JSBigInt__fromJS(EncodedJSValue encodedValue)
     return nullptr;
 }
 
-extern "C" int8_t JSC__JSBigInt__orderDouble(JSBigInt* bigInt, double num)
-{
-    ASSERT(!std::isnan(num));
-    JSBigInt::ComparisonResult result = JSBigInt::compareToDouble(bigInt, num);
-
-    switch (result) {
-    case JSBigInt::ComparisonResult::Equal:
-        return 0;
-    case JSBigInt::ComparisonResult::GreaterThan:
-        return 1;
-    case JSBigInt::ComparisonResult::LessThan:
-        return -1;
-    case JSBigInt::ComparisonResult::Undefined:
-        UNREACHABLE();
-    }
-}
-
-extern "C" int8_t JSC__JSBigInt__orderUint64(JSBigInt* bigInt, uint64_t num)
-{
-    JSBigInt::ComparisonResult result = JSBigInt::compare(bigInt, num);
-
-    switch (result) {
-    case JSBigInt::ComparisonResult::Equal:
-        return 0;
-    case JSBigInt::ComparisonResult::GreaterThan:
-        return 1;
-    case JSBigInt::ComparisonResult::LessThan:
-        return -1;
-    case JSBigInt::ComparisonResult::Undefined:
-        UNREACHABLE();
-    }
-}
-
 extern "C" int8_t JSC__JSBigInt__orderInt64(JSBigInt* bigInt, int64_t num)
 {
     JSBigInt::ComparisonResult result = JSBigInt::compare(bigInt, num);

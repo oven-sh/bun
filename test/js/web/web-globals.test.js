@@ -13,6 +13,7 @@ import {
 import { once } from "node:events";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { createContext, Script } from "node:vm";
 import storesThatEndInADefinition from "../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
 test("exists", () => {
@@ -786,6 +787,18 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
     `target.addEventListener("a", { handleEvent: 123 });`,
     `target.dispatchEvent(new Event("a"));`,
   ];
+  // The two cases of WPT dom/events/EventListener-handleEvent-not-callable-after-caught-exception.html.
+  const handleEventGetterCatches = [
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", { get handleEvent() { try { throw new Error("caught by the getter"); } catch {} return "not callable"; } });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
+  const earlierListenerCatches = [
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", () => { try { throw new Error("caught by an earlier listener"); } catch {} });`,
+    `target.addEventListener("a", { handleEvent: "not callable" });`,
+    `target.dispatchEvent(new Event("a"));`,
+  ];
   // The error is not caught. It propagates through the finally block to the event loop.
   const handleEventNotCallableInFinally = [
     `const target = new EventTarget();`,
@@ -811,6 +824,18 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
     `process.nextTick(() => { try { throw new Error("caught in a tick, unrelated"); } catch {} });`,
     `target.dispatchEvent(new Event("a"));`,
   ];
+  // The thenable keeps onRejected. Its caller rejects twice in a later turn, after a tick that throws and catches.
+  const thenableRejectsLater = [
+    `let onRejected;`,
+    `const target = new EventTarget();`,
+    `target.addEventListener("a", () => ({ then: (resolve, reject) => { onRejected = reject; } }));`,
+    `target.dispatchEvent(new Event("a"));`,
+    `setImmediate(() => {`,
+    `  process.nextTick(() => { try { throw new Error("caught in a tick, unrelated"); } catch {} });`,
+    `  onRejected("first");`,
+    `  onRejected(42);`,
+    `});`,
+  ];
   // The pending tick makes the second async function catch its rejection before the tick that
   // reports the first one's.
   const asyncAttributeHandlerThrows = [
@@ -825,6 +850,16 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
     [
       "handleEvent is not callable",
       [onUncaughtException(`console.log(String(error));`), ...handleEventNotCallable],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, after its getter caught an error",
+      [onUncaughtException(`console.log(String(error));`), ...handleEventGetterCatches],
+      "TypeError: 'handleEvent' property of event listener should be callable\n",
+    ],
+    [
+      "handleEvent is not callable, after an earlier listener caught an error",
+      [onUncaughtException(`console.log(String(error));`), ...earlierListenerCatches],
       "TypeError: 'handleEvent' property of event listener should be callable\n",
     ],
     [
@@ -849,6 +884,11 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
       "the listener's thenable rejects with a number",
       [onUncaughtException(`console.log(typeof error, error);`), ...thenableRejectsWith(`42`)],
       "number 42\n",
+    ],
+    [
+      "the listener's thenable rejects twice in a later turn",
+      [onUncaughtException(`console.log(typeof error, error);`), ...thenableRejectsLater],
+      "string first\nnumber 42\n",
     ],
     [
       "an async on<event> handler throws",
@@ -891,4 +931,26 @@ describe.concurrent("an EventTarget reports a listener's error, not an older err
       exitCode: 1,
     });
   });
+});
+
+// The dispatcher clears the termination that cut the first listener short, and goes on to the second listener.
+// A report made there would reach `bun test` as an unhandled error and fail this test.
+test("dispatchEvent reports no listener error while the timeout of a node:vm run is pending", () => {
+  const target = new EventTarget();
+  let entered = false;
+  target.addEventListener("a", () => {
+    entered = true;
+    const end = Date.now() + 5000;
+    while (Date.now() < end);
+  });
+  target.addEventListener("a", { handleEvent: 123 });
+  const context = createContext({ dispatch: () => target.dispatchEvent(new Event("a")) });
+  const script = new Script("dispatch()");
+  let code;
+  try {
+    script.runInContext(context, { timeout: 50 });
+  } catch (error) {
+    code = error.code;
+  }
+  expect({ entered, code }).toEqual({ entered: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT" });
 });

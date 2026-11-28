@@ -1571,7 +1571,9 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
 
   // Nobody threw what an EventTarget reports here: a listener that cannot be called, and the reason
   // a listener's thenable rejects with. The report belongs to the context it is made in, whatever
-  // another context threw and caught just before it.
+  // another context threw and caught just before it. A rejection is reported from the listener's
+  // context, which is the target's. A listener that cannot be called is reported before that context
+  // is entered, so from the dispatcher's.
   test("a listener error that an EventTarget reports belongs to the context that reports it, whatever another context caught before", async () => {
     const script = `
       const told = [];
@@ -1583,6 +1585,9 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       const graphCatches = thrown => graph.run(catches, thrown);
       const otherCatches = thrown => other.run(catches, thrown);
       const dispatch = listener => { const target = new EventTarget(); target.addEventListener("a", listener); target.dispatchEvent(new Event("a")); };
+      const dispatchTo = (target, listener) => { target.addEventListener("a", listener, { once: true }); target.dispatchEvent(new Event("a")); };
+      const hostTarget = new EventTarget();
+      const graphTarget = graph.run(() => new EventTarget());
       const reason = new Error("the listener's reason");
       // The thenable rejects inside dispatchEvent: the tick that reports the reason runs right after the tick queued before it.
       const rejects = () => ({ then: (resolve, reject) => reject(reason) });
@@ -1594,6 +1599,10 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
         ["in the graph: a listener's thenable rejects, after the host caught", () => { process.nextTick(catches, new Error("the host's own")); graph.run(dispatch, rejects); }],
         ["in the graph: a listener's thenable rejects with the error the host caught", () => { process.nextTick(catches, reason); graph.run(dispatch, rejects); }],
         ["in the graph: a listener's thenable rejects, after another graph caught", () => { process.nextTick(otherCatches, new Error("the other graph's own")); graph.run(dispatch, rejects); }],
+        ["the host dispatches to the graph's target: a listener's thenable rejects, after another graph caught", () => { process.nextTick(otherCatches, new Error("the other graph's own")); dispatchTo(graphTarget, rejects); }],
+        ["the graph dispatches to the host's target: a listener's thenable rejects, after another graph caught", () => { process.nextTick(otherCatches, new Error("the other graph's own")); graph.run(dispatchTo, hostTarget, rejects); }],
+        ["the host dispatches to the graph's target: handleEvent is not callable, after another graph caught", () => { otherCatches(new Error("the other graph's own")); dispatchTo(graphTarget, { handleEvent: 123 }); }],
+        ["the graph dispatches to the host's target: handleEvent is not callable, after another graph caught", () => graph.run(() => { otherCatches(new Error("the other graph's own")); dispatchTo(hostTarget, { handleEvent: 123 }); })],
       ];
       const out = {};
       for (const [name, start] of cases) {
@@ -1615,6 +1624,14 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       "in the graph: a listener's thenable rejects, after the host caught": "graph: the listener's reason",
       "in the graph: a listener's thenable rejects with the error the host caught": "graph: the listener's reason",
       "in the graph: a listener's thenable rejects, after another graph caught": "graph: the listener's reason",
+      "the host dispatches to the graph's target: a listener's thenable rejects, after another graph caught":
+        "graph: the listener's reason",
+      "the graph dispatches to the host's target: a listener's thenable rejects, after another graph caught":
+        "host: the listener's reason",
+      "the host dispatches to the graph's target: handleEvent is not callable, after another graph caught":
+        "host: 'handleEvent' property of event listener should be callable",
+      "the graph dispatches to the host's target: handleEvent is not callable, after another graph caught":
+        "graph: 'handleEvent' property of event listener should be callable",
     });
     expect(exitCode).toBe(0);
   });

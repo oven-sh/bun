@@ -2736,7 +2736,7 @@ mod draft {
                         commands,
                         stable_address as u64,
                     ) {
-                        if i != 0 {
+                        if !core::ptr::eq(header, bun_sys::macho::main_executable::header()) {
                             // these libraries are not interesting, mark as unknown
                             return None;
                         }

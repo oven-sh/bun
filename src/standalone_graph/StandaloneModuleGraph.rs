@@ -636,54 +636,30 @@ mod macho {
         Some((unsafe { slice_ptr.add(data_offset) }, length as usize))
     }
 
-    unsafe extern "C" {
-        /// `<mach-o/getsect.h>`: the named segment's load command in the main executable.
-        fn getsegbyname(
-            segname: *const core::ffi::c_char,
-        ) -> *const bun_sys::macho::segment_command_64;
-        /// `<mach-o/dyld.h>`: the path dyld loaded image `image_index` from.
-        fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
-    }
-
     /// `F_RDADVISE` on the executable for the file bytes backing `[lo, hi)`: an
     /// asynchronous read into the page cache that returns at once.
     /// (`MADV_WILLNEED` blocks on Darwin until the pages are in, so it is no use
     /// for overlapping I/O with startup.)
     pub(super) fn read_ahead(lo: usize, hi: usize) {
-        // SAFETY: NUL-terminated segment name; returns null or a pointer into the
-        // main image's load commands, which live as long as the process.
-        let segment = unsafe { getsegbyname(c"__BUN".as_ptr()) };
-        if segment.is_null() {
+        use bun_sys::macho::main_executable;
+
+        let Some(offset) = main_executable::file_offset_of(lo..hi) else {
             return;
-        }
-        // SAFETY: non-null per the check above.
-        let segment = unsafe { &*segment };
-        let slide = bun_sys::c::_dyld_get_image_vmaddr_slide(0) as usize;
-        let segment_start = (segment.vmaddr as usize).wrapping_add(slide);
-        let segment_end = segment_start.saturating_add(segment.filesize as usize);
-        if lo < segment_start || hi > segment_end {
+        };
+        let Some(exe_path) = main_executable::path() else {
             return;
-        }
-        // SAFETY: image 0 is the main executable; dyld keeps its NUL-terminated
-        // path alive for the life of the process.
-        let exe_path = unsafe { bun_core::ZStr::from_c_ptr(_dyld_get_image_name(0)) };
+        };
         let Ok(file) = bun_sys::File::open(exe_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
         else {
             return;
         };
-        let advisory = libc::radvisory {
-            ra_offset: (lo - segment_start + segment.fileoff as usize) as libc::off_t,
-            ra_count: (hi - lo).min(i32::MAX as usize) as core::ffi::c_int,
-        };
-        // SAFETY: `advisory` is a valid `struct radvisory` for the duration of
-        // the call; the fd stays open until `file` drops below.
-        let rc = unsafe { libc::fcntl(file.fd().native(), libc::F_RDADVISE, &advisory) };
+        let advised = bun_sys::darwin::read_advise(file.fd(), offset, hi - lo);
         bun_core::scoped_log!(
             super::StandaloneModuleGraph,
             "prefetch: F_RDADVISE offset={} count={} rc={}",
-            advisory.ra_offset,
-            advisory.ra_count,
-            rc
+            offset,
+            hi - lo,
+            if advised.is_ok() { 0 } else { -1 }
         );
     }
 }

@@ -518,6 +518,56 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
   expect(getMachOImageZeroOffset()).toBe(0x100000000);
 });
 
+test.if(process.platform === "darwin")("macOS has the assumed image offset with a library inserted", async () => {
+  // dyld lists an inserted library before the executable, so the executable is not its image 0.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { crash_handler } = require("bun:internal-for-testing");
+       const { symbols } = require("bun:ffi").dlopen("/usr/lib/libSystem.B.dylib", {
+         _dyld_get_image_header: { args: ["u32"], returns: "ptr" },
+         _NSGetMachExecuteHeader: { args: [], returns: "ptr" },
+       });
+       console.log(JSON.stringify({
+         executableIsImageZero: symbols._dyld_get_image_header(0) === symbols._NSGetMachExecuteHeader(),
+         offset: crash_handler.getMachOImageZeroOffset(),
+       }));`,
+    ],
+    env: { ...bunEnv, DYLD_INSERT_LIBRARIES: "/usr/lib/libz.1.dylib" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ executableIsImageZero: false, offset: 0x100000000 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.if(process.platform === "darwin")("the trace string is the same with a library inserted", async () => {
+  // Taken for another image, each frame of bun is written as unknown.
+  const [plain, inserted] = await Promise.all(
+    [undefined, "/usr/lib/libz.1.dylib"].map(async library => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          path.join(import.meta.dir, "fixture-crash.js"),
+          "panic",
+          "--debug-crash-handler-use-trace-string",
+        ],
+        env: { ...noReportEnv, DYLD_INSERT_LIBRARIES: library },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The link ends with "invoked crashByPanic() handler" as a zlib stream.
+      return stderr.match(/^ (\S+A0eNrLzCvLz05NUUguSizOcKoMSMzLTNbQVMhIzEvJSS0CAK\/LCxc)$/m)?.[1];
+    }),
+  );
+  // A trace without the frames of bun is a run of "_", one for each frame.
+  expect({ plain: plain?.includes("__________"), inserted }).toEqual({ plain: false, inserted: plain });
+});
+
 test("raise ignoring panic handler does not trigger the panic handler", async () => {
   let sent = false;
   const resolve_handler = Promise.withResolvers();

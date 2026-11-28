@@ -15,18 +15,7 @@ pub(crate) fn get_mach_o_image_zero_offset() -> Option<f64> {
     }
     #[cfg(target_os = "macos")]
     {
-        unsafe extern "C" {
-            safe fn _dyld_get_image_header(image_index: u32) -> *const core::ffi::c_void;
-            safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
-        }
-        let header = _dyld_get_image_header(0);
-        if header.is_null() {
-            return None;
-        }
-        let base_address = header as usize;
-        let vmaddr_slide = _dyld_get_image_vmaddr_slide(0) as usize;
-
-        Some((base_address - vmaddr_slide) as f64)
+        Some(bun_sys::macho::main_executable::linked_header_address()? as f64)
     }
 }
 

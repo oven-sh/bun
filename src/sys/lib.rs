@@ -5188,6 +5188,17 @@ pub mod darwin {
         unsafe { __ulock_wake(operation, word.cast(), 0) }
     }
 
+    /// `fcntl(F_RDADVISE)`: the kernel starts to read `count` bytes of the file at `offset` into the page cache, and the call returns at once.
+    pub fn read_advise(fd: super::Fd, offset: u64, count: usize) -> super::Maybe<()> {
+        let advisory = libc::radvisory {
+            ra_offset: offset as libc::off_t,
+            ra_count: super::clamp_count(count),
+        };
+        let address = (&raw const advisory).expose_provenance() as isize;
+        // SAFETY: `F_RDADVISE` reads one `radvisory` at the address.
+        unsafe { super::fcntl_unchecked(fd, libc::F_RDADVISE, address) }.map(drop)
+    }
+
     /// Darwin `struct kevent64_s` (extended kevent with 2-slot `ext[]`).
     pub use libc::kevent64_s;
     /// SAFETY: as [`crate::kevent`]. What `ext` points to is valid for as long as the change is registered.
@@ -5381,6 +5392,114 @@ pub mod macho {
         code_segments
             .any(|segment| address.wrapping_sub(segment.vmaddr) < segment.vmsize)
             .then(|| address.wrapping_sub(code_start))
+    }
+
+    fn segments(ncmds: u32, commands: &[u8]) -> impl Iterator<Item = segment_command_64> {
+        LoadCommandIterator::new(ncmds, commands)
+            .filter(|command| command.cmd() == LC_SEGMENT_64)
+            .filter_map(|command| command.cast::<segment_command_64>())
+    }
+
+    /// Whether the segment maps the first byte of the file, which is the first byte of the header.
+    fn maps_header(segment: &segment_command_64) -> bool {
+        segment.fileoff == 0 && segment.filesize > 0
+    }
+
+    /// The address that the linker gave the byte at `address`, in an image whose header the loader put at `header_address`.
+    fn linked_address(
+        header_address: usize,
+        header_segment: &segment_command_64,
+        address: usize,
+    ) -> u64 {
+        let offset_in_image = address.wrapping_sub(header_address) as u64;
+        header_segment.vmaddr.wrapping_add(offset_in_image)
+    }
+
+    /// The offset of the bytes at `addresses` from the image's header in its file, in an image whose header the loader put at `header_address`. `None` unless one segment maps all of them from the file.
+    pub fn file_offset_of(
+        header_address: usize,
+        ncmds: u32,
+        commands: &[u8],
+        addresses: core::ops::Range<usize>,
+    ) -> Option<u64> {
+        if addresses.is_empty() {
+            return None;
+        }
+        let mut segments = segments(ncmds, commands);
+        // The loader wants the segments in the order of the file, so none before this one maps bytes of it.
+        let header_segment = segments.by_ref().find(maps_header)?;
+        let start = linked_address(header_address, &header_segment, addresses.start);
+        let length = (addresses.end - addresses.start) as u64;
+        core::iter::once(header_segment)
+            .chain(segments)
+            .find_map(|segment| {
+                let offset = start.checked_sub(segment.vmaddr)?;
+                let end = offset.checked_add(length)?;
+                if end > segment.filesize.min(segment.vmsize) {
+                    return None;
+                }
+                segment.fileoff.checked_add(offset)
+            })
+    }
+
+    /// The executable of this process. dyld's image 0 is not always that one: it puts the libraries of `DYLD_INSERT_LIBRARIES` in front.
+    #[cfg(target_os = "macos")]
+    pub mod main_executable {
+        use super::{mach_header_64, segment_command_64};
+
+        unsafe extern "C" {
+            /// The linker's name for the header of the executable it links. It is mapped read-only for the life of the process, so reading it is safe.
+            #[link_name = "_mh_execute_header"]
+            safe static HEADER: mach_header_64;
+        }
+
+        pub fn header() -> &'static mach_header_64 {
+            &HEADER
+        }
+
+        pub fn load_commands() -> &'static [u8] {
+            let header = &raw const HEADER;
+            // SAFETY: `sizeofcmds` bytes of load commands follow the header in the same mapped segment.
+            unsafe {
+                core::slice::from_raw_parts(header.add(1).cast::<u8>(), HEADER.sizeofcmds as usize)
+            }
+        }
+
+        fn header_address() -> usize {
+            (&raw const HEADER).addr()
+        }
+
+        fn header_segment() -> Option<segment_command_64> {
+            super::segments(HEADER.ncmds, load_commands()).find(super::maps_header)
+        }
+
+        /// The address that the linker gave the header.
+        pub fn linked_header_address() -> Option<u64> {
+            Some(header_segment()?.vmaddr)
+        }
+
+        /// The offset of the bytes at `addresses` from the executable's header in its file, which is the offset in the file unless the file is universal. `None` unless one segment maps all of them from the file.
+        pub fn file_offset_of(addresses: core::ops::Range<usize>) -> Option<u64> {
+            super::file_offset_of(header_address(), HEADER.ncmds, load_commands(), addresses)
+        }
+
+        /// The offset of `address` from the start of the executable's code, or `None` if the address isn't in the code.
+        pub fn offset_in_code(address: usize) -> Option<u64> {
+            let linked = super::linked_address(header_address(), &header_segment()?, address);
+            super::offset_in_code(HEADER.ncmds, load_commands(), linked)
+        }
+
+        /// The path that dyld loaded the executable from. Not for a signal handler: `dladdr` can take dyld's lock.
+        pub fn path() -> Option<&'static bun_core::ZStr> {
+            let mut info: libc::Dl_info = bun_core::ffi::zeroed();
+            // SAFETY: `dladdr` does not read through the address, and `info` is live.
+            let found = unsafe { libc::dladdr((&raw const HEADER).cast(), &raw mut info) };
+            if found == 0 || info.dli_fname.is_null() {
+                return None;
+            }
+            // SAFETY: dyld keeps the NUL-terminated path of the executable for the life of the process.
+            Some(unsafe { bun_core::ZStr::from_c_ptr(info.dli_fname) })
+        }
     }
 }
 

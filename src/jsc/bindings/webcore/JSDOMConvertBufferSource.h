@@ -123,28 +123,6 @@ template<> struct JSConverter<IDLArrayBuffer> {
     }
 };
 
-template<> struct Converter<IDLDataView> : DefaultConverter<IDLDataView> {
-    using WrapperType = JSC::JSDataView;
-    using ReturnType = RefPtr<JSC::DataView>;
-
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        return Detail::BufferSourceConverter<IDLDataView, Detail::BufferSourceConverterAllowSharedMode::Disallow>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
-    }
-};
-
-template<> struct JSConverter<IDLDataView> {
-    static constexpr bool needsState = true;
-    static constexpr bool needsGlobalObject = true;
-
-    template<typename U>
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
-    {
-        return toJS(&lexicalGlobalObject, &globalObject, Detail::getPtrOrRef(value));
-    }
-};
-
 template<> struct Converter<IDLUint8Array> : DefaultConverter<IDLUint8Array> {
     using WrapperType = JSC::JSUint8Array;
     using ReturnType = RefPtr<JSC::Uint8Array>;

@@ -76,3 +76,52 @@ describe("path.win32.matchesGlob(path, glob)", () => {
     expect(path.win32.matchesGlob(pathname, glob)).toBeFalse();
   });
 });
+
+// Node 24 minimatch semantics, including per-adapter separator and cache isolation.
+describe("Node minimatch parity", () => {
+  it.each([
+    ["src/server/main.ts", "{src,extensions}/**/!(*.test|*.test-support|*.e2e|*.e2e.test|*.live.test).ts", true, true],
+    [
+      "src/server/main.test.ts",
+      "{src,extensions}/**/!(*.test|*.test-support|*.e2e|*.e2e.test|*.live.test).ts",
+      false,
+      false,
+    ],
+    [
+      "extensions/example/index.live.test.ts",
+      "{src,extensions}/**/!(*.test|*.test-support|*.e2e|*.e2e.test|*.live.test).ts",
+      false,
+      false,
+    ],
+    ["src/main.ts", "src/**/!(*.test).ts", true, true],
+    ["foo.js", "!(*.ts)", true, true],
+    ["foo.ts", "!(*.ts)", false, false],
+    ["foo.test.ts", "!(*.test).ts", false, false],
+    ["foo.ts", "!(*.test).ts", true, true],
+    ["foo.bar.ts", "!(foo|bar).ts", true, true],
+    ["foo.ts", "!(foo|bar).ts", false, false],
+    ["a/b.ts", "!(a)/*.ts", false, false],
+    ["b/b.ts", "!(a)/*.ts", true, true],
+    ["web/src/styles/./base.css", "web/src/styles/base.css", true, true],
+    ["web/src/tmp/../styles/base.css", "web/src/styles/*.css", true, true],
+    ["web/src/styles/base.css", "web/src/./styles/*.css", true, true],
+    ["web/src/styles/base.css", "web/src/tmp/../styles/*.css", true, true],
+    ["a/../x.ts", "*.ts", true, true],
+    ["a/./b/../x.ts", "a/*.ts", true, true],
+    ["src/.hidden.ts", "src/*.ts", false, false],
+    ["!foo", "!foo", true, true],
+    ["#foo", "#foo", true, true],
+    ["a\\b.ts", "a/*.ts", false, true],
+    ["a\\.\\b.ts", "a\\*.ts", false, true],
+    ["C:\\src\\tmp\\..\\main.ts", "C:/src/*.ts", false, true],
+    ["//host/share/foo.ts", "//host/share/*.ts", true, true],
+    ["", "", true, true],
+    ["./", "*", false, false],
+    ["a/b/", "a/**", true, true],
+    ["aaa.js", "@(a|+(a)).js", true, true],
+  ])("matches %s against %s", (pathname, pattern, posix, win32) => {
+    expect(path.posix.matchesGlob(pathname, pattern)).toBe(posix);
+    expect(path.win32.matchesGlob(pathname, pattern)).toBe(win32);
+    expect(path.posix.matchesGlob(pathname, pattern)).toBe(posix);
+  });
+});

@@ -302,8 +302,6 @@ pub struct ResolvedConfig {
     pub processor: Option<Box<[u8]>>,
     /// Where to load the processor from, if the config is an `eslint.config.js`.
     pub processor_location: Option<Arc<js_plugin::Processor>>,
-    /// The name of `languageOptions.parser`, if one is configured.
-    pub parser_name: Option<Box<[u8]>>,
     /// True if one of the plugins is eslint-plugin-html. Loading it patches ESLint's `Linter` to extract the scripts
     /// from an HTML file.
     pub changes_linter: bool,

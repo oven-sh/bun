@@ -1,12 +1,14 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, nodeExeAtLeast, tempDir, tmpdirSync } from "harness";
+import nodeFetch from "node-fetch";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
-import { finished as finishedP } from "node:stream/promises";
+import { finished as finishedP, pipeline as pipelineP } from "node:stream/promises";
 import { join } from "path";
+import { request as undiciRequest } from "undici";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -1253,6 +1255,271 @@ describe("webstreams adapters (Node v26 sync)", () => {
     await promise;
 
     expect(chunks).toEqual(expected);
+  });
+
+  // Node ends the Readable when destroy() cancels a read of the web stream that waits. With no read waiting, the
+  // premature close stays. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L688-L690
+  const fromWebDestroyFixture = join(import.meta.dir, "readable-from-web-destroy-fixture.js");
+  const fromWebDestroyExpected = `read() waits, destroy()
+  always: locked=true | close | finished=ok source.cancel(null) ended=true
+for await waits, destroy()
+  always: resolves [] | close | finished=ok source.cancel(null) ended=true
+for await took a chunk and waits, destroy()
+  always: resolves [3] | close | finished=ok source.cancel(null) ended=true
+for await and destroy() in one tick
+  always: resolves [] | close | finished=ok source.cancel(null) ended=true
+toArray() waits, destroy()
+  always: resolves [] | close | finished=ok source.cancel(null) ended=true
+'data' listener, a read waits, destroy()
+  always: end close | finished=ok source.cancel(null) ended=true
+'data' listener took a chunk, a read waits, destroy()
+  always: data:3 end close | finished=ok source.cancel(null) ended=true
+'data' listener, encoding utf8, half a character is held, a read waits, destroy()
+  always: data:U+FFFD end close | finished=ok source.cancel(null) ended=true
+pipe(dest), a read waits, destroy()
+  always: end close | finished=ok source.cancel(null) ended=true dest.finished=true
+pipe(dest), encoding utf8, half a character is held, a read waits, destroy()
+  always: dest.write:U+FFFD end close | finished=ok source.cancel(null) ended=true dest.finished=true
+pipeline(r, dest), a read waits, destroy()
+  always: end close | finished=ok source.cancel(null) ended=true dest.finished=true pipeline=ok
+pipeline(r, dest, { end: false }), a read waits, destroy()
+  always: end close | finished=ok source.cancel(null) ended=true dest.finished=false pipeline=ok
+new Response(r).arrayBuffer() took a chunk, a read waits, destroy()
+  always: resolves 3 | close | finished=ok source.cancel(null) ended=true
+read() waits, the source enqueues null, destroy()
+  promise job, nextTick, setImmediate: close | finished=ok source.cancel(null) ended=true
+  promise job over a bytes source, nextTick over a bytes source, setImmediate over a bytes source: enqueue(null) throws | close | finished=ok source.cancel(null) ended=true
+read() waits, destroy(error)
+  always: error:boom close | finished=boom source.cancel(boom) ended=true
+for await waits, destroy(error)
+  always: rejects boom | error:boom close | finished=boom source.cancel(boom) ended=true
+'data' listener, encoding utf8, half a character is held, a read waits, destroy(error)
+  always: data:U+FFFD error:boom close | finished=boom source.cancel(boom) ended=true
+pipe(dest), encoding utf8, half a character is held, a read waits, destroy(error)
+  always: dest.write:U+FFFD error:boom close | finished=boom source.cancel(boom) ended=true dest.finished=false
+read() waits, the source closes, destroy()
+  always: close | finished=ok source.cancel() ended=true
+TransformStream: read() waits, destroy()
+  always: close | finished=ok source.cancel() ended=true
+tee() branch: 'data' listener, a read waits, destroy()
+  always: end | finished=ok source.cancel() ended=true
+'data' listener, pull() of the source calls destroy()
+  always: end close | finished=ok source.cancel(null) ended=true
+a chunk is buffered, the next read waits, destroy()
+  always: buffered=3 | close | finished=ERR_STREAM_PREMATURE_CLOSE source.cancel(null) ended=true
+Duplex.from(r) with a 'data' listener, a read waits, destroy()
+  always: close | finished=ok source.cancel(null) ended=true duplex=never
+for await over Duplex.from(r) waits, destroy()
+  always: never | close | finished=ok source.cancel(null) ended=true
+pipeline(Duplex.from(r), dest), a read waits, destroy()
+  always: close | finished=ok source.cancel(null) ended=true dest.finished=false pipeline=never
+read() waits, destroy(), then pipeline(r, dest) after 'close'
+  always: close | finished=ok source.cancel(null) ended=true dest.finished=false pipeline=never
+destroy() before the first read
+  always: close | finished=ERR_STREAM_PREMATURE_CLOSE source.cancel(null) ended=false
+resume() and destroy() in one tick
+  always: close | finished=ERR_STREAM_PREMATURE_CLOSE source.cancel(null) ended=false
+destroy() in a 'data' listener
+  always: data:3 close | finished=ERR_STREAM_PREMATURE_CLOSE source.cancel(null) ended=false
+a chunk is queued, read() and destroy() in one tick
+  always: close | finished=ERR_STREAM_PREMATURE_CLOSE source.cancel(null) ended=false
+read() waits, the source has a chunk, destroy()
+  always: close | finished=ERR_STREAM_PREMATURE_CLOSE source.cancel(null) ended=false
+`;
+  for (const [name, runtime] of [
+    ["bun", bunExe()],
+    // v26.3.0 and v26.12.1 print this text. They differ in when the EOF arrives, which the fixture leaves out.
+    ["node", nodeExeAtLeast("26.3.0")],
+  ]) {
+    it.skipIf(!runtime)(
+      `Readable.fromWeb: destroy() ends a stream whose read waits, as node does (${name})`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [runtime, fromWebDestroyFixture],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: fromWebDestroyExpected, stderr: "", exitCode: 0 });
+      },
+    );
+  }
+
+  // Node has no direct streams. They follow the default ones.
+  it("Readable.fromWeb(direct stream): destroy() ends a stream whose read waits", async () => {
+    const r = Readable.fromWeb(new ReadableStream({ type: "direct", pull: () => new Promise(() => {}) }));
+    r.read();
+    r.destroy();
+    expect(await finishedP(r)).toBeUndefined();
+    expect(r._readableState.ended).toBe(true);
+  });
+
+  // A pipeline() that hangs must fail the test at once, not at the timeout of the runner.
+  const outcomeOf = async pipelined => {
+    const turns = (async () => {
+      for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+      return "never settles";
+    })();
+    return Promise.race([
+      pipelined.then(
+        () => "resolves",
+        error => error.code,
+      ),
+      turns,
+    ]);
+  };
+  // pull() runs inside the first read(), closes the source and destroys the Readable that reads it.
+  const closedAndDestroyedByPull = async () => {
+    const ctx = {};
+    const web = new ReadableStream(
+      {
+        pull(controller) {
+          controller.close();
+          ctx.r.destroy();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    // Once the source has started, read() calls pull() before it returns.
+    await new Promise(resolve => setImmediate(resolve));
+    ctx.r = Readable.fromWeb(web);
+    ctx.dest = new Writable({ write: (chunk, encoding, callback) => callback() });
+    return ctx;
+  };
+
+  // The EOF of this read comes after the callback of destroy(), so 'end' can no longer precede 'close'. To push it
+  // would leave pipeline() waiting for that 'end' for good, as Node before v26.9.0 does.
+  it("Readable.fromWeb: pipeline() settles when pull() closes the source and then destroys the Readable", async () => {
+    const { r, dest } = await closedAndDestroyedByPull();
+    expect({ outcome: await outcomeOf(pipelineP(r, dest)), destDestroyed: dest.destroyed }).toEqual({
+      outcome: "ERR_STREAM_PREMATURE_CLOSE",
+      destDestroyed: true,
+    });
+  });
+
+  // Node from v26.9.0 on pushes the EOF inside close(), so 'end' comes first and the pipeline completes.
+  it.todo(
+    "Readable.fromWeb: pipeline() resolves when pull() closes the source and then destroys the Readable",
+    async () => {
+      const { r, dest } = await closedAndDestroyedByPull();
+      expect(await outcomeOf(pipelineP(r, dest))).toBe("resolves");
+    },
+  );
+
+  // A stream that has its EOF and closes before 'end' never emits 'end', and pipeline() ends its destination on
+  // 'end'. So it never calls back, as in Node, which pushes the same EOF. Node never calls back in the second row
+  // either: there Bun's resume() still runs on a destroyed stream, and a destination that drains before the EOF
+  // arrives gets 'end'.
+  it.each([
+    ["after the Readable closed", "never settles"],
+    ["in the tick of destroy()", "resolves"],
+  ])(
+    "Readable.fromWeb: pipeline() whose destination holds a write when destroy() runs, the write released %s",
+    async (when, outcome) => {
+      let pulls = 0;
+      const nextReadWaits = Promise.withResolvers();
+      const web = new ReadableStream(
+        {
+          pull(controller) {
+            if (pulls++ === 0) controller.enqueue(new Uint8Array(8));
+            else nextReadWaits.resolve();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const r = Readable.fromWeb(web);
+      const heldWrite = Promise.withResolvers();
+      const dest = new Writable({
+        highWaterMark: 1,
+        write: (chunk, encoding, callback) => heldWrite.resolve(callback),
+      });
+      const pipelined = pipelineP(r, dest);
+      const release = await heldWrite.promise;
+      await nextReadWaits.promise;
+      const flowing = r.readableFlowing;
+      const closed = new Promise(resolve => r.once("close", resolve));
+      r.destroy();
+      if (when === "after the Readable closed") await closed;
+      release();
+      expect({ flowing, outcome: await outcomeOf(pipelined) }).toEqual({ flowing: false, outcome });
+    },
+  );
+
+  // One chunk, then every read of the source waits.
+  const oneChunkThenWaits = () => {
+    let pulls = 0;
+    const nextReadWaits = Promise.withResolvers();
+    const web = new ReadableStream(
+      {
+        pull(controller) {
+          if (pulls++ === 0) controller.enqueue(new TextEncoder().encode("partial"));
+          else nextReadWaits.resolve();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { r: Readable.fromWeb(web), nextReadWaits: nextReadWaits.promise };
+  };
+
+  // Bun's own sinks read a Node stream through its async iterator, so the end of that stream is the end of the body.
+  it.each([
+    ["destroy()", undefined, "resolves partial"],
+    ["destroy(error)", new Error("stop"), "rejects"],
+  ])("Bun.serve: a Readable.fromWeb() body that stops with %s", async (_, error, outcome) => {
+    const { r, nextReadWaits } = oneChunkThenWaits();
+    r.on("error", () => {});
+    await using server = Bun.serve({ port: 0, development: false, fetch: () => new Response(r) });
+    const response = await fetch(server.url);
+    await nextReadWaits;
+    r.destroy(error);
+    const body = await response.text().then(
+      text => `resolves ${text}`,
+      () => "rejects",
+    );
+    expect(body).toBe(outcome);
+  });
+
+  it("Bun.write: a Readable.fromWeb() body that stops with destroy() gives the bytes so far", async () => {
+    using dir = tempDir("fromweb-destroy", {});
+    const file = join(String(dir), "body");
+    const { r, nextReadWaits } = oneChunkThenWaits();
+    const written = Bun.write(file, new Response(r));
+    await nextReadWaits;
+    r.destroy();
+    expect({ written: await written, content: await Bun.file(file).text() }).toEqual({
+      written: 7,
+      content: "partial",
+    });
+  });
+
+  // The node-fetch and undici bodies use the class of Readable.fromWeb(), but in Node they are plain Readables:
+  // node-fetch reports ERR_STREAM_PREMATURE_CLOSE here too, and undici reports UND_ERR_ABORTED.
+  it.each([
+    ["node-fetch", async url => (await nodeFetch(url)).body],
+    ["undici", async url => (await undiciRequest(url)).body],
+  ])("a %s body does not end when destroy() cancels a read that waits", async (_, bodyOf) => {
+    // The head of a response, and never a byte of its body.
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+        },
+      },
+    });
+    const body = await bodyOf(`http://127.0.0.1:${server.port}/`);
+    const events = [];
+    body.on("end", () => events.push("end"));
+    body.read();
+    body.destroy();
+    const error = await finishedP(body).catch(error => error);
+    expect({ code: error?.code, events, ended: body._readableState.ended }).toEqual({
+      code: "ERR_STREAM_PREMATURE_CLOSE",
+      events: [],
+      ended: false,
+    });
   });
 
   // Upstream: v26 Writable.toWeb wraps (Shared)ArrayBuffer chunks in a

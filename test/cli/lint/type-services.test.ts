@@ -93,6 +93,29 @@ test.concurrent("the inner part of a dotted namespace is a namespace whatever it
   expect(exitCode).toBe(0);
 });
 
+// Widening `{ kind: "b" }` next to `{ kind: "a", reason: "x" }` gives it a `reason?: undefined` property. It's made
+// from the sibling, so it's `readonly` in an `as const` table, whichever table the checker widened first.
+test.concurrent(
+  "a readonly table stays readonly after a mutable table with the same keys on the same checker",
+  async () => {
+    const { errors, exitCode } = await lint(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, strict: true, module: "esnext", moduleResolution: "bundler", noEmit: true },
+        }),
+        "tables.ts":
+          "declare function each<T>(rows: readonly T[]): (run: (row: T) => void) => void;\n" +
+          "declare function eachConst<const T>(rows: readonly T[]): (run: (row: T) => void) => void;\n" +
+          'each([{ kind: "a", reason: "x" }, { kind: "b" }])((row): void => { void row; });\n' +
+          'eachConst([{ kind: "a", reason: "x" }, { kind: "b" }] as const)((row): void => { void row; });\n',
+      },
+      [...rule("prefer-readonly-parameter-types"), "--threads", "1", "tables.ts"],
+    );
+    expect(errors).toEqual(["3:52 Parameter should be a read only type."]);
+    expect(exitCode).toBe(1);
+  },
+);
+
 describe("`export *` from a package that the file also requires, and that has other types for `require`", () => {
   const names = Array.from({ length: 12 }, (_, i) => `dual-${i + 1}`);
   const files = {

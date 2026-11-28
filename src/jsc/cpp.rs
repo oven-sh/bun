@@ -10,10 +10,9 @@
 //! (so the C++ ThrowScope dtor's `simulateThrow()` is satisfied by the Rust-side scope's
 //! `exception()` query under `BUN_JSC_validateExceptionChecks=1`), asserts the
 //! return-sentinel/exception-state biconditional, and converts to
-//! [`JsResult`](crate::JsResult). `nothrow` functions are re-exported as raw `extern "C"`.
+//! [`JsResult`](crate::JsResult). `nothrow` functions get no scope.
 //!
-//! Generated wrappers use raw-pointer parameter types verbatim from the C++ signature
-//! (`*mut JSGlobalObject`, `*const u8`, …) so they compose with whatever Rust-side
+//! Handles and `[[ZIG_NONNULL]]` pointers are references; other pointers stay raw, to fit whatever Rust-side
 //! newtype the caller has in hand; the per-type ergonomic shims live next to the
 //! type (`JSValue::get`, `JSPromise::resolve`, …) and delegate here.
 #![allow(

@@ -575,21 +575,19 @@ impl DevServer {
     pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
         server: &crate::server::NewServer<SSL, DEBUG>,
+        app: &mut uws::NewApp<SSL>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
         // The server has its routes now; the scan of the pages ran before it had them.
         self.report_pages_hidden_by_server_routes();
-        let app = server.app().unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.
         macro_rules! route {
-            ($add:ident($($method:expr)?), $pattern:expr, $id:expr) => {{
-                // SAFETY: `app` is set before `set_routes` (server init path)
-                // and outlives it; the borrow is statement-scoped.
-                unsafe { &mut *app }.$add($($method,)? $pattern, dev_route_tramp::<SSL, { $id }>, dev);
-            }};
+            ($add:ident($($method:expr)?), $pattern:expr, $id:expr) => {
+                app.$add($($method,)? $pattern, dev_route_tramp::<SSL, { $id }>, dev)
+            };
         }
 
         route!(
@@ -619,8 +617,7 @@ impl DevServer {
         );
         route!(any(), INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
-        // SAFETY: see `route!` — statement-scoped reborrow of the live app.
-        unsafe { &mut *app }.ws::<Self, HmrSocket>(
+        app.ws::<Self, HmrSocket>(
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
             dev,
             0,

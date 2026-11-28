@@ -107,15 +107,10 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 
 extern "C" BunString BakeProdLoad(void* perThreadData, const BunString* a);
 
-extern "C" bool BakeGlobalObject__isBakeGlobalObject(JSC::JSGlobalObject* global)
-{
-    return global->JSCell::inherits(Bake::GlobalObject::info());
-}
-
 extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
 {
-    Bake::GlobalObject* bake = uncheckedDowncast<Bake::GlobalObject>(global);
-    return bake->m_perThreadData;
+    Bake::GlobalObject* bake = dynamicDowncast<Bake::GlobalObject>(*global);
+    return bake ? bake->m_perThreadData : nullptr;
 }
 
 JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,

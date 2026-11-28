@@ -164,10 +164,10 @@ impl Response {
 
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(*mut UD, u64, &mut Response) -> bool + Copy + 'static,
+        H: Fn(*mut UD, u64, AnyResponse) -> bool + Copy + 'static,
     {
         let handler: server::OnWritable<Host> = |stream, offset, ud| {
-            ud.is_null() || thunk::zst::<H>()(ud.cast(), offset, Self::of(stream))
+            ud.is_null() || thunk::zst::<H>()(ud.cast(), offset, AnyResponse::H2(Self::of(stream)))
         };
         self.stream().set_on_writable(Some(handler), ud.cast())
     }
@@ -176,15 +176,15 @@ impl Response {
     }
     fn on_event<UD, H>(stream: &Rc<Stream>, ud: *mut c_void)
     where
-        H: Fn(*mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
         if !ud.is_null() {
-            thunk::zst::<H>()(ud.cast(), Self::of(stream));
+            thunk::zst::<H>()(ud.cast(), AnyResponse::H2(Self::of(stream)));
         }
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(*mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
         (self.stream()).set_on_aborted(Some(Self::on_event::<UD, H>), ud.cast())
     }
@@ -193,7 +193,7 @@ impl Response {
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(*mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
         (self.stream()).set_on_timeout(Some(Self::on_event::<UD, H>), ud.cast())
     }
@@ -202,11 +202,11 @@ impl Response {
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut UD, AnyResponse, &[u8], bool) + Copy + 'static,
     {
         let handler: server::OnData<Host> = |stream, chunk, is_last, ud| {
             if !ud.is_null() {
-                thunk::zst::<H>()(ud.cast(), Self::of(stream), chunk, is_last);
+                thunk::zst::<H>()(ud.cast(), AnyResponse::H2(Self::of(stream)), chunk, is_last);
             }
         };
         self.stream().set_on_data(Some(handler), ud.cast())
@@ -498,14 +498,11 @@ impl App {
         where
             H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: `Routes::dispatch` passes `res`/`req` as live disjoint handles,
-            // `p` is the registered `*mut UD` (non-null by route registration).
-            unsafe {
-                let Some(ud) = p.cast::<UD>().as_ref() else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
-            }
+            // SAFETY: `p` is the registered `*mut UD` (non-null by route registration).
+            let Some(ud) = (unsafe { p.cast::<UD>().as_ref() }) else {
+                return;
+            };
+            thunk::zst::<H>()(ud, Request::opaque_mut(req), Response::opaque_mut(res));
         }
         self.routes().add(method, pattern, cb::<UD, H>, ud.cast());
     }

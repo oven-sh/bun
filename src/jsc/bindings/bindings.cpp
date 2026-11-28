@@ -3170,7 +3170,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
     return JSValue::encode(object);
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject([[ZIG_NONNULL]] const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -6365,7 +6365,7 @@ restart:
     properties.releaseData();
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, false);
 }
@@ -6486,7 +6486,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     properties.releaseData();
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
 }
@@ -6751,7 +6751,7 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue timeValue)
     return number;
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, const BunString* str)
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, [[ZIG_NONNULL]] const BunString* str)
 {
     auto& vm = JSC::getVM(globalObject);
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
@@ -6764,7 +6764,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSG
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobalObject* globalObject, double ms, bool localTime,
-    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+    [[ZIG_NONNULL]] int* year, [[ZIG_NONNULL]] int* month, [[ZIG_NONNULL]] int* day, [[ZIG_NONNULL]] int* hour, [[ZIG_NONNULL]] int* minute, [[ZIG_NONNULL]] int* second, [[ZIG_NONNULL]] int* weekday)
 {
     auto& vm = JSC::getVM(globalObject);
     auto dt = vm.dateCache.msToGregorianDateTime(ms, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
@@ -6777,7 +6777,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobal
     *weekday = dt.weekDay();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__resolveTimeZoneID(const uint8_t* name, size_t len)
+extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__resolveTimeZoneID([[ZIG_NONNULL]] const uint8_t* name, size_t len)
 {
     auto id = JSC::intlResolveTimeZoneID(StringView { std::span(reinterpret_cast<const Latin1Character*>(name), len) });
     return id ? *id : std::numeric_limits<uint32_t>::max();
@@ -6819,7 +6819,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
 // Materializes a date/time literal as a Temporal object through the same
 // paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
 // `bun_ast::E::TomlDateTimeKind` discriminants.
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateTimeLiteral(JSC::JSGlobalObject* globalObject, const uint8_t* text, size_t len, uint8_t kind)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateTimeLiteral(JSC::JSGlobalObject* globalObject, [[ZIG_NONNULL]] const uint8_t* text, size_t len, uint8_t kind)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -7549,13 +7549,13 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLine
 // REPL evaluation function - evaluates JavaScript code in the global scope
 // Returns the result value, or undefined if an exception was thrown
 // If an exception is thrown, the exception value is stored in *exception
-extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__REPL__evaluate(
     JSC::JSGlobalObject* globalObject,
-    const unsigned char* sourcePtr,
+    [[ZIG_NONNULL]] const unsigned char* sourcePtr,
     size_t sourceLen,
-    const unsigned char* filenamePtr,
+    [[ZIG_NONNULL]] const unsigned char* filenamePtr,
     size_t filenameLen,
-    JSC::EncodedJSValue* exception)
+    [[ZIG_NONNULL]] JSC::EncodedJSValue* exception)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -7602,10 +7602,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
 
 // REPL completion function - gets completions for a partial property access
 // Returns an array of completion strings, or undefined if no completions
-extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue targetValue,
-    const unsigned char* prefixPtr,
+    [[ZIG_NONNULL]] const unsigned char* prefixPtr,
     size_t prefixLen)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -7676,10 +7676,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 }
 
 // One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
-extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__REPL__getProperty(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue baseValue,
-    const unsigned char* namePtr,
+    [[ZIG_NONNULL]] const unsigned char* namePtr,
     size_t nameLen)
 {
     auto& vm = JSC::getVM(globalObject);

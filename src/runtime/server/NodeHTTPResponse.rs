@@ -520,13 +520,11 @@ impl NodeHTTPResponse {
             return Ok(None);
         };
 
-        let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
-        // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
-        let ws_ref = unsafe { &*ws };
+        let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket).payload_guard();
 
         // If it fails, this is still an HTTP response, and uws still calls it.
         let Some(raw_response) = self.writer().filter(|raw| raw.write_handshake(handshake)) else {
-            ws_ref.discard_unopened();
+            ws.discard_unopened();
             return Ok(None);
         };
         let armed_reader = self.armed_this_value.get();
@@ -540,7 +538,7 @@ impl NodeHTTPResponse {
         // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
         // request so a stopped server doesn't drain if this is its last connection.
         let pending = PendingRequest::new(server);
-        raw_response.become_web_socket(ws, deflate_params, &context);
+        raw_response.become_web_socket(ws.as_ptr(), deflate_params, &context);
         drop(pending);
         self.bytes_written
             .set(self.bytes_written.get().saturating_add(handshake.len()));
@@ -550,7 +548,7 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
         }
 
-        Ok(ws_ref.js_value())
+        Ok(ws.js_value())
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {

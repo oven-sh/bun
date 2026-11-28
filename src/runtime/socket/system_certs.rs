@@ -186,8 +186,7 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
     };
 
     // The default store reads this file too, so `cert_files` reads it for both.
-    // SAFETY: BoringSSL returns a static NUL-terminated string.
-    let default_file = unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_file()) };
+    let default_file = ZStr::from_cstr(boringssl::X509_get_default_cert_file().to_cstr());
     cert_files::read_openssl_default_cert_file(default_file, |pem, stat| {
         if let Some(stat) = stat {
             loader.first_visit(stat);
@@ -212,10 +211,7 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
         }
         None => {
             #[cfg(not(target_os = "android"))]
-            // SAFETY: BoringSSL returns a static NUL-terminated string.
-            loader.load_directory(
-                unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_dir()) }.as_bytes(),
-            );
+            loader.load_directory(boringssl::X509_get_default_cert_dir().to_cstr().to_bytes());
             for dir in WELL_KNOWN_DIRS {
                 loader.load_directory(dir);
             }

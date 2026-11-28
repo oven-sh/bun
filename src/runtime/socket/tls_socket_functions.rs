@@ -18,20 +18,10 @@ use crate::api::bun_x509 as X509;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_upper_case_globals)]
 pub(super) mod ffi {
-    use super::boringssl::{OwnedX509Store, SSL, SSL_CTX, SSL_SESSION, X509, struct_stack_st_X509};
-    use core::ffi::{c_char, c_int, c_uint, c_void};
-
-    // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
-    // genuine caller precondition; the rest are re-declared `safe fn` below.
-    pub(crate) use super::boringssl::SSL_set_tlsext_host_name;
-
-    // Opaque handles missing from boringssl_sys.
-    bun_opaque::opaque_ffi! {
-        pub(crate) struct SSL_CIPHER;
-    }
+    use super::boringssl::{OwnedX509Store, SSL, SSL_CIPHER, SSL_CTX, SSL_SESSION, X509};
+    use core::ffi::{c_char, c_int, c_void};
 
     // ssl.h
-    pub(crate) const TLSEXT_NAMETYPE_host_name: c_int = 0;
     pub(crate) const TLS1_2_VERSION: u16 = 0x0303;
     pub(crate) use super::boringssl::TLS1_3_VERSION;
 
@@ -53,22 +43,11 @@ pub(super) mod ffi {
     pub(crate) const NID_X25519: c_int = 948;
     pub(crate) const NID_kx_ecdhe: c_int = 952;
 
-    // ffi-safe-fn: every handle type below (`SSL`, `X509`, `SSL_CIPHER`,
-    // `SSL_SESSION`) is an `opaque_ffi!` ZST — `&T`
-    // dereferences zero bytes, carries no `dereferenceable`/`noalias`
-    // obligation, and the `UnsafeCell` body lets BoringSSL mutate through a
-    // shared ref. Functions whose *only* pointer arguments are such handles
-    // (plus by-value scalars) therefore have no caller-side precondition and
-    // are declared `safe fn`; callers convert raw pointers via the
-    // const-asserted `T::opaque_ref` (panics on null, which every call site
-    // already guards). Functions that additionally take raw out-params /
-    // caller-owned buffers / +1 ownership pointers keep `unsafe fn`.
     unsafe extern "C" {
         // ── SSL session/handshake info ───────────────────────────────────
-        pub(crate) safe fn SSL_get_version(ssl: &SSL) -> *const c_char;
+        pub(crate) safe fn SSL_get_version(ssl: &SSL) -> bun_core::CStrRef<'static>;
         pub(crate) safe fn SSL_version(ssl: &SSL) -> c_int;
         pub(crate) safe fn SSL_get_negotiated_group(ssl: &SSL) -> c_int;
-        pub(crate) safe fn SSL_get_certificate(ssl: &SSL) -> *mut X509;
         pub(crate) safe fn SSL_set_max_send_fragment(ssl: &SSL, max_send_fragment: usize) -> c_int;
         // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
         pub(crate) fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
@@ -78,9 +57,6 @@ pub(super) mod ffi {
             buf: *mut c_void,
             count: usize,
         ) -> usize;
-        // Opaque-ZST `&SSL` + `Option<&mut _>` out-params (NPO ⇒ ABI-identical
-        // to nullable `*mut _`); BoringSSL writes each non-null slot in place.
-        // No remaining caller-side precondition.
         pub(crate) safe fn SSL_get_shared_sigalgs(
             ssl: &SSL,
             idx: c_int,
@@ -111,60 +87,18 @@ pub(super) mod ffi {
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
         pub(crate) safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
-        // Both handles are opaque-ZST refs (`UnsafeCell` body); BoringSSL bumps
-        // `session`'s refcount internally — no caller-side precondition.
-        pub(crate) safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
-        // Opaque-ZST `&SSL_SESSION` + `&mut` out-params (FFI-nonnull) ⇒ no
-        // caller-side precondition; BoringSSL writes a borrowed ptr/len pair.
         pub(crate) safe fn SSL_SESSION_get0_ticket(
             session: &SSL_SESSION,
             out_ticket: &mut *const u8,
             out_len: &mut usize,
         );
-        // SAFETY (unsafe fn): `pp` (when non-null) must point to a buffer with capacity for the encoded session.
-        pub(crate) fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
 
         // ── SSL_CIPHER ────────────────────────────────────────────────────
-        pub(crate) safe fn SSL_get_current_cipher(ssl: &SSL) -> *const SSL_CIPHER;
-        pub(crate) safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> *const c_char;
-        pub(crate) safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> *const c_char;
         pub(crate) safe fn SSL_CIPHER_get_min_version(cipher: &SSL_CIPHER) -> u16;
         pub(crate) safe fn SSL_CIPHER_get_kx_nid(cipher: &SSL_CIPHER) -> c_int;
 
-        // ── X509 ─────────────────────────────────────────────────────────
-        // ffi-safe-fn: BoringSSL's `sk_value` takes `const OPENSSL_STACK *` and
-        // returns the element at `i` (or NULL if out-of-range — see
-        // `crypto/stack/stack.cc`); it never dereferences past the header it
-        // owns. The Rust `struct_stack_st_X509` is an `opaque_ffi!` ZST, so
-        // `&struct_stack_st_X509` is a thin non-null pointer with no
-        // `dereferenceable`/`noalias` obligation, and the `*mut X509` return is
-        // a mut→mut narrowing of the C `void *` slot. No remaining caller-side
-        // precondition; convert via `struct_stack_st_X509::opaque_ref` (panics
-        // on null, which both call sites already guard).
-        #[link_name = "sk_value"]
-        pub(crate) safe fn sk_X509_value(sk: &struct_stack_st_X509, i: usize) -> *mut X509;
+        pub(crate) safe fn OBJ_nid2sn(nid: c_int) -> Option<bun_core::CStrRef<'static>>;
 
-        // ── OBJ ──────────────────────────────────────────────────────────
-        // Pure NID→short-name lookup; takes a by-value int and returns a
-        // pointer into BoringSSL's static OID table (or null). No pointer
-        // precondition, so declare `safe fn`.
-        pub(crate) safe fn OBJ_nid2sn(nid: c_int) -> *const c_char;
-
-        // ── Safe re-declarations of upstream `bun_boringssl_sys` symbols ──
-        // Upstream still takes raw `*const/*mut SSL`; the opaque-ZST `&SSL`
-        // (UnsafeCell body, zero-byte deref, no `noalias`) plus by-value
-        // scalars / `&mut` out-params leave no caller-side precondition, so
-        // declare them `safe fn` here and route callers through
-        // `SSL::opaque_ref` (panics on null, which every site already guards).
-        pub(crate) safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
-        pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
-        pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
-        pub(crate) safe fn SSL_get0_alpn_selected(
-            ssl: &SSL,
-            out_data: &mut *const u8,
-            out_len: &mut c_uint,
-        );
-        pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         /// Save/restore the per-loop BIO routing state around in-handshake JS
         /// callbacks (defined in usockets' openssl.cpp). The caller's snapshot
         /// array must have exactly `us_internal_ssl_loop_state_slots()`
@@ -172,34 +106,15 @@ pub(super) mod ffi {
         pub(crate) safe fn us_internal_ssl_loop_state_slots() -> c_int;
         pub(crate) safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out: *mut *mut c_void);
         pub(crate) safe fn us_internal_ssl_loop_state_restore(saved: *mut *mut c_void);
-        pub(crate) safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
-        pub(crate) safe fn SSL_set_renegotiate_mode(
-            ssl: &SSL,
-            mode: super::boringssl::ssl_renegotiate_mode_t,
-        );
-        pub(crate) safe fn SSL_set_verify(
-            ssl: &SSL,
-            mode: c_int,
-            callback: super::boringssl::SSL_verify_cb,
-        );
         pub(crate) safe fn SSL_is_server(ssl: &SSL) -> c_int;
-        // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
-        // it verbatim, never derefs) ⇒ no caller-side precondition.
-        pub(crate) safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
-        // Returns the borrowed parent CTX (always non-null for a live `SSL*`).
-        pub(crate) safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
         // Swaps the cert/key/chain (and session-related state) this connection
         // serves to those of `ctx`; takes its own reference to `ctx`.
         pub(crate) fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
         // Apply `ctx`'s leaf certificate / private key / extra chain directly
         // to the connection - SSL_set_SSL_CTX alone does not retarget the
         // certificate once ClientHello processing has reached ALPN selection.
-        pub(crate) fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
         pub(crate) fn SSL_CTX_get0_privatekey(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_use_certificate(
-            ssl: *mut SSL,
-            x509: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
+        pub(crate) fn SSL_use_certificate(ssl: *mut SSL, x509: *mut X509) -> core::ffi::c_int;
         pub(crate) fn SSL_use_PrivateKey(
             ssl: *mut SSL,
             pkey: *mut core::ffi::c_void,
@@ -212,23 +127,6 @@ pub(super) mod ffi {
             ssl: *mut SSL,
             chain: *mut core::ffi::c_void,
         ) -> core::ffi::c_int;
-        // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
-        // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
-        // opaque `*mut c_void` ⇒ no caller-side precondition.
-        pub(crate) safe fn SSL_CTX_set_alpn_select_cb(
-            ctx: &SSL_CTX,
-            cb: Option<
-                unsafe extern "C" fn(
-                    ssl: *mut SSL,
-                    out: *mut *const u8,
-                    out_len: *mut u8,
-                    in_: *const u8,
-                    in_len: c_uint,
-                    arg: *mut c_void,
-                ) -> c_int,
-            >,
-            arg: *mut c_void,
-        );
         // The process-wide default root store.
         pub(crate) safe fn us_get_shared_default_ca_store() -> Option<OwnedX509Store>;
         pub(crate) safe fn us_ssl_ctx_has_user_ca(ctx: &SSL_CTX) -> c_int;
@@ -241,20 +139,15 @@ use crate::node::StringOrBuffer;
 
 impl TLSSocket {
     pub(crate) fn get_servername(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::UNDEFINED);
         };
 
-        let servername = ffi::SSL_get_servername(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-            ffi::TLSEXT_NAMETYPE_host_name,
-        );
-        if servername.is_null() {
-            return Ok(JSValue::UNDEFINED);
+        match ssl.servername() {
+            Some(servername) => bun_string_jsc::create_utf8_for_js(cx.global(), servername),
+            None => Ok(JSValue::UNDEFINED),
         }
-        // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
-        let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-        bun_string_jsc::create_utf8_for_js(cx.global(), slice)
     }
 
     pub(crate) fn set_servername(&self, cx: &mut JsScope<'_>, name: JsLocal<'_>) -> JsResult<()> {
@@ -279,56 +172,51 @@ impl TLSSocket {
 
         let host = self.server_name.get().as_deref().unwrap();
         if !host.is_empty() {
-            let Some(ssl_ptr) = self.socket.get().ssl() else {
+            // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+            let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
                 return Ok(());
             };
 
-            if ffi::SSL_is_init_finished(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
+            if boringssl::SSL_is_init_finished(ssl) != 0 {
                 // match node.js exceptions
                 return Err(global.throw(format_args!("Already started.")));
             }
-            let host_z = bun_core::ZBox::from_bytes(host);
-            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-            unsafe { ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+            ssl.set_servername(&bun_core::ZBox::from_bytes(host));
         }
 
         Ok(())
     }
 
     pub(crate) fn get_peer_x509_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::UNDEFINED);
         };
-        match boringssl::SSL::opaque_ref(ssl_ptr).peer_certificate() {
+        match ssl.peer_certificate() {
             Some(cert) => X509::to_js_object(cert, cx.global()),
             None => Ok(JSValue::UNDEFINED),
         }
     }
 
     pub(crate) fn get_x509_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
-        if !cert.is_null() {
-            let cert = boringssl::OwnedX509::retain(boringssl::X509::opaque_ref(cert));
-            return X509::to_js_object(cert, cx.global());
+        match boringssl::SSL_get_certificate(ssl) {
+            Some(cert) => X509::to_js_object(boringssl::OwnedX509::retain(cert), cx.global()),
+            None => Ok(JSValue::UNDEFINED),
         }
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn get_tls_version(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         jsc::mark_binding();
 
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::NULL);
         };
-        let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
-        if version.is_null() {
-            return Ok(JSValue::NULL);
-        }
-        // SAFETY: SSL_get_version returns a static NUL-terminated C string.
-        let slice = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
+        let slice = ffi::SSL_get_version(ssl).to_cstr().to_bytes();
         if slice.is_empty() {
             return Ok(JSValue::NULL);
         }
@@ -352,14 +240,12 @@ impl TLSSocket {
             return Ok(JSValue::FALSE);
         }
 
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::FALSE);
         };
         Ok(JSValue::from(
-            ffi::SSL_set_max_send_fragment(
-                boringssl::SSL::opaque_ref(ssl_ptr),
-                usize::try_from(size).expect("int cast"),
-            ) == 1,
+            ffi::SSL_set_max_send_fragment(ssl, usize::try_from(size).expect("int cast")) == 1,
         ))
     }
 
@@ -384,74 +270,62 @@ impl TLSSocket {
         let Some(ssl_ptr) = self.socket.get().ssl() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let ssl = unsafe { &mut *ssl_ptr };
+        let is_server_ssl = ffi::SSL_is_server(ssl) != 0;
 
         if abbreviated {
-            if is_server_ssl
-                && let Some(mut cert) = boringssl::SSL::opaque_ref(ssl_ptr).peer_certificate()
-            {
-                return X509::to_js(&mut cert, global);
+            if is_server_ssl && let Some(cert) = ssl.peer_certificate() {
+                return X509::to_js(&cert, global);
             }
 
-            let cert_chain = ffi::SSL_get_peer_cert_chain(boringssl::SSL::opaque_ref(ssl_ptr));
-            if cert_chain.is_null() {
-                return Ok(JSValue::UNDEFINED);
-            }
-            let cert =
-                ffi::sk_X509_value(boringssl::struct_stack_st_X509::opaque_ref(cert_chain), 0);
-            if cert.is_null() {
-                return Ok(JSValue::UNDEFINED);
-            }
-            return X509::to_js(boringssl::X509::opaque_mut(cert), global);
+            return match ssl.peer_leaf_certificate() {
+                Some(cert) => X509::to_js(cert, global),
+                None => Ok(JSValue::UNDEFINED),
+            };
         }
 
-        let mut cert = if is_server_ssl {
-            boringssl::SSL::opaque_ref(ssl_ptr).peer_certificate()
+        let cert = if is_server_ssl {
+            ssl.peer_certificate()
         } else {
             None
         };
 
-        let cert_chain = ffi::SSL_get_peer_cert_chain(boringssl::SSL::opaque_ref(ssl_ptr));
-        let first_cert: *mut boringssl::X509 = if let Some(cert) = cert.as_deref_mut() {
-            cert
-        } else if !cert_chain.is_null() {
-            ffi::sk_X509_value(boringssl::struct_stack_st_X509::opaque_ref(cert_chain), 0)
-        } else {
-            core::ptr::null_mut()
-        };
-
-        if first_cert.is_null() {
+        let cert_chain = boringssl::SSL_get_peer_cert_chain(ssl);
+        let Some(first_cert) = cert
+            .as_deref()
+            .or_else(|| boringssl::sk_X509_value(cert_chain?, 0))
+        else {
             return Ok(JSValue::UNDEFINED);
-        }
+        };
 
         // The detailed form links each certificate to its issuer through
         // `issuerCertificate`, the way Node's getPeerCertificate(true) does.
         // SSL_get_peer_cert_chain includes the leaf on the client side but not on
         // the server side, where the peer certificate above is the leaf instead.
-        let first_obj = X509::to_js(boringssl::X509::opaque_mut(first_cert), global)?;
+        let first_obj = X509::to_js(first_cert, global)?;
         // Link each certificate to its predecessor immediately so every object in
         // the chain is reachable from the stack-rooted `first_obj` before the next
         // `X509::to_js` allocation can trigger a GC - a heap-backed Vec<JSValue>
         // is not stack-scanned.
         let mut prev_obj: JSValue = first_obj;
-        let mut last_sent = boringssl::X509::opaque_ref(first_cert);
-        if !cert_chain.is_null() {
+        let mut last_sent = first_cert;
+        if let Some(chain) = cert_chain {
             // The certificates the peer sent are candidates: each link is the one that
             // X509_check_issued accepts, like Node's AddIssuerChainToObject
             // (src/crypto/crypto_common.cc).
-            let chain = boringssl::struct_stack_st_X509::opaque_ref(cert_chain);
-            let mut candidates: Vec<*mut boringssl::X509> = (usize::from(cert.is_none())..)
-                .map(|i| ffi::sk_X509_value(chain, i))
-                .take_while(|candidate| !candidate.is_null())
+            let mut candidates: Vec<&boringssl::X509> = (usize::from(cert.is_none())..)
+                .map_while(|i| boringssl::sk_X509_value(chain, i))
                 .collect();
-            while let Some(i) = candidates.iter().position(|&candidate| {
-                ffi::X509_check_issued(boringssl::X509::opaque_ref(candidate), last_sent) == 0
-            }) {
+            while let Some(i) = candidates
+                .iter()
+                .position(|candidate| ffi::X509_check_issued(candidate, last_sent) == 0)
+            {
                 let issuer = candidates.remove(i);
-                let obj = X509::to_js(boringssl::X509::opaque_mut(issuer), global)?;
+                let obj = X509::to_js(issuer, global)?;
                 prev_obj.put(global, b"issuerCertificate", obj);
                 prev_obj = obj;
-                last_sent = boringssl::X509::opaque_ref(issuer);
+                last_sent = issuer;
             }
         }
 
@@ -459,9 +333,8 @@ impl TLSSocket {
         // certificate is reached, the way Node's getPeerCertificate(true) walks
         // X509_STORE_CTX_get1_issuer to surface the root that completed
         // verification even though the peer never sent it.
-        let ssl_ctx = boringssl::SSL_CTX::opaque_ref(ffi::SSL_get_SSL_CTX(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-        ));
+        // SAFETY: `ssl` holds a reference to its context. Asking for it frees nothing that `ssl` has lent.
+        let ssl_ctx = unsafe { &*boringssl::SSL_get_SSL_CTX(ssl_ptr) };
         let ctx_store = boringssl::SSL_CTX_get_cert_store(ssl_ctx);
         // Without `ca`, Node looks in the bundled roots.
         let shared_store = if ctx_store.is_none() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
@@ -480,10 +353,10 @@ impl TLSSocket {
             if ffi::X509_check_issued(subject, subject) == 0 {
                 break;
             }
-            let Some(mut issuer) = lookup.issuer_of(subject) else {
+            let Some(issuer) = lookup.issuer_of(subject) else {
                 break;
             };
-            let obj = X509::to_js(&mut issuer, global)?;
+            let obj = X509::to_js(&issuer, global)?;
             prev_obj.put(global, b"issuerCertificate", obj);
             prev_obj = obj;
             last_found = Some(issuer);
@@ -498,15 +371,14 @@ impl TLSSocket {
     }
 
     pub(crate) fn get_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
-
-        if !cert.is_null() {
-            return X509::to_js(boringssl::X509::opaque_mut(cert), cx.global());
+        match boringssl::SSL_get_certificate(ssl) {
+            Some(cert) => X509::to_js(cert, cx.global()),
+            None => Ok(JSValue::UNDEFINED),
         }
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn get_tls_finished_message(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -546,19 +418,12 @@ impl TLSSocket {
         jsc::mark_binding();
         let global = cx.global();
 
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::NULL);
         };
 
-        let nsig = ffi::SSL_get_shared_sigalgs(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-            0,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
+        let nsig = ffi::SSL_get_shared_sigalgs(ssl, 0, None, None, None, None, None);
 
         let array = JSValue::create_empty_array(global, usize::try_from(nsig).expect("int cast"))?;
 
@@ -568,7 +433,7 @@ impl TLSSocket {
             let sig_with_md: &[u8];
 
             ffi::SSL_get_shared_sigalgs(
-                boringssl::SSL::opaque_ref(ssl_ptr),
+                ssl,
                 c_int::try_from(i).expect("int cast"),
                 Some(&mut sign_nid),
                 Some(&mut hash_nid),
@@ -605,20 +470,16 @@ impl TLSSocket {
                     sig_with_md = b"gost2012_512";
                 }
                 _ => {
-                    let sn_str = ffi::OBJ_nid2sn(sign_nid);
-                    if !sn_str.is_null() {
-                        // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                        sig_with_md = unsafe { bun_core::ffi::cstr(sn_str) }.to_bytes();
+                    if let Some(sn_str) = ffi::OBJ_nid2sn(sign_nid) {
+                        sig_with_md = sn_str.to_cstr().to_bytes();
                     } else {
                         sig_with_md = b"UNDEF";
                     }
                 }
             }
 
-            let hash_str = ffi::OBJ_nid2sn(hash_nid);
-            if !hash_str.is_null() {
-                // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                let hash_slice = unsafe { bun_core::ffi::cstr(hash_str) }.to_bytes();
+            if let Some(hash_str) = ffi::OBJ_nid2sn(hash_nid) {
+                let hash_slice = hash_str.to_cstr().to_bytes();
                 let mut buffer: Vec<u8> =
                     Vec::with_capacity(sig_with_md.len() + hash_slice.len() + 1);
                 buffer.extend_from_slice(sig_with_md);
@@ -645,45 +506,27 @@ impl TLSSocket {
 
     pub(crate) fn get_cipher(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
+        let cipher = boringssl::SSL_get_current_cipher(ssl);
         let result = JSValue::create_empty_object(global, 0);
 
-        if cipher.is_null() {
+        let Some(cipher) = cipher else {
             result.put(global, b"name", JSValue::NULL);
             result.put(global, b"standardName", JSValue::NULL);
             result.put(global, b"version", JSValue::NULL);
             return Ok(result);
-        }
-        let cipher = ffi::SSL_CIPHER::opaque_ref(cipher);
+        };
 
-        let name = ffi::SSL_CIPHER_get_name(cipher);
-        if name.is_null() {
-            result.put(global, b"name", JSValue::NULL);
-        } else {
-            // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
-            let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-            result.put(
-                global,
-                b"name",
-                bun_string_jsc::create_utf8_for_js(global, s)?,
-            );
-        }
-
-        let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
-        if standard_name.is_null() {
-            result.put(global, b"standardName", JSValue::NULL);
-        } else {
-            // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
-            let s = unsafe { bun_core::ffi::cstr(standard_name) }.to_bytes();
-            result.put(
-                global,
-                b"standardName",
-                bun_string_jsc::create_utf8_for_js(global, s)?,
-            );
-        }
+        let to_js = |name: bun_core::CStrRef<'_>| {
+            bun_string_jsc::create_utf8_for_js(global, name.to_cstr().to_bytes())
+        };
+        let name = to_js(boringssl::SSL_CIPHER_get_name(cipher))?;
+        result.put(global, b"name", name);
+        let standard_name = to_js(boringssl::SSL_CIPHER_standard_name(cipher))?;
+        result.put(global, b"standardName", standard_name);
 
         // BoringSSL's SSL_CIPHER_get_version is a constant; these are OpenSSL's per-cipher minimum versions.
         let version = match ffi::SSL_CIPHER_get_min_version(cipher) {
@@ -748,18 +591,18 @@ impl TLSSocket {
         let Some(ssl_ptr) = self.socket.get().ssl() else {
             return Ok(());
         };
-        // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
+        // SAFETY: an attached socket is open; `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
         unsafe {
             let ctx = &sc.ctx;
             ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
             // A client keeps no session id context (see `us_internal_ssl_attach`).
-            if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            if ffi::SSL_is_server(&*ssl_ptr) == 0 {
                 boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
             }
             // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
             // processing has reached ALPN selection, and Node supports calling
             // setKeyCert from ALPNCallback - apply the identity directly.
-            let leaf = ffi::SSL_CTX_get0_certificate(ctx.as_ptr().cast());
+            let leaf = boringssl::SSL_CTX_get0_certificate(ctx.as_ptr());
             let pkey = ffi::SSL_CTX_get0_privatekey(ctx.as_ptr().cast());
             if !leaf.is_null() && !pkey.is_null() {
                 let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
@@ -862,10 +705,10 @@ impl TLSSocket {
 
     pub(crate) fn get_ephemeral_key_info(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::NULL);
         };
-        let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
         if ffi::SSL_is_server(ssl) != 0 {
             return Ok(JSValue::NULL);
         }
@@ -892,24 +735,15 @@ impl TLSSocket {
 
     pub(crate) fn get_alpn_protocol(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        let mut alpn_proto: *const u8 = core::ptr::null();
-        let mut alpn_proto_len: u32 = 0;
-
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(JSValue::FALSE);
         };
 
-        ffi::SSL_get0_alpn_selected(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-            &mut alpn_proto,
-            &mut alpn_proto_len,
-        );
-        if alpn_proto.is_null() || alpn_proto_len == 0 {
+        let slice = ssl.alpn_selected();
+        if slice.is_empty() {
             return Ok(JSValue::FALSE);
         }
-
-        // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
-        let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
         if strings::eql(slice, b"h2") {
             return Ok(global.common_strings().alpn_h2());
         }
@@ -934,28 +768,15 @@ impl TLSSocket {
     }
 
     pub(crate) fn get_session(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
-            return Ok(JSValue::UNDEFINED);
+        // SAFETY: an attached socket is open, and nothing replaces the session before it is encoded.
+        let session = unsafe {
+            let ssl = self.socket.get().ssl_mut();
+            ssl.and_then(|ssl| self.current_session(ssl).as_ref())
         };
-        let session = self.current_session(boringssl::SSL::opaque_ref(ssl_ptr));
-        if session.is_null() {
-            return Ok(JSValue::UNDEFINED);
+        match session.and_then(boringssl::SSL_SESSION::to_der) {
+            Some(der) => jsc::ArrayBuffer::create_buffer(cx.global(), &der),
+            None => Ok(JSValue::UNDEFINED),
         }
-        // SAFETY: session is a non-null *mut SSL_SESSION; null out-param requests only the encoded size.
-        let size = unsafe { ffi::i2d_SSL_SESSION(session, core::ptr::null_mut()) };
-        if size <= 0 {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let buffer_size = usize::try_from(size).expect("int cast");
-        let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-        let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
-
-        // SAFETY: session is a non-null *mut SSL_SESSION; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-        let result_size = unsafe { ffi::i2d_SSL_SESSION(session, &raw mut buffer_ptr) };
-        debug_assert!(result_size == size);
-        Ok(buffer)
     }
 
     pub(crate) fn set_session(&self, cx: &mut JsScope<'_>, session: JsLocal<'_>) -> JsResult<()> {
@@ -966,10 +787,10 @@ impl TLSSocket {
 
         if let Some(sb) = StringOrBuffer::from_js(global, session.to_js())? {
             let session_slice = sb.slice();
-            let Some(ssl_ptr) = self.socket.get().ssl() else {
+            // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+            let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
                 return Ok(());
             };
-            let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
             // SSL_set_session abort()s once the ClientHello is built, which is when the client random is filled.
             let mut client_random = [0u8; 32];
             ffi::SSL_get_client_random(ssl, &mut client_random, 32);
@@ -977,7 +798,7 @@ impl TLSSocket {
                 return Ok(());
             }
             if let Some(session) = boringssl::OwnedSslSession::from_der(session_slice) {
-                ffi::SSL_set_session(ssl, &session);
+                boringssl::SSL_set_session(ssl, &session);
             }
             Ok(())
         } else {
@@ -988,21 +809,18 @@ impl TLSSocket {
     }
 
     pub(crate) fn get_tls_ticket(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and nothing replaces the session before the copy below.
+        let session = unsafe {
+            let ssl = self.socket.get().ssl_mut();
+            ssl.and_then(|ssl| self.current_session(ssl).as_ref())
+        };
+        let Some(session) = session else {
             return Ok(JSValue::UNDEFINED);
         };
-        let session = self.current_session(boringssl::SSL::opaque_ref(ssl_ptr));
-        if session.is_null() {
-            return Ok(JSValue::UNDEFINED);
-        }
         let mut ticket: *const u8 = core::ptr::null();
         let mut length: usize = 0;
         // The pointer is only valid while the connection is in use so we need to copy it
-        ffi::SSL_SESSION_get0_ticket(
-            boringssl::SSL_SESSION::opaque_ref(session),
-            &mut ticket,
-            &mut length,
-        );
+        ffi::SSL_SESSION_get0_ticket(session, &mut ticket, &mut length);
 
         if ticket.is_null() || length == 0 {
             return Ok(JSValue::UNDEFINED);
@@ -1015,31 +833,31 @@ impl TLSSocket {
 
     pub(crate) fn renegotiate(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
         let global = cx.global();
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(());
         };
         boringssl::ERR_clear_error();
-        if ffi::SSL_renegotiate(boringssl::SSL::opaque_ref(ssl_ptr)) != 1 {
+        if boringssl::SSL_renegotiate(ssl) != 1 {
             return Err(global.throw_value(get_ssl_exception(global, b"SSL_renegotiate error")));
         }
         Ok(())
     }
 
     pub(crate) fn disable_renegotiation(&self) {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return;
         };
-        ffi::SSL_set_renegotiate_mode(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-            boringssl::ssl_renegotiate_never,
-        );
+        boringssl::SSL_set_renegotiate_mode(ssl, boringssl::ssl_renegotiate_never);
     }
 
     pub(crate) fn is_session_reused(&self) -> bool {
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return false;
         };
-        ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1
+        ffi::SSL_session_reused(ssl) == 1
     }
 
     pub(crate) fn set_verify_mode(
@@ -1079,16 +897,16 @@ impl TLSSocket {
                 reject_unauthorized && (!acts_as_server || request_cert),
             );
         });
-        let Some(ssl_ptr) = self.socket.get().ssl() else {
+        // SAFETY: an attached socket is open, and `ssl` is last used before JS runs or the socket closes.
+        let Some(ssl) = (unsafe { self.socket.get().ssl_mut() }) else {
             return Ok(());
         };
-        let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
-        if !acts_as_server && reject_unauthorized && ffi::SSL_is_init_finished(ssl) == 0 {
+        if !acts_as_server && reject_unauthorized && boringssl::SSL_is_init_finished(ssl) == 0 {
             // The same in-handshake chain check as for a client that rejects from the start.
             self.socket.get().set_inline_reject();
         } else {
             // we always allow and check the SSL certificate after the handshake or renegotiation
-            ffi::SSL_set_verify(ssl, verify_mode, Some(always_allow_ssl_verify_callback));
+            boringssl::SSL_set_verify(ssl, verify_mode, Some(always_allow_ssl_verify_callback));
         }
         Ok(())
     }
@@ -1096,7 +914,7 @@ impl TLSSocket {
 
 extern "C" fn always_allow_ssl_verify_callback(
     _preverify_ok: c_int,
-    _ctx: *mut boringssl::X509_STORE_CTX,
+    _ctx: &boringssl::X509_STORE_CTX,
 ) -> c_int {
     1
 }
@@ -1117,40 +935,34 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             written += 1;
         }
 
-        let reason_ptr = boringssl::ERR_reason_error_string(ssl_error);
-        if !reason_ptr.is_null() {
-            // SAFETY: ERR_reason_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { bun_core::ffi::cstr(reason_ptr) }.to_bytes();
-            if reason.is_empty() {
-                break;
-            }
+        // SAFETY: nothing calls `strerror` before `reason` is copied.
+        let reason = unsafe { boringssl::ERR_reason_error_string(ssl_error) };
+        let reason = reason.to_cstr().to_bytes();
+        if reason.is_empty() {
+            break;
+        }
+        output_buf[written..written + reason.len()].copy_from_slice(reason);
+        written += reason.len();
+
+        let reason = boringssl::ERR_func_error_string(ssl_error)
+            .to_cstr()
+            .to_bytes();
+        if !reason.is_empty() {
+            const VIA: &[u8] = b" via ";
+            output_buf[written..written + VIA.len()].copy_from_slice(VIA);
+            written += VIA.len();
             output_buf[written..written + reason.len()].copy_from_slice(reason);
             written += reason.len();
         }
 
-        let func_ptr = boringssl::ERR_func_error_string(ssl_error);
-        if !func_ptr.is_null() {
-            // SAFETY: ERR_func_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { bun_core::ffi::cstr(func_ptr) }.to_bytes();
-            if !reason.is_empty() {
-                const VIA: &[u8] = b" via ";
-                output_buf[written..written + VIA.len()].copy_from_slice(VIA);
-                written += VIA.len();
-                output_buf[written..written + reason.len()].copy_from_slice(reason);
-                written += reason.len();
-            }
-        }
-
-        let lib_ptr = boringssl::ERR_lib_error_string(ssl_error);
-        if !lib_ptr.is_null() {
-            // SAFETY: ERR_lib_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { bun_core::ffi::cstr(lib_ptr) }.to_bytes();
-            if !reason.is_empty() {
-                output_buf[written] = b' ';
-                written += 1;
-                output_buf[written..written + reason.len()].copy_from_slice(reason);
-                written += reason.len();
-            }
+        let reason = boringssl::ERR_lib_error_string(ssl_error)
+            .to_cstr()
+            .to_bytes();
+        if !reason.is_empty() {
+            output_buf[written] = b' ';
+            written += 1;
+            output_buf[written..written + reason.len()].copy_from_slice(reason);
+            written += reason.len();
         }
 
         ssl_error = boringssl::ERR_get_error();

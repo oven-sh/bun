@@ -24,45 +24,12 @@ use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt, identifier};
+use bun_jsc::cpp::{Bun__REPL__evaluate, Bun__REPL__getCompletions, Bun__REPL__getProperty};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_paths as path;
 use bun_sys::{self as sys, Fd};
-
-// ============================================================================
-// C++ Bindings
-// ============================================================================
-
-// NOTE: `globalObject` is `*const` here because `JSGlobalObject` is an opaque
-// FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
-// Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
-// reference would violate provenance. This matches the convention in
-// `src/jsc/lib.rs`.
-unsafe extern "C" {
-    fn Bun__REPL__evaluate(
-        globalObject: *const JSGlobalObject,
-        sourcePtr: *const u8,
-        sourceLen: usize,
-        filenamePtr: *const u8,
-        filenameLen: usize,
-        exception: *mut JSValue,
-    ) -> JSValue;
-
-    fn Bun__REPL__getCompletions(
-        globalObject: *const JSGlobalObject,
-        targetValue: JSValue,
-        prefixPtr: *const u8,
-        prefixLen: usize,
-    ) -> JSValue;
-
-    fn Bun__REPL__getProperty(
-        globalObject: *const JSGlobalObject,
-        baseValue: JSValue,
-        namePtr: *const u8,
-        nameLen: usize,
-    ) -> JSValue;
-}
 
 // ============================================================================
 // Constants
@@ -1429,9 +1396,7 @@ impl<'a> Repl<'a> {
             if !identifier::is_identifier(part) || current.is_undefined_or_null() {
                 return JSValue::UNDEFINED;
             }
-            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `part` borrows
-            // from `expr`, which outlives the call.
-            current = unsafe { Bun__REPL__getProperty(global, current, part.as_ptr(), part.len()) };
+            current = Bun__REPL__getProperty(global, current, part);
         }
         current
     }
@@ -1473,11 +1438,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; the prefix ptr/len
-        // pair is valid for the duration of the call.
-        let completions = unsafe {
-            Bun__REPL__getCompletions(global, target, ctx.prefix.as_ptr(), ctx.prefix.len())
-        };
+        let completions = Bun__REPL__getCompletions(global, target, ctx.prefix);
 
         let mut best_len: usize = usize::MAX;
 
@@ -1589,18 +1550,7 @@ impl<'a> Repl<'a> {
 
         // Evaluate the transformed code
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
+        let result = Bun__REPL__evaluate(global, &transformed_code, b"[repl]", &mut exception);
 
         // Check for exception
         if !exception.is_undefined() && !exception.is_null() {
@@ -1728,18 +1678,7 @@ impl<'a> Repl<'a> {
         let Some(transformed_code) = self.transform_for_repl(code) else {
             // Transform failed — fall back to raw evaluation for the error message
             let mut exception: JSValue = JSValue::UNDEFINED;
-            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-            // are valid for the duration of the call; `exception` is a stack local.
-            unsafe {
-                let _ = Bun__REPL__evaluate(
-                    global,
-                    code.as_ptr(),
-                    code.len(),
-                    b"[eval]".as_ptr(),
-                    b"[eval]".len(),
-                    &raw mut exception,
-                );
-            }
+            let _ = Bun__REPL__evaluate(global, code, b"[eval]", &mut exception);
             if !exception.is_undefined() && !exception.is_null() {
                 self.print_js_error_to(exception, Output::error_writer(), stderr_colors);
             }
@@ -1747,18 +1686,7 @@ impl<'a> Repl<'a> {
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
-                b"[eval]".as_ptr(),
-                b"[eval]".len(),
-                &raw mut exception,
-            )
-        };
+        let result = Bun__REPL__evaluate(global, &transformed_code, b"[eval]", &mut exception);
 
         if !exception.is_undefined() && !exception.is_null() {
             self.print_js_error_to(exception, Output::error_writer(), stderr_colors);
@@ -1836,18 +1764,7 @@ impl<'a> Repl<'a> {
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                code.as_ptr(),
-                code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
+        let result = Bun__REPL__evaluate(global, code, b"[repl]", &mut exception);
 
         if !exception.is_undefined() && !exception.is_null() {
             self.set_last_error(exception);
@@ -1885,18 +1802,7 @@ impl<'a> Repl<'a> {
         };
 
         let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
+        let result = Bun__REPL__evaluate(global, &transformed_code, b"[repl]", &mut exception);
 
         if !exception.is_undefined() && !exception.is_null() {
             self.set_last_error(exception);
@@ -2672,7 +2578,6 @@ impl<'a> Repl<'a> {
             return;
         };
         let word_start = ctx.prefix_start;
-        let prefix = ctx.prefix;
 
         let mut target = JSValue::UNDEFINED;
         if !ctx.object_expr.is_empty() {
@@ -2683,10 +2588,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
-        // are valid for the duration of the call.
-        let completions =
-            unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
+        let completions = Bun__REPL__getCompletions(global, target, ctx.prefix);
 
         if completions.is_undefined() || !completions.is_array() {
             self.insert_tab_spaces();

@@ -1582,8 +1582,6 @@ impl FFI {
         let this_value = FFI::default().into_js_wrapper(global);
         let js_object = this_value.to_js();
         let _js_object_guard = js_object.protected();
-        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
-        let lib = unsafe { this_value.payload_ptr().as_ref() };
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1631,6 +1629,7 @@ impl FFI {
             obj.put_may_be_index(global, &key, cb)?;
         }
 
+        let lib = this_value.payload_guard();
         lib.dylib.set(Some(dylib));
         lib.functions.set(symbols);
         js::symbols_value_set_cached(js_object, global, obj);
@@ -1669,8 +1668,6 @@ impl FFI {
         let this_value = FFI::default().into_js_wrapper(global);
         let js_object = this_value.to_js();
         let _js_object_guard = js_object.protected();
-        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
-        let lib = unsafe { this_value.payload_ptr().as_ref() };
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1707,7 +1704,7 @@ impl FFI {
             obj.put_may_be_index(global, &key, cb)?;
         }
 
-        lib.functions.set(symbols);
+        this_value.payload_guard().functions.set(symbols);
         js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
     }

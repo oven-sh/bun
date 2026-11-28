@@ -85,12 +85,13 @@ impl<const SSL: bool> Response<SSL> {
     /// zero-sized type (function item or capture-less closure): the trampoline
     /// is monomorphized over `H` and conjures the ZST inside, so the user
     /// handler is baked in with no runtime storage.
+    /// It gets `*mut U`, never `&mut U`: handlers re-enter code that reaches `U`.
     pub(crate) fn on_writable<U, H>(&mut self, _handler: H, user_data: *mut U)
     where
-        H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
+        H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
     {
         let handler: OnWritable = |res, offset, data| {
-            let res = Self::as_handle(res.as_mut_ptr().cast());
+            let res = Self::res_to_any(res.as_mut_ptr());
             data.is_null() || thunk::zst::<H>()(data.cast(), offset, res)
         };
         self.set_on_writable(handler, user_data.cast());
@@ -98,34 +99,34 @@ impl<const SSL: bool> Response<SSL> {
 
     fn on_event<U, H>(res: &uws_res, user_data: *mut c_void)
     where
-        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
         if !user_data.is_null() {
-            thunk::zst::<H>()(user_data.cast(), Self::as_handle(res.as_mut_ptr().cast()));
+            thunk::zst::<H>()(user_data.cast(), Self::res_to_any(res.as_mut_ptr()));
         }
     }
 
     pub(crate) fn on_aborted<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
         self.set_on_aborted(Self::on_event::<U, H>, optional_data.cast());
     }
 
     pub fn on_timeout<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
         self.set_on_timeout(Self::on_event::<U, H>, optional_data.cast());
     }
 
     pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
-        H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
     {
         let handler: OnData = |res, chunk, is_last, user_data| {
             if !user_data.is_null() {
-                let res = Self::as_handle(res.as_mut_ptr().cast());
+                let res = Self::res_to_any(res.as_mut_ptr());
                 thunk::zst::<H>()(user_data.cast(), res, chunk, is_last);
             }
         };
@@ -202,51 +203,28 @@ macro_rules! any_dispatch {
     };
 }
 
-/// Stamp one ZST adapter per variant and register it via that variant's `$method`.
-/// Each arm is a generic fn *item* monomorphized over `<U, H>`, so it is itself
-/// a ZST satisfying the `$method` bound (`Fn(*mut U, …)`).
-///
-/// Syntax:
-///   any_response_register_cb! {
-///       self, $method, $opt_data;
-///       <U, H: [bounds…]>
-///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
-///   }
-/// - `u` is `*mut U`, never `&mut U`: handlers re-enter code that reaches `U`, and a
-///   `noalias` param lets LLVM fold away the ref they hold across that call.
-/// - `r` is the typed `&mut {TLS,TCP,H3,H2}Response` param; `any` is the
-///   `AnyResponse` re-wrap of `r`. Underscore-prefix either if unused.
-macro_rules! any_response_register_cb {
-    (
-        $self:expr, $method:ident, $opt_data:expr;
-        <$U:ident, $H:ident : [$($bound:tt)*]>
-        |$u:ident $(, $pre:ident : $pre_ty:ty)* ; $r:ident, $any:ident $(, $post:ident : $post_ty:ty)*| -> $ret:ty
-        { $($body:tt)* }
-    ) => {{
-        const { assert!(core::mem::size_of::<$H>() == 0, "handler must be a fn item or capture-less closure") };
-        fn ssl<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TLSResponse $(, $post: $post_ty)*) -> $ret {
-            let $any = AnyResponse::SSL(std::ptr::from_mut($r));
-            $($body)*
-        }
-        fn tcp<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut TCPResponse $(, $post: $post_ty)*) -> $ret {
-            let $any = AnyResponse::TCP(std::ptr::from_mut($r));
-            $($body)*
-        }
-        fn h3<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
-            let $any = AnyResponse::H3(std::ptr::from_mut($r));
-            $($body)*
-        }
-        fn h2<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
-            let $any = AnyResponse::H2(std::ptr::from_mut($r));
-            $($body)*
-        }
+/// For the methods whose handler is told the variant.
+macro_rules! variant_dispatch {
+    ($self:expr, |$r:ident| $body:expr) => {
         match $self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).$method(ssl::<$U, $H>, $opt_data),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).$method(tcp::<$U, $H>, $opt_data),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).$method(h3::<$U, $H>, $opt_data),
-            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).$method(h2::<$U, $H>, $opt_data),
+            AnyResponse::SSL(ptr) => {
+                let $r = TLSResponse::as_handle(ptr);
+                $body
+            }
+            AnyResponse::TCP(ptr) => {
+                let $r = TCPResponse::as_handle(ptr);
+                $body
+            }
+            AnyResponse::H3(ptr) => {
+                let $r = H3Response::as_handle(ptr);
+                $body
+            }
+            AnyResponse::H2(ptr) => {
+                let $r = H2Response::as_handle(ptr);
+                $body
+            }
         }
-    }};
+    };
 }
 
 impl AnyResponse {
@@ -367,15 +345,13 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
 
-    pub fn on_data<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_data<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, &[u8], bool) + Copy + 'static,
     {
-        any_response_register_cb! {
-            self, on_data, optional_data;
-            <U, H: [Fn(*mut U, &[u8], bool) + Copy + 'static]>
-            |u; _r, _any, d: &[u8], l: bool| -> () { thunk::zst::<H>()(u, d, l) }
-        }
+        variant_dispatch!(self, |r| {
+            r.on_data(move |u, _, d, l| handler(u, d, l), optional_data)
+        })
     }
 
     pub fn write_status(self, status: &[u8]) {
@@ -467,37 +443,25 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.prepare_for_sendfile())
     }
 
-    pub fn on_writable<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_writable<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
     {
-        any_response_register_cb! {
-            self, on_writable, optional_data;
-            <U, H: [Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static]>
-            |u, off: u64; r, any| -> bool { thunk::zst::<H>()(u, off, any) }
-        }
+        variant_dispatch!(self, |r| r.on_writable(handler, optional_data))
     }
 
-    pub fn on_timeout<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_timeout<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        any_response_register_cb! {
-            self, on_timeout, optional_data;
-            <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
-            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
-        }
+        variant_dispatch!(self, |r| r.on_timeout(handler, optional_data))
     }
 
-    pub fn on_aborted<U: 'static, H>(self, _handler: H, optional_data: *mut U)
+    pub fn on_aborted<U: 'static, H>(self, handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        any_response_register_cb! {
-            self, on_aborted, optional_data;
-            <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
-            |u; r, any| -> () { thunk::zst::<H>()(u, any) }
-        }
+        variant_dispatch!(self, |r| r.on_aborted(handler, optional_data))
     }
 
     /// The registrant keeps a ref on `owner` until it clears the handler, which gets a ref of its own.

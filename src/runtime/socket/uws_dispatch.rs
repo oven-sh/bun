@@ -261,12 +261,11 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_server_identity(
     s: *mut us_socket_t,
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &mut bun_boringssl_sys::SSL,
 ) -> c_int {
     use bun_boringssl::ServerIdentity::Unchecked;
     use bun_uws_sys::thunk::ExtSlot;
     let s_ref = us_socket_t::opaque_mut(s);
-    let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
             .ext::<NativeRef<true>>()
@@ -302,9 +301,9 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_new_session(
     s: *mut us_socket_t,
-    session: *mut bun_boringssl_sys::SSL_SESSION,
+    session: &bun_boringssl_sys::SSL_SESSION,
 ) -> c_int {
-    use bun_boringssl_sys::{OwnedSslSession, SSL_SESSION};
+    use bun_boringssl_sys::OwnedSslSession;
     let s_ref = us_socket_t::opaque_mut(s);
     match s_ref.kind() {
         SocketKind::HttpClientTls => {
@@ -315,7 +314,6 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             let Some(tls) = s_ref.ext::<NativeRef<true>>().owner_ref() else {
                 return 0;
             };
-            let session = SSL_SESSION::opaque_ref(session);
             tls.latest_session
                 .set(Some(OwnedSslSession::retain(session)));
             1

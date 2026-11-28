@@ -2708,9 +2708,9 @@ extern "C" void Bun__AOT__forEachFirstLoad(JSC::VM* vm, void* context, void (*ea
     });
 }
 
-extern "C" void Bun__AOT__noteFirstLoadInEarlierProcess(JSC::VM* vm, BunAOTBytes path, bool wasSynchronous)
+extern "C" void Bun__AOT__noteFirstLoadInEarlierProcess(JSC::JSGlobalObject* globalObject, BunAOTBytes path, bool wasSynchronous)
 {
-    JSC::AOT::recordFirstLoadFromEarlierProcess(*vm, String::fromUTF8(std::span<const uint8_t> { path.ptr, path.len }), wasSynchronous);
+    JSC::AOT::recordFirstLoadFromEarlierProcess(globalObject->vm(), String::fromUTF8(std::span<const uint8_t> { path.ptr, path.len }), wasSynchronous);
 }
 
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* path)
@@ -2837,7 +2837,7 @@ extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return fa
 extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes, void*, bool (*)(void*, BunAOTBytes)) {}
 extern "C" void Bun__AOT__forEachCountedFile(JSC::VM*, void*, void (*)(void*, BunAOTBytes, const uint64_t*, size_t)) {}
 extern "C" void Bun__AOT__forEachFirstLoad(JSC::VM*, void*, void (*)(void*, BunAOTBytes, bool)) {}
-extern "C" void Bun__AOT__noteFirstLoadInEarlierProcess(JSC::VM*, BunAOTBytes, bool) {}
+extern "C" void Bun__AOT__noteFirstLoadInEarlierProcess(JSC::JSGlobalObject*, BunAOTBytes, bool) {}
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCompiledFileChangedOutOfSight(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }

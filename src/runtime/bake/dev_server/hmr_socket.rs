@@ -2,6 +2,7 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
+use bun_uws_sys::web_socket::Event;
 use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::timer::EventLoopTimerState;
@@ -304,44 +305,38 @@ impl HmrSocket {
 
 impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     #[inline]
-    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
-        // SAFETY: `this` is the live user-data pointer (per trait contract). The dev server closes
-        // its sockets before it goes, and `on_websocket_upgrade` keeps it without borrowing it.
-        unsafe { (*this).on_open(&*(*this).dev, ws) }
-    }
-    #[inline]
-    unsafe fn on_message(
-        this: *mut Self,
-        ws: bun_uws_sys::AnyWebSocket,
-        message: &[u8],
-        _opcode: bun_uws_sys::Opcode,
-    ) {
-        // SAFETY: both are live, see `on_open`. The borrows end with the call, and ask for no more
-        // exclusivity than the HTTP handlers do (see `dev_route_tramp`).
-        if unsafe { (*this).on_message(&mut *(*this).dev, ws, message) }.is_err() {
-            ws.close();
+    unsafe fn on_event(this: *mut Self, ws: AnyWebSocket, event: Event<'_>) {
+        match event {
+            // SAFETY: `this` is the live user-data pointer (per trait contract). The dev server
+            // closes its sockets before it goes, and `on_websocket_upgrade` keeps it without
+            // borrowing it.
+            Event::Open => unsafe { (*this).on_open(&*(*this).dev, ws) },
+            Event::Message(message, _) => {
+                // SAFETY: both are live, see `Open`. The borrows end with the call, and ask for no
+                // more exclusivity than the HTTP handlers do (see `dev_route_tramp`).
+                if unsafe { (*this).on_message(&mut *(*this).dev, ws, message) }.is_err() {
+                    ws.close();
+                }
+            }
+            Event::Close(..) => {
+                // SAFETY: `on_websocket_upgrade` gave up this `Box`, and uWS is done with it. `dev`
+                // is live or null. For its exclusivity, see `Message`.
+                let (dev, socket) = unsafe { ((*this).dev.as_mut(), bun_core::heap::take(this)) };
+                if let Some(dev) = dev {
+                    let removed = dev.active_websocket_connections.remove(&this);
+                    debug_assert!(removed.is_some());
+                    socket.release(dev);
+                }
+            }
+            Event::Drain | Event::Ping(_) | Event::Pong(_) => {}
         }
     }
-    #[inline]
-    unsafe fn on_close(this: *mut Self, _: bun_uws_sys::AnyWebSocket, _: i32, _: &[u8]) {
-        // SAFETY: `on_websocket_upgrade` gave up this `Box`, and uWS is done with it. `dev` is live
-        // or null. For its exclusivity, see `on_message`.
-        let (dev, socket) = unsafe { ((*this).dev.as_mut(), bun_core::heap::take(this)) };
-        if let Some(dev) = dev {
-            let removed = dev.active_websocket_connections.remove(&this);
-            debug_assert!(removed.is_some());
-            socket.release(dev);
-        }
-    }
-    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
-    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
-    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
 }
 
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+        res: &mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,
         upgrade_ctx: &WebSocketUpgradeContext,
         id: usize,
@@ -352,19 +347,15 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // callback's duration. `res.upgrade(..)` synchronously runs `on_open`,
         // which reads the DevServer through the socket's backref, so no
         // `&mut DevServer` may span it — the pre-upgrade borrows below are
-        // scoped to their statements. uWS guarantees `res` is non-null and live
-        // for the upgrade callback (`Response<SSL>` is an opaque handle); every
-        // `&mut *res` below is likewise statement-scoped.
+        // scoped to their statements.
         //
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            host_forbidden(unsafe { &mut *res }.as_any_response());
+            host_forbidden(res.as_any_response());
             return;
         }
         if !is_allowed_dev_origin(req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            origin_forbidden(unsafe { &mut *res }.as_any_response());
+            origin_forbidden(res.as_any_response());
             return;
         }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this));
@@ -375,19 +366,15 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         };
         // `upgrade` ends the HTTP connection, and a stopped server frees `this` with its last one.
         let _pending = PendingRequest::new(server);
-        // SAFETY: `res` is live for this callback (see Note above); `on_open`
-        // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
-        let upgraded = unsafe {
-            (*res).upgrade(
-                dw.cast(),
-                req.header(b"sec-websocket-key").unwrap_or(b""),
-                req.header(b"sec-websocket-protocol").unwrap_or(b""),
-                req.header(b"sec-websocket-extension").unwrap_or(b""),
-                upgrade_ctx,
-            )
-        };
+        let upgraded = res.upgrade(
+            dw.cast(),
+            req.header(b"sec-websocket-key").unwrap_or(b""),
+            req.header(b"sec-websocket-protocol").unwrap_or(b""),
+            req.header(b"sec-websocket-extension").unwrap_or(b""),
+            upgrade_ctx,
+        );
         if !upgraded {
-            // The connection was already closed, so uWS never stored `dw` and `on_close` won't run.
+            // The connection was already closed, so uWS never stored `dw` and `Close` won't come.
             // SAFETY: `this` is live (see above).
             let _ = unsafe { (*this).active_websocket_connections.remove(&dw) };
             // SAFETY: `dw` was allocated above and nothing else owns it.

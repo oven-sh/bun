@@ -167,7 +167,7 @@ bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe);
 
 pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
-    use core::ffi::{c_char, c_int, c_uint, c_void};
+    use core::ffi::{c_int, c_uint, c_void};
     unsafe extern "C" {
         pub safe fn bsd_socket_export_size() -> c_int;
         pub fn bsd_socket_export(
@@ -177,12 +177,12 @@ pub mod socket_transfer {
         ) -> c_int;
         pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
         pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
-        pub fn bsd_create_bound_socket(
-            host: *const c_char,
+        pub safe fn bsd_create_bound_socket(
+            host: bun_core::CStrRef<'_>,
             port: c_int,
             options: c_int,
-            out_port: *mut c_int,
-            error: *mut c_int,
+            out_port: &mut c_int,
+            error: &mut c_int,
         ) -> LIBUS_SOCKET_DESCRIPTOR;
     }
 }

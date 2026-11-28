@@ -21,6 +21,7 @@ use crate::async_socket::{Appended, AsyncSocket, MAX_CORKED_WRITE_LEN};
 use crate::http1::{VACATED_LEN, VACATED_OFFSET, node};
 use crate::response::Response;
 use crate::socket_group::VTable;
+use crate::thunk::OpaqueHandle;
 use crate::{
     CloseCode, InternalLoopData, Loop, Opcode, Request, SendStatus, SocketGroup, SocketKind,
     us_socket_t, uws_res,
@@ -118,7 +119,7 @@ struct Timeouts {
 
 /// User-data type stored on a WebSocket.
 ///
-/// Noalias re-entrancy: the `on_*` methods take `this: *mut Self`,
+/// Noalias re-entrancy: `on_event` takes `this: *mut Self`,
 /// NOT `&mut self`. The handler body re-enters JS (`ws.send()`, `ws.close()`,
 /// promise callbacks…); JS can call back into this same socket via the wrapper
 /// object's `m_ptr`, re-deriving a `&mut Self` and mutating its fields. A live
@@ -130,22 +131,7 @@ pub trait WebSocketHandler: Sized + 'static {
     /// # Safety
     /// `this` is the live `*mut Self` from the socket's user-data slot;
     /// JS-thread only.
-    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket);
-    /// # Safety
-    /// See `on_open`.
-    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode);
-    /// # Safety
-    /// See `on_open`.
-    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket);
-    /// # Safety
-    /// See `on_open`.
-    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
-    /// # Safety
-    /// See `on_open`.
-    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
-    /// # Safety
-    /// See `on_open`.
-    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
+    unsafe fn on_event(this: *mut Self, ws: AnyWebSocket, event: Event<'_>);
 }
 
 /// Server type that handles the HTTP→WS upgrade.
@@ -161,7 +147,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// `id != 0`.
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut Response<SSL>,
+        res: &mut Response<SSL>,
         req: &mut Request,
         context: &WebSocketUpgradeContext,
         id: usize,
@@ -185,8 +171,8 @@ impl UpgradeRoute {
         Self {
             // SAFETY: as it was passed to `App::ws`.
             handler: |this, res, req| unsafe {
-                let server = this.server.cast();
-                Server::on_websocket_upgrade(server, res.cast(), req, &this.context, this.id)
+                let res = Response::as_handle(res.cast());
+                Server::on_websocket_upgrade(this.server.cast(), res, req, &this.context, this.id)
             },
             server,
             context,
@@ -203,7 +189,7 @@ impl UpgradeRoute {
 }
 
 #[derive(Clone, Copy)]
-enum Event<'a> {
+pub enum Event<'a> {
     Open,
     Message(&'a [u8], Opcode),
     Drain,
@@ -215,16 +201,7 @@ enum Event<'a> {
 fn emit<T: WebSocketHandler>(ws: AnyWebSocket, event: Event<'_>) {
     let this = ws.state().user_data.cast::<T>();
     // SAFETY: the upgrade was given a `T`, which lasts until `Close`, the last event.
-    unsafe {
-        match event {
-            Event::Open => T::on_open(this, ws),
-            Event::Message(message, opcode) => T::on_message(this, ws, message, opcode),
-            Event::Drain => T::on_drain(this, ws),
-            Event::Ping(message) => T::on_ping(this, ws, message),
-            Event::Pong(message) => T::on_pong(this, ws, message),
-            Event::Close(code, message) => T::on_close(this, ws, code, message),
-        }
-    }
+    unsafe { T::on_event(this, ws, event) }
 }
 
 /// What an app has for its WebSockets.

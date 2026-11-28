@@ -402,7 +402,7 @@ impl uws_res {
             && let Some(ssl) = self.raw().get_native_handle()
         {
             // SAFETY: the `SSL` of an open socket.
-            return unsafe { SSL_get_shutdown(ssl.cast()) } & SSL_SENT_SHUTDOWN != 0;
+            return SSL_get_shutdown(unsafe { &*ssl.cast() }) & SSL_SENT_SHUTDOWN != 0;
         }
         true
     }

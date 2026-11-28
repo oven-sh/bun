@@ -256,6 +256,32 @@ pub fn sort_vec_unstable_by<T>(items: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -
 /// Reorders `items` in place so that `items[i]` becomes the element that was at `order[i]`,
 /// without a scratch `Vec`; `order` must be a permutation of `0..items.len()` and is consumed.
 pub fn apply_permutation_in_place<T>(items: &mut [T], order: &mut [u32]) {
+    use core::mem::MaybeUninit;
+    /// One copy of the loop per element size rather than per element type.
+    #[inline(never)]
+    fn by_size<U, const N: usize>(items: *mut [MaybeUninit<U>; N], len: usize, order: &mut [u32]) {
+        // SAFETY: the caller's slice, whose elements have this size and alignment; elements are only swapped.
+        permute(
+            unsafe { core::slice::from_raw_parts_mut(items, len) },
+            order,
+        )
+    }
+    macro_rules! dispatch {
+        ($unit:ty: $($n:literal)*) => {
+            if align_of::<T>() == align_of::<$unit>() {
+                $(if size_of::<T>() == $n * size_of::<$unit>() {
+                    return by_size::<$unit, $n>(items.as_mut_ptr().cast(), items.len(), order);
+                })*
+            }
+        };
+    }
+    dispatch!(u64: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40);
+    dispatch!(u32: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16);
+    permute(items, order)
+}
+
+#[inline]
+fn permute<T>(items: &mut [T], order: &mut [u32]) {
     debug_assert_eq!(items.len(), order.len());
     const DONE: u32 = u32::MAX;
     for start in 0..items.len() {

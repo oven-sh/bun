@@ -288,6 +288,8 @@ pub(crate) fn which<'a>(
     if command.len() >= MAX_PATH_BYTES {
         return Err(heap.error(format_args!("bin path is too long")));
     }
+    // What it finds depends on PATH and on every directory in it.
+    bun_jsc::test_input_recorder::mark_current(b"which");
 
     let vm = VirtualMachine::get();
     let path = options
@@ -1205,6 +1207,11 @@ pub(crate) fn alloc_unsafe<'a>(
 
 pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> JsResult<JSValue> {
     let global_this = cx.global();
+    bun_jsc::test_input_recorder::own_read(
+        global_this.bun_vm(),
+        bun_jsc::test_own_reads::Look::Content,
+        path,
+    );
 
     #[cfg(windows)]
     {

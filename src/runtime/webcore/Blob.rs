@@ -357,6 +357,7 @@ pub(crate) trait BlobExt {
         path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
         check_s3: bool,
+        looks: bool,
     ) -> Blob
     where
         Self: Sized;
@@ -1107,11 +1108,20 @@ impl BlobExt for Blob {
         validate_writable_blob(cx.global(), self)?;
 
         let store = self.store().expect("infallible: store present").clone();
-        match &store.data {
+        let own = note_file_write(cx.global(), &store);
+        let removed = match &store.data {
             store::Data::S3(s3) => s3.unlink(store.clone(), &cx, Some(options.to_js())),
             store::Data::File(file) => file.unlink(&cx),
             store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
+        }?;
+        if let Some(own) = own {
+            bun_jsc::test_input_recorder::own_wrote_when_fulfilled(
+                cx.global().bun_vm(),
+                own,
+                removed,
+            );
         }
+        Ok(removed)
     }
 
     // This mostly means 'can it be read?'
@@ -1315,6 +1325,9 @@ impl BlobExt for Blob {
         validate_writable_blob(global_this, self)?;
 
         let store = self.store().expect("infallible: store present").clone();
+        // A writer's writes have no one result to wait for, so their effect never applies: what
+        // the file reads there afterwards stays an input.
+        drop(note_file_write(global_this, &store));
         if self.is_s3() {
             // Borrow `s3` through the
             // cloned `store: RefPtr<Store>` (independent of `self`) so the
@@ -2712,11 +2725,13 @@ impl BlobExt for Blob {
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
     /// return a Blob viewing it. Runtime `check_s3` matches the call shape used
     /// by `server_body.rs` / `fetch.rs` (collapsed from a const generic since
-    /// it only guards a string prefix check).
+    /// it only guards a string prefix check). `looks`: the code reads what it gets from the file,
+    /// for the test input recorder; a destination that is about to be written is no read.
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
         check_s3: bool,
+        looks: bool,
     ) -> Blob {
         // ─── S3 (`s3://…`) branch ──────────────────────────────────────────
         if check_s3 {
@@ -2789,6 +2804,15 @@ impl BlobExt for Blob {
             }
         };
 
+        // `Bun.file`, a `file://` fetch or a file body: what the code reads from it later is the
+        // file's bytes, so they count from here; a write first makes them not an input.
+        if looks && let PathOrFileDescriptor::Path(path) = &path {
+            bun_jsc::test_input_recorder::own_read(
+                global_this.bun_vm(),
+                bun_jsc::test_own_reads::Look::Content,
+                path.slice(),
+            );
+        }
         named(
             Blob::init_with_store(
                 bun_core::handle_oom(Store::init_file(path, None)),
@@ -3166,6 +3190,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         &mut path_or_fd,
                         global_this,
                         true,
+                        true,
                     );
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
@@ -3179,7 +3204,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         return Err(crate::Error::InvalidValue);
                     }
                     let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
-                    break 'file try_find_or_create_file_from_path(&mut dest, global_this)?;
+                    break 'file try_find_or_create_file_from_path(&mut dest, global_this, true)?;
                 }
             }
         }
@@ -3789,6 +3814,36 @@ pub(crate) fn write_file_with_source_destination(
 ///   comes from JS must go through [`write_destination_from_js`] first.
 pub(crate) fn write_file_internal(
     cx: &bun_jsc::JsThread<'_>,
+    path_or_blob: &mut PathOrBlob,
+    data: JSValue,
+    options: WriteFileOptions,
+) -> JsResult<JSValue> {
+    // For the test input recorder: what the file looked at there is observed now, and the write's
+    // effect applies once its promise is fulfilled.
+    let vm = cx.global().bun_vm();
+    let own = bun_jsc::test_input_recorder::OwnWrites::new(vm).and_then(|mut own| {
+        let destination = match &*path_or_blob {
+            PathOrBlob::Path(path) => Some(path),
+            PathOrBlob::Blob(blob) => match blob.store.get().as_ref().map(|store| &store.data) {
+                Some(store::Data::File(file)) => Some(&file.pathlike),
+                _ => None,
+            },
+        };
+        let Some(PathOrFileDescriptor::Path(path)) = destination else {
+            return None;
+        };
+        own.write(vm, path.slice(), bun_jsc::test_input_recorder::Wrote::File);
+        Some(own)
+    });
+    let written = write_file_unrecorded(cx, path_or_blob, data, options)?;
+    if let Some(own) = own {
+        bun_jsc::test_input_recorder::own_wrote_when_fulfilled(vm, own, written);
+    }
+    Ok(written)
+}
+
+fn write_file_unrecorded(
+    cx: &bun_jsc::JsThread<'_>,
     path_or_blob_: &mut PathOrBlob,
     data: JSValue,
     options: WriteFileOptions,
@@ -3933,7 +3988,8 @@ pub(crate) fn write_file_internal(
                     let store = bun_core::handle_oom(Store::init_file(path, None));
                     Blob::init_with_store(store, cx.global())
                 }
-                false => try_find_or_create_file_from_path(path, cx.global())?,
+                // A destination: what is there is about to be written, not read.
+                false => try_find_or_create_file_from_path(path, cx.global(), false)?,
             };
             if new_blob.store.get().is_none() {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
@@ -4584,7 +4640,7 @@ pub(crate) fn file(
         }
     }
 
-    let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+    let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false, true);
 
     if let Some(options) = options {
         BunFileOptions::from_js(global_object, options, |options| {
@@ -4638,7 +4694,7 @@ fn find_or_create_s3_file(
     path_or_fd: &mut PathOrFileDescriptor<'static>,
     global_this: &JSGlobalObject,
 ) -> Blob {
-    Blob::find_or_create_file_from_path(path_or_fd, global_this, true)
+    Blob::find_or_create_file_from_path(path_or_fd, global_this, true, false)
 }
 
 /// Whether the executable holds a file for `path`, which names a place on the disk of the build and not one inside the executable.
@@ -4651,11 +4707,31 @@ fn is_held_at_source_path(path: &PathOrFileDescriptor<'static>) -> bool {
             .is_some_and(|graph| graph.find_data(path.slice()).is_some())
 }
 
+/// A file blob's path is about to be written or removed, for the test input recorder: what the
+/// file looked at there is observed now. The effect is returned, to apply when the call succeeded.
+fn note_file_write(
+    global_this: &JSGlobalObject,
+    store: &Store,
+) -> Option<bun_jsc::test_input_recorder::OwnWrites> {
+    let vm = global_this.bun_vm();
+    let mut own = bun_jsc::test_input_recorder::OwnWrites::new(vm)?;
+    if let store::Data::File(file) = &store.data {
+        match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => {
+                own.write(vm, path.slice(), bun_jsc::test_input_recorder::Wrote::File)
+            }
+            PathOrFileDescriptor::Fd(_) => own.writes_through_descriptor(),
+        }
+    }
+    Some(own)
+}
+
 /// `find_or_create_file_from_path` with `check_s3`.
 #[inline(always)]
 fn try_find_or_create_file_from_path(
     path_or_fd: &mut PathOrFileDescriptor<'static>,
     global_this: &JSGlobalObject,
+    looks: bool,
 ) -> JsResult<Blob> {
     let is_s3_path = matches!(
         &*path_or_fd,
@@ -4666,6 +4742,7 @@ fn try_find_or_create_file_from_path(
             path_or_fd,
             global_this,
             false,
+            looks,
         ));
     }
     Ok(bun_removable_features::call_removable_or!(

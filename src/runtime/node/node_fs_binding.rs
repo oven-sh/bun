@@ -11,6 +11,7 @@ use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, move_waiting_descriptors, ret,
 };
+use bun_jsc::test_input_recorder::OwnWrites;
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
 // spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
@@ -20,24 +21,215 @@ use crate::node::fs::{
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
 
-fn run_sync_with<R: FsReturn, A: FsArgument>(
+/// What a `node:fs` call looks at and writes, for the test input recorder (`bun test --reuse`).
+/// Called on the JS thread with the parsed arguments, before the
+/// operation runs or is scheduled: looks are noted then, and what the call writes is returned, to be
+/// applied with `own_wrote` once it succeeded. Calls on a file descriptor are covered by the `open`
+/// that made it.
+fn note_own<A: FsArgument + 'static>(
+    vm: &VirtualMachine,
+    function: NodeFSFunctionEnum,
+    args: &A,
+) -> Option<bun_jsc::test_input_recorder::OwnWrites> {
+    use NodeFSFunctionEnum as F;
+    use bun_jsc::test_input_recorder::{self as recorder, OwnWrites, Wrote};
+    use bun_jsc::test_own_reads::Look;
+    let mut own = OwnWrites::new(vm)?;
+    let [first, second] = args.paths();
+    let (first, second) = (first.map(|it| it.slice()), second.map(|it| it.slice()));
+    let read = |look: Look, path: Option<&[u8]>| {
+        if let Some(path) = path {
+            recorder::own_read(vm, look, path);
+        }
+    };
+    let write = |own: &mut OwnWrites, path: Option<&[u8]>, wrote: Wrote| {
+        if let Some(path) = path {
+            own.write(vm, path, wrote);
+        }
+    };
+    let any: &dyn core::any::Any = args;
+    // What an open (or a whole-file write) with these flags depends on: the bytes when it reads
+    // them or keeps some of them, else whether the path is there when that decides failure. With
+    // `O_EXCL` any name fails, a dangling symbolic link too, so that is looked at with `lstat`.
+    let open_like = |own: &mut OwnWrites, flags: i32, path: Option<&[u8]>| {
+        use bun_sys::O;
+        let access = flags & (O::RDONLY | O::WRONLY | O::RDWR);
+        if access != O::WRONLY || flags & O::APPEND != 0 || flags & O::TRUNC == 0 {
+            read(Look::Content, path);
+        } else if flags & O::EXCL != 0 && flags & O::CREAT != 0 {
+            read(Look::Lstat, path);
+        } else if flags & O::CREAT == 0 {
+            read(Look::Exists, path);
+        }
+        if access != O::RDONLY || flags & (O::CREAT | O::TRUNC | O::APPEND) != 0 {
+            write(own, path, Wrote::File);
+        }
+    };
+    match function {
+        F::Exists => read(Look::Exists, first),
+        F::Access => {
+            // `F_OK` asks only whether the path is there.
+            let mode = any
+                .downcast_ref::<args::Access<'static>>()
+                .map_or(0, |it| it.mode.as_int());
+            match (mode, first) {
+                (0, _) => read(Look::Exists, first),
+                (mode, Some(path)) => {
+                    recorder::own_read_with(vm, Look::Access, path, mode.to_string().as_bytes())
+                }
+                (_, None) => {}
+            }
+        }
+        F::Stat => read(Look::Stat, first),
+        F::Lstat => read(Look::Lstat, first),
+        F::Readlink => read(Look::Readlink, first),
+        F::Realpath | F::RealpathNonNative => read(Look::Realpath, first),
+        F::Readdir => {
+            let recursive = any
+                .downcast_ref::<args::Readdir<'static>>()
+                .is_some_and(|it| it.recursive);
+            read(
+                if recursive {
+                    Look::ListRecursive
+                } else {
+                    Look::List
+                },
+                first,
+            );
+        }
+        F::ReadFile => read(Look::Content, first),
+        F::Open => {
+            let flags = any
+                .downcast_ref::<args::Open<'static>>()
+                .map_or(0, |it| it.flags.as_int());
+            open_like(&mut own, flags, first);
+        }
+        F::WriteFile | F::AppendFile => {
+            let flags = match any.downcast_ref::<args::WriteFile<'static>>() {
+                Some(it) => it.flag.as_int(),
+                None => any
+                    .downcast_ref::<args::AppendFile<'static>>()
+                    .map_or(0, |it| it.0.flag.as_int()),
+            };
+            open_like(&mut own, flags, first);
+        }
+        F::CopyFile => {
+            read(Look::Content, first);
+            let exclusive = any
+                .downcast_ref::<args::CopyFile<'static>>()
+                .is_some_and(|it| it.mode.0 & 1 != 0);
+            if exclusive {
+                // Fails on any name, a dangling symbolic link too.
+                read(Look::Lstat, second);
+            }
+            write(&mut own, second, Wrote::File);
+        }
+        F::Rename => {
+            // Moves a symbolic link itself, a dangling one too.
+            read(Look::Lstat, first);
+            // What moves to the new name is the file's product only if the old name held one;
+            // otherwise what it held is looked at now, before it moves.
+            if let Some(from) = first
+                && !recorder::own_generated(vm, from)
+            {
+                let zfrom = bun_core::ZBox::from_vec(from.to_vec());
+                let is_file = bun_sys::lstat(&zfrom).is_ok_and(|st| {
+                    st.st_mode as u32 & bun_sys::S::IFMT as u32 == bun_sys::S::IFREG as u32
+                });
+                read(if is_file { Look::Content } else { Look::Tree }, first);
+            }
+            write(&mut own, first, Wrote::Tree);
+            write(&mut own, second, Wrote::Tree);
+        }
+        F::Link => {
+            // The new name shares the old one's bytes, so they are looked at now.
+            read(Look::Content, first);
+            write(&mut own, first, Wrote::Meta);
+            // The new name must not be there yet, not even as a dangling symbolic link.
+            read(Look::Lstat, second);
+            write(&mut own, second, Wrote::File);
+        }
+        F::Symlink => {
+            // The same. What a look through the link reaches is found when the look is made.
+            read(Look::Lstat, first);
+            write(&mut own, first, Wrote::File);
+        }
+        F::Mkdtemp => own.created(),
+        F::Mkdir => {
+            let recursive = any
+                .downcast_ref::<args::Mkdir<'static>>()
+                .is_some_and(|it| it.recursive);
+            // Without `recursive` it fails unless the name is free.
+            if !recursive {
+                read(Look::Lstat, first);
+            }
+            write(
+                &mut own,
+                first,
+                if recursive { Wrote::Meta } else { Wrote::Tree },
+            );
+        }
+        F::Rm => {
+            let force = any
+                .downcast_ref::<args::Rm<'static>>()
+                .is_some_and(|it| it.0.force);
+            // Removes a symbolic link itself, a dangling one too.
+            if !force {
+                read(Look::Lstat, first);
+            }
+            write(&mut own, first, Wrote::Tree);
+        }
+        F::Truncate => {
+            // What is left of the bytes is still there afterwards.
+            read(Look::Content, first);
+            write(&mut own, first, Wrote::File);
+        }
+        F::Unlink | F::Rmdir => {
+            // These fail when the name is missing; a dangling symbolic link is there.
+            read(Look::Lstat, first);
+            write(&mut own, first, Wrote::Tree);
+        }
+        F::Chmod | F::Chown | F::Utimes => {
+            read(Look::Exists, first);
+            write(&mut own, first, Wrote::Meta);
+        }
+        F::Lchmod | F::Lchown | F::Lutimes => {
+            read(Look::Lstat, first);
+            write(&mut own, first, Wrote::Meta);
+        }
+        F::Fchmod | F::Fchown | F::Ftruncate | F::Futimes | F::Write | F::Writev => {
+            own.writes_through_descriptor()
+        }
+        F::Statfs | F::Close | F::Fdatasync | F::Fstat | F::Fsync | F::Read | F::Readv => {}
+    }
+    Some(own)
+}
+
+fn run_sync_with<R: FsReturn, A: FsArgument + 'static>(
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
+    function: NodeFSFunctionEnum,
     dispatch: impl FnOnce(&A) -> Maybe<R>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    let own = note_own(vm, function, &args);
     move_waiting_descriptors();
     match dispatch(&args) {
         Err(err) => Err(global.throw_value(err.to_js(global))),
-        Ok(res) => res.fs_to_js(global),
+        Ok(res) => {
+            if let Some(own) = own {
+                bun_jsc::test_input_recorder::own_wrote(vm, own, res.returned_path());
+            }
+            res.fs_to_js(global)
+        }
     }
 }
 
 /// `Bindings(FunctionEnum).runSync`.
-fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
+fn run_sync<R: FsReturn, A: FsArgument + 'static, const F: NodeFSFunctionEnum>(
     this: &Binding,
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
@@ -48,14 +240,14 @@ where
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    run_sync_with::<R, A>(cx, args, |args| {
+    run_sync_with::<R, A>(cx, args, F, |args| {
         this.node_fs
             .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync))
     })
 }
 
 /// A synchronous `node:fs` function for compiled code. It has no binding object and uses the `NodeFS` of the VM.
-fn run_sync_function<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
+fn run_sync_function<R: FsReturn, A: FsArgument + 'static, const F: NodeFSFunctionEnum>(
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
 ) -> JsResult<JSValue>
@@ -63,7 +255,7 @@ where
     Op<{ F }>: NodeFSDispatch<R, A>,
 {
     let vm = cx.global().bun_vm();
-    run_sync_with::<R, A>(cx, args, |args| {
+    run_sync_with::<R, A>(cx, args, F, |args| {
         crate::jsc_hooks::with_node_fs(vm, |node_fs| {
             node_fs.vm = Some(vm);
             NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
@@ -125,10 +317,11 @@ fn split_callback<'a>(
 /// Windows path picks `UVFSRequest` for a handful of fds-only ops while
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
-fn run_async<A: FsArgument>(
+fn run_async<A: FsArgument + 'static>(
     this: &Binding,
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
+    function: NodeFSFunctionEnum,
     arm: AsyncArm,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
@@ -136,6 +329,7 @@ fn run_async<A: FsArgument>(
         ThreadIsolated<A>,
         &VirtualMachine,
         Option<JSValue>,
+        Option<OwnWrites>,
     ) -> JSValue,
 ) -> JsResult<JSValue> {
     let cx = cx.js_thread();
@@ -146,8 +340,9 @@ fn run_async<A: FsArgument>(
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
     let vm: &VirtualMachine = global.bun_vm();
+    let own = note_own(vm, function, &*args);
     move_waiting_descriptors();
-    Ok(create_task(&cx, this, args, vm, callback))
+    Ok(create_task(&cx, this, args, vm, callback, own))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -230,7 +425,8 @@ impl Binding {
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
         let vm: &VirtualMachine = global.bun_vm();
-        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
+        let own = note_cp(vm, &cp_args);
+        Ok(AsyncCpTask::create(&cx, self, cp_args, vm, own))
     }
 
     /// `callSync(.cp)`.
@@ -241,11 +437,17 @@ impl Binding {
 
         // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
         let cp_args = args::Cp::from_js(global, &mut slice)?;
+        let own = note_cp(vm, &cp_args);
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
-            Ok(()) => Ok(JSValue::UNDEFINED),
+            Ok(()) => {
+                if let Some(own) = own {
+                    bun_jsc::test_input_recorder::own_wrote(vm, own, None);
+                }
+                Ok(JSValue::UNDEFINED)
+            }
         }
     }
 
@@ -279,6 +481,8 @@ impl Binding {
             }
         };
         let vm: &VirtualMachine = global.bun_vm();
+        // A listing writes nothing.
+        let _ = note_own(vm, NodeFSFunctionEnum::Readdir, &*rd_args);
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
         let is_bunfs = bun_standalone_graph::Graph::get_ref()
             .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
@@ -287,7 +491,9 @@ impl Binding {
                 &cx, &rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
+        Ok(async_::Readdir::create(
+            &cx, self, rd_args, vm, callback, None,
+        ))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -298,6 +504,11 @@ impl Binding {
         let mut slice = ArgumentsSlice::init(cx.vm(), JsLocal::to_js_slice(args));
 
         let watch_args = fs::Watcher::Arguments::from_js(&cx, &mut slice)?;
+        bun_jsc::test_input_recorder::own_read(
+            cx.vm(),
+            bun_jsc::test_own_reads::Look::Exists,
+            watch_args.path.slice(),
+        );
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -321,6 +532,11 @@ impl Binding {
         let mut slice = ArgumentsSlice::init(cx.vm(), JsLocal::to_js_slice(args));
 
         let wf_args = fs::StatWatcher::Arguments::from_js(&cx, &mut slice)?;
+        bun_jsc::test_input_recorder::own_read(
+            cx.vm(),
+            bun_jsc::test_own_reads::Look::Stat,
+            wf_args.path.slice(),
+        );
 
         match self
             .node_fs
@@ -350,14 +566,14 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Args>(self, cx, args, NodeFSFunctionEnum::$F, AsyncArm::Promise, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Args>(self, cx, args, NodeFSFunctionEnum::$F, AsyncArm::Callback, async_::$F::create)
                 }
             )*
         }
@@ -422,6 +638,26 @@ impl Binding {
     }
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
+}
+
+/// `fs.cp`: what is below the source, and the destination, for the test input recorder. A copy
+/// into a directory that is there and is not the file's product merges into it, so what was there
+/// stays an input; otherwise everything at the destination is the file's product.
+fn note_cp(vm: &VirtualMachine, args: &args::Cp<'static>) -> Option<OwnWrites> {
+    use bun_jsc::test_input_recorder as recorder;
+    use bun_jsc::test_own_reads::Look;
+    let mut own = OwnWrites::new(vm)?;
+    let look = if args.flags.recursive {
+        Look::Tree
+    } else {
+        Look::Content
+    };
+    recorder::own_read(vm, look, args.src.slice());
+    if args.flags.error_on_exist && !args.flags.force {
+        recorder::own_read(vm, Look::Exists, args.dest.slice());
+    }
+    own.write_tree(vm, args.dest.slice());
+    Some(own)
 }
 
 pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {

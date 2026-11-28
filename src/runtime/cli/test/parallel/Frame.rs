@@ -56,6 +56,7 @@ pub(crate) fn counters(summary: &mut Summary) -> [&mut u32; 8] {
         skipped_because_label: skipped,
         files,
         shuffled,
+        reused_files: _,
     } = summary;
     [
         pass,

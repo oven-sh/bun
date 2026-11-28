@@ -115,6 +115,8 @@ using Bun::SqlitePtr;
 // One-time sqlite3_config() calls. Must run before the FIRST sqlite3_open_v2
 // from EITHER bun:sqlite or node:sqlite (they share one library, and config
 // is SQLITE_MISUSE after init). extern "C" for the cross-TU forward-declare.
+extern "C" void Bun__TestInputRecorder__mark(void* bunVM, const char* name);
+
 extern "C" void Bun__initializeSQLite()
 {
     static std::once_flag onceFlag;
@@ -1625,6 +1627,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         openFlags = JSC::toInt32(flags.asNumber());
     }
 
+    // An in-memory database reads nothing.
+    if (!(path.length() == 8 && !memcmp(path.legacyCStringPointer(), ":memory:", 8)))
+        Bun__TestInputRecorder__mark(defaultGlobalObject(lexicalGlobalObject)->bunVM(), "sqlite");
     SqlitePtr<sqlite3> db;
     int statusCode = sqlite3_open_v2(path.legacyCStringPointer(), outPtr(db), openFlags, nullptr);
 

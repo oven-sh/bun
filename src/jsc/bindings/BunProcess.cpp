@@ -484,6 +484,7 @@ extern "C" size_t Bun__process_dlopen_count;
 
 extern "C" DlOpenAction* CrashHandler__beginDlOpenAction(const char* path);
 extern "C" bool Bun__VM__allowAddons(void* vm);
+extern "C" void Bun__TestInputRecorder__mark(void* bunVM, const char* name);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
 // Drops only this load's reference. A library that registered modules on an earlier load is still referenced by that load.
@@ -623,6 +624,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         globalObject->napiModuleRegisterCallCount = outerRegisterCallCount;
     });
 
+    // Marked only when it loads: a refusal above depends on nothing but the file name and the run's settings.
+    Bun__TestInputRecorder__mark(globalObject->bunVM(), "native-addon");
     Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)

@@ -63,6 +63,13 @@ bun test <patterns>
   With <code>vitest</code>, every file gets them from <code>"vitest"</code>
 </ParamField>
 
+<ParamField path="--reuse" type="string">
+  Skip test files whose recorded inputs are unchanged since they last passed, and record the others. Implies{" "}
+  <code>--isolate</code>. <code>explain</code> also says why each other file runs, <code>check</code> runs every file
+  and fails if a skipped one would end differently, and <code>list</code> runs no file. See{" "}
+  <a href="/test/reuse">Reusing test results</a>
+</ParamField>
+
 <ParamField path="--react-compiler" type="boolean">
   Compile components and hooks with the React Compiler. Test files, preload scripts and <code>node_modules</code> are
   left alone

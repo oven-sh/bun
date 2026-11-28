@@ -133,6 +133,7 @@ fn on_require_extension_modify(
     value: JSValue,
 ) -> Result<(), bun_alloc::AllocError> {
     let vm = global.bun_vm();
+    crate::test_input_recorder::mark(vm, b"require-extensions");
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
     vm.commonjs_custom_extensions.with_mut(|extensions| {
@@ -171,6 +172,7 @@ fn on_require_extension_modify_non_function(
     str: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
     let vm = global.bun_vm();
+    crate::test_input_recorder::mark(vm, b"require-extensions");
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
     if let Some(prev) = (vm.commonjs_custom_extensions).with_mut(|it| it.fetch_swap_remove(str)) {

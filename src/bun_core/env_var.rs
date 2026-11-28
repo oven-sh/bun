@@ -53,6 +53,22 @@ new!(pub BUN_BYTECODE_DIGEST_OUT: string, "BUN_BYTECODE_DIGEST_OUT", {});
 new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {});
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
+// `bun test --isolate` writes one record of its inputs per test file into this directory. Overrides the default directory of `--reuse`.
+new!(pub BUN_TEST_INPUT_RECORD_DIR: string, "BUN_TEST_INPUT_RECORD_DIR", {});
+// With a record directory, overriding the mode of `--reuse`: "1" skips test files whose record still holds and counts them as it says; "explain" also says why each other file runs; "check" runs every file and fails when one whose record held has other counts; "list" says which would run and runs none; "0" turns reuse off.
+new!(pub BUN_TEST_INPUT_REUSE: string, "BUN_TEST_INPUT_REUSE", {});
+// With BUN_TEST_INPUT_REUSE: a file to write one JSON line per test file to, saying whether its record held and why not.
+new!(pub BUN_TEST_INPUT_REUSE_REPORT: string, "BUN_TEST_INPUT_REUSE_REPORT", {});
+// Part of the fingerprint of every record, for what the caller knows changes outcomes, such as the version of a database.
+new!(pub BUN_TEST_INPUT_RECORD_SALT: string, "BUN_TEST_INPUT_RECORD_SALT", {});
+// With a record directory: "1" also writes each record as JSON beside the store, to read.
+new!(pub BUN_TEST_INPUT_RECORD_JSON: string, "BUN_TEST_INPUT_RECORD_JSON", {});
+// With a record directory: the directory record paths are relative to (default: the nearest directory with a lockfile at or above the project), so records hold in another checkout of the repository.
+new!(pub BUN_TEST_INPUT_RECORD_ROOT: string, "BUN_TEST_INPUT_RECORD_ROOT", {});
+// Comma-separated names of environment variables whose values are part of the fingerprint of every record.
+new!(pub BUN_TEST_INPUT_RECORD_ENV: string, "BUN_TEST_INPUT_RECORD_ENV", {});
+// Internal: what a `--parallel` coordinator hands its workers, so they record its fingerprint.
+new!(pub BUN_TEST_INPUT_RECORD_FINGERPRINT: string, "BUN_TEST_INPUT_RECORD_FINGERPRINT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 // JavaScriptCore's option of that name: the engine logs the phases of an AOT build. The front end logs its stages beside them.
 new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });

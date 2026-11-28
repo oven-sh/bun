@@ -178,6 +178,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     };
 
     let (argv, env) = (CStrList::new(&argv), CStrList::new(&env));
+    bun_jsc::test_input_recorder::mark_current(b"spawn");
     let spawned = bun_spawn::spawn_process(&opts, argv, Some(env))??;
 
     let event_loop = EventLoopHandle::init(vm.event_loop_ptr());

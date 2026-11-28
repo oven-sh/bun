@@ -573,6 +573,7 @@ fn spawn(
             ..SpawnOptions::default()
         };
 
+        bun_jsc::test_input_recorder::mark_current(b"spawn");
         let spawned = bun_spawn::spawn_process(&opts, argv, Some(env.as_list()))??;
         #[cfg(windows)]
         let mut spawned = spawned;

@@ -474,6 +474,12 @@ pub mod jsc_scheduler;
 pub mod process_auto_killer;
 #[path = "ScriptExecutionContext.rs"]
 pub mod script_execution_context;
+#[path = "TestInputRecorder.rs"]
+pub mod test_input_recorder;
+#[path = "TestInputStore.rs"]
+pub mod test_input_store;
+#[path = "TestOwnReads.rs"]
+pub mod test_own_reads;
 
 /// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
 #[derive(Clone, Copy, Default)]

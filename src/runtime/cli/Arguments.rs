@@ -19,6 +19,7 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
+    TestReuse,
 };
 use bun_options_types::schema::api;
 use bun_paths::portable::from_portable_rooted;
@@ -970,6 +971,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
+        "--reuse <STR>?                   Skip test files whose recorded inputs are unchanged, and record the others. Implies --isolate. \"explain\": say why each other file runs. \"check\": run every file and fail if a skipped one would end differently. \"list\": say which files would run, and run none."
+    ),
+    parse_param!(
         "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another. \"modules\": keep the global object and load each file's modules afresh (faster; files can see each other's changes to globals)."
     ),
     parse_param!(
@@ -1355,6 +1359,17 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let named_file = args.option(b"--config").filter(|file| !file.is_empty());
             startup_options::reject_unusable_bunfig_settings(ctx, named_file);
         }
+    }
+
+    // After `[test] reuse` too: reuse needs each file in a fresh global, as `--parallel` does.
+    if cmd == CommandTag::TestCommand && ctx.test_options.reuse.is_some() {
+        if args.flag(b"--no-isolate") {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --reuse needs --isolate and cannot be used with --no-isolate"
+            );
+            Global::exit(1);
+        }
+        ctx.test_options.isolate = true;
     }
 
     // So far these are `[bundle] entryPoints`. An AOT build expands patterns, in which `\` escapes.
@@ -2430,6 +2445,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
     };
     ctx.test_options.test_worker = args.flag(b"--test-worker");
+
+    if let Some(mode) = args.option(b"--reuse") {
+        let Some(reuse) = TestReuse::from_name(mode) else {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --reuse expects \"explain\", \"check\" or \"list\", received \"{}\"",
+                BStr::new(mode)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.reuse = Some(reuse);
+    }
 
     if let Some(parallel_str) = args.option(b"--parallel") {
         let parsed: u32 = if !parallel_str.is_empty() {

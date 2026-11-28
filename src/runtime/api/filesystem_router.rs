@@ -154,6 +154,7 @@ impl FileSystemRouter {
         cx: &mut JsScope<'a>,
         options: &FileSystemRouterOptions<'a>,
     ) -> bindgen::Result<'a, Self> {
+        bun_jsc::test_input_recorder::mark(cx.global().bun_vm(), b"file-system-router");
         match options.style {
             Some(b"nextjs") => {}
             Some(_) => {

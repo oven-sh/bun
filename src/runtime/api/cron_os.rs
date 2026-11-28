@@ -276,6 +276,7 @@ impl OsJob {
         #[cfg(windows)]
         let env = Some(envp.as_list());
 
+        bun_jsc::test_input_recorder::mark_current(b"spawn");
         let mut spawned = spawn::spawn_process(&options, argv.as_list(), env)
             .map_err(|err| Failure::Spawn(err.name().as_bytes()))?
             .map_err(|err| Failure::Spawn(err.name()))?;

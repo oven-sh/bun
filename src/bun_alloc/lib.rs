@@ -2054,6 +2054,13 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// Forgets every entry, as [`Self::remove`] of each does: the values stay where they are, so
+    /// what was handed out before stays valid.
+    pub fn forget_all(&mut self) {
+        let _guard = self.mutex.lock();
+        self.index.clear();
+    }
 }
 
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled

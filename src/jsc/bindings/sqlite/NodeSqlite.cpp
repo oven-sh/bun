@@ -125,6 +125,8 @@ static const char* probeSqliteVersion()
 }
 #endif
 
+extern "C" void Bun__TestInputRecorder__mark(void* bunVM, const char* name);
+
 extern "C" const char* Bun__sqlite3_version()
 {
 #if LAZY_LOAD_SQLITE
@@ -812,6 +814,8 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
 
     auto utf8 = tryUTF8(globalObject, scope, m_location);
     RETURN_IF_EXCEPTION(scope, false);
+    if (m_location != ":memory:"_s)
+        Bun__TestInputRecorder__mark(defaultGlobalObject(globalObject)->bunVM(), "sqlite");
     SqlitePtr<sqlite3> db;
     int r = sqlite3_open_v2(utf8.legacyCStringPointer(), outPtr(db), flags, nullptr);
     if (r != SQLITE_OK) {

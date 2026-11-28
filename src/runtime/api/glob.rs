@@ -393,10 +393,28 @@ impl Glob {
                 init_walker::<StandaloneAccessor>(self.pattern.slice(), &match_opts)?,
             ));
         }
-        Ok(AnyGlobWalker::Fs(init_walker::<walk::SyscallAccessor>(
-            self.pattern.slice(),
-            &match_opts,
-        )?))
+        let walker = init_walker::<walk::SyscallAccessor>(self.pattern.slice(), &match_opts)?;
+        if let Some(vm) = bun_jsc::virtual_machine::VirtualMachine::get_or_null()
+            && bun_jsc::test_input_recorder::is_recording(vm)
+        {
+            use bun_jsc::test_own_reads::{GlobOptions, Look, glob_extra};
+            let extra = glob_extra(
+                self.pattern.slice(),
+                &GlobOptions {
+                    dot: match_opts.dot,
+                    absolute: match_opts.absolute,
+                    only_files: match_opts.only_files,
+                    follow_symlinks: match_opts.follow_symlinks,
+                    error_on_broken_symlinks: match_opts.error_on_broken_symlinks,
+                },
+            );
+            let cwd = match &match_opts.cwd {
+                Some(cwd) => cwd.to_vec(),
+                None => b".".to_vec(),
+            };
+            bun_jsc::test_input_recorder::own_read_with(vm, Look::Glob, &cwd, &extra);
+        }
+        Ok(AnyGlobWalker::Fs(walker))
     }
 }
 

@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{CStr, c_char, c_int, c_ulong, c_void};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
@@ -10,6 +10,32 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 
 /// Typed error callback signature for a given context type.
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
+
+/// `TCCOpenFunc` of libtcc.h (patches/tinycc/open-func.patch), where its three results are.
+pub type TCCOpenFunc = Option<
+    unsafe extern "C" fn(
+        opaque: *mut c_void,
+        filename: *const c_char,
+        buf: *mut *const c_char,
+        len: *mut c_ulong,
+    ) -> c_int,
+>;
+
+/// What [`OpenFiles::open`] answers for one file name.
+pub enum Opened {
+    /// The contents of the file. TinyCC copies them.
+    Contents(&'static [u8]),
+    /// The name belongs to the implementer, and there is no such file. TinyCC does not ask the file system.
+    NotFound,
+    /// TinyCC reads the file system.
+    FileSystem,
+}
+
+/// Serves C sources and `#include`s from memory: see [`State::set_open_func`].
+pub trait OpenFiles {
+    /// Runs under the libtcc lock: it must not call into libtcc.
+    fn open(filename: &[u8]) -> Opened;
+}
 
 // `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
 // not Android, not FreeBSD (the vendored fork doesn't support those targets).
@@ -58,7 +84,7 @@ macro_rules! tcc_externs {
 
 /// The only lock around TinyCC's process globals: its own are compiled out
 /// (`CONFIG_TCC_SEMLOCK=0`, scripts/build/deps/tinycc.ts). Held across the
-/// error callback, which must not call into libtcc.
+/// error callback and the open callback, which must not call into libtcc.
 static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {
@@ -79,6 +105,7 @@ tcc_externs! {
     fn tcc_add_symbol(s: *mut TCCState, name: *const c_char, val: *const c_void) -> c_int;
     fn tcc_relocate(s1: *mut TCCState) -> c_int;
     fn tcc_get_symbol(s: *mut TCCState, name: *const c_char) -> *mut c_void;
+    fn tcc_set_open_func(s: *mut TCCState, open_opaque: *mut c_void, open_func: TCCOpenFunc);
 }
 
 const TCC_OUTPUT_MEMORY: c_int = 1;
@@ -241,6 +268,37 @@ impl State {
         let opaque = error_opaque.map_or(core::ptr::null_mut(), |p| p.cast::<c_void>());
         // SAFETY: self is a valid *mut TCCState.
         unsafe { tcc_set_error_func(self, opaque, erased) }
+    }
+
+    /// Asks `F` for every C source and `#include` of this state before TinyCC opens a file.
+    pub fn set_open_func<F: OpenFiles>(&mut self) {
+        unsafe extern "C" fn open<F: OpenFiles>(
+            _: *mut c_void,
+            filename: *const c_char,
+            buf: *mut *const c_char,
+            len: *mut c_ulong,
+        ) -> c_int {
+            // SAFETY: TinyCC passes a NUL-terminated file name.
+            let filename = unsafe { CStr::from_ptr(filename) };
+            match F::open(filename.to_bytes()) {
+                Opened::Contents(contents) => {
+                    // TinyCC keeps the length of a file buffer in an `int`.
+                    let Ok(contents_len) = c_int::try_from(contents.len()) else {
+                        return 1;
+                    };
+                    // SAFETY: `buf` and `len` point to locals of the TinyCC function that calls.
+                    unsafe {
+                        *buf = contents.as_ptr().cast();
+                        *len = c_ulong::from(contents_len.unsigned_abs());
+                    }
+                    0
+                }
+                Opened::NotFound => 1,
+                Opened::FileSystem => -1,
+            }
+        }
+        // SAFETY: self is a valid *mut TCCState.
+        unsafe { tcc_set_open_func(self, core::ptr::null_mut(), Some(open::<F>)) }
     }
 
     // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying

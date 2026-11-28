@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::io::Write as _;
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 use std::sync::{Once, OnceLock};
 
 use bstr::BStr;
@@ -654,17 +655,7 @@ impl CompileC {
             }
         };
 
-        if let Some(compiler_rt_dir) = CompilerRT::dir() {
-            if state.add_sys_include_path(compiler_rt_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
-            }
-        }
-
-        if let Some(node_dir) = CompilerRT::node_dir() {
-            if state.add_sys_include_path(node_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
-            }
-        }
+        CompilerRT::add_include_paths(&mut state);
 
         #[cfg(target_os = "macos")]
         {
@@ -2311,203 +2302,103 @@ use super::abi_type::ABIType;
 
 struct CompilerRT;
 
-// Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + leak.
-static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-static COMPILER_RT_NODE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+/// A header that `cc()` bundles: `<dir>/<name>` below [`CompilerRT::DIR`], or `<name>` if `dir` is empty.
+struct BundledHeader {
+    dir: &'static [u8],
+    name: &'static [u8],
+    contents: &'static [u8],
+}
 
-struct CompilerRtSources;
-impl CompilerRtSources {
-    const SOURCES: &'static [(&'static str, &'static [u8])] = &[
-        ("stdbool.h", include_bytes!("./ffi-stdbool.h")),
-        ("stdarg.h", include_bytes!("./ffi-stdarg.h")),
-        ("stdnoreturn.h", include_bytes!("./ffi-stdnoreturn.h")),
-        ("stdalign.h", include_bytes!("./ffi-stdalign.h")),
-        ("tgmath.h", include_bytes!("./ffi-tgmath.h")),
-        ("stddef.h", include_bytes!("./ffi-stddef.h")),
-        ("varargs.h", b"// empty"),
-    ];
+impl CompilerRT {
+    /// Names no directory on disk: TinyCC asks [`TCC::OpenFiles::open`] for every file below it.
+    const DIR: &'static ZStr = zstr!("/$bun-cc");
+    const NODE_DIR: &'static ZStr = zstr!("/$bun-cc/node");
 
-    const NODE_HEADERS: &'static [(&'static str, &'static [u8])] = &[
-        ("node_api.h", include_bytes!("../napi/node_api.h")),
-        (
-            "node_api_types.h",
+    const HEADERS: &'static [BundledHeader] = &[
+        Self::header(b"", b"stdbool.h", include_bytes!("./ffi-stdbool.h")),
+        Self::header(b"", b"stdarg.h", include_bytes!("./ffi-stdarg.h")),
+        Self::header(b"", b"stdnoreturn.h", include_bytes!("./ffi-stdnoreturn.h")),
+        Self::header(b"", b"stdalign.h", include_bytes!("./ffi-stdalign.h")),
+        Self::header(b"", b"tgmath.h", include_bytes!("./ffi-tgmath.h")),
+        Self::header(b"", b"stddef.h", include_bytes!("./ffi-stddef.h")),
+        Self::header(b"", b"varargs.h", b"// empty"),
+        Self::header(b"node", b"node_api.h", include_bytes!("../napi/node_api.h")),
+        Self::header(
+            b"node",
+            b"node_api_types.h",
             include_bytes!("../napi/node_api_types.h"),
         ),
-        ("js_native_api.h", include_bytes!("../napi/js_native_api.h")),
-        (
-            "js_native_api_types.h",
+        Self::header(
+            b"node",
+            b"js_native_api.h",
+            include_bytes!("../napi/js_native_api.h"),
+        ),
+        Self::header(
+            b"node",
+            b"js_native_api_types.h",
             include_bytes!("../napi/js_native_api_types.h"),
         ),
     ];
-}
 
-static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
-
-impl CompilerRT {
-    fn create_compiler_rt_dir() {
-        // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
-        // yet expose an inherent `tmpdir()`; reuse the crate-local
-        // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
-        use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-        let Ok(tmpdir) = Fs::FileSystem::get().tmpdir() else {
-            return;
-        };
-
-        // Prefer the reusable per-user directory; if it cannot be safely
-        // populated, fall back to a freshly created, randomly named one.
-        #[cfg(unix)]
-        if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
-            && Self::populate_compiler_rt_dir(&bun_cc)
-        {
-            return;
-        }
-        for _ in 0..8 {
-            let Some(name) = Self::fresh_compiler_rt_dir_name() else {
-                return;
-            };
-            match bun_sys::mkdirat(tmpdir.fd(), name.as_zstr(), 0o700) {
-                Ok(()) => {}
-                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
-                Err(_) => return,
-            }
-            let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
-                return;
-            };
-            let _ = Self::populate_compiler_rt_dir(&dir);
-            return;
+    const fn header(
+        dir: &'static [u8],
+        name: &'static [u8],
+        contents: &'static [u8],
+    ) -> BundledHeader {
+        BundledHeader {
+            dir,
+            name,
+            contents,
         }
     }
 
-    /// Random name for a freshly created header directory. The Windows shape
-    /// keeps the leading characters and the extension random, so a generated
-    /// short (8.3) alias of the directory is random as well.
-    fn fresh_compiler_rt_dir_name() -> Option<ZBox> {
-        #[cfg(unix)]
-        {
-            let mut name_buf = bun_paths::path_buffer_pool::get();
-            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                .ok()?;
-            Some(ZBox::from_bytes(name.as_bytes()))
-        }
-        #[cfg(windows)]
-        {
-            let mut name = Vec::new();
-            write!(
-                &mut name,
-                "{}-bun-cc.{}",
-                bun_fmt::truncated_hash32(bun_core::fast_random()),
-                bun_fmt::truncated_hash32(bun_core::fast_random()),
-            )
-            .ok()?;
-            Some(ZBox::from_vec(name))
+    /// Puts the bundled headers on the include path of `state`.
+    pub(crate) fn add_include_paths(state: &mut TCC::State) {
+        state.set_open_func::<Self>();
+        for dir in [Self::DIR, Self::NODE_DIR] {
+            if state.add_sys_include_path(dir).is_err() {
+                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+            }
         }
     }
 
-    /// Stage every header into `bun_cc` and publish its path; returns false
-    /// (leaving nothing published) if any entry could not be written -- e.g.
-    /// a pre-planted symlinked entry refused by the no-follow write.
-    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
-        for (name, source) in CompilerRtSources::SOURCES {
-            if !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source) {
-                return false;
-            }
-        }
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
-            return false;
-        };
-        for (name, source) in CompilerRtSources::NODE_HEADERS {
-            if !Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source) {
-                return false;
-            }
-        }
-
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
-            return false;
-        };
-        // `ZBox::from_bytes` panics on OOM.
-        let path = ZBox::from_bytes(&*path);
-        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
-            return false;
-        };
-        let node_path = ZBox::from_bytes(&*node_path);
-        let _ = COMPILER_RT_DIR.set(path);
-        let _ = COMPILER_RT_NODE_DIR.set(node_path);
-        true
-    }
-
-    /// Write one staged header without following a pre-planted symlinked
-    /// entry inside the header directory.
-    fn write_compiler_rt_file(dir: &bun_sys::Dir, name: &[u8], source: &[u8]) -> bool {
-        #[cfg(unix)]
-        {
-            let Ok(file) = dir.open_file(
-                name,
-                bun_sys::O::WRONLY
-                    | bun_sys::O::CREAT
-                    | bun_sys::O::TRUNC
-                    | bun_sys::O::CLOEXEC
-                    | bun_sys::O::NOFOLLOW,
-                0o644,
-            ) else {
-                return false;
-            };
-            file.write_all(source).is_ok()
-        }
-        #[cfg(windows)]
-        {
-            let name_z = ZBox::from_bytes(name);
-            bun_sys::File::write_file(dir.fd(), name_z.as_zstr(), source).is_ok()
-        }
-    }
-
-    /// Per-user `bun-cc-<uid>` directory: created 0700, reused only when it
-    /// is a real directory owned by the current user and not writable by
-    /// group or others, so a pre-planted or shared entry is never used to
-    /// stage compiler headers.
-    #[cfg(unix)]
-    fn open_owned_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> Option<bun_sys::Dir> {
-        let uid = bun_sys::c::getuid();
-        let mut dir_name = Vec::new();
-        write!(&mut dir_name, "bun-cc-{uid}").ok()?;
-        let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-        let dir = match tmpdir.open_at_with(&dir_name, dir_flags) {
-            Ok(dir) => dir,
-            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-                let name_z = ZBox::from_bytes(&dir_name);
-                match bun_sys::mkdirat(tmpdir.fd(), name_z.as_zstr(), 0o700) {
-                    Ok(()) => {}
-                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
-                    Err(_) => return None,
-                }
-                tmpdir.open_at_with(&dir_name, dir_flags).ok()?
-            }
-            Err(_) => return None,
-        };
-        let st = bun_sys::fstat(dir.fd()).ok()?;
-        if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
+    /// The bundled header at `path` below `DIR`: `.`, `..` and empty components are resolved as text.
+    fn bundled_header(path: &[u8]) -> Option<&'static [u8]> {
+        if bun_paths::climbs_out(path) {
             return None;
         }
-        Some(dir)
-    }
-
-    pub(crate) fn dir() -> Option<&'static ZStr> {
-        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
-        COMPILER_RT_DIR
-            .get()
-            .map(|b| b.as_zstr())
-            .filter(|d| !d.is_empty())
-    }
-
-    pub(crate) fn node_dir() -> Option<&'static ZStr> {
-        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
-        COMPILER_RT_NODE_DIR
-            .get()
-            .map(|b| b.as_zstr())
-            .filter(|d| !d.is_empty())
+        // From the end, so that each `..` is counted before the component it removes.
+        let mut removed = 0usize;
+        let mut kept = bun_paths::components(path).rev().filter(|&part| {
+            if part == b"." {
+                return false;
+            }
+            if part == b".." {
+                removed += 1;
+                return false;
+            }
+            if removed > 0 {
+                removed -= 1;
+                return false;
+            }
+            true
+        });
+        let name = kept.next()?;
+        let dir = kept.next().unwrap_or(b"");
+        if kept.next().is_some() {
+            return None;
+        }
+        // A directory on disk has the names of its file system: without case on Windows and macOS.
+        let same = |a: &[u8], b: &[u8]| {
+            if cfg!(any(windows, target_os = "macos")) {
+                a.eq_ignore_ascii_case(b)
+            } else {
+                a == b
+            }
+        };
+        (Self::HEADERS.iter())
+            .find(|header| same(header.dir, dir) && same(header.name, name))
+            .map(|header| header.contents)
     }
 
     #[inline(never)]
@@ -2627,6 +2518,18 @@ impl CompilerRT {
                 WORKAROUND.uint64_to_jsvalue as *const c_void,
             )
             .expect("unreachable");
+    }
+}
+
+impl TCC::OpenFiles for CompilerRT {
+    fn open(filename: &[u8]) -> TCC::Opened {
+        let Some(below) = bun_paths::strip_prefix(filename, Self::DIR.as_bytes()) else {
+            return TCC::Opened::FileSystem;
+        };
+        match Self::bundled_header(below) {
+            Some(contents) => TCC::Opened::Contents(contents),
+            None => TCC::Opened::NotFound,
+        }
     }
 }
 

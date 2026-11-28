@@ -1,20 +1,14 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import {
-  chmodSync,
-  existsSync,
-  promises as fs,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  symlinkSync,
-  writeFileSync,
-} from "fs";
+import { chmodSync, promises as fs, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
   expectRssDeltaBelow,
   isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
   isWindows,
   normalizeBunSnapshot,
   tempDir,
@@ -1577,12 +1571,67 @@ it.skipIf(isASAN || isWindows)("SDKROOT with the name of an SDK is not a directo
   expect(exitCode).toBe(1);
 });
 
-describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
+// cc() serves the headers it bundles to TinyCC from memory: it reads and writes nothing below the temp dir.
+describe.concurrent("bundled headers", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
+  // TinyCC asks for an absolute name first, so no directory of the host can answer for these names.
+  const inBundledDir = (names: string[]) => names.map(name => `/$bun-cc/${name}`);
+  const found = [
+    ...inBundledDir([
+      "stdbool.h",
+      "stdarg.h",
+      "stdnoreturn.h",
+      "stdalign.h",
+      "tgmath.h",
+      "stddef.h",
+      "varargs.h",
+      "node/node_api.h",
+      "node/node_api_types.h",
+      "node/js_native_api.h",
+      "node/js_native_api_types.h",
+      // Spellings that a directory on disk resolves.
+      "./stddef.h",
+      "node/../stdbool.h",
+      "node//node_api.h",
+      "/stdbool.h",
+      // A directory has no case on Windows and macOS, and both separators on Windows.
+      ...(isWindows || isMacOS ? ["STDBOOL.H", "Node/Node_Api.h"] : []),
+      ...(isWindows ? ["node\\node_api.h", "node\\..\\stdbool.h"] : []),
+    ]),
+    // On Windows the name of the directory itself has no case and both separators.
+    ...(isWindows ? ["\\$bun-cc\\stdbool.h", "/$BUN-CC/stddef.h"] : []),
+    // Both bundled directories are on the include path.
+    "varargs.h",
+    "node_api.h",
+    "node_api_types.h",
+    "js_native_api.h",
+    "js_native_api_types.h",
+  ];
+  const notFound = [
+    ...inBundledDir([
+      "node_api.h",
+      "node/stdbool.h",
+      "node/node/node_api.h",
+      "x/stdbool.h",
+      "x/node/node_api.h",
+      "not-a-bundled-header.h",
+      `${Buffer.alloc(200, "a")}.h`,
+      ...(isLinux ? ["STDBOOL.H"] : []),
+    ]),
+    "/$bun-ccX/stdbool.h",
+    "not-a-bundled-header.h",
+    "node/not-a-bundled-header.h",
+    "x/stdbool.h",
+    "../../stdbool.h",
+  ];
+  const probed = [...found, ...notFound];
   const files = {
     "sentinel.txt": "sentinel-unchanged\n",
+    // No libc has a varargs.h. TinyCC's own include directory has one that is an #error, and
+    // -nostdinc takes that directory off the include path.
     "add.c": /* c */ `
       #include <stdbool.h>
+      #include <varargs.h>
       int add(int a, int b) {
         return a + b + (int)true - 1;
       }
@@ -1593,90 +1642,239 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
 
       const { symbols } = cc({
         source: path.join(import.meta.dir, "add.c"),
+        flags: ["-nostdinc"],
+        symbols: { add: { args: ["int", "int"], returns: "int" } },
+      });
+      console.log(symbols.add(1, 2));
+    `,
+    // -vvv makes TinyCC print every name that it asks the file system for: "-> " if the file exists, else "nf ".
+    "probe.c": /* c */ `
+      int probe(int name) {
+        switch (name) {
+      ${probed.map((name, i) => `#if __has_include(<${name}>)\n  case ${i}: return 1;\n#endif`).join("\n")}
+        }
+        return 0;
+      }
+    `,
+    "probe-fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "probe.c"),
+        flags: "-std=c11 -vvv",
+        symbols: { probe: { args: ["int"], returns: "int" } },
+      });
+      console.log(JSON.stringify(${JSON.stringify(probed)}.filter((name, i) => symbols.probe(i))));
+    `,
+    // One include that is bundled, one that is on disk, and names that are nowhere.
+    "traced.c": /* c */ `
+      #include <stdbool.h>
+      #include <on-disk.h>
+      #if __has_include(<not-a-bundled-header.h>) || __has_include(<../../stdbool.h>)
+      #error a name below the directory of the bundled headers exists
+      #endif
+      #if __has_include(</$bun-cc-beside/on-disk.h>)
+      #error /$bun-cc-beside/on-disk.h exists
+      #endif
+      int add(int a, int b) {
+        return a + b + (int)true - ON_DISK;
+      }
+    `,
+    "on-disk/on-disk.h": "#define ON_DISK 1\n",
+    "trace-fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "traced.c"),
+        include: [path.join(import.meta.dir, "on-disk")],
+        flags: "-std=c11 -vvv",
+        symbols: { add: { args: ["int", "int"], returns: "int" } },
+      });
+      console.log(symbols.add(1, 2));
+    `,
+    "warn.c": /* c */ `
+      #define bool int
+      #include <stdbool.h>
+      int add(int a, int b) {
+        return a + b;
+      }
+    `,
+    "warn-fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      try {
+        cc({
+          source: path.join(import.meta.dir, "warn.c"),
+          flags: "-std=c11 -nostdinc",
+          symbols: { add: { args: ["int", "int"], returns: "int" } },
+        });
+        console.log("compiled");
+      } catch (e) {
+        console.log(e.message);
+      }
+    `,
+    // The largest bundled headers. They need a stdint.h, which only a libc has.
+    "napi.c": /* c */ `
+      #include <node/node_api.h>
+      int add(int a, int b) {
+        return a + b;
+      }
+    `,
+    "without-libc/stdint.h": /* c */ `
+      typedef signed char int8_t;
+      typedef unsigned char uint8_t;
+      typedef short int16_t;
+      typedef unsigned short uint16_t;
+      typedef int int32_t;
+      typedef unsigned int uint32_t;
+      typedef long long int64_t;
+      typedef unsigned long long uint64_t;
+    `,
+    "napi-fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "napi.c"),
+        include: [path.join(import.meta.dir, "without-libc")],
         symbols: { add: { args: ["int", "int"], returns: "int" } },
       });
       console.log(symbols.add(1, 2));
     `,
   };
+  const entries = [...new Set(Object.keys(files).map(name => name.split("/")[0]))];
 
-  async function runFixture(dir: string) {
+  // Each result is compared as one object, so that a failure shows what TinyCC printed.
+  async function runFixture(dir: string, fixture = "fixture.js", tmpdir = dir) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: { ...bunEnv, BUN_TMPDIR: String(dir) },
+      cmd: [bunExe(), fixture],
+      env: { ...bunEnv, BUN_TMPDIR: tmpdir },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
   }
 
-  it.skipIf(isWindows)("compiles a source that includes a compiler runtime header", async () => {
+  it("compiles a source that includes a bundled header, and adds nothing to the temp dir", async () => {
     using dir = tempDir("bun-ffi-cc-rt-dir", files);
 
-    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+    const result = await runFixture(String(dir));
 
-    expect(readFileSync(path.join(String(dir), `bun-cc-${process.getuid!()}`, "stdbool.h"), "utf8")).toContain(
-      "_STDBOOL_H",
-    );
-    expect(stdout).toBe("3\n");
-    expect(exitCode).toBe(0);
+    expect(readdirSync(String(dir)).sort()).toEqual([...entries].sort());
+    expect(result).toMatchObject({ stdout: "3\n", exitCode: 0 });
   });
 
-  it.skipIf(isWindows)("does not write compiler runtime headers through a symlinked entry", async () => {
-    using dir = tempDir("bun-ffi-cc-rt-dir-symlink", files);
-    for (const name of ["bun-cc", `bun-cc-${process.getuid!()}`]) {
+  it("does not read or change the header directories that an earlier version left in the temp dir", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-planted", files);
+    // `bun-cc` was the directory before 1.4.0. `bun-cc-<uid>` is the one after it, here open to everybody.
+    const planted = ["bun-cc", ...(isWindows ? [] : [`bun-cc-${process.getuid!()}`])];
+    for (const name of planted) {
       const headerDir = path.join(String(dir), name);
       mkdirSync(headerDir, { recursive: true });
-      chmodSync(headerDir, 0o755);
-      symlinkSync("../sentinel.txt", path.join(headerDir, "stdbool.h"));
+      writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
+      if (!isWindows) {
+        symlinkSync("../sentinel.txt", path.join(headerDir, "varargs.h"));
+        chmodSync(headerDir, 0o777);
+      }
     }
 
-    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+    const result = await runFixture(String(dir));
 
+    expect(readdirSync(String(dir)).sort()).toEqual([...entries, ...planted].sort());
+    for (const name of planted) {
+      const headerDir = path.join(String(dir), name);
+      expect(readdirSync(headerDir).sort()).toEqual(isWindows ? ["stdbool.h"] : ["stdbool.h", "varargs.h"]);
+      expect(readFileSync(path.join(headerDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
+    }
     expect(readFileSync(path.join(String(dir), "sentinel.txt"), "utf8")).toBe("sentinel-unchanged\n");
-    expect(stdout).toBe("3\n");
-    expect(exitCode).toBe(0);
+    expect(result).toMatchObject({ stdout: "3\n", exitCode: 0 });
   });
 
-  it.skipIf(isWindows)(
-    "does not place compiler runtime headers in a pre-existing group- and world-writable directory",
-    async () => {
-      using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
-      const sharedName = `bun-cc-${process.getuid!()}`;
-      for (const name of ["bun-cc", sharedName]) {
-        const headerDir = path.join(String(dir), name);
-        mkdirSync(headerDir, { recursive: true });
-        writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
-      }
-      chmodSync(path.join(String(dir), "bun-cc"), 0o755);
-      chmodSync(path.join(String(dir), sharedName), 0o777);
+  it.each([
+    ["does not exist", "missing"],
+    ["is a file", "sentinel.txt"],
+  ])("compiles a source that includes a bundled header when the temp dir %s", async (_, name) => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-unusable", files);
 
-      const [stdout, stderr, exitCode] = await runFixture(String(dir));
+    const result = await runFixture(String(dir), "fixture.js", path.join(String(dir), name));
 
-      expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
-      expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
-      expect(stdout).toBe("3\n");
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(result).toMatchObject({ stdout: "3\n", exitCode: 0 });
+  });
 
-  it("does not reuse a pre-existing fixed-name bun-cc directory for compiler runtime headers", async () => {
-    using dir = tempDir("bun-ffi-cc-rt-dir-fixed-name", files);
-    const fixedDir = path.join(String(dir), "bun-cc");
-    mkdirSync(fixedDir, { recursive: true });
-    writeFileSync(path.join(fixedDir, "stdbool.h"), plantedHeader);
+  it("compiles a source that includes the bundled Node-API headers when the temp dir does not exist", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-napi", files);
 
-    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+    const result = await runFixture(String(dir), "napi-fixture.js", path.join(String(dir), "missing"));
 
-    const staged = readdirSync(String(dir)).filter(
-      name => name !== "bun-cc" && name.includes("bun-cc") && existsSync(path.join(String(dir), name, "stdbool.h")),
+    expect(result).toMatchObject({ stdout: "3\n", exitCode: 0 });
+  });
+
+  it("finds every bundled header, and only those, when the temp dir does not exist", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-probe", files);
+
+    const { stdout, stderr, exitCode } = await runFixture(
+      String(dir),
+      "probe-fixture.js",
+      path.join(String(dir), "missing"),
     );
-    expect(staged.length).toBe(1);
-    expect(readFileSync(path.join(String(dir), staged[0], "stdbool.h"), "utf8")).toContain("_STDBOOL_H");
-    expect(readdirSync(fixedDir).sort()).toEqual(["stdbool.h"]);
-    expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
-    expect(stdout).toBe("3\n");
-    expect(exitCode).toBe(0);
+
+    const lines = stdout.split(/\r?\n/);
+    const json = lines.find(line => line.startsWith("["));
+    expect({ found: json ? JSON.parse(json) : stdout, stderr, exitCode }).toMatchObject({ found, exitCode: 0 });
+    // A name beside the bundled directory goes to the file system. No name below it does.
+    expect(lines).toContain("nf /$bun-ccX/stdbool.h");
+    expect(lines.filter(line => /^(->|nf) +\/\$bun-cc[\\/]/.test(line))).toEqual([]);
+  });
+
+  it("asks the file system for no file below the directory of the bundled headers", async () => {
+    using dir = tempDir("ffi-cc-headers-trace", { ...files, "tmp/.keep": "" });
+    const tmpdir = path.join(String(dir), "tmp");
+
+    const { stdout, stderr, exitCode } = await runFixture(String(dir), "trace-fixture.js", tmpdir);
+
+    const lines = stdout.replaceAll("\\", "/").split(/\r?\n/);
+    expect({ printed: lines.includes("3"), stdout, stderr, exitCode }).toMatchObject({ printed: true, exitCode: 0 });
+    // The trace has the files that TinyCC opened and the ones that it did not find.
+    const traced = (mark: string) => lines.filter(line => line.startsWith(mark)).map(line => line.slice(3).trim());
+    const opened = traced("-> ");
+    const missed = traced("nf ");
+    expect(opened.filter(file => file.endsWith("/traced.c"))).toHaveLength(1);
+    expect(opened.filter(file => file.endsWith("/on-disk/on-disk.h"))).toHaveLength(1);
+    expect(missed.some(file => file.endsWith("/not-a-bundled-header.h"))).toBe(true);
+    expect(missed).toContain("/$bun-cc-beside/on-disk.h");
+    expect(
+      [...opened, ...missed].filter(
+        file => file.startsWith("/$bun-cc/") || file.startsWith(tmpdir.replaceAll("\\", "/")),
+      ),
+    ).toEqual([]);
+  });
+
+  it("names the bundled header in a diagnostic", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-warn", files);
+
+    const { stdout, stderr, exitCode } = await runFixture(String(dir), "warn-fixture.js");
+
+    expect({ lines: stdout.split(/\r?\n/), stderr, exitCode }).toMatchObject({
+      lines: expect.arrayContaining(["/$bun-cc/stdbool.h:6: warning: bool redefined"]),
+      exitCode: 0,
+    });
+  });
+
+  // Before, each process wrote the headers again over the ones that the other processes were reading.
+  // Windows had no directory that processes share.
+  it.skipIf(isWindows)("processes that share a temp dir compile at the same time", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-shared", files);
+
+    for (let round = 0; round < (isDebug || isASAN ? 2 : 6); round++) {
+      const results = await Promise.all(Array.from({ length: 8 }, () => runFixture(String(dir), "napi-fixture.js")));
+
+      expect(results).toMatchObject(Array.from({ length: 8 }, () => ({ stdout: "3\n", exitCode: 0 })));
+    }
   });
 });
 

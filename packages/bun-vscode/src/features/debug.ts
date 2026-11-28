@@ -410,10 +410,6 @@ class FileDebugSession extends DebugSession {
       });
     }
 
-    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => {}),
-    );
-
     adapters.set(url, this);
   }
 

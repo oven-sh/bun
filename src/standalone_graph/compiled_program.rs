@@ -951,7 +951,8 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
             // In a sticky folder others can make files, but not replace this one. Nothing is loaded out of one.
             let folder = bun_core::ZBox::from_bytes(&at[..parent.max(1)]);
             if !is_safe(&stat, is_folder)
-                || has_access_control_list(&name)
+                || (cfg!(target_os = "macos") || stat.st_mode as u32 & 0o020 != 0)
+                    && has_access_control_list(&name)
                 || !is_folder && !bun_sys::lstat(&folder).is_ok_and(|it| is_safe(&it, false))
             {
                 return false;

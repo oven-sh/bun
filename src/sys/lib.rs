@@ -8418,10 +8418,12 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let dst = loop {
         // Unlink dest first — fixes ETXTBUSY on Linux.
         // Whoever else can write to the folder may put something there before it is opened.
-        let flags = match unlinkat(to_dir, destination).map_err(|e| e.get_errno()) {
-            Ok(()) | Err(E::ENOENT) => O::EXCL,
+        let flags = match unlinkat(to_dir, destination) {
+            Ok(()) => O::EXCL,
+            Err(e) if e.get_errno() == E::ENOENT => O::EXCL,
             Err(_) if may_follow => O::TRUNC,
-            Err(_) => O::TRUNC | O::NOFOLLOW,
+            // What another user has put there, a file as well as a link, stays theirs.
+            Err(e) => return Err(e),
         };
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | flags;
         match Tmpfile::open(to_dir, destination, flags, mode) {

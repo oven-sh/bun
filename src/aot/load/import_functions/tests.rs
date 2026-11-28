@@ -15,6 +15,7 @@ fn count_imports_written(path: &str, text: &str) -> usize {
         every_file_is_a_module: false,
         reads_jsdoc: true,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let mut hir = parse_for_compile(arena, &options, text.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(text.as_bytes());

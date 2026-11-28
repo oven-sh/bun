@@ -530,6 +530,7 @@ impl<'t> Look<'t> {
             every_file_is_a_module: false,
             reads_jsdoc: false,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let text: &'t [u8] = arena.alloc_slice_copy(text);
         let mut hir = parse_for_compile(arena, &parse_options, text, atoms);

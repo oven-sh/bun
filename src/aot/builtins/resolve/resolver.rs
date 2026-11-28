@@ -470,13 +470,6 @@ pub(super) fn count_states(
     resolver.states.ids().len()
 }
 
-fn binding_of_defined_root(input: &ResolveInput<'_, '_>, expression: ExprId) -> Binding {
-    match input.hir[expression].kind {
-        ExprKind::Ident(_) => input.bound.binding(expression),
-        _ => input.bound.runtime.binding_of_defined_path(expression),
-    }
-}
-
 impl<'a, 's> Resolver<'a, 's> {
     fn new(
         input: &'a ResolveInput<'a, 's>,
@@ -782,10 +775,7 @@ impl<'a, 's> Resolver<'a, 's> {
                     self.states.set_code(expr, UNRESOLVED);
                 }
                 Decision::GlobalPath(path) => {
-                    let state = match binding_of_defined_root(input, expr) {
-                        Binding::Free => self.resolve_global_path(path),
-                        _ => ExprState::Unresolved,
-                    };
+                    let state = self.resolve_global_path(path);
                     if state.is_found() || matches!(kind, ExprKind::This) {
                         self.found_or_this.push(expr);
                     }

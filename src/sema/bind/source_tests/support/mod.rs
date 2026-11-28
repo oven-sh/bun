@@ -246,6 +246,7 @@ impl<'s> Workspace<'s> {
             every_file_is_a_module: false,
             reads_jsdoc: true,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         hir.text = Cow::Borrowed(self.arena.alloc_slice_copy(source.text));

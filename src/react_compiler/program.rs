@@ -89,6 +89,10 @@ pub trait Host {
         false
     }
 
+    fn globals_written_by_defines(&self) -> &[Loc] {
+        &[]
+    }
+
     /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()
@@ -1383,6 +1387,7 @@ pub fn maybe_compile_pending(
                 outlined: &state.outlined_decls[outlined_before..],
                 symbols: &[],
                 import_records: &[],
+                globals_written_by_defines: &[],
             };
             observation.report_function(host, referenced, &function);
         }

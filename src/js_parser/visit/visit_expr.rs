@@ -11,8 +11,9 @@ use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
 use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
 use crate::parser::{
-    FnOrArrowDataVisit, PrependTempRefsOpts, ReactRefresh, Ref, StrictModeFeature, ThenCatchChain,
-    TransposeState, UsedAs, VisitArgsOpts, float_to_int32, prefill,
+    FindSymbolResult, FnOrArrowDataVisit, PrependTempRefsOpts, ReactRefresh, Ref,
+    StrictModeFeature, ThenCatchChain, TransposeState, UsedAs, VisitArgsOpts, float_to_int32,
+    prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -160,6 +161,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[inline]
+    pub(crate) fn resolve_name(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'a [u8],
+        used_as: UsedAs,
+    ) -> (E::Identifier, FindSymbolResult) {
+        let p = self;
+        let result = p.find_symbol(loc, name).expect("unreachable");
+
+        let mut e_ = E::Identifier::init(result.r#ref)
+            .with_must_keep_due_to_with_stmt(result.is_inside_with_scope);
+
+        if p.options.features.defers_requires
+            && (p.while_loading.functions_around == 0
+                || result.is_inside_with_scope
+                || used_as == UsedAs::DeleteTarget)
+        {
+            p.while_loading.note_read(result.r#ref);
+        }
+
+        if used_as.is_assigned() {
+            // A write to the name of a class with lowered class decorators goes to
+            // the class's own immutable binding, not to `inner_class_ref`.
+            if let Some(&(inner_ref, name_ref)) = p
+                .decorated_class_names
+                .iter()
+                .find(|(inner, _)| *inner == result.r#ref)
+            {
+                p.ignore_usage(inner_ref);
+                p.record_usage(name_ref);
+                e_.ref_ = name_ref;
+            }
+
+            if p.exports_ref.eql(e_.ref_) {
+                // Assigning to `exports` in a CommonJS module must be tracked to undo the
+                // `module.exports` -> `exports` optimization.
+                p.commonjs_module_exports_assigned_deoptimized = true;
+            }
+
+            p.record_assignment(result.r#ref);
+        }
+
+        (e_, result)
+    }
+
     fn e_identifier(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         // The substitution revisit re-enters with an already-resolved `Ref`.
         // `find_symbol` below only looks in `scope.members`, so a symbol that
@@ -170,7 +217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let expr = *e;
-        let mut e_ = expr
+        let e_ = expr
             .data
             .e_identifier()
             .expect("infallible: variant checked");
@@ -185,90 +232,55 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         }
 
-        let result = p.find_symbol(expr.loc, name).expect("unreachable");
-
-        // Order matters: assigning a fresh `Ref` clears the packed user-bit
-        // flags (intentional — the parse-time ref carries no flags), so set
-        // `ref_` first, then derive the visit-time flags into the user bits.
-        e_.ref_ = result.r#ref;
-        e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
-
-        if p.options.features.defers_requires
-            && (p.while_loading.functions_around == 0
-                || result.is_inside_with_scope
-                || used_as == UsedAs::DeleteTarget)
-        {
-            p.while_loading.note_read(result.r#ref);
-        }
+        let (mut e_, result) = p.resolve_name(expr.loc, name, used_as);
 
         // Handle assigning to a constant
-        if used_as.is_assigned() {
-            // A write to the name of a class with lowered class decorators goes to
-            // the class's own immutable binding, not to `inner_class_ref`.
-            if let Some(&(inner_ref, name_ref)) = p
-                .decorated_class_names
-                .iter()
-                .find(|(inner, _)| *inner == result.r#ref)
-            {
-                p.ignore_usage(inner_ref);
-                p.record_usage(name_ref);
-                e_.ref_ = name_ref;
+        if used_as.is_assigned()
+            && p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
+        {
+            // TODO: silence this for runtime transpiler
+            let r = js_lexer::range_of_identifier(p.source, expr.loc);
+            let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
+                text: {
+                    let mut v = Vec::new();
+                    write!(
+                        &mut v,
+                        "The symbol \"{}\" was declared a constant here:",
+                        BStr::new(name)
+                    )
+                    .unwrap();
+                    std::borrow::Cow::Owned(v)
+                },
+                location: bun_ast::Location::init_or_null(
+                    Some(p.source),
+                    js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
+                ),
+                ..Default::default()
+            }]);
+
+            let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
+            match is_error {
+                true => p.log().add_range_error_fmt_with_notes(
+                    Some(p.source),
+                    r,
+                    notes,
+                    format_args!(
+                        "Cannot assign to \"{}\" because it is a constant",
+                        BStr::new(name)
+                    ),
+                ),
+
+                false => p.log().add_range_error_fmt_with_notes(
+                    Some(p.source),
+                    r,
+                    notes,
+                    format_args!(
+                        "This assignment will throw because \"{}\" is a constant",
+                        BStr::new(name)
+                    ),
+                ),
             }
-
-            if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
-            {
-                // TODO: silence this for runtime transpiler
-                let r = js_lexer::range_of_identifier(p.source, expr.loc);
-                let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
-                    text: {
-                        let mut v = Vec::new();
-                        write!(
-                            &mut v,
-                            "The symbol \"{}\" was declared a constant here:",
-                            BStr::new(name)
-                        )
-                        .unwrap();
-                        std::borrow::Cow::Owned(v)
-                    },
-                    location: bun_ast::Location::init_or_null(
-                        Some(p.source),
-                        js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
-                    ),
-                    ..Default::default()
-                }]);
-
-                let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
-                match is_error {
-                    true => p.log().add_range_error_fmt_with_notes(
-                        Some(p.source),
-                        r,
-                        notes,
-                        format_args!(
-                            "Cannot assign to \"{}\" because it is a constant",
-                            BStr::new(name)
-                        ),
-                    ),
-
-                    false => p.log().add_range_error_fmt_with_notes(
-                        Some(p.source),
-                        r,
-                        notes,
-                        format_args!(
-                            "This assignment will throw because \"{}\" is a constant",
-                            BStr::new(name)
-                        ),
-                    ),
-                }
-            } else if p.exports_ref.eql(e_.ref_) {
-                // Assigning to `exports` in a CommonJS module must be tracked to undo the
-                // `module.exports` -> `exports` optimization.
-                p.commonjs_module_exports_assigned_deoptimized = true;
-            }
-
-            p.record_assignment(result.r#ref);
         }
-
-        let mut original_name: Option<&[u8]> = None;
 
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
@@ -280,18 +292,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // helpers (`value_for_define`) below need no lifetime laundering.
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
-                if !def.valueless() {
-                    let newvalue: Expr = p.value_for_define(expr.loc, used_as, def);
-
-                    // Don't substitute an identifier for a non-identifier if this is an
-                    // assignment target, since it'll cause a syntax error
-                    if matches!(newvalue.data.tag(), Tag::EIdentifier) || !used_as.is_assigned() {
-                        p.ignore_usage(e_.ref_);
-                        *e = newvalue;
-                        return;
-                    }
-
-                    original_name = def.original_name();
+                if !def.valueless() && (!used_as.is_assigned() || def.can_be_assigned()) {
+                    p.ignore_usage(e_.ref_);
+                    *e = p.value_for_define(expr.loc, used_as, def);
+                    return;
                 }
 
                 // Copy the side effect flags over in case this expression is unused
@@ -322,7 +326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        *e = p.handle_identifier(expr.loc, e_, original_name, used_as, true);
+        *e = p.handle_identifier(expr.loc, e_, None, used_as, true);
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
     // `visit_expr_as` dispatcher frame. Without `inline(never)` LLVM folds the
@@ -1371,7 +1375,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.is_dot_define_match(expr, &define.parts) {
                     if !used_as.is_assigned() {
                         // Substitute user-specified defines
-                        if !define.data.valueless() {
+                        if !define.data.valueless() && p.can_write_define(expr.loc, &define.data) {
                             *e = p.value_for_define(expr.loc, used_as, &define.data);
                             return;
                         }
@@ -1425,14 +1429,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_as(
-            &mut e_.target,
-            match used_as {
-                UsedAs::DeleteTarget => UsedAs::Value,
-                _ if used_as.leads_to_call() => UsedAs::ObjectOfCallTarget,
-                _ => UsedAs::Object,
-            },
-        );
+        p.visit_expr_as(&mut e_.target, used_as.of_object());
 
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {

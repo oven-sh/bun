@@ -449,10 +449,6 @@ impl Identifier {
     pub const fn must_keep_due_to_with_stmt(self) -> bool {
         self.ref_.user_bit(0)
     }
-    #[inline]
-    pub fn set_must_keep_due_to_with_stmt(&mut self, v: bool) {
-        self.ref_.set_user_bit(0, v);
-    }
 
     /// If true, this identifier is known to not have a side effect (i.e. to not
     /// throw an exception) when referenced. If false, this identifier may or may

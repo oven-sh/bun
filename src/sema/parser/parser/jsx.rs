@@ -646,7 +646,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             true => return self.finish_expr(ExprKind::String(name), start),
             false if name == known::this => self.finish_expr(ExprKind::This, start),
-            false => self.finish_expr(ExprKind::Ident(name), start),
+            false => {
+                self.leave_room_for_defines(name, start);
+                self.finish_expr(ExprKind::Ident(name), start)
+            }
         };
         if self.token() == T::Dot {
             self.note_identifier(name, start);

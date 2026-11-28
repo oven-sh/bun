@@ -1,4 +1,5 @@
 mod analyze;
+mod paths_of_defines;
 #[cfg(test)]
 mod tests;
 mod top_level_await;

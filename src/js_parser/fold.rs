@@ -515,7 +515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EString(str_) => {
-                    if p.options.features.minify_syntax {
+                    if p.options.features.minify_syntax && !used_as.is_assigned_or_deleted() {
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {

@@ -3570,6 +3570,200 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "prod hello from a text loader" },
   });
+  for (const minify of [false, true]) {
+    const options = { minifySyntax: minify, minifyIdentifiers: minify };
+    const suffix = minify ? "Minified" : "";
+    itBundled(`edgecase/DefinePathBeginsAtNameOfFile${suffix}`, {
+      ...options,
+      files: {
+        "/entry.ts": /* ts */ `
+          import config from "./config.js";
+          import * as ns from "./config.js";
+          import { named } from "./config.js";
+          import cjs from "./cjs.cjs";
+          const local = { level: 4 };
+          enum Level { Low, High }
+          namespace Space { export let inner = 5; console.log(OF_TS_NAMESPACE); }
+          function pick(local) { return OF_CONST; }
+          console.log(OF_DEFAULT, METHOD(), OF_NAMESPACE, OF_NAMED, OF_CJS, OF_CONST, OF_ENUM, process.env.OF_PATH);
+          console.log(pick({ level: 6 }));
+        `,
+        "/config.js": /* js */ `
+          export default { level: 1, method() { return this.level; } };
+          export const named = { level: 2 };
+        `,
+        "/cjs.cjs": `exports.level = 3;`,
+      },
+      define: {
+        OF_DEFAULT: "config.level",
+        METHOD: "config.method",
+        OF_NAMESPACE: "ns.named.level",
+        OF_NAMED: "named.level",
+        OF_CJS: "cjs.level",
+        OF_CONST: "local.level",
+        OF_ENUM: "Level.High",
+        OF_TS_NAMESPACE: "inner",
+        "process.env.OF_PATH": "local.level",
+      },
+      run: { stdout: "5\n1 1 2 2 3 4 1 4\n6" },
+    });
+    itBundled(`edgecase/DefinePathIsReplacedOnce${suffix}`, {
+      ...options,
+      files: {
+        "/entry.js": /* js */ `
+          globalThis.holder = { first: "a", second: "b", third: "c" };
+          function read() { let prefix = String(1); return prefix + FIRST + HOLDER.first + holder.first; }
+          console.log(read());
+        `,
+      },
+      define: {
+        FIRST: "holder.first",
+        HOLDER: "holder",
+        "holder.first": "holder.second",
+        "holder.second": "holder.third",
+      },
+      run: { stdout: "1aab" },
+    });
+    itBundled(`edgecase/DefinePathKeepsWhatItsFirstNameWasAssigned${suffix}`, {
+      ...options,
+      files: {
+        "/entry.js": /* js */ `
+          function make() { console.log("made"); return { level: 1 }; }
+          function read(wanted) { const local = make(); const level = LEVEL; return wanted ? level : 0; }
+          console.log(read(false), read(true));
+        `,
+      },
+      define: { LEVEL: "local.level" },
+      run: { stdout: "made\nmade\n0 1" },
+    });
+    itBundled(`edgecase/DefinePathIsNotFoldedWhereAssigned${suffix}`, {
+      ...options,
+      files: {
+        "/entry.ts": /* ts */ `
+          const text = "abc";
+          enum Text { Short = "a" }
+          globalThis.never = () => { LENGTH = 0; LENGTH_OF_MEMBER++; };
+          console.log(LENGTH, LENGTH_OF_MEMBER);
+        `,
+      },
+      define: { LENGTH: "text.length", LENGTH_OF_MEMBER: "Text.Short.length" },
+      run: { stdout: "3 1" },
+    });
+  }
+  itBundled("edgecase/DefineIsNotBoundToWhatInliningRemoved", {
+    files: {
+      "/entry.js": /* js */ `
+        process.env.LEVEL = "real";
+        function read() { const env = process.env; return env.LEVEL === "real"; }
+        console.log(read());
+      `,
+    },
+    define: { "process.env.LEVEL": "env" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: { stdout: "true" },
+  });
+  itBundled("edgecase/DefineOfGlobalMatchesAfterInlining", {
+    files: {
+      "/entry.js": /* js */ `
+        globalThis.settings = { level: "real" };
+        function read() { const env = process.env; return env.LEVEL === "real"; }
+        function local(config) { return LEVEL; }
+        console.log(read(), local({ level: 1 }));
+      `,
+    },
+    define: { "process.env.LEVEL": "settings.level", LEVEL: "config.level" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: { stdout: "true 1" },
+  });
+  itBundled("edgecase/DefinePathBeginsAtCommonJSVariableAfterInlining", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function a() { const env = process.env; return env.HOT === 1; }
+        function b() { const env = process.env; return env.NAMED === 2; }
+        function c() { const module = 1; const env = process.env; return env.HOT === undefined; }
+        module.hot = 1;
+        exports.named = 2;
+        console.log(a(), b(), c());
+      `,
+    },
+    define: { "process.env.HOT": "module.hot", "process.env.NAMED": "exports.named" },
+    minifySyntax: true,
+    target: "bun",
+    run: { stdout: "true true true" },
+  });
+  itBundled("edgecase/DefinePathBeginsAtOwnModuleVariable", {
+    files: {
+      "/entry.js": /* js */ `
+        var module = { level: 1 };
+        console.log(A);
+      `,
+    },
+    define: { A: "module.level" },
+    run: { stdout: "1" },
+  });
+  itBundled("edgecase/DefineAssignsToConstant", {
+    files: {
+      "/entry.js": /* js */ `
+        function read() {
+          const limits = { max: 3 }, constant = 4;
+          globalThis.never = () => { CONSTANT = 5; CONSTANT++; };
+          return [MAX, CONSTANT];
+        }
+        const globalLimits = (globalThis.limits = { max: 0 });
+        console.log(read().join(), globalLimits.max);
+      `,
+    },
+    define: { CONSTANT: "constant", MAX: "limits.max" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    run: { stdout: "3,4 0" },
+  });
+  itBundled("edgecase/DefinePathReservesItsFirstName", {
+    files: {
+      "/entry.js": /* js */ `
+        for (const name of "abcdefghijklmnopqrstuvwxyz") globalThis[name] = { value: name };
+        function read(first, second, third) { return [E, T, N, R, O, first, second, third].join(); }
+        console.log(read(1, 2, 3));
+      `,
+    },
+    define: { E: "e.value", T: "t.value", N: "n.value", R: "r.value", O: "o.value" },
+    minifyIdentifiers: true,
+    run: { stdout: "e,t,n,r,o,1,2,3" },
+  });
+  itBundled("edgecase/DefineConstantIsNotAssigned", {
+    files: {
+      "/entry.js": /* js */ `
+        globalThis.LEVEL = globalThis.NAME = globalThis.NOTHING = 0;
+        LEVEL = 1; LEVEL++; [NAME] = [3]; ({ NOTHING } = { NOTHING: 4 });
+        console.log(LEVEL, NAME, NOTHING, globalThis.LEVEL, globalThis.NAME, globalThis.NOTHING);
+      `,
+    },
+    define: { LEVEL: "9", NAME: '"name"', NOTHING: "undefined" },
+    run: { stdout: "9 name undefined 2 3 4" },
+  });
+  itBundled("edgecase/DefineNameIsAssignedBesideNamespaceImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./other.js";
+        globalThis.target = 0;
+        ALIAS = 1;
+        console.log(target, ns.value);
+      `,
+      "/other.js": `export const value = 2;`,
+    },
+    define: { ALIAS: "target" },
+    run: { stdout: "1 2" },
+  });
+  itBundled("edgecase/DefineNameOfImportIsNotAssigned", {
+    files: {
+      "/entry.js": `import { value } from "./other.js"; ALIAS = 1;`,
+      "/other.js": `export let value = 2;`,
+    },
+    define: { ALIAS: "value" },
+    bundleErrors: { "/entry.js": ['Cannot assign to import "value"'] },
+  });
   // `--external` and `--packages=external` describe the output bundle, not the
   // macro VM. A package the macro module imports has to resolve at build time.
   itBundled("edgecase/MacroImportsPackageMarkedExternal", {

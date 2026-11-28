@@ -51,6 +51,7 @@ impl<'s> Fixture<'_, 's> {
     fn parse(&self, path: &[u8]) -> ParsedCode<'s> {
         let settings = default_settings();
         let request = CodeParseRequest {
+            room_for_defines: Default::default(),
             path,
             loader: BY_NAME,
             options: ParseOptions::default(),

@@ -18,7 +18,7 @@ enum ImplicitReferenceOrder {
 
 fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceOrder {
     let is_fragment = match reference.kind {
-        ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::DefinedPath => false,
+        ImplicitReferenceKind::JsxFactory => false,
         ImplicitReferenceKind::JsxFragment => true,
         ImplicitReferenceKind::DecoratorMetadata(recorded) => {
             return ImplicitReferenceOrder::DecoratorMetadata(recorded);
@@ -200,6 +200,7 @@ define_tables! {
             dynamic_declarator_lookups: S::Few<(PatId, ScopeId)>,
             eval_scopes: S::Few<(ExprId, EvalScope)>,
             jump_targets: S::Few<(StmtId, StmtId)>,
+            places_of_defined_paths: S::Few<(ExprId, u32)>,
         }
         sorted {
             stores: S::List<SymbolStore> = |store| (store.symbol, store.target),

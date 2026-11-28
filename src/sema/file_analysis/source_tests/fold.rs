@@ -1546,17 +1546,10 @@ fn name_in_place_of_a_free_name_is_bound_where_it_stands() {
         function own() { const MODE = 3; return MODE; } MODE = 4;";
     folded("a.mjs", text, NAME_IN_PLACE, |s| {
         let of_file = Binding::Symbol(s.variable("mode", 0));
-        assert_eq!(s.binding("MODE", 0), of_file);
-        assert_eq!(s.binding("MODE", 1), Binding::Symbol(s.variable("mode", 1)));
-        assert_eq!(s.binding("MODE", 2), Binding::Symbol(s.variable("MODE", 0)));
-        assert_eq!(s.binding("MODE", 3), of_file);
-        for nth in 0..4 {
-            let found = decision(s, s.ident("MODE", nth));
-            assert!(
-                !matches!(found, Decision::GlobalPath(_)),
-                "{nth}: {found:?}"
-            );
-        }
+        assert_eq!(s.binding("mode", 0), of_file);
+        assert_eq!(s.binding("mode", 1), Binding::Symbol(s.variable("mode", 1)));
+        assert_eq!(s.binding("MODE", 0), Binding::Symbol(s.variable("MODE", 0)));
+        assert_eq!(s.binding("mode", 2), of_file);
     });
     folded("a.mjs", "function pick() { MODE; }", NAME_IN_PLACE, |s| {
         assert_eq!(s.binding("MODE", 0), Binding::Free);
@@ -1570,20 +1563,13 @@ fn name_in_place_of_a_path_is_bound_where_it_stands() {
     let text = "const mode = 1; config.mode; function pick(mode) { return config.mode; } \
         function own(config) { return config.mode; }";
     folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
-        let paths: Vec<ExprId> = (0..s.hir.exprs.len() as u32)
-            .map(ExprId)
-            .filter(|&e| matches!(s.hir[e].kind, ExprKind::Dot { .. }))
-            .collect();
-        let bindings = paths
-            .iter()
-            .map(|&e| s.bound.runtime.binding_of_defined_path(e));
-        let bindings: Vec<Binding> = bindings.collect();
         let of_file = Binding::Symbol(s.variable("mode", 0));
-        assert_eq!(bindings[0], of_file);
-        assert!(
-            matches!(bindings[1], Binding::Symbol(symbol) if Binding::Symbol(symbol) != of_file)
-        );
-        assert_eq!(bindings[2], Binding::Free);
+        assert_eq!(s.binding("mode", 0), of_file);
+        assert!(matches!(s.binding("mode", 1), Binding::Symbol(_)));
+        assert_ne!(s.binding("mode", 1), of_file);
+        let paths = s.hir.exprs.iter();
+        let paths = paths.filter(|it| matches!(it.kind, ExprKind::Dot { .. }));
+        assert_eq!(paths.count(), 1);
     });
 }
 
@@ -1591,15 +1577,10 @@ fn name_in_place_of_a_path_is_bound_where_it_stands() {
 fn first_name_of_a_path_in_place_of_a_name_is_bound_where_it_stands() {
     let text = "const settings = { level: 1 }; LEVEL; function pick(settings) { return LEVEL; }";
     folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
-        let path = [s.workspace.atom("settings"), s.workspace.atom("level")];
-        for nth in 0..2 {
-            assert_eq!(
-                decision(s, s.ident("LEVEL", nth)),
-                Decision::GlobalPath(&path)
-            );
-        }
-        assert_eq!(s.binding("LEVEL", 0), Binding::Free);
-        assert!(matches!(s.binding("LEVEL", 1), Binding::Symbol(_)));
+        let of_file = Binding::Symbol(s.variable("settings", 0));
+        assert_eq!(s.binding("settings", 0), of_file);
+        assert!(matches!(s.binding("settings", 1), Binding::Symbol(_)));
+        assert_ne!(s.binding("settings", 1), of_file);
     });
 }
 
@@ -1607,11 +1588,10 @@ fn first_name_of_a_path_in_place_of_a_name_is_bound_where_it_stands() {
 fn store_through_a_path_in_place_is_no_store_to_its_first_name() {
     let text = "function put() { const settings = { level: 1 }; LEVEL = 2; }";
     folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
-        let target = s.ident("LEVEL", 0);
-        assert!(matches!(s.bound.binding(target), Binding::Symbol(_)));
-        assert!(!s.bound.is_store_target(target));
+        let settings = s.variable("settings", 0);
+        assert_eq!(s.binding("settings", 0), Binding::Symbol(settings));
         let mut stores = s.bound.runtime.stores().iter();
-        assert!(stores.all(|store| store.target != target));
+        assert!(stores.all(|store| store.symbol != settings));
     });
 }
 
@@ -1620,7 +1600,7 @@ fn require_in_place_of_a_name_is_the_variable_at_hand_and_not_that_of_the_file()
     let text = "LOADER; function pick(require) { return LOADER; }";
     folded("a.mjs", text, NAME_IN_PLACE_OF_PATH, |s| {
         assert_eq!(s.binding("LOADER", 0), Binding::Free);
-        assert!(matches!(s.binding("LOADER", 1), Binding::Symbol(_)));
+        assert!(matches!(s.binding("require", 0), Binding::Symbol(_)));
     });
 }
 

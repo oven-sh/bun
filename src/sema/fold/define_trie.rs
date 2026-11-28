@@ -4,6 +4,7 @@ use super::inputs::{
 };
 use super::{Constant, slice_in};
 use crate::atom::Atom;
+use crate::hir::RoomForDefines;
 use crate::session::Arena;
 
 impl<'s> FoldInputs<'s> {
@@ -33,13 +34,24 @@ impl<'s> FoldInputs<'s> {
             DefineRoot::Global(name) => filter | root_filter_bit(name),
             DefineRoot::ImportMeta => filter,
         });
+        let replaced = options.defines.iter().filter(|it| {
+            !matches!(
+                it.value,
+                DefineValue::RuntimeValue(_) | DefineValue::RuntimeConstant(_)
+            )
+        });
+        let replaced = replaced.map(|it| it.path);
+        let dropped = options.dropped_calls.iter().copied();
         let names_in_place: Vec<PathInPlace<'s>> = (options.defines.iter())
             .filter_map(|define| match define.value {
-                DefineValue::GlobalPath(&[first_name, ref rest @ ..]) => Some(PathInPlace {
+                DefineValue::GlobalPath(&[first_name, ref members @ ..]) => Some(PathInPlace {
                     path: define.path,
                     first_name,
-                    is_one_name: rest.is_empty(),
+                    members,
                     is_in_bundle: false,
+                    may_end_in_brackets: true,
+                    longer_paths: find_longer_paths(replaced.clone(), define.path, arena),
+                    longer_dropped_paths: find_longer_paths(dropped.clone(), define.path, arena),
                 }),
                 _ => None,
             })
@@ -47,6 +59,7 @@ impl<'s> FoldInputs<'s> {
         let names_in_place_in_bundle: Vec<PathInPlace<'s>> = (names_in_place.iter())
             .map(|&it| PathInPlace {
                 is_in_bundle: true,
+                may_end_in_brackets: options.minifies_syntax,
                 ..it
             })
             .collect();
@@ -80,6 +93,18 @@ impl<'s> FoldInputs<'s> {
 
     pub fn names_in_place(&self) -> &'s [PathInPlace<'s>] {
         self.names_in_place
+    }
+
+    pub fn room_for_defines(&self) -> RoomForDefines {
+        let mut room = RoomForDefines::NONE;
+        for in_place in self.names_in_place {
+            let name = match in_place.path.root {
+                DefineRoot::Global(name) => name,
+                DefineRoot::ImportMeta => RoomForDefines::IMPORT_META,
+            };
+            room.add(name, in_place.members.len());
+        }
+        room
     }
 
     pub fn for_file_stored_by_mocks(self, stored_by_mocks: StoredByMocks<'s>) -> FoldInputs<'s> {
@@ -196,6 +221,20 @@ impl<'s> FoldInputs<'s> {
             }
         }
     }
+}
+
+fn find_longer_paths<'s>(
+    paths: impl Iterator<Item = DefinePath<'s>>,
+    path: DefinePath<'s>,
+    arena: &'s Arena,
+) -> &'s [&'s [Atom]] {
+    let longer = paths.filter(|it| {
+        it.root == path.root
+            && it.members.len() > path.members.len()
+            && it.members.starts_with(path.members)
+    });
+    let longer: Vec<&[Atom]> = longer.map(|it| it.members).collect();
+    slice_in(&longer, arena)
 }
 
 #[derive(Default)]

@@ -5,6 +5,7 @@ use super::evaluate::Value;
 use super::folder::Folder;
 use super::inputs::DefineValue;
 use super::known_constructors::KnownConstruction;
+use super::known_to_bun_run::is_hot_of_import_meta;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::check::spans::skip_trivia;
@@ -297,7 +298,7 @@ impl Folder<'_, '_> {
                 ..
             } if matches!(hir[obj].kind, ExprKind::ImportMeta) => {
                 !matches!(hir.member_key(e), Some((_, MemberKey::Name(known::main))))
-                    && !self.is_hot_of_import_meta(e)
+                    && !is_hot_of_import_meta(self.hir, e)
             }
             ExprKind::Dot { .. } => self.is_listed_read(e),
             ExprKind::New(call)

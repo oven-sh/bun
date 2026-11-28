@@ -201,6 +201,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         id
     }
 
+    #[inline(always)]
+    pub(crate) fn leave_room_for_defines(&mut self, name: Atom, pos: u32) {
+        if self.options.room_for_defines.is_needed_by(name) {
+            self.f.leave_room(self.options.room_for_defines, pos);
+        }
+    }
+
     /// Adds an expression that ends with the previous token.
     #[inline(always)]
     pub(crate) fn finish_expr(&mut self, kind: ExprKind, pos: u32) -> ExprId {
@@ -386,7 +393,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     fn name_or_literal(&mut self) -> Option<ExprId> {
         let kind = match self.token() {
-            T::Identifier => ExprKind::Ident(self.note_identifier(self.lx.atom, self.lx.start)),
+            T::Identifier => {
+                self.leave_room_for_defines(self.lx.atom, self.lx.start);
+                ExprKind::Ident(self.note_identifier(self.lx.atom, self.lx.start))
+            }
             T::String => ExprKind::String(self.lx.atom),
             T::Number => {
                 let number = self.f.numbers.len() as u32;
@@ -1328,6 +1338,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 b"meta" if self.token() == T::Identifier => {
                     self.next();
                     self.f.rare_syntax |= rare::IMPORT_META;
+                    self.leave_room_for_defines(RoomForDefines::IMPORT_META, start);
                     return self.finish_expr(ExprKind::ImportMeta, start);
                 }
                 // For Babel and oxc, `source` is a phase too. It's stored like `defer`, and the source text
@@ -2070,6 +2081,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             T::Identifier => {
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
+                self.leave_room_for_defines(name, self.lx.start);
                 self.token_expr(ExprKind::Ident(name))
             }
             T::String => self.token_expr(ExprKind::String(self.lx.atom)),
@@ -2114,6 +2126,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.take_as_name();
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
+                self.leave_room_for_defines(name, self.lx.start);
                 self.token_expr(ExprKind::Ident(name))
             }
             _ => self.missing_expression(1109),
@@ -2774,6 +2787,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return self.fail();
             };
             self.note_identifier(name, pos);
+            self.leave_room_for_defines(name, pos);
             let target = self.add_expr(ExprKind::Ident(name), pos, name_end);
             match self.token() {
                 // `{ a = 1 }`, which only a destructuring assignment can have.

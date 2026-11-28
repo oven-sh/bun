@@ -160,6 +160,7 @@ pub struct Options {
     pub accepts_legacy_octal: bool,
     /// With `compiles`: the engine gets the text as it is written, so a comment says of no call that it is pure.
     pub ignores_pure_comments: bool,
+    pub room_for_defines: bun_sema::hir::RoomForDefines,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.
     pub skips_function_blocks: bool,
     /// Of a TypeScript module only the `import` and `export` statements in front of the others are parsed. A text whose

@@ -1,3 +1,4 @@
+use super::paths_of_defines::write_paths_of_defines;
 use super::{AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, has_live_top_level_await};
 use crate::atom::Interner;
 use crate::bind::{BindOptions, Bound, bind_below_defines};
@@ -20,8 +21,26 @@ pub(super) fn bind<'s>(
     debug_assert!(options.runtime.is_some());
     debug_assert!(!matches!(hir.kind, FileKind::Json | FileKind::Declaration));
     hir.reset_strict();
+    bind_with_paths_of_defines(hir, options, inputs, atoms, arena)
+}
+
+fn bind_with_paths_of_defines<'s>(
+    hir: &mut File<'s>,
+    options: BindOptions,
+    inputs: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Bound<'s> {
     let _step = file_steps::count(FileStep::Bind);
-    bind_below_defines(hir, options, inputs.names_in_place(), atoms, arena)
+    let names_in_place = inputs.names_in_place();
+    let bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
+    if bound.ran_out_of_stack || bound.runtime.places_of_defined_paths().is_empty() {
+        return bound;
+    }
+    let places = bound.runtime.places_of_defined_paths();
+    write_paths_of_defines(hir, places, names_in_place, atoms, arena);
+    drop(bound);
+    bind_below_defines(hir, options, names_in_place, atoms, arena)
 }
 
 pub(super) fn run<'s>(
@@ -32,7 +51,6 @@ pub(super) fn run<'s>(
     atoms: &Interner<'s>,
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
-    let names_in_place = inputs.names_in_place();
     let mut bound = bind(hir, options, inputs, atoms, arena);
     if bound.ran_out_of_stack {
         return (bound, FileAnalysis::default());
@@ -45,9 +63,7 @@ pub(super) fn run<'s>(
         hir.set_strict();
         if has_sloppy_functions || bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
-            let step = file_steps::count(FileStep::Bind);
-            bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
-            drop(step);
+            bound = bind_with_paths_of_defines(hir, options, inputs, atoms, arena);
             if bound.ran_out_of_stack {
                 return (bound, FileAnalysis::default());
             }

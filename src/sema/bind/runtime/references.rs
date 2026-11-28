@@ -17,7 +17,7 @@ use super::{
 };
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
-use crate::fold::{DefinePath, DefineRoot, PathInPlace};
+use crate::fold::PathInPlace;
 use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
@@ -244,21 +244,23 @@ impl ReferencePass<'_, '_> {
             }
             insert_bit(&mut self.references.evaluated_idents, ident.idx());
             let mut found = recent.find(&self.lookup, scope, name, hir[ident].pos);
-            let written = DefinePath {
-                root: DefineRoot::Global(name),
-                members: &[],
+            let is_left_free = match found.binding {
+                Binding::Symbol(symbol) => {
+                    taken_out_by_bundler.contains(&symbol)
+                        && find_call_of_name(hir, bound, ident).is_none()
+                }
+                Binding::CommonJs(
+                    CommonJsVariable::Module
+                    | CommonJsVariable::Exports
+                    | CommonJsVariable::Require,
+                ) => {
+                    hir.is_written_by_define(ident)
+                        && !hir.is_path_of_define(ident)
+                        && self.names_in_place.iter().any(|it| it.is_in_bundle)
+                }
+                _ => false,
             };
-            if found.binding == Binding::Free
-                && !hir.is_in_known_evaluation(hir[ident].pos)
-                && let Some(in_place) = self.names_in_place.iter().find(|it| it.path == written)
-                && let Some(at_hand) = self.find_name_in_place(scope, in_place, hir[ident].pos)
-            {
-                found = at_hand;
-            }
-            if let Binding::Symbol(symbol) = found.binding
-                && taken_out_by_bundler.contains(&symbol)
-                && find_call_of_name(hir, bound, ident).is_none()
-            {
+            if is_left_free {
                 found = Found {
                     binding: Binding::Free,
                     scope: ScopeId::NONE,
@@ -336,7 +338,9 @@ impl ReferencePass<'_, '_> {
         {
             let jsx = &hir[j];
             return ident == jsx.close_tag
-                || (ident == jsx.tag && is_intrinsic_jsx_name(self.atoms.bytes(name)));
+                || (ident == jsx.tag
+                    && !hir.is_path_of_define(ident)
+                    && is_intrinsic_jsx_name(self.atoms.bytes(name)));
         }
         false
     }

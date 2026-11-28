@@ -31,9 +31,7 @@ fn find_jsx_reference(
 ) -> ImplicitReference {
     let found = references.binary_search_by(|reference| {
         let recorded_root = match reference.kind {
-            ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::DefinedPath => {
-                JsxRoot::Factory
-            }
+            ImplicitReferenceKind::JsxFactory => JsxRoot::Factory,
             ImplicitReferenceKind::JsxFragment => JsxRoot::Fragment,
             ImplicitReferenceKind::DecoratorMetadata(_) => return Ordering::Greater,
         };
@@ -51,7 +49,7 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.hir[tag].kind {
             ExprKind::String(name) => Some(name),
             ExprKind::This => Some(known::this),
-            ExprKind::Ident(name) => {
+            ExprKind::Ident(name) if !self.hir.is_path_of_define(tag) => {
                 is_intrinsic_jsx_name(self.queries.atom_bytes(name)).then_some(name)
             }
             _ => None,

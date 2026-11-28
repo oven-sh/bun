@@ -164,6 +164,7 @@ impl<'s> Workspace<'s> {
             every_file_is_a_module: false,
             reads_jsdoc: source.reads_jsdoc,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         self.set_text(&mut hir, source.text);

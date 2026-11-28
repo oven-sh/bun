@@ -64,17 +64,6 @@ impl Walker<'_, '_> {
         }
         match self.decisions.decision(expression) {
             Decision::Unknown => {}
-            Decision::GlobalPath(_) => {
-                let is_bound_name = matches!(self.hir[expression].kind, ExprKind::Ident(_))
-                    && self.bound.binding(expression) != Binding::Free;
-                if is_bound_name {
-                    self.visit_identifier(expression, context);
-                }
-                for binding in bindings_of(&self.jsx_uses, expression) {
-                    self.record_binding_use(context, binding, false);
-                }
-                return;
-            }
             _ => return,
         }
         if expression == self.literal_of_bodies {

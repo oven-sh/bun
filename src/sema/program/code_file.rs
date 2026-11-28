@@ -337,6 +337,7 @@ fn accept_tree<'s, 'r>(
     } = context;
     let path = key.path;
     let request = CodeParseRequest {
+        room_for_defines: context.inputs.fold.room_for_defines(),
         path,
         loader: key.loader,
         options: parse_options_of(context, path, settings, is_javascript),

@@ -147,6 +147,7 @@ fn default_host_parses_code_with_parse() {
     let atoms = Interner::new_in(&session);
     let settings = default_settings();
     let request = CodeParseRequest {
+        room_for_defines: Default::default(),
         path: MAIN,
         loader: HostLoader(7),
         options: ParseOptions {

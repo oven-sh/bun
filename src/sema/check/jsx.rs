@@ -159,7 +159,8 @@ impl<'p, 's> Checker<'p, 's> {
         match self.hir(file)[tag].kind {
             ExprKind::String(name) => Some(name),
             ExprKind::Ident(name)
-                if crate::hir::is_intrinsic_jsx_name(self.atoms().bytes(name)) =>
+                if !self.hir(file).is_path_of_define(tag)
+                    && crate::hir::is_intrinsic_jsx_name(self.atoms().bytes(name)) =>
             {
                 Some(name)
             }

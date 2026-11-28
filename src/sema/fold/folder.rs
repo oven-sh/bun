@@ -219,14 +219,14 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn fold_at(&mut self, e: ExprId) {
         let index = e.idx();
+        if self.bound.parent_of_expr(e) == Parent::None {
+            return;
+        }
         self.asks_for_main_module |= match self.hir[e].kind {
             ExprKind::ImportMeta => self.may_read_main_of_import_meta(e),
             ExprKind::Binary { .. } => main_module_operand(self.hir, self.bound, e).is_some(),
             _ => false,
         };
-        if self.bound.parent_of_expr(e) == Parent::None {
-            return;
-        }
         let host_values = self.file.host_values;
         let host_value = host_values.binary_search_by_key(&e, |entry| entry.0);
         let over_limit_before = self.evaluator.over_limit_count();

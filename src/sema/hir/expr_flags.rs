@@ -10,6 +10,35 @@ bitflags::bitflags! {
         const PRIVATE_NAME = 1 << 3;
         const TEMPLATE_LITERAL = 1 << 4;
         const RESOLVED_AT_RUNTIME = 1 << 5;
+        /// A name that no define replaces again, or `RoomForDefines`.
+        const WRITTEN_BY_DEFINE = 1 << 6;
+        /// The whole path and its first name. The text holds what the define replaced.
+        const PATH_OF_DEFINE = 1 << 7;
+    }
+}
+
+/// A node has a higher number than its children. So the parser leaves unused nodes in front of a name that a define may
+/// replace with a path.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct RoomForDefines {
+    names: u64,
+    len: u8,
+}
+
+impl RoomForDefines {
+    pub const NONE: RoomForDefines = RoomForDefines { names: 0, len: 0 };
+    pub const IMPORT_META: Atom = Atom::NONE;
+
+    pub fn add(&mut self, name: Atom, len: usize) {
+        if let Ok(len @ 1..) = u8::try_from(len) {
+            self.names |= 1 << (name.0 & 63);
+            self.len = self.len.max(len);
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_needed_by(self, name: Atom) -> bool {
+        self.names & (1 << (name.0 & 63)) != 0
     }
 }
 
@@ -48,6 +77,26 @@ impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn expr_flags(&self, e: ExprId) -> ExprFlags {
         self.expr_flags.get(e.idx()).copied().unwrap_or_default()
+    }
+
+    pub fn is_written_by_define(&self, name: ExprId) -> bool {
+        self.expr_flags(name).contains(ExprFlags::WRITTEN_BY_DEFINE)
+    }
+
+    pub fn is_path_of_define(&self, e: ExprId) -> bool {
+        self.expr_flags(e).contains(ExprFlags::PATH_OF_DEFINE)
+    }
+
+    pub fn has_paths_of_defines(&self) -> bool {
+        self.rare_syntax & super::rare::PATH_OF_DEFINE != 0
+    }
+
+    pub fn has_room_in_front(&self, name: ExprId, len: usize) -> bool {
+        let is_room = |at: usize| {
+            matches!(self.exprs[at].kind, ExprKind::Missing)
+                && self.is_written_by_define(ExprId(at as u32))
+        };
+        (name.idx().checked_sub(len)).is_some_and(|first| (first..name.idx()).all(is_room))
     }
 
     pub fn template_parts(&self, template: ExprId) -> &[TemplatePart] {
@@ -178,6 +227,14 @@ impl FileBuilder {
     #[inline]
     pub fn add_flags(&mut self, e: ExprId, flags: ExprFlags) {
         self.expr_flags[e.idx()] |= flags;
+    }
+
+    #[cold]
+    pub fn leave_room(&mut self, room: RoomForDefines, pos: u32) {
+        for _ in 0..room.len {
+            let unused = self.expr(ExprKind::Missing, pos, pos);
+            self.add_flags(unused, ExprFlags::WRITTEN_BY_DEFINE);
+        }
     }
 
     #[inline]

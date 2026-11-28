@@ -218,6 +218,7 @@ fn with_parts<R>(
     let atoms = Interner::new_in(&session);
     let names = BuiltinNames::new(&atoms);
     let arena = session.arena();
+    let fold = create_fold_inputs(setup, &atoms, arena);
     let parse_options = CompileParseOptions {
         path: setup.path.as_bytes(),
         script_kind: None,
@@ -225,10 +226,10 @@ fn with_parts<R>(
         every_file_is_a_module: false,
         reads_jsdoc: true,
         ignores_pure_comments: false,
+        room_for_defines: fold.room_for_defines(),
     };
     let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(source.as_bytes());
-    let fold = create_fold_inputs(setup, &atoms, arena);
     let jsx_factory_root = setup.jsx_factory_root;
     let bind_options = BindOptions {
         runtime: Some(RuntimeBindOptions {

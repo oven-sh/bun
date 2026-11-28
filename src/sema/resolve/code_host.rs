@@ -416,6 +416,7 @@ pub struct CodeParseRequest<'a> {
     pub loader: HostLoader,
     pub options: ParseOptions,
     pub reads_jsdoc: bool,
+    pub room_for_defines: crate::hir::RoomForDefines,
     pub settings: &'a TranspileSettings,
     pub declared_module_type: DeclaredModuleType,
 }

@@ -14,7 +14,7 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_wyhash::Wyhash;
 
-use crate::defines::{Define, DefineData};
+use crate::defines::{Define, DefineData, Replacement};
 use crate::lexer as js_lexer;
 use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
@@ -22,8 +22,8 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit,
-    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
+    FindLabelSymbolResult, FindSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse,
+    FnOrArrowDataVisit, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
@@ -471,6 +471,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) jest: Jest,
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// Where a define wrote the name of a global. No define matches it again.
+    pub(crate) globals_written_by_defines: ArrayHashMap<bun_ast::Loc, ()>,
     /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
     pub(crate) chai_imports: crate::parser::ChaiImports,
     /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
@@ -2266,7 +2268,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if TYPESCRIPT {
-            if let Some(member_data) = self.ref_to_ts_namespace_member.get(&ref_) {
+            if !used_as.is_assigned_or_deleted()
+                && let Some(member_data) = self.ref_to_ts_namespace_member.get(&ref_)
+            {
                 match member_data {
                     js_ast::ts::Data::EnumNumber(num) => {
                         let num = *num;
@@ -5399,18 +5403,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            if parts.len() > 1 {
-                UsedAs::Object
-            } else {
-                UsedAs::Value
-            },
+            UsedAs::Value.of_object_before(parts.len() - 1),
             true,
         );
-        if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..]));
-        }
-
-        Ok(value)
+        Ok(self.member_expression(loc, value, parts[1..].iter().copied(), UsedAs::Value, true))
     }
 
     /// The classic runtime's `options.jsx.factory` / `options.jsx.fragment` as
@@ -5437,32 +5433,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         initial_value: Expr,
-        parts: &[&'a [u8]],
+        mut parts: impl ExactSizeIterator<Item = &'a [u8]>,
+        used_as: UsedAs,
+        can_be_removed_if_unused: bool,
     ) -> Expr {
         let mut value = initial_value;
 
-        for (i, part) in parts.iter().enumerate() {
-            if let Some(rewrote) = self.maybe_rewrite_property_access(
-                loc,
-                value,
-                part,
-                loc,
-                if i + 1 < parts.len() {
-                    UsedAs::Object
-                } else {
-                    UsedAs::Value
-                },
-            ) {
+        while let Some(part) = parts.next() {
+            let used_as = used_as.of_object_before(parts.len());
+            if let Some(rewrote) =
+                self.maybe_rewrite_property_access(loc, value, part, loc, used_as)
+            {
                 value = rewrote;
             } else {
-                let is_import_property_use =
-                    self.record_import_property_use(&value, part, UsedAs::Value);
+                let is_import_property_use = self.record_import_property_use(&value, part, used_as);
                 value = self.new_expr(
                     E::Dot {
                         target: value,
-                        name: (*part).into(),
+                        name: part.into(),
                         name_loc: loc,
-                        can_be_removed_if_unused: self.options.features.dead_code_elimination,
+                        can_be_removed_if_unused: can_be_removed_if_unused
+                            && self.options.features.dead_code_elimination,
                         is_import_property_use,
                         ..Default::default()
                     },
@@ -7107,18 +7098,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
-        let value = define_data.value;
-        match value {
-            js_ast::ExprData::EIdentifier(id) => {
-                // Identifier defines always carry a name. Match the
-                // contract so `handle_identifier`'s trailing `find_symbol`
-                // rebind runs against the *resolved* scope ref, not the
-                // define-time ref silently passed through with `None`.
-                let original_name = define_data
-                    .original_name()
-                    .expect("identifier define must have original_name");
-                return self.handle_identifier(loc, id, Some(original_name), used_as, true);
+        let value = match &define_data.value {
+            Replacement::Data(value) => *value,
+            Replacement::Path { root, members } => {
+                // These nodes are new, so their uses count.
+                let is_revisit = core::mem::take(&mut self.is_revisit_for_substitution);
+                let path = self.value_for_defined_path(loc, used_as, root, members);
+                self.is_revisit_for_substitution = is_revisit;
+                return path;
             }
+        };
+        match value {
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
             }
@@ -7133,6 +7123,55 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         Expr { data: value, loc }
+    }
+
+    /// Inlining may have removed the declaration that a path begins at.
+    pub(crate) fn can_write_define(&mut self, loc: bun_ast::Loc, define: &'a DefineData) -> bool {
+        match &define.value {
+            Replacement::Path { root, members } if self.is_revisit_for_substitution => {
+                (self.find_symbol_with_record_usage::<false>(loc, root)).is_ok_and(|found| {
+                    found.r#ref.is_empty()
+                        || self.is_variable_of_output(&found, members)
+                        || self.symbols[found.r#ref.inner_index() as usize].kind
+                            == js_ast::symbol::Kind::Unbound
+                })
+            }
+            _ => true,
+        }
+    }
+
+    /// "module.hot" and "require.resolve" are those of the output, and no sign of CommonJS.
+    fn is_variable_of_output(&self, found: &FindSymbolResult, members: &[Box<[u8]>]) -> bool {
+        !members.is_empty()
+            && [self.module_ref, self.exports_ref, self.require_ref].contains(&found.r#ref)
+            && found.declare_loc == Some(bun_ast::Loc::EMPTY)
+    }
+
+    fn value_for_defined_path(
+        &mut self,
+        loc: bun_ast::Loc,
+        used_as: UsedAs,
+        root: &'a [u8],
+        members: &'a [Box<[u8]>],
+    ) -> Expr {
+        let root_used_as = used_as.of_object_before(members.len());
+        let (mut id, found) = self.resolve_name(loc, root, root_used_as);
+        if self.is_variable_of_output(&found, members) {
+            self.ignore_usage(id.ref_);
+            id.ref_ = self.new_symbol(js_ast::symbol::Kind::Unbound, root);
+        }
+        let is_global =
+            self.symbols[id.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
+        if is_global {
+            self.globals_written_by_defines.insert(loc, ());
+        }
+        id.set_can_be_removed_if_unused(members.is_empty());
+        if root_used_as.is_assigned() && self.const_values.contains_key(&id.ref_) {
+            return self.new_expr(id, loc);
+        }
+        let root = self.handle_identifier(loc, id, None, root_used_as, true);
+        let members = members.iter().map(|member| &**member);
+        self.member_expression(loc, root, members, used_as, is_global)
     }
 
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
@@ -7177,7 +7216,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // The last expression must be an identifier
                 if parts.len() == 1 {
                     let name = self.load_name_from_ref(ex.ref_);
-                    if !strings::eql(name, &parts[0]) {
+                    if !strings::eql(name, &parts[0])
+                        || self.globals_written_by_defines.contains_key(&expr.loc)
+                    {
                         return false;
                     }
 
@@ -9722,6 +9763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),
+            globals_written_by_defines: Default::default(),
             chai_imports: Default::default(),
             did_apply_test_feature: false,
             has_hoisted_mock_stmt: false,

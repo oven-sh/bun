@@ -348,6 +348,7 @@ mod tests {
             every_file_is_a_module: false,
             reads_jsdoc: false,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), atoms);
         hir.text = Cow::Borrowed(source.as_bytes());

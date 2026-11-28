@@ -242,9 +242,7 @@ pub(super) fn compute_import_uses(
             continue;
         };
         let is_live = match reference.kind {
-            ImplicitReferenceKind::JsxFactory
-            | ImplicitReferenceKind::JsxFragment
-            | ImplicitReferenceKind::DefinedPath => {
+            ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => {
                 !matches!(reference.node, NodeData::Expr(e) if decisions.is_dead_expr(e))
             }
             ImplicitReferenceKind::DecoratorMetadata(_) => true,

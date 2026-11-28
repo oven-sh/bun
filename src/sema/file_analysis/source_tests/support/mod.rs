@@ -317,6 +317,10 @@ impl<'s> Workspace<'s> {
     }
 
     pub(crate) fn parse(&self, source: &Source<'_>) -> File<'s> {
+        self.parse_with_room(source, RoomForDefines::NONE)
+    }
+
+    fn parse_with_room(&self, source: &Source<'_>, room_for_defines: RoomForDefines) -> File<'s> {
         let options = CompileParseOptions {
             path: source.path.as_bytes(),
             script_kind: None,
@@ -324,6 +328,7 @@ impl<'s> Workspace<'s> {
             every_file_is_a_module: false,
             reads_jsdoc: source.reads_jsdoc,
             ignores_pure_comments: false,
+            room_for_defines,
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         hir.text = Cow::Borrowed(self.arena.alloc_slice_copy(source.text));
@@ -401,7 +406,7 @@ impl<'s> Workspace<'s> {
     }
 
     pub(crate) fn analyze(&self, source: &Source<'_>, fold: &FoldInputs<'s>) -> Analyzed<'s> {
-        let mut hir = self.parse(source);
+        let mut hir = self.parse_with_room(source, fold.room_for_defines());
         let (bound, analysis) = self.analyze_tree(&mut hir, source, fold, &[]);
         Analyzed {
             workspace: *self,

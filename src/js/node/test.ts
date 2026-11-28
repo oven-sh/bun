@@ -773,6 +773,10 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
 // API reference: https://nodejs.org/api/test.html#class-mocktracker
 // -----------------------------------------------------------------------------
 let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;
+// Counts up over all trackers. The end of a test file goes over two of them, newest mock first.
+let mockSequence = 0;
+let undoPropertyMock: (ctx: object) => boolean;
+let endMocksOfFile: (rootTracker: MockTracker | null, moduleTracker: MockTracker) => void;
 
 class MockFunctionContext {
   #calls: unknown[];
@@ -980,6 +984,16 @@ class MockPropertyContext {
       value: this.#originalValue,
     });
   }
+
+  static {
+    // For the end of a test file. restore() adds `value`, as Node's does, and an accessor descriptor rejects that.
+    undoPropertyMock = function undoPropertyMock(ctx: object) {
+      if (!(#object in ctx)) return false;
+      // @ts-ignore
+      $Object.$defineProperty(ctx.#object, ctx.#propertyName, { __proto__: null, ...ctx.#descriptor });
+      return true;
+    };
+  }
 }
 
 function validateTimes(value: unknown, name: string) {
@@ -1010,8 +1024,11 @@ function createDefaultOriginal(): Function {
   return original;
 }
 
+type MockEntry = { ctx: { restore: () => void }; sequence: number };
+const kNoMocks: MockEntry[] = [];
+
 class MockTracker {
-  #mocks: { ctx: { restore: () => void } }[] = [];
+  #mocks: MockEntry[] = [];
   #timers: unknown;
   // Set on the module-level tracker: registering into it from a new file's
   // module scope must run the file-boundary reset (getRootNode) first.
@@ -1037,7 +1054,7 @@ class MockTracker {
     times: number = Infinity,
   ) {
     const context = new MockFunctionContext(original, implementation, restore, times);
-    this.#mocks.push({ ctx: context });
+    this.#mocks.push({ ctx: context, sequence: ++mockSequence });
     function mockFunction(this: unknown, ...args: unknown[]) {
       return trackMockCall(context, this, args, new.target);
     }
@@ -1271,7 +1288,7 @@ class MockTracker {
       arguments.length > 2
         ? new MockPropertyContext(object, propertyName, value)
         : new MockPropertyContext(object, propertyName);
-    this.#mocks.push({ ctx });
+    this.#mocks.push({ ctx, sequence: ++mockSequence });
 
     return new Proxy(object, {
       get(target, property, receiver) {
@@ -1304,6 +1321,39 @@ class MockTracker {
     // mock.fn() mocks call their original function again, like node. Unlike
     // reset(), the mocks stay associated with the tracker.
     for (const { ctx } of this.#mocks) ctx.restore();
+  }
+
+  static {
+    // For getRootNode(). Newest first, so two mocks of one property leave what it had before the first.
+    endMocksOfFile = function endMocksOfFile(rootTracker: MockTracker | null, moduleTracker: MockTracker) {
+      let first: { error: unknown } | undefined;
+      const ofRoot = rootTracker !== null ? rootTracker.#mocks : kNoMocks;
+      const ofModule = moduleTracker.#mocks;
+      let i = ofRoot.length - 1;
+      let j = ofModule.length - 1;
+      // Forgotten before any write: a failed undo is not repeated, and a mock a Proxy trap makes is the next file's.
+      if (i >= 0) rootTracker!.#mocks = [];
+      if (j >= 0) moduleTracker.#mocks = [];
+      while (i >= 0 || j >= 0) {
+        const { ctx } = j < 0 || (i >= 0 && ofRoot[i].sequence > ofModule[j].sequence) ? ofRoot[i--] : ofModule[j--];
+        try {
+          if (!undoPropertyMock(ctx)) ctx.restore();
+        } catch (error) {
+          first ??= { error };
+        }
+      }
+      try {
+        if (rootTracker !== null) (rootTracker.#timers as { reset: () => void } | undefined)?.reset();
+      } catch (error) {
+        first ??= { error };
+      }
+      try {
+        (moduleTracker.#timers as { reset: () => void } | undefined)?.reset();
+      } catch (error) {
+        first ??= { error };
+      }
+      if (first !== undefined) throw first.error;
+    };
   }
 
   module() {
@@ -1694,10 +1744,9 @@ function getRootNode(): TestNode {
       // module-level mocks and assert.register() additions with its root.
       // The root's own mockTracker (reachable via a file-level before hook's
       // `t.mock`) is distinct from the module-level `mock` export.
-      oldRoot.mockTracker?.reset();
-      mock.reset();
       customAssertions = { __proto__: null } as unknown as Record<string, Function>;
       tagsExperimentalWarningEmitted = false;
+      endMocksOfFile(oldRoot.mockTracker, mock);
     }
   }
   return rootNode;

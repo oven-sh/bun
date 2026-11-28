@@ -269,6 +269,65 @@ describe("node:test", () => {
     });
   });
 
+  // Node runs each test file in a new process. `bun test` runs them in one, so it takes
+  // the module-level mocks of a file off when the file ends. The next four tests are about that step.
+  test.concurrent("should take off the mocks that a file left, newest first", async () => {
+    // The three files also pass with `node --test`.
+    const { exitCode, stderr } = await runTests([
+      "30-mocks-left-at-file-end-a.mjs",
+      "30-mocks-left-at-file-end-b.mjs",
+      "30-mocks-left-at-file-end-c.mjs",
+    ]);
+    expect(stderr).toContain("5 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test.concurrent("should take off a mock that restoreAll() left on a method that was mocked twice", async () => {
+    // The two files also pass with `node --test`.
+    const { exitCode, stderr } = await runTests(
+      ["31-mock-again-before-restore-all-a.mjs", "31-mock-again-before-restore-all-b.mjs"],
+      {},
+      ["--rerun-each=2"],
+    );
+    expect(stderr).toContain("6 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test.concurrent(
+    "should throw the error of a mock that cannot come off once, after the other mocks are off",
+    async () => {
+      const { exitCode, stderr } = await runTests([
+        "32-mock-cannot-come-off-a.mjs",
+        "32-mock-cannot-come-off-b.mjs",
+        "32-mock-cannot-come-off-c.mjs",
+      ]);
+      expect(stderr).toContain("3 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+  );
+
+  test.concurrent("should end the mocks of a file when a Proxy trap makes a mock on each write", async () => {
+    const { exitCode, stderr } = await runTests([
+      "33-mock-made-in-trap-at-file-end-a.mjs",
+      "33-mock-made-in-trap-at-file-end-b.mjs",
+      "33-mock-made-in-trap-at-file-end-c.mjs",
+    ]);
+    expect(stderr).toContain("3 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
   test("should keep node's zero-delay mock interval semantics", async () => {
     const { exitCode, stderr } = await runTests(["18-mock-timers-interval-zero.js"]);
     expect(stderr).toContain("3 pass");

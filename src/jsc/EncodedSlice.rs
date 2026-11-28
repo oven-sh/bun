@@ -56,13 +56,11 @@ pub trait EncodedSliceJsc: Sized {
     /// Copies into a GC-managed `JSString`.
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
-    /// external-string finalizer.
-    fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// As `to_external_value`, `None` where that throws.
+    /// external-string finalizer. `None`, with the buffer freed, when it is too long for a string.
     fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// Like `to_external_value`, for bytes that `store` owns: the string keeps the ref.
+    /// Like `try_to_external_value`, for bytes that `store` owns: the string keeps the ref.
     ///
     /// # Safety
     /// The bytes stay valid and unchanged until `store` is dropped.
@@ -84,10 +82,6 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toValueGC(self, global)
-    }
-    fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.try_to_external_value(global)
-            .ok_or_else(|| global.throw_string_too_long())
     }
     fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue> {
         if self.len > bun_core::String::max_length() {

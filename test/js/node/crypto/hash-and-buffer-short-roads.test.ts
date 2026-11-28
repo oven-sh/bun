@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { createHash, getHashes } from "node:crypto";
 
@@ -123,6 +124,31 @@ describe("createHash", () => {
         .update(Uint8Array.of(0x63, 0x61, 0x66, 0xe9))
         .digest("hex"),
     );
+  });
+
+  test("a long string is hashed as its UTF-8 bytes wherever its surrogates stand", () => {
+    const times = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+    const texts = [times("é", 4096), times("é", 10_000), times("你", 4096), times("你", 10_000), times("😀", 5000)];
+    for (const offset of [0, 4094, 4095, 4096, 4097, 8190, 8191, 8192]) {
+      for (const piece of ["😀", "\ud83d", "\ude00", "\ud83d\ud83d\ude00", "\ude00\ud83d"]) {
+        texts.push(times("你", offset) + piece, times("你", offset) + piece + times("x", 5000));
+      }
+    }
+    for (const name of ["sha256", "sha3-256"]) {
+      expect(texts.map(text => createHash(name).update(text).digest("hex"))).toEqual(
+        texts.map(text => createHash(name).update(new TextEncoder().encode(text)).digest("hex")),
+      );
+    }
+  });
+
+  test("update() makes no Buffer of a string that is not ASCII", () => {
+    const texts = [Buffer.alloc(10_000, "é").toString(), Buffer.alloc(15_000, "你").toString()];
+    texts.push(texts[1] + "\ud83d");
+    const hash = createHash("sha256");
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Uint8Array ?? 0;
+    for (let i = 0; i < 100; i++) for (const text of texts) hash.update(text);
+    expect((heapStats().objectTypeCounts.Uint8Array ?? 0) - before).toBeLessThan(10);
   });
 
   test("every encoding of a digest says the same bytes", () => {

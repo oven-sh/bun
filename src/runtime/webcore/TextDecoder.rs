@@ -305,12 +305,12 @@ impl TextDecoder {
 
                 // Dispatch the runtime `fatal` bool to a const-generic parameter.
                 let maybe_decode_result = if self.fatal {
-                    strings::to_utf16_alloc_maybe_buffered::<true, FLUSH>(input)
+                    strings::decode_utf8_alloc_maybe_buffered::<true, FLUSH>(input)
                 } else {
-                    strings::to_utf16_alloc_maybe_buffered::<false, FLUSH>(input)
+                    strings::decode_utf8_alloc_maybe_buffered::<false, FLUSH>(input)
                 };
 
-                let maybe_decode_result = match maybe_decode_result {
+                let (decoded, buf, len) = match maybe_decode_result {
                     Ok(v) => v,
                     Err(err) => {
                         if self.fatal && matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
@@ -327,13 +327,15 @@ impl TextDecoder {
                     }
                 };
 
-                let (string, pending) = match maybe_decode_result {
-                    Some((decoded, buf, len)) => (
-                        heap.create_utf16_string_from_vec(decoded)?,
-                        Buffered { buf, len },
-                    ),
-                    // All ASCII: copied as it is, so `input` may borrow. Experiment: using mimalloc directly is slightly slower
-                    None => (heap.try_create_latin1_string(input)?, Buffered::default()),
+                let string = match decoded {
+                    // Copied as it is, so `input` may borrow. Experiment: using mimalloc directly is slightly slower
+                    strings::DecodedUtf8::Ascii => heap.try_create_latin1_string(input)?,
+                    strings::DecodedUtf8::Latin1(latin1) => {
+                        heap.create_latin1_string_from_vec(latin1)?
+                    }
+                    strings::DecodedUtf8::Utf16(utf16) => {
+                        heap.create_utf16_string_from_vec(utf16)?
+                    }
                 };
 
                 // "BOM seen" is only written by "serialize I/O queue", which a
@@ -342,7 +344,7 @@ impl TextDecoder {
                 if set_bom_seen {
                     self.bom_seen = true;
                 }
-                self.buffered = pending;
+                self.buffered = Buffered { buf, len };
                 Ok(string)
             }
 

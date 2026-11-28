@@ -329,6 +329,24 @@ describe("Intl.getCanonicalLocales", () => {
     // sh/tl/no are kept as-is (ICU ships bundles under both names)
     expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sh", "tl", "no"]);
   });
+
+  test("tags of a language, a script and a region", () => {
+    const canonical = {
+      "EN-us": "en-US",
+      "eng": "en",
+      "deu-DD": "de-DE",
+      "iw-hebr-il": "he-Hebr-IL",
+      "fil-PH": "fil-PH",
+      "es-419": "es-419",
+      "sr-latn-ba": "sr-Latn-BA",
+      "und-Latn": "und-Latn",
+      "en-US-posix": "en-US-u-va-posix",
+      "ca-ES-valencia": "ca-ES-valencia",
+    };
+    expect(Object.keys(canonical).map(tag => Intl.getCanonicalLocales(tag)[0])).toEqual(Object.values(canonical));
+    const available = ["en-US", "fil-PH", "es-419", "sr-Latn-BA", "zh-Hant-HK", "ca-ES-valencia"];
+    expect(Intl.ListFormat.supportedLocalesOf([...available, "zz-ZZ"])).toEqual(available);
+  });
 });
 
 // ---------------------------------------------------------------------------

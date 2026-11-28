@@ -668,13 +668,46 @@ pub enum ToUTF16Error {
 
 crate::oom_from_alloc!(ToUTF16Error);
 
-pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
+/// UTF-8 text in the narrowest form a JS string can hold it in.
+pub enum DecodedUtf8 {
+    /// The input is its own Latin-1 form.
+    Ascii,
+    Latin1(Vec<u8>),
+    Utf16(Vec<u16>),
+}
+
+/// `None` unless `bytes` is valid UTF-8 without a code point above U+00FF, and there is memory for the result.
+pub(super) fn utf8_to_latin1(bytes: &[u8], first_non_ascii_idx: usize) -> Option<Vec<u8>> {
+    const FIRST_LEAD_BYTE_ABOVE_LATIN1: u8 = 0xC4;
+    let fits =
+        |chunk: &[u8]| chunk.iter().fold(0u8, |a, &b| a.max(b)) < FIRST_LEAD_BYTE_ABOVE_LATIN1;
+    if !bytes[first_non_ascii_idx..].chunks(256).all(fits) {
+        return None;
+    }
+    let input = WithUtf16Len::utf8(bytes);
+    let mut out = Vec::new();
+    out.try_reserve_exact(input.utf16_len().max(1)).ok()?;
+    crate::vec::append_with(&mut out, usize::MAX, |out| {
+        simdutf::convert::utf8::to::latin1_with_errors(input, out)
+    })
+    .is_successful()
+    .then_some(out)
+}
+
+pub fn decode_utf8_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
-) -> Result<Option<(Vec<u16>, [u8; 3], u8)>, ToUTF16Error> {
+) -> Result<(DecodedUtf8, [u8; 3], u8), ToUTF16Error> {
     let Some(first_non_ascii_idx) = first_non_ascii(bytes) else {
-        return Ok(None);
+        return Ok((DecodedUtf8::Ascii, [0; 3], 0));
     };
     let first_non_ascii_idx = first_non_ascii_idx as usize;
+    let (whole, buffered, buffered_len) = match bytes {
+        [whole @ .., lead @ (0xC2 | 0xC3)] if !FLUSH => (whole, [*lead, 0, 0], 1),
+        _ => (bytes, [0; 3], 0),
+    };
+    if let Some(latin1) = utf8_to_latin1(whole, first_non_ascii_idx) {
+        return Ok((DecodedUtf8::Latin1(latin1), buffered, buffered_len));
+    }
 
     let mut output: Vec<u16> = if crate::FeatureFlags::USE_SIMDUTF {
         'output: {
@@ -698,7 +731,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                     bytes.len(),
                     out_length
                 );
-                return Ok(Some((out, [0; 3], 0)));
+                return Ok((DecodedUtf8::Utf16(out), [0; 3], 0));
             }
 
             // SAFETY: simdutf converts sequentially and the first error is at or
@@ -758,11 +791,11 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                     3 => [remaining[0], remaining[1], remaining[2]],
                     _ => unreachable!(),
                 };
-                return Ok(Some((
-                    output,
+                return Ok((
+                    DecodedUtf8::Utf16(output),
                     buffered,
                     u8::try_from(remaining.len()).expect("int cast"),
-                )));
+                ));
             }
         }
 
@@ -791,7 +824,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         bytes.len(),
         output.len()
     );
-    Ok(Some((output, [0; 3], 0)))
+    Ok((DecodedUtf8::Utf16(output), [0; 3], 0))
 }
 
 #[inline]

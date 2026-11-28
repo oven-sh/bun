@@ -138,7 +138,7 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
         return nullptr;
     }
     // Bun's simdutf-backed Buffer.toString('utf8') path: SIMD ASCII check,
-    // external UTF-16 for non-ASCII, replacement chars for invalid sequences.
+    // external Latin-1 or UTF-16 for non-ASCII, replacement chars for invalid sequences.
     JSValue decoded = JSValue::decode(Bun__encoding__toStringUTF8(toDecode.data(), toDecode.size(), globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
     return asString(decoded);

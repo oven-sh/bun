@@ -66,3 +66,31 @@ test("a test run runs such a file compiled", async () => {
     exitCode: 0,
   });
 }, 120_000);
+
+test("a module above the root is another file than one in a folder that is named as the parent is", async () => {
+  using dir = tempDir("aot-folder-named-as-parent", {
+    "tsconfig.json": `{}`,
+    "lib/a.mjs": `export const name = "above"; if (!Bun.isMainThread) postMessage(name);\n`,
+    "src/_.._/lib/a.mjs": `export const name = "below"; if (!Bun.isMainThread) postMessage(name);\n`,
+    "src/main.mjs": `import { readdirSync } from "node:fs";
+const file = process.argv[9] ?? "a";
+console.log((await import("../lib/" + file + ".mjs")).name, (await import("./_.._/lib/" + file + ".mjs")).name);
+for (const url of [new URL("../lib/a.mjs", import.meta.url), new URL("./_.._/lib/a.mjs", import.meta.url)]) {
+  const worker = new Worker(url);
+  console.log(await new Promise(resolve => (worker.onmessage = event => resolve(event.data))));
+  worker.terminate();
+}
+console.log(readdirSync(import.meta.dir).every(name => name !== ""));
+`,
+  });
+  const folder = join(String(dir), "src");
+  const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "--outfile", executable, "./main.mjs"],
+    folder,
+    bunEnv,
+  );
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const ran = await run([executable], folder, bunEnv);
+  expect(ran.stdout).toBe("above below\nabove\nbelow\ntrue\n");
+}, 120_000);

@@ -10,6 +10,8 @@ use bun_resolver::compiled_program::name_in_plain_executable;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
+const FOLDER_ABOVE_ROOT: &[u8] = b"_.._";
+
 /// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the name that `bun build --compile` gives it.
 pub(crate) struct EntryPointNames<'a> {
     pub module_prefix: &'a [u8],
@@ -72,7 +74,20 @@ impl EntryPointNames<'_> {
                 false => name,
             }
         });
-        file_names.collect()
+        let mut file_names: Vec<Cow<'p, [u8]>> = file_names.collect();
+        // A folder below the root may be named `_.._` too, and the path of a file in it is its name.
+        let is_below_root = |at: &usize| public_paths[*at].starts_with(self.module_prefix);
+        let (below, above): (Vec<usize>, Vec<usize>) =
+            (0..public_paths.len()).partition(is_below_root);
+        let mut taken: FxHashSet<Cow<'p, [u8]>> = FxHashSet::default();
+        taken.extend(below.into_iter().map(|at| file_names[at].clone()));
+        for at in above {
+            while !taken.insert(file_names[at].clone()) {
+                let name = [FOLDER_ABOVE_ROOT, b"/", &file_names[at]].concat();
+                file_names[at] = Cow::Owned(name);
+            }
+        }
+        file_names
     }
 }
 
@@ -288,6 +303,29 @@ mod tests {
         assert_eq!(
             names.file_names(&paths),
             [&b"_.._/_.._/_.._/x.mjs"[..], b"_.._/_.._/x.mjs"]
+        );
+    }
+
+    #[test]
+    fn module_above_the_root_and_module_in_a_folder_named_as_the_parent_are_two_files() {
+        let names = EntryPointNames {
+            module_prefix: PREFIX,
+            levels_above_root: 2,
+            shown: &[],
+            embedded: &[],
+        };
+        let mut paths = [
+            b"/$bunfs/root/_.._/lib/a.mjs".to_vec(),
+            b"/$bunfs/_.._/_.._/lib/a.mjs".to_vec(),
+        ];
+        assert_eq!(
+            names.file_names(&paths),
+            [&b"_.._/lib/a.mjs"[..], b"_.._/_.._/lib/a.mjs"]
+        );
+        paths.reverse();
+        assert_eq!(
+            names.file_names(&paths),
+            [&b"_.._/_.._/lib/a.mjs"[..], b"_.._/lib/a.mjs"]
         );
     }
 

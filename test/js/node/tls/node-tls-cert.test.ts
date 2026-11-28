@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { ECDH, generateKeyPairSync, sign, X509Certificate, type KeyPairKeyObjectResult as KeyPair } from "crypto";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tls as harnessCert, invalidTls, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tls as harnessCert, invalidTls, nodeExe, tempDir, tmpdirSync } from "harness";
 import net, { type AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
 import type { Server, TLSSocket } from "node:tls";
@@ -1657,6 +1657,19 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     }
   });
 
+  function duplexTo(port: number) {
+    const transport = net.connect(port, "127.0.0.1");
+    const socket = new Duplex({
+      read() {},
+      write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
+    });
+    transport
+      .on("data", chunk => socket.push(chunk))
+      .on("error", error => socket.destroy(error))
+      .on("close", () => socket.push(null));
+    return socket.on("close", () => transport.destroy());
+  }
+
   describe.each(bothOrders(root, shortOtherKey).map((ca, i) => [i ? "last" : "first", ca] as const))(
     "with the right root %s",
     (_, ca) => {
@@ -1672,19 +1685,11 @@ describe("a certificate is accepted when any path to a trusted certificate is va
       });
 
       it("over a Duplex", async () => {
-        const transport = net.connect(await portOf([leaf, int]), "127.0.0.1");
-        const socket = new Duplex({
-          read() {},
-          write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
-        });
-        transport
-          .on("data", chunk => socket.push(chunk))
-          .on("error", error => socket.destroy(error))
-          .on("close", () => socket.push(null));
+        const socket = duplexTo(await portOf([leaf, int]));
         try {
           expect(await connect([leaf, int], { ca, socket })).toBe("authorized");
         } finally {
-          transport.destroy();
+          socket.destroy();
         }
       });
 
@@ -1755,7 +1760,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
 
   /** What `side` makes of `chain`, and then again with the session of that connection. */
   async function seenBy(
-    side: "client" | "server",
+    side: "client" | "client over a Duplex" | "server",
     maxVersion: tls.SecureVersion,
     chain: string[],
     trust: tls.ConnectionOptions,
@@ -1763,7 +1768,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
   ) {
     const identity = { key, cert: chain.join("") };
     await using server = tls.createServer(
-      side === "client" ? identity : { ...harnessCert, ...trust, requestCert: true, rejectUnauthorized: false },
+      side === "server" ? { ...harnessCert, ...trust, requestCert: true, rejectUnauthorized: false } : identity,
       sendTickets,
     );
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -1772,9 +1777,11 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     let session: Buffer | undefined;
     for (const event of ["session", "secureConnect"]) {
       const options = side === "server" ? identity : session ? trustOfResumingClient : trust;
+      const duplex = side === "client over a Duplex" ? duplexTo(port) : undefined;
       const client = tls.connect({
         host: "127.0.0.1",
         port,
+        socket: duplex,
         maxVersion,
         session,
         rejectUnauthorized: false,
@@ -1782,7 +1789,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
       });
       try {
         const [[accepted], [arg]] = await Promise.all([once(server, "secureConnection"), once(client, event)]);
-        const socket: TLSSocket = side === "client" ? client : accepted;
+        const socket: TLSSocket = side === "server" ? accepted : client;
         const serials = [];
         for (let cert = socket.getPeerCertificate(true), last; cert && serials.at(-1) !== "itself";) {
           serials.push(cert === last ? "itself" : cert.serialNumber);
@@ -1792,6 +1799,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
         session ??= arg as Buffer;
       } finally {
         client.destroy();
+        duplex?.destroy();
       }
     }
     return seen;
@@ -1876,7 +1884,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     "getPeerCertificate(true) with %s",
     async (_, chain, trust, expected) => {
       const serials = serialsOf(expected);
-      const outcomes = (["client", "server"] as const).flatMap(side =>
+      const outcomes = (["client", "client over a Duplex", "server"] as const).flatMap(side =>
         (["TLSv1.2", "TLSv1.3"] as const).map(version => seenBy(side, version, chain, trust)),
       );
       expect(await Promise.all(outcomes)).toEqual(
@@ -1980,10 +1988,12 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     ["no path is valid", { ca: other }, "CERT_SIGNATURE_FAILURE", [leaf, int, forgedRoot, other, "itself"]],
     ["the first path is valid", both, null, usualPath],
   ])("a session that is resumed where %s", async (_, trust, error, expected) => {
-    expect(await seenBy("client", "TLSv1.3", [leaf, int, forgedRoot], { ca: [shortNotCA, root] }, trust)).toEqual([
-      { error: null, resumed: false, serials: serialsOf(usualPath) },
-      { error, resumed: true, serials: serialsOf(expected) },
-    ]);
+    for (const side of ["client", "client over a Duplex"] as const) {
+      expect(await seenBy(side, "TLSv1.3", [leaf, int, forgedRoot], { ca: [shortNotCA, root] }, trust)).toEqual([
+        { error: null, resumed: false, serials: serialsOf(usualPath) },
+        { error, resumed: true, serials: serialsOf(expected) },
+      ]);
+    }
   });
 
   async function sessionOf(chain: string[], options: tls.ConnectionOptions) {
@@ -2019,27 +2029,27 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     expect(await connect([leaf, int], { ca, session })).toBe(expected);
   });
 
-  it("a session that is refused when it is resumed stays refused", async () => {
+  // BoringSSL does not renegotiate as a server.
+  it.skipIf(!nodeExe())("a session that is refused when it is resumed stays refused", async () => {
     await using server = Bun.spawn({
-      cmd: ["node", join(import.meta.dir, "renegotiation-feature.js")],
+      cmd: [nodeExe()!, join(import.meta.dir, "renegotiation-feature.js")],
       env: { ...bunEnv, SERVER_CERT: leaf + int, SERVER_KEY: key },
       stdout: "pipe",
       stderr: "inherit",
     });
     const { value } = await server.stdout.getReader().read();
     const port = Number(new URL(new TextDecoder().decode(value)).port);
-    const first = tls.connect({ host: "localhost", port, ca: [shortNotCA, root] });
-    const [session] = await once(first, "session");
-    first.destroy();
+    const orClose = (socket: TLSSocket, event: string) => Promise.race([once(socket, event), once(socket, "close")]);
+    await using first = tls.connect({ host: "localhost", port, ca: [shortNotCA, root] });
+    const [session] = await orClose(first, "session");
     const secureContext = tls.createSecureContext({ ca: other });
-    const socket = tls.connect({ host: "localhost", port, secureContext, session, rejectUnauthorized: false });
+    await using socket = tls.connect({ host: "localhost", port, secureContext, session, rejectUnauthorized: false });
     await once(socket, "secureConnect");
     const resumed = socket.isSessionReused();
     secureContext.context.addCACert(root);
     // The response comes after a renegotiation.
     socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-    const [response] = await once(socket, "data");
-    socket.destroy();
+    const [response] = await orClose(socket, "data");
     expect([resumed, String(response).slice(0, 15), socket.authorized]).toEqual([true, "HTTP/1.1 200 OK", false]);
   });
 

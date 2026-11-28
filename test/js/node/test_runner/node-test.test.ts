@@ -2,6 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -323,6 +324,68 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test.concurrent("should give every --retry attempt of a test its own state", async () => {
+    const { lines, verdicts, exitCode } = observed(await runTests(["32-retry.js"], {}, ["--retry", "1"]));
+    expect(lines).toEqual([
+      "subtests: attempt 1 child runs=1",
+      "subtests: attempt 2 child runs=2",
+      "a subtest that fails on every attempt: it runs on the second attempt",
+      "t.after(): hook of attempt 1 runs=1",
+      "t.after(): hook of attempt 2 runs=2",
+      "tags: attempt 1 declared",
+      "tags: attempt 2 declared",
+      "late mock of the first attempt: method=mocked",
+      "after the late mock: method=real",
+    ]);
+    expect(verdicts).toEqual([
+      "(pass) t.plan() (attempt 2)",
+      "(pass) subtests (attempt 2)",
+      "(fail) a subtest that fails on every attempt (attempt 2)",
+      "(pass) t.after() (attempt 2)",
+      "(pass) tags (attempt 2)",
+      "(pass) late mock of the first attempt (attempt 2)",
+      "(pass) after the late mock",
+      "(pass) expectFailure option (attempt 2)",
+      "(fail) plan option that is never met (attempt 2)",
+      "(fail) fails, is not skipped (attempt 2)",
+      "(skip) is skipped",
+      "(fail) fails, is not expected to (attempt 2)",
+      "(pass) is expected to fail",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent(
+    "should keep the t.after hooks and the mock reset of an attempt that bun:test's own timeout ended",
+    async () => {
+      const args = ["--retry", "1", "--timeout", "1"];
+      const { lines, verdicts, exitCode } = observed(await runTests(["34-retry-after-timeout.js"], {}, args));
+      expect(lines).toEqual([
+        "t.after of attempt 1",
+        "t.after of attempt 2",
+        "next: method=real setTimeout is real=true",
+      ]);
+      expect(verdicts).toEqual(["(fail) its first attempt hangs (attempt 2)", "(pass) next"]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.concurrent("should report the declared todo for a --retry attempt of a run() child", async () => {
+    const events = await run({
+      files: [join(import.meta.dirname, "fixtures", "33-retry-todo.js")],
+      argv: ["--retry", "1"],
+      env: bunEnv,
+    }).toArray();
+    // One event for each attempt. The first attempt of each test is the one that a stray error failed.
+    const todos = events.filter(({ type }) => type === "test:pass").map(({ data }) => [data.name, data.todo]);
+    expect(todos).toEqual([
+      ["todo spelling", true],
+      ["todo spelling", true],
+      ["todo option with a message", "not yet"],
+      ["todo option with a message", "not yet"],
+    ]);
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
@@ -342,6 +405,24 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The lines a fixture logged with its "OBS " prefix, and the verdict that `bun test` printed for each test.
+function observed({ exitCode, stdout, stderr }: Awaited<ReturnType<typeof runTests>>) {
+  const lines = linesOf(stdout)
+    .filter(line => line.startsWith("OBS "))
+    .map(line => line.slice(4));
+  const verdicts = linesOf(stderr)
+    .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
+    .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""));
+  return { lines, verdicts, exitCode };
+}
+
+function linesOf(text: string) {
+  return text
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line !== "");
 }
 
 describe("node:test mock", () => {

@@ -7088,7 +7088,7 @@ impl VirtualMachine {
             .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
         bun_core::Output::flush();
 
-        let writer = bun_core::Output::error_writer();
+        let writer = bun_core::Output::error_writer_buffered();
 
         let mut has_location = false;
         if let Some(frame) = top_frame {

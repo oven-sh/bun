@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -128,6 +128,38 @@ test("uncaught error thrown from a data: URL module longer than a path buffer is
   const annotation = stderr.split("\n").find(line => line.startsWith("::error"));
   expect(annotation).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
   expect(annotation).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+  expect(exitCode).toBe(1);
+});
+
+// `/proc/thread-self/io` (the write(2) counter of a thread) is only on Linux.
+test.skipIf(!isLinux).each([
+  ["true", 2],
+  ["false", 1],
+])("with GITHUB_ACTIONS=%s an error that fits the buffer of stderr is %d write(2)", async (githubActions, writes) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { readFileSync } = require("fs");
+        const syscw = () => Number(readFileSync("/proc/thread-self/io", "utf8").match(/^syscw: (\\d+)$/m)[1]);
+        const line = "a\\tb \\u65e5\\n";
+        const error = new Error("title\\n\\n" + Buffer.alloc(20 * Buffer.byteLength(line), line).toString());
+        const before = syscw();
+        reportError(error);
+        const after = syscw();
+        console.log(JSON.stringify({ writes: after - before }));
+      `,
+    ],
+    env: { ...bunEnv, GITHUB_ACTIONS: githubActions },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+  expect(annotations).toHaveLength(githubActions === "true" ? 1 : 0);
+  expect(JSON.parse(stdout)).toEqual({ writes });
   expect(exitCode).toBe(1);
 });
 

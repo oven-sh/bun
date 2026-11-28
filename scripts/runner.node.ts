@@ -155,9 +155,9 @@ type LiveOutputFilter = ((chunk: string) => string) & { end: () => string };
  * (the runner groups the log itself) and the rest is kept for GitHub to render. In
  * Buildkite a line that starts with one of its group markers (`--- `) is defused too.
  *
- * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
- * writes, so a chunk usually ends in the middle of one. An incomplete last line that
- * starts with `::`, or that is so far only the start of a marker, is held back until
+ * The output arrives in pipe-sized chunks, and bun writes a `::error` line of more than
+ * 4096 bytes as several writes, so a chunk can end in the middle of one. An incomplete last
+ * line that starts with `::`, or that is so far only the start of a marker, is held back until
  * the rest of it arrives. `end()` returns what is still held back when the stream ends.
  *
  * @returns the text to write for each chunk

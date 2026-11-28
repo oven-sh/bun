@@ -500,8 +500,7 @@ pub(crate) struct CacheStaging {
 impl CacheStaging {
     fn new(cache_dir: Fd, cache_dir_path: &[u8]) -> Result<Self, Error> {
         let mut tmp_name_buf = [0u8; 64];
-        let tmp_name =
-            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())?;
+        let tmp_name = Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf)?;
         let tmp_path = bun_paths::Path::resolve(&[cache_dir_path, tmp_name]).to_vec();
         Ok(Self {
             entry: UnfinishedEntry::new(cache_dir, tmp_name),
@@ -627,9 +626,8 @@ fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
     }
     // Write a temporary file and rename it, so another install never reads a half-written `config`.
     let mut tmp_name_buf = [0u8; 64];
-    let tmp_name =
-        Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-            .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::open))?;
+    let tmp_name = Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf)
+        .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::open))?;
     let tmp = bun_sys::Tmpfile::open(repo, tmp_name, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
     tmp.file.write_all(&config)?;
     tmp.close().rename_to(repo, bun_core::zstr!("config"))

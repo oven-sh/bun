@@ -1818,3 +1818,29 @@ fn write_fmt_rolls_back_when_display_ignores_error() {
     );
     assert_eq!(path.as_bytes_with_nul(), b"a\0");
 }
+
+// Two processes can read one clock value, and whatever else they both know is equal too: a hash, a pid that the clock cancels.
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "reads the clock and starts a process, which isolation forbids"
+)]
+#[expect(clippy::disallowed_methods, clippy::disallowed_types)]
+fn tmpname_differs_between_processes() {
+    const OTHER: &str = "BUN_PATHS_TMPNAME_OF_THE_OTHER_PROCESS";
+    let mut buf = [0u8; 64];
+    let name = crate::fs::FileSystem::tmpname(b"tmp", &mut buf).unwrap();
+    let here = u64::from_str_radix(text(&name.as_bytes()[1..17]), 16).unwrap();
+    let Ok(there) = std::env::var(OTHER) else {
+        // `BUN_DEBUG_HASH_RANDOM_SEED` makes the seed equal in both processes, which is what it is for.
+        let again = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "path_tests::tmpname_differs_between_processes"])
+            .env(OTHER, here.to_string())
+            .env_remove("BUN_DEBUG_HASH_RANDOM_SEED")
+            .stdout(std::process::Stdio::null())
+            .status();
+        return assert!(again.unwrap().success());
+    };
+    // Their clocks are minutes apart at most, which explains the low 40 bits of a difference.
+    assert_ne!((here ^ there.parse::<u64>().unwrap()) >> 40, 0);
+}

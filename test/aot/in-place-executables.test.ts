@@ -771,15 +771,20 @@ console.log(require(path.join(__dirname, "vendor", "addon", ["addon", "node"].jo
 `,
 };
 
-// addon.node, and vendor/ with an addon that links to a shared library beside it.
+// addon.node, and vendor/ with an addon that links to a shared library beside it. large-library/ holds that library again, with 8 MB more to write.
 async function compileAddons() {
   const isDarwin = process.platform === "darwin";
   const library = isDarwin ? "libgreeting.dylib" : isWindows ? "greeting.dll" : "libgreeting.so";
   const libraryFolder = isWindows ? "vendor/addon" : "vendor/lib";
+  const largeLibraryFolder = libraryFolder.replace("vendor", "large-library");
+  const exported = isWindows ? "__declspec(dllexport) " : "";
   const folder = String(
     tempDir("aot-in-place-addons", {
       "addon.c": addonSource,
-      "greeting.c": `${isWindows ? "__declspec(dllexport) " : ""}const char* greeting(void) { return "from a library beside the addon"; }\n`,
+      "greeting.c": `#ifdef PADDING
+${exported}char padding[PADDING] = {1};
+#endif
+${exported}const char* greeting(void) { return "from a library beside the addon"; }\n`,
       "addon-with-library.c":
         "const char* greeting(void);\n" + addonSource.replace(`"from a native addon"`, "greeting()"),
     }),
@@ -787,21 +792,24 @@ async function compileAddons() {
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   mkdirSync(join(folder, "vendor", "lib"), { recursive: true });
   mkdirSync(join(folder, "vendor", "addon"));
+  mkdirSync(join(folder, largeLibraryFolder), { recursive: true });
   const shared = [systemCC!, "-shared", ...(isWindows ? [] : ["-fPIC"])];
   const addon = [
     ...shared,
     ...(isDarwin ? ["-undefined", "dynamic_lookup"] : []),
     "-I" + resolve(import.meta.dir, "../../src/runtime/napi"),
   ];
+  const greeting = (to: string) => [
+    ...shared,
+    "greeting.c",
+    "-o",
+    `${to}/${library}`,
+    ...(isDarwin ? ["-install_name", `@rpath/${library}`] : []),
+  ];
   for (const command of [
     [...addon, "addon.c", "-o", "addon.node"],
-    [
-      ...shared,
-      "greeting.c",
-      "-o",
-      `${libraryFolder}/${library}`,
-      ...(isDarwin ? ["-install_name", `@rpath/${library}`] : []),
-    ],
+    greeting(libraryFolder),
+    [...greeting(largeLibraryFolder), `-DPADDING=${8 << 20}`],
     [
       ...addon,
       "addon-with-library.c",
@@ -828,9 +836,10 @@ async function copyAddon(to: string) {
   copyFileSync(join(await compiledAddons, "addon.node"), to);
 }
 
-async function buildAddonWithLibrary(dir: string, flags = ["--compile-in-place"]) {
+async function buildAddonWithLibrary(dir: string, flags = ["--compile-in-place"], hasLargeLibrary = false) {
   const app = join(dir, "app");
   cpSync(join(await compiledAddons, "vendor"), join(app, "vendor"), { recursive: true });
+  if (hasLargeLibrary) cpSync(join(await compiledAddons, "large-library"), join(app, "vendor"), { recursive: true });
   const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
   expect(plain).toEqual({ stdout: "from a library beside the addon\n", stderr: "", exitCode: 0 });
   const built = await run(app, [
@@ -875,6 +884,51 @@ test.skipIf(!systemCC).each([
     using dir = tempDir("aot-addon-with-a-library", addonWithLibrary);
     const plain = await buildAddonWithLibrary(String(dir), flags);
     expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+  },
+  120_000,
+);
+
+// Each Worker writes the library to a scratch file of its own. The library is large, so that they write at the same time.
+const addonWithLibraryInWorkers = {
+  "app/start.cjs": `const path = require("node:path");
+const { Worker, isMainThread, parentPort, workerData } = require("node:worker_threads");
+if (isMainThread) {
+  const gate = new Int32Array(new SharedArrayBuffer(4));
+  const results = [];
+  let waiting = 0;
+  for (let i = 0; i < 8; i++) {
+    new Worker(__filename, { workerData: gate }).on("message", message => {
+      if (message !== "waiting") results.push(message);
+      else if (++waiting === 8) {
+        Atomics.store(gate, 0, 1);
+        Atomics.notify(gate, 0);
+      }
+      if (results.length === 8) console.log([...new Set(results)].join("\\n"));
+    });
+  }
+} else {
+  parentPort.postMessage("waiting");
+  Atomics.wait(workerData, 0, 0);
+  try {
+    parentPort.postMessage(require(path.join(__dirname, "vendor", "addon", ["addon", "node"].join("."))).hello());
+  } catch (error) {
+    parentPort.postMessage(error.message);
+  }
+}
+`,
+  "first/.keep": "",
+  "second/.keep": "",
+};
+test.skipIf(!systemCC)(
+  "Workers that load a native addon at the same time all get the shared library it links to",
+  async () => {
+    using dir = tempDir("aot-addon-with-a-library-in-workers", addonWithLibraryInWorkers);
+    const plain = await buildAddonWithLibrary(String(dir), [], true);
+    // The Workers of a start write the library only where the temporary folder does not have it yet.
+    const starts = ["first", "second"].map(temporary =>
+      run(String(dir), ["./built.exe"], { ...bunEnv, BUN_TMPDIR: join(String(dir), temporary) }),
+    );
+    expect(await Promise.all(starts)).toEqual([plain, plain]);
   },
   120_000,
 );

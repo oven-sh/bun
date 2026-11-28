@@ -502,11 +502,7 @@ fn spawn(
             ZBox::from_vec(v)
         } else {
             let mut name_buf = [0u8; 64];
-            let name = bun_paths::fs::FileSystem::tmpname(
-                b"bun-chrome",
-                &mut name_buf,
-                bun_core::fast_random(),
-            )?;
+            let name = bun_paths::fs::FileSystem::tmpname(b"bun-chrome", &mut name_buf)?;
             let dir = Path::join(&[bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()]);
             bun_sys::mkdir(&dir, 0o700)?;
             let mut v = Vec::with_capacity(16 + dir.len());

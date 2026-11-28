@@ -4192,7 +4192,7 @@ pub(crate) fn resolve_embedded_file(input_path: &[u8], extname: &[u8]) -> Option
 
     // Write to a unique scratch name, then atomically rename it into place.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..]).ok()?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
@@ -4286,19 +4286,11 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
         if is_written() {
             continue;
         }
-        bun_sys::mkdir_recursive_at_mode(
-            bun_sys::Fd::cwd(),
-            bun_paths::dirname(to.as_bytes())?,
-            0o700,
-        )
-        .ok()?;
-        let scratch = bun_core::ZBox::from_vec(
-            [
-                to.as_bytes(),
-                format!(".{:x}", bun_core::fast_random()).as_bytes(),
-            ]
-            .concat(),
-        );
+        let folder_of_file = bun_paths::dirname(to.as_bytes())?;
+        bun_sys::mkdir_recursive_at_mode(bun_sys::Fd::cwd(), folder_of_file, 0o700).ok()?;
+        let mut name_buffer = [0u8; 64];
+        let name = Fs::FileSystem::tmpname(b"tmp", &mut name_buffer).ok()?;
+        let scratch = bun_paths::Path::from_parts(&[folder_of_file, name]);
         let flags = O::WRONLY | O::CREAT | O::EXCL;
         let scratch = bun_sys::Tmpfile::open(bun_sys::Fd::cwd(), scratch, flags, 0o600).ok()?;
         let is_complete = scratch.file.write_all(contents).is_ok();

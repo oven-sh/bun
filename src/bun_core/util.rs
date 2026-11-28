@@ -2357,6 +2357,8 @@ pub fn is_writable(fd: Fd) -> Pollable {
 pub fn os_entropy(bytes: &mut [u8]) -> bool {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
+        // A process that starts at boot draws a temporary name, and must not wait there for the kernel's pool. Linux before 5.6 answers GRND_INSECURE with EINVAL.
+        let mut flags = libc::GRND_INSECURE;
         let mut filled = 0usize;
         while filled < bytes.len() {
             // SAFETY: writes at most len-filled bytes into the slice.
@@ -2364,14 +2366,18 @@ pub fn os_entropy(bytes: &mut [u8]) -> bool {
                 libc::getrandom(
                     bytes.as_mut_ptr().add(filled).cast(),
                     bytes.len() - filled,
-                    0,
+                    flags,
                 )
             };
             if rc <= 0 {
                 if rc < 0 && crate::ffi::errno() == libc::EINTR {
                     continue;
                 }
-                // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
+                if err == libc::EINVAL && flags == libc::GRND_INSECURE {
+                    flags = libc::GRND_NONBLOCK;
+                    continue;
+                }
+                // Linux before 5.6 says EAGAIN until the pool is ready, before 3.17 it returns ENOSYS, and a seccomp filter can return EPERM.
                 use std::io::Read;
                 // It stays open: there may be no descriptor left the next time.
                 static URANDOM: Once<std::fs::File> = Once::new();

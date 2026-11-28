@@ -2185,8 +2185,7 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
         },
     };
     let mut name_buf = [0u8; 64];
-    let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
-        .expect("unreachable");
+    let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf).expect("unreachable");
     let mut tmp = Path::from(abs_tarball_dest);
     tmp.set_basename(UNFINISHED_TARBALL_PREFIX);
     tmp.extend_from_slice(name);

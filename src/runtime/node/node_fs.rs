@@ -760,12 +760,8 @@ fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
         }
     }
     let mut name_buffer = [0u8; 64];
-    let name = paths::fs::FileSystem::tmpname(
-        b"bun-embedded-file",
-        &mut name_buffer,
-        bun_core::fast_random(),
-    )
-    .expect("64 bytes hold a temporary name");
+    let name = paths::fs::FileSystem::tmpname(b"bun-embedded-file", &mut name_buffer)
+        .expect("64 bytes hold a temporary name");
     let path = Path::from_parts(&[bun_resolver::fs::RealFS::tmpdir_path(), name]);
     let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL;
     let named = sys::Tmpfile::open(FD::cwd(), path, flags, 0o600)?;
@@ -816,12 +812,8 @@ fn open_embedded_folder(flags: i32, path: &[u8]) -> Maybe<FD> {
         return Err(sys::Error::from_code(E::EISDIR, sys::Tag::open).with_path(path));
     }
     let mut name_buffer = [0u8; 64];
-    let name = paths::fs::FileSystem::tmpname(
-        b"bun-embedded-folder",
-        &mut name_buffer,
-        bun_core::fast_random(),
-    )
-    .expect("64 bytes hold a temporary name");
+    let name = paths::fs::FileSystem::tmpname(b"bun-embedded-folder", &mut name_buffer)
+        .expect("64 bytes hold a temporary name");
     let folder = Path::from_parts(&[bun_resolver::fs::RealFS::tmpdir_path(), name]);
     let open = |folder: &ZStr| {
         let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC;

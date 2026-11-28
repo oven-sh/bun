@@ -423,14 +423,15 @@ pub mod fs {
             self.top_level_dir.as_slice()
         }
 
-        /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
+        /// Writes `.<hex(random^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
         /// the NUL-terminated borrow. Static (no `&self`).
         pub fn tmpname<'b>(
             extname: &[u8],
             buf: &'b mut [u8],
-            hash: u64,
         ) -> Result<&'b ZStr, bun_errno::SystemErrno> {
-            let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
+            // `fast_random()` differs between processes but repeats between threads, so the counter separates threads and calls. The clock separates processes when `BUN_DEBUG_HASH_RANDOM_SEED` pins `fast_random()`.
+            let hex_value: u64 =
+                bun_core::fast_random() ^ (bun_core::time::nano_timestamp() as u64);
 
             // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
             bun_core::fmt::buf_print_z(

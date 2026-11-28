@@ -192,18 +192,15 @@ pub mod fs {
 
     impl FileSystem {
         /// Generates a unique NUL-terminated temp filename into `buf` from
-        /// `extname`, `hash`, a per-process counter, and the current time.
-        pub fn tmpname<'b>(
-            extname: &[u8],
-            buf: &'b mut [u8],
-            hash: u64,
-        ) -> crate::CrateResult<&'b ZStr> {
+        /// `extname`, a random value, a per-process counter, and the current time.
+        pub fn tmpname<'b>(extname: &[u8], buf: &'b mut [u8]) -> crate::CrateResult<&'b ZStr> {
             // bun_core has no `time` module yet; use std directly.
             let nanos: u128 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let hex_value: u64 = hash ^ (nanos as u64);
+            // `fast_random()` differs between processes but repeats between threads, so the counter separates threads and calls. The clock separates processes when `BUN_DEBUG_HASH_RANDOM_SEED` pins `fast_random()`.
+            let hex_value: u64 = bun_core::fast_random() ^ (nanos as u64);
 
             bun_core::fmt::buf_print_z(
                 buf,
@@ -1920,3 +1917,37 @@ pub mod package_names;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;
+
+#[cfg(test)]
+mod tests {
+    // Two processes can read one clock value, and whatever else they both know is equal too: a hash, a pid that the clock cancels.
+    #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "reads the clock and starts a process, which isolation forbids"
+    )]
+    #[expect(clippy::disallowed_methods, clippy::disallowed_types)]
+    fn tmpname_differs_between_processes() {
+        const OTHER: &str = "BUN_RESOLVER_TMPNAME_OF_THE_OTHER_PROCESS";
+        let mut buf = [0u8; 64];
+        let name = crate::fs::FileSystem::tmpname(b"tmp", &mut buf).unwrap();
+        let digits = name.as_bytes()[1..]
+            .iter()
+            .take_while(|digit| digit.is_ascii_hexdigit())
+            .count();
+        let here = core::str::from_utf8(&name.as_bytes()[1..=digits]).unwrap();
+        let here = u64::from_str_radix(here, 16).unwrap();
+        let Ok(there) = std::env::var(OTHER) else {
+            // `BUN_DEBUG_HASH_RANDOM_SEED` makes the seed equal in both processes, which is what it is for.
+            let again = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "tests::tmpname_differs_between_processes"])
+                .env(OTHER, here.to_string())
+                .env_remove("BUN_DEBUG_HASH_RANDOM_SEED")
+                .stdout(std::process::Stdio::null())
+                .status();
+            return assert!(again.unwrap().success());
+        };
+        // Their clocks are minutes apart at most, which explains the low 40 bits of a difference.
+        assert_ne!((here ^ there.parse::<u64>().unwrap()) >> 40, 0);
+    }
+}

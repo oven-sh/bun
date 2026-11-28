@@ -53,6 +53,20 @@ A curated list of popular npm packages with lifecycle scripts is allowed by defa
   packages from spoofing trusted package names through local file paths or git repositories.
 </Note>
 
+### Blocked scripts
+
+When an install blocks lifecycle scripts, its summary ends with a count. [`bun pm untrusted`](/pm/cli/pm#untrusted) lists the packages and their scripts.
+
+```txt
+Blocked 1 postinstall. Run `bun pm untrusted` for details.
+```
+
+When the command names packages, as `bun add my-package` does, Bun also names the ones whose scripts it blocked. The note goes to stderr. A plain `bun install` prints the count only.
+
+```txt
+note: skipping lifecycle scripts of "my-package": not in trustedDependencies
+```
+
 ### Behavior of the `trustedDependencies` field
 
 Defining `trustedDependencies` in `package.json` **replaces** the default list rather than extending it. Exactly one of three modes applies per project:

@@ -131,16 +131,6 @@ pub enum ReactiveTerminalTargetKind {
     Unlabeled,
 }
 
-impl std::fmt::Display for ReactiveTerminalTargetKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReactiveTerminalTargetKind::Implicit => write!(f, "implicit"),
-            ReactiveTerminalTargetKind::Labeled => write!(f, "labeled"),
-            ReactiveTerminalTargetKind::Unlabeled => write!(f, "unlabeled"),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum ReactiveTerminal {
     Break {

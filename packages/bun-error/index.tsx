@@ -885,7 +885,6 @@ const BuildError = ({ message }: { message: Message }) => {
 };
 
 const ResolveError = ({ message }: { message: Message }) => {
-  const { cwd } = useContext(ErrorGroupContext);
   let title = (message.data.text || "").trim();
   const newline = title.indexOf("\n");
   let subtitle: string | null = null;

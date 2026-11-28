@@ -1416,6 +1416,25 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect(reads.toSorted()).toEqual(["cancel", "close", "pull"]);
       expect(() => new ReadableStream({ type: "direct", pull() {}, close: 1 })).toThrow(TypeError);
     });
+
+    // A direct stream does not run start(), so a source without pull() can never write or close.
+    it.each([
+      ["no methods", { type: "direct" }],
+      ["pull: undefined", { type: "direct", pull: undefined }],
+      ["start() only", { type: "direct", start() {} }],
+      ["cancel() only", { type: "direct", cancel() {} }],
+    ])("a source without pull() does not construct: %s", (_label, source) => {
+      let thrown;
+      try {
+        new ReadableStream(source);
+      } catch (error) {
+        thrown = error;
+      }
+      expect({ name: thrown?.name, message: thrown?.message }).toEqual({
+        name: "TypeError",
+        message: `The underlying source's 'pull' property is required when 'type' is "direct": a direct stream does not call start()`,
+      });
+    });
   });
 
   // A type:"direct" pull() is re-invoked per read as a demand signal, but never while a

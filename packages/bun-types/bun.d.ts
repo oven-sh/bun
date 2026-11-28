@@ -603,6 +603,9 @@ declare module "bun" {
      *
      * A reader (`getReader()`, `for await`, `pipeTo()`) calls `pull()` again
      * for a later read, once the previous call has settled.
+     *
+     * `pull` is required: a direct stream does not call `start()`. Without
+     * `pull`, the `ReadableStream` constructor throws a `TypeError`.
      */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";

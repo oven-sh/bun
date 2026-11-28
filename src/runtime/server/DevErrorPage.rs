@@ -120,10 +120,27 @@ fn write_stack_trace(w: &mut Vec<u8>, stack: &StackTrace) {
             w.push(b',');
         }
         write!(w, "{{\"line\":{},\"text\":", source_line.line + 1).unwrap();
-        write_string(w, &source_line.text);
+        write_source_line_text(w, &source_line.text);
         w.push(b'}');
     }
     w.extend_from_slice(b"]}");
+}
+
+/// Same cap as `MAX_LINE_LENGTH` in the terminal error printer (`VirtualMachine.rs`).
+const MAX_SOURCE_LINE_LENGTH: usize = 1024;
+
+fn write_source_line_text(w: &mut Vec<u8>, text: &[u8]) {
+    if text.len() <= MAX_SOURCE_LINE_LENGTH {
+        return write_string(w, text);
+    }
+    let mut end = MAX_SOURCE_LINE_LENGTH;
+    while end > 0 && !strings::is_utf8_char_boundary(text[end]) {
+        end -= 1;
+    }
+    let mut clamped = Vec::with_capacity(end + 3);
+    clamped.extend_from_slice(&text[..end]);
+    clamped.extend_from_slice("…".as_bytes());
+    write_string(w, &clamped);
 }
 
 /// bun-error treats `-1` as "no line/column" (e.g. frames without a source position).
@@ -171,7 +188,7 @@ fn write_message_data(w: &mut Vec<u8>, text: &[u8], location: Option<&Location>)
         w.extend_from_slice(b",\"namespace\":");
         write_string(w, &location.namespace);
         w.extend_from_slice(b",\"line_text\":");
-        write_string(w, location.line_text.as_deref().unwrap_or(b""));
+        write_source_line_text(w, location.line_text.as_deref().unwrap_or(b""));
         write!(
             w,
             ",\"line\":{},\"column\":{},\"offset\":{}}}",

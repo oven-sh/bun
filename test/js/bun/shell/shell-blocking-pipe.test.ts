@@ -1,7 +1,7 @@
 import { $, generateHeapSnapshot } from "bun";
 
-import { test } from "bun:test";
-import { isWindows } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // We skip this test on Windows becasue:
 // 1. Windows didn't have this problem to begin with
@@ -30,4 +30,32 @@ test.skipIf(isWindows)("writing > send buffer size (with a variable) doesn't blo
   if (result !== expected + "\n") {
     throw new Error("Expected " + expected + "\n but got " + result);
   }
+});
+
+test("builtins blocked on input do not starve file I/O", async () => {
+  using dir = tempDir("shell-blocked-builtins", {
+    "file.txt": "read",
+    "producer.js": `
+      require("fs").writeFileSync("started-" + process.argv[2], "");
+      for (const deadline = Date.now() + 30_000; !require("fs").existsSync("go") && Date.now() < deadline; ) Bun.sleepSync(1);
+      console.log(process.argv[2]);
+    `,
+    "main.js": `
+      const fs = require("fs");
+      const pipelines = Array.from({ length: 8 }, (_, i) => Bun.$\`\${process.execPath} producer.js \${i} | cat | cat\`.text());
+      while (fs.readdirSync(".").filter(name => name.startsWith("started-")).length < 8) await Bun.sleep(1);
+      console.log(await Bun.file("file.txt").text());
+      fs.writeFileSync("go", "");
+      console.log((await Promise.all(pipelines)).join(""));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "read\n0\n1\n2\n3\n4\n5\n6\n7\n\n", stderr: "", exitCode: 0 });
 });

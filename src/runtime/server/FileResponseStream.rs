@@ -43,9 +43,6 @@ pub(crate) struct FileResponseStream {
     state: Cell<State>,
     /// For the uWS callbacks and the reader, until `finish()`.
     self_ref: JsCell<Option<RefPtr<Self>>>,
-    /// A uv read in flight outlives `finish()`.
-    #[cfg(windows)]
-    read_ref: JsCell<Option<RefPtr<Self>>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -115,9 +112,9 @@ impl Drop for StreamFd {
     fn drop(&mut self) {
         if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.0) {
             #[cfg(windows)]
-            Closer::close(file, bun_sys::windows::libuv::Loop::get());
+            Closer::close_pending(file, Some(bun_uws::Loop::get().port().add_pending_close()));
             #[cfg(not(windows))]
-            Closer::close(file, ());
+            Closer::close(file);
         }
     }
 }
@@ -198,8 +195,6 @@ impl FileResponseStream {
             sendfile: JsCell::new(Sendfile::default()),
             state: Cell::new(State::default()),
             self_ref: JsCell::new(None),
-            #[cfg(windows)]
-            read_ref: JsCell::new(None),
         });
         owned.self_ref.set(Some(owned.clone()));
         let this = owned.as_ptr();
@@ -245,7 +240,6 @@ impl FileResponseStream {
         reader.update_flags(|f| {
             f.set(ReaderFlags::POLLABLE, opts.pollable);
             f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
-            #[cfg(unix)]
             f.set(ReaderFlags::SOCKET, opts.file_type == FileType::Socket);
         });
         // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
@@ -268,8 +262,6 @@ impl FileResponseStream {
 
         reader.update_ref(true);
 
-        #[cfg(windows)]
-        this_ref.hold_read_ref();
         this_ref.read(None);
     }
 
@@ -331,9 +323,6 @@ impl FileResponseStream {
 
         match resp.write(chunk) {
             WriteResult::Backpressure(_) => {
-                // `on_writable` takes it again.
-                #[cfg(windows)]
-                let _read_ref = self.read_ref.take();
                 self.arm_on_writable();
                 self.reader.pause();
                 false
@@ -344,18 +333,9 @@ impl FileResponseStream {
 
     fn on_read_result(&self, result: ReadResult) {
         match result {
-            ReadResult::Pending => return,
+            ReadResult::Pending => {}
             ReadResult::Done => self.finish(),
             ReadResult::Err(err) => self.fail_with(err),
-        }
-        #[cfg(windows)]
-        self.read_ref.set(None);
-    }
-
-    #[cfg(windows)]
-    fn hold_read_ref(&self) {
-        if self.read_ref.get().is_none() {
-            self.read_ref.set(self.self_ref.get().clone());
         }
     }
 
@@ -371,8 +351,6 @@ impl FileResponseStream {
             return true;
         }
         self.resp.get().timeout(self.idle_timeout.get());
-        #[cfg(windows)]
-        self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
         self.on_read_result(self.reader.unpause());
         self.read(None);
@@ -504,7 +482,6 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             // An `abort` listener may close the fd, and epoll cannot remove a closed fd.
-            #[cfg(unix)]
             self.reader.release_handle();
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }

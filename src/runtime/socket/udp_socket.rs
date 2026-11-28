@@ -17,7 +17,7 @@ use bun_ptr::BackRef;
 
 use crate::node::validators;
 #[cfg(windows)]
-use bun_libuv_sys::sockaddr_storage;
+use bun_sys::posix::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
 #[cfg(not(windows))]

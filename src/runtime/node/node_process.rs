@@ -59,7 +59,7 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 /// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
 pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
-    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_crt(fd), !blocking) {
         Ok(()) => 0,
         Err(err) => -i32::from(err.errno),
     }
@@ -95,6 +95,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                 );
                 bun_jsc::node_compile_cache::persist_now();
                 bun_core::Output::flush();
+                vm.finish_writes();
                 bun_core::reload_process(should_clear_terminal, false);
             });
         }
@@ -109,6 +110,24 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__getUmask() -> u32 {
+    bun_sys::windows::current_umask()
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__setUmask(mask: u32) -> u32 {
+    bun_sys::umask(mask)
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__isatty(fd: i32) -> bool {
+    bun_sys::isatty(bun_sys::Fd::from_crt(fd))
 }
 
 /// `--redirect-warnings=<path>` value; `Dead` when unset.
@@ -196,15 +215,7 @@ mod _impl {
 
     // ───────────────────────────── title ─────────────────────────────
 
-    // Windows `process.title` getter support: the C++ getter needs to know
-    // whether a title was explicitly set (CLI `--title` or assignment) so it
-    // can prefer the store over `uv_get_process_title` without comparing
-    // against the "bun" default string.
-    #[unsafe(export_name = "Bun__Process__hasTitle")]
-    extern "C" fn has_title() -> bool {
-        crate::cli::Bun__Node__ProcessTitle.lock().is_some()
-    }
-
+    #[cfg(not(windows))]
     #[unsafe(export_name = "Bun__Process__getTitle")]
     extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
@@ -219,11 +230,30 @@ mod _impl {
         )
     }
 
+    /// Without `--title` or an assignment, the first read caches the console title.
+    #[cfg(windows)]
+    #[unsafe(export_name = "Bun__Process__getTitle")]
+    extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
+        const DEFAULT_TITLE: &[u8] = b"bun";
+        let mut title = crate::cli::Bun__Node__ProcessTitle.lock();
+        if title.is_none()
+            && let Ok(console_title) = bun_sys::windows::console_title::get()
+        {
+            let console_title = console_title.filter(|bytes| !bytes.is_empty());
+            *title = Some(console_title.as_deref().unwrap_or(DEFAULT_TITLE).into());
+        }
+        BunString::clone_utf8(title.as_deref().unwrap_or(DEFAULT_TITLE))
+    }
+
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
     extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &BunString) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
+
+        // Fails if the process has no console.
+        #[cfg(windows)]
+        let _ = bun_sys::windows::console_title::set(&new_title);
 
         // Assigning into the `Option<Box<[u8]>>` static drops the previous box.
         *crate::cli::Bun__Node__ProcessTitle.lock() = Some(new_title);

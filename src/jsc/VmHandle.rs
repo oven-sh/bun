@@ -366,13 +366,13 @@ impl VmHandle {
     }
 
     /// As [`post`](Self::post), but a loop that is asleep stays asleep until something else wakes it.
-    pub fn post_without_waking<T: BoxedTask>(
+    pub fn post_without_waking<T: Taskable>(
         &self,
         kind: LoopKind,
-        task: Box<T>,
-    ) -> Posted<Box<T>> {
+        task: T::Payload,
+    ) -> Posted<T::Payload> {
         self.post_with(T::TAG, task, |task| {
-            let node = ConcurrentTaskItem::create_boxed(task);
+            let node = ConcurrentTaskItem::create::<T>(task);
             self.0.loop_of(kind).post(node);
         })
     }

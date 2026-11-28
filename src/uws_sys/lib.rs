@@ -167,7 +167,7 @@ pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
     use core::ffi::{c_int, c_uint, c_void};
     unsafe extern "C" {
-        pub safe fn bsd_socket_export_size() -> c_int;
+        pub safe fn bsd_socket_is_listening(fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int;
         pub fn bsd_socket_export(
             fd: LIBUS_SOCKET_DESCRIPTOR,
             target_pid: c_uint,
@@ -420,6 +420,8 @@ mod hpack;
 mod http1;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;
+#[cfg(windows)]
+mod iocp;
 #[path = "ListenSocket.rs"]
 pub mod listen_socket;
 #[path = "Loop.rs"]
@@ -438,10 +440,6 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
-// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
-#[cfg(windows)]
-#[path = "Timer.rs"]
-pub mod timer;
 #[path = "udp.rs"]
 pub mod udp;
 #[path = "us_socket_t.rs"]
@@ -471,7 +469,7 @@ pub mod fault_inject {
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
     /// Not a syscall: poll registration in `us_poll_start_rc`
-    /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
+    /// (`SocketRegistration::new` on Windows, `EPOLL_CTL_ADD` / `kevent` on
     /// epoll/kqueue).
     pub const POLL_START: c_int = 11;
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
@@ -502,7 +500,7 @@ pub mod fault_inject {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
         pub safe fn us_fault_clear_all();
         safe static us_fault_armed: AtomicI32;
-        safe fn us_fault_hit(
+        pub(crate) safe fn us_fault_hit(
             syscall: c_int,
             fd: c_int,
             out: &mut isize,
@@ -522,12 +520,8 @@ pub use socket::{
 // ───────────────────────────── re-exports ────────────────────────────────────
 
 pub use internal_loop_data::InternalLoopData;
-#[cfg(windows)]
-pub use loop_::WindowsLoop;
 pub use loop_::{Loop, NOW_NS_UNKNOWN, ThreadLoop};
 pub use socket_kind::SocketKind;
-#[cfg(windows)]
-pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;

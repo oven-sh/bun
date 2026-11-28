@@ -62,7 +62,7 @@ use crate::webcore::blob::BlobExt as _;
 // `repr(C)` keeps `timer` at offset 0, so `timer_all()` is the thread-local load alone.
 #[repr(C)]
 pub(crate) struct RuntimeState {
-    /// setTimeout/setInterval heap + uv timers.
+    /// setTimeout/setInterval heap.
     pub(crate) timer: timer::All,
     /// `RareData.{mysql,postgresql}_context` — concrete SQL state. The
     /// `bun_jsc::rare_data::RareData` slots for these are opaque ZSTs (cycle
@@ -86,7 +86,7 @@ pub(crate) struct RuntimeState {
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     #[cfg(windows)]
-    pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
+    pub(crate) io_order: crate::io_order::IoOrder,
     pub(crate) request_pools: crate::server::RequestPools,
     /// The wrappers of the running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
     pub(crate) cron_jobs: JsCell<Vec<bun_jsc::Strong>>,
@@ -107,8 +107,7 @@ pub(crate) struct RuntimeState {
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
     /// keep its address for as long as the VM lives.
-    #[cfg(unix)]
-    pub(crate) uv_loop: crate::napi::uv_posix::UvLoop,
+    pub(crate) uv_loop: crate::napi::uv::UvLoop,
 }
 
 /// One `RuntimeState` per JS thread, cleared by [`deinit_runtime_state`].
@@ -184,12 +183,6 @@ pub(crate) fn ssl_ctx_cache() -> &'static crate::api::SSLContextCache::SSLContex
 /// [`RuntimeState::sql_rare`] of `vm`.
 pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
     &runtime_state_of(vm).sql_rare
-}
-
-/// [`RuntimeState::path_watchers`] of this thread's VM.
-#[cfg(windows)]
-pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
-    runtime_state().path_watchers.get_or_init(Default::default)
 }
 
 /// [`RuntimeState::request_pools`] of `vm`.
@@ -316,7 +309,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
             }
         },
         #[cfg(windows)]
-        path_watchers: Default::default(),
+        io_order: Default::default(),
         request_pools: Default::default(),
         cron_jobs: JsCell::default(),
         cron_os_jobs: Default::default(),
@@ -328,8 +321,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         browsers: Default::default(),
         zstd_tables: JsCell::default(),
         lint: core::cell::OnceCell::new(),
-        #[cfg(unix)]
-        uv_loop: crate::napi::uv_posix::UvLoop::new(vm.handle()),
+        uv_loop: crate::napi::uv::UvLoop::new(vm.handle()),
     }));
     RUNTIME_STATE.set(state);
 
@@ -746,26 +738,14 @@ fn auto_tick(vm: &VirtualMachine) {
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
+    let did_run_immediates = el.immediate_task_count() > 0;
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
-    #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
-        el.wakeup();
-    }
 
     // ── pending unref ───────────────────────────────────────────────────
-    #[cfg(unix)]
-    {
-        // `swap(0)` so a concurrent
-        // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick`) can't be lost between
-        // the read and the reset.
-        let pending_unref = vm
-            .pending_unref_counter
-            .swap(0, core::sync::atomic::Ordering::Relaxed);
-        if pending_unref > 0 {
-            loop_.unref_count(pending_unref);
-        }
+    let pending_unref = vm.take_pending_unref();
+    if pending_unref > 0 {
+        loop_.unref_count(pending_unref);
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
@@ -791,10 +771,7 @@ fn auto_tick(vm: &VirtualMachine) {
 
     // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
     // Run them before reading `has_pending_immediate` because their callbacks can queue work.
-    #[cfg(unix)]
     let uv_idle_started = state.uv_loop.before_poll(vm);
-    #[cfg(not(unix))]
-    let uv_idle_started = false;
 
     // Call `ctx.timer.getTimeout(..)` ONLY inside
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
@@ -805,7 +782,9 @@ fn auto_tick(vm: &VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // A started idle handle keeps the poll from blocking, like in libuv.
+        // An immediate that just ran may have satisfied the condition the caller waits on.
         let has_pending_immediate = has_yielded_tasks
+            || did_run_immediates
             || uv_idle_started
             || el.immediate_task_count() > 0
             || el.has_pending_tasks();
@@ -834,12 +813,9 @@ fn auto_tick(vm: &VirtualMachine) {
         }
     }
 
-    #[cfg(unix)]
-    {
-        // ── addons' uv_check_t (libuv runs them right after its poll) ────
-        state.uv_loop.after_poll(vm);
-        state.timer.drain_timers(vm);
-    }
+    // ── addons' uv_check_t (libuv runs them right after its poll) ────────
+    state.uv_loop.after_poll(vm);
+    state.timer.drain_timers(vm);
 
     vm.on_after_event_loop();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
@@ -866,23 +842,10 @@ fn auto_tick_active(vm: &VirtualMachine) {
 
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
-    #[cfg(windows)]
-    if has_yielded_tasks || el.immediate_task_count() > 0 || el.has_pending_tasks() {
-        el.wakeup();
-    }
 
-    #[cfg(unix)]
-    {
-        // `swap(0)` so a concurrent
-        // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick`) can't be lost between
-        // the read and the reset.
-        let pending_unref = vm
-            .pending_unref_counter
-            .swap(0, core::sync::atomic::Ordering::Relaxed);
-        if pending_unref > 0 {
-            loop_.unref_count(pending_unref);
-        }
+    let pending_unref = vm.take_pending_unref();
+    if pending_unref > 0 {
+        loop_.unref_count(pending_unref);
     }
 
     let Some(state) = try_runtime_state() else {
@@ -892,10 +855,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     };
     state.timer.update_date_header_timer_if_necessary(loop_, vm);
 
-    #[cfg(unix)]
     let uv_idle_started = state.uv_loop.before_poll(vm);
-    #[cfg(not(unix))]
-    let uv_idle_started = false;
 
     {
         let has_pending_immediate = has_yielded_tasks
@@ -925,11 +885,8 @@ fn auto_tick_active(vm: &VirtualMachine) {
         }
     }
 
-    #[cfg(unix)]
-    {
-        state.uv_loop.after_poll(vm);
-        state.timer.drain_timers(vm);
-    }
+    state.uv_loop.after_poll(vm);
+    state.timer.drain_timers(vm);
 
     vm.on_after_event_loop();
 }
@@ -1188,7 +1145,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
-    close_timer_loop_handles_after_vm_destroyed,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1330,16 +1286,6 @@ fn end_hot_run_timers(vm: &VirtualMachine, cancel: CancelHotRunTimers) {
     }
 }
 
-/// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
-/// `cancel_timers` (which the `--isolate` swap also uses on a live VM).
-///
-/// # Safety
-/// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
-unsafe fn close_timer_loop_handles_after_vm_destroyed() {
-    #[cfg(windows)]
-    timer_all().close_loop_handles_for_vm_teardown();
-}
-
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
 unsafe fn disarm_all_timers_for_vm_teardown() {
     if let Some(all) = try_timer_all() {
@@ -1356,8 +1302,6 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     let mut result = SweepResult::Idle;
     if let Some(resolver) = state.dns_resolver.get() {
         result = result.and(resolver.close_client_for_terminate());
-        #[cfg(windows)]
-        resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
@@ -4369,7 +4313,7 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
 // §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_io`).
 
 /// `bun_io::__bun_get_vm_ctx` body. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
+/// `extern "Rust"` in `bun_io`; link-time resolved.
 #[unsafe(no_mangle)]
 fn __bun_get_vm_ctx() -> bun_io::EventLoopCtx {
     VirtualMachine::get().loop_ctx()

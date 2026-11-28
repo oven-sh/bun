@@ -84,7 +84,7 @@ mod posix {
     use bun_io::OwnedFilePoll;
     use bun_io::posix_event_loop::FlagsSet;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use bun_io::posix_event_loop::{Flags, Owner, PollTag};
+    use bun_io::{Owner, PollFlag as Flags, PollTag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
 

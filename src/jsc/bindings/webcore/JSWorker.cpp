@@ -23,9 +23,7 @@
 #include "CodeGenerationFromStrings.h"
 
 #include "BunCPUProfiler.h"
-#if OS(WINDOWS)
-#include <uv.h>
-#else
+#if !OS(WINDOWS)
 #include <sys/resource.h>
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -840,10 +838,10 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
         double user = 0;
         double sys = 0;
 #if OS(WINDOWS)
-        uv_rusage_t ru;
-        if (uv_getrusage_thread(&ru) == 0) {
-            user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
-            sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
+        Bun::CpuUsage usage;
+        if (Bun::Bun__Process__getThreadCpuUsage(&usage) == 0) {
+            user = static_cast<double>(usage.user);
+            sys = static_cast<double>(usage.system);
         }
 #elif defined(__APPLE__)
         // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process

@@ -183,7 +183,7 @@ pub fn is_windows_path_with_executable_extension(bin: &[u8]) -> bool {
 
 /// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).
 ///
-/// `CreateProcessW` runs these through `cmd.exe`, which re-tokenizes the
+/// These run through `cmd.exe`, which re-tokenizes the
 /// command line with shell metacharacter rules ("BatBadBut",
 /// CVE-2024-24576 / CVE-2024-27980). Spawn paths must not pass untrusted
 /// arguments to one without checking [`batch_arg_has_cmd_metachars`].
@@ -205,7 +205,7 @@ pub fn is_batch_file(path: &[u8]) -> bool {
 
 /// Returns true when `arg` contains a byte `cmd.exe` would reinterpret while
 /// re-tokenizing the command line of a `.bat`/`.cmd` invocation: `"` breaks
-/// out of libuv's MSVCRT-style quoting, `%` expands environment variables
+/// out of MSVCRT-style quoting, `%` expands environment variables
 /// even inside quotes, and the rest are command separators / redirection /
 /// escape characters in unquoted positions. None of these can be escaped for
 /// `cmd.exe`, so callers must reject the spawn instead.

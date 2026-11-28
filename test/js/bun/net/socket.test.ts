@@ -509,7 +509,7 @@ describe.concurrent("socket", () => {
     expect(opened).toBe(true);
   });
 
-  it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
+  it("should not leak file descriptors when connecting", async () => {
     expect(await bunRun(fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url)))).toSpawn();
   });
 
@@ -2267,11 +2267,9 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
     });
   });
 
-  // libuv reports a missing pipe from the connect callback, not from
-  // uv_pipe_connect itself. On that path the pipe was never handed to the
-  // writer, so closing the writer reported no close, and the native context
-  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
-  // stayed alive once per failed attempt.
+  // A missing pipe is reported from the connect callback. The writer has no pipe yet and
+  // reports no close, but the native context (which holds a ref on the TCPSocket/TLSSocket,
+  // and for TLS the SSL_CTX) must still be released.
   it.concurrent.each([
     ["plain", "", 0],
     ["tls", "tls: true,", 1],
@@ -2365,7 +2363,7 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 // that is queued when the socket closes. A handler can close the socket and
 // then spin the event loop before it returns (`Bun.build()` blocks on a plugin's
 // `setup()` promise and runs queued tasks), so the context is gone by the time the
-// libuv read callback that invoked the handler gets control back. The
+// read callback that invoked the handler gets control back. The
 // callback must keep the context alive until it is done with it.
 describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
   // `trigger` is the server handler that tears the socket down: "end" runs
@@ -3867,54 +3865,48 @@ Reo=
       };
     }
 
-    it.skipIf(isWindows)(
-      "verifies the server certificate against localhost over a unix socket when no serverName is given",
-      async () => {
-        using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
-        expect(await t.handshake.promise).toEqual({
-          authorizedArg: false,
-          authorizedGetter: false,
-          callbackError: AGENT1_LOCALHOST_MISMATCH,
-          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-          getterError: AGENT1_LOCALHOST_MISMATCH,
-          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-        });
-        await t.closed.promise;
-        expect(t.received).toEqual([]);
-        expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    it("verifies the server certificate against localhost over a unix socket when no serverName is given", async () => {
+      using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError: AGENT1_LOCALHOST_MISMATCH,
+        callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        getterError: AGENT1_LOCALHOST_MISMATCH,
+        getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      await t.closed.promise;
+      expect(t.received).toEqual([]);
+      expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
 
-        using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
-        expect(await ok.handshake.promise).toEqual({
-          authorizedArg: true,
-          authorizedGetter: true,
-          callbackError: null,
-          callbackCode: null,
-          getterError: null,
-          getterCode: null,
-        });
-        ok.client.write("ping");
-        await ok.echoed.promise;
-        expect(ok.received.join("")).toBe("hello-from-server\nping");
-      },
-    );
+      using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
+      expect(await ok.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: true,
+        callbackError: null,
+        callbackCode: null,
+        getterError: null,
+        getterCode: null,
+      });
+      ok.client.write("ping");
+      await ok.echoed.promise;
+      expect(ok.received.join("")).toBe("hello-from-server\nping");
+    });
 
-    it.skipIf(isWindows)(
-      "reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost",
-      async () => {
-        using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
-        expect(await t.handshake.promise).toEqual({
-          authorizedArg: false,
-          authorizedGetter: false,
-          callbackError: AGENT1_LOCALHOST_MISMATCH,
-          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-          getterError: AGENT1_LOCALHOST_MISMATCH,
-          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-        });
-        t.client.write("ping");
-        await t.echoed.promise;
-        expect(t.received.join("")).toBe("hello-from-server\nping");
-      },
-    );
+    it("reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost", async () => {
+      using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError: AGENT1_LOCALHOST_MISMATCH,
+        callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        getterError: AGENT1_LOCALHOST_MISMATCH,
+        getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      t.client.write("ping");
+      await t.echoed.promise;
+      expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/33754
@@ -5145,7 +5137,7 @@ describe("shutdown(true)", () => {
       for (const allowHalfOpen of [false, true]) {
         const socket = `${role === "accepted" ? "an accepted" : "a connected"}${secure ? " TLS" : ""} socket`;
 
-        it.skipIf(secure && isWindows)(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
+        it(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
           expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: true })).toEqual(
             isWindows
               ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
@@ -5616,7 +5608,7 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
   // this covers the shared usockets core in bun:test form. Unfixed, epoll
   // re-delivered end on every writable rearm, kqueue spun the writable
-  // dispatch forever, and the libuv backend stranded (the FIN consumed the
+  // dispatch forever, and Windows stranded (the FIN consumed the
   // only AFD event the reset could ride).
   it("delivers end exactly once and closes after the reset", async () => {
     const issued = Promise.withResolvers<void>();
@@ -5782,7 +5774,7 @@ function linuxSocketBufferLimit(name: "rmem_max" | "wmem_max") {
 const receiveBuffer = 8 * 1024 * 1024;
 const sendBuffer = 1024 * 1024;
 
-// setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
+// setSocketOptions does nothing on Windows.
 it.skipIf(
   isWindows ||
     (isLinux &&

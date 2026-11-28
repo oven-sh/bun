@@ -5,7 +5,6 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, SpawnOptions, Status};
 use crate::cli::Command;
@@ -152,7 +151,7 @@ impl<'a> ProcessHandle<'a> {
 
         let argv = ScriptArgv::new(shell_bin, handle.output.config.combined)?;
         let start_time = Instant::now();
-        let mut spawned: spawn::SpawnProcessResult = 'brk: {
+        let mut spawned: spawn::SpawnResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -190,28 +189,12 @@ impl<'a> ProcessHandle<'a> {
             unsafe { handle.reader(kind).set_owner(owner) };
         }
 
-        #[cfg(windows)]
-        {
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.set_source(bun_io::Source::Pipe(pipe));
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.set_source(bun_io::Source::Pipe(pipe));
-            }
-        }
-
-        #[cfg(unix)]
         for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
             if let Some(pipe) = pipe {
                 let _ = bun_sys::set_nonblocking(pipe.fd());
                 let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
-                let _ = reader.start(event_loop, pipe.into(), true)?;
+                let _ = reader.start_exclusive_pipe(event_loop, pipe)?;
             }
-        }
-        #[cfg(not(unix))]
-        {
-            handle.stdout.start_with_current_pipe()?;
-            handle.stderr.start_with_current_pipe()?;
         }
 
         handle.process = Some(ProcessInfo {
@@ -258,7 +241,10 @@ impl<'a> ProcessHandle<'a> {
     /// After the exit: a leftover child may hold the pipes open, so their EOF may never come.
     fn drain_and_close_pipes(&mut self) {
         for kind in [Kind::Stdout, Kind::Stderr] {
-            // Windows has no synchronous drain.
+            #[cfg(windows)]
+            if let Some(event) = self.reader(kind).try_read() {
+                self.read(kind, Some(event));
+            }
             #[cfg(unix)]
             if !self.reader(kind).is_done() && self.reader(kind).get_fd() != bun_sys::Fd::INVALID {
                 self.read(kind, None);
@@ -873,7 +859,7 @@ pub(crate) fn run_scripts_with_filter(
         Some(unsafe { &mut *env_ptr }),
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which escape the spawn's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
@@ -924,12 +910,9 @@ pub(crate) fn run_scripts_with_filter(
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
                 cwd: without_trailing_sep(dirname_or_root(&script.package_json_path)).into(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
+                #[cfg(windows)]
+                inherits_all_handles: true,
                 ..Default::default()
             },
             remaining_dependencies: 0,

@@ -2,7 +2,7 @@ use core::ops::Deref;
 
 use bun_core::ZStr;
 
-use crate::{AsFd, CloseOnDrop, Dir, Error, Fd, Mode, O, Tag};
+use crate::{AsFd, CloseOnDrop, Dir, Error, Fd, Mode, O};
 
 /// The path of something that is removed when this drops.
 #[must_use]
@@ -82,11 +82,7 @@ impl<N: Deref<Target = ZStr>, D: AsFd> Tmpfile<N, D> {
 
     pub fn create_with_mode(destination_dir: D, tmpfilename: N, perm: Mode) -> crate::Result<Self> {
         let flags = O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY;
-        let Self { file, entry } = Self::open(destination_dir, tmpfilename, flags, perm)?;
-        Ok(Self {
-            file: file.make_lib_uv_owned_for_syscall(Tag::open)?,
-            entry,
-        })
+        Self::open(destination_dir, tmpfilename, flags, perm)
     }
 
     pub fn open(dir: D, name: N, flags: i32, perm: Mode) -> crate::Result<Self> {

@@ -10,13 +10,11 @@ use bstr::BStr;
 use bun_core::fmt::for_terminal;
 use bun_core::{CStrList, Output, strings};
 use bun_event_loop::EventLoopHandle;
-#[cfg(unix)]
-use bun_io::PosixFlags;
+use bun_io::ReaderFlags;
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr};
-#[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{ProcessHandle, Rusage, SpawnOptions, Status};
 use bun_sys::Fd;
@@ -1169,11 +1167,6 @@ impl GitSubprocess {
             stdin: bun_spawn::Stdio::Ignore,
             stdout: bun_spawn::Stdio::Buffer,
             stderr: bun_spawn::Stdio::Buffer,
-            #[cfg(windows)]
-            windows: bun_spawn::WindowsOptions {
-                loop_: self.event_loop,
-                ..Default::default()
-            },
             stream: false,
             // The kernel kills the child when bun dies, so no git outlives the install.
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1187,34 +1180,21 @@ impl GitSubprocess {
         // after `Step::Config`.
         drop(envp);
 
-        #[cfg(unix)]
-        for (reader, file, is_memfd) in [
+        for (reader, pipe, _is_memfd) in [
             (&self.stdout, spawned.stdout.take(), spawned.memfds[1]),
             (&self.stderr, spawned.stderr.take(), spawned.memfds[2]),
         ] {
-            let Some(file) = file else {
-                continue;
-            };
-            if is_memfd {
-                reader.start_memfd(file);
+            let Some(pipe) = pipe else { continue };
+            #[cfg(unix)]
+            if _is_memfd {
+                reader.start_memfd(pipe);
                 continue;
             }
-            let _ = bun_sys::set_nonblocking(file.fd());
+            let _ = bun_sys::set_nonblocking(pipe.fd());
             self.remaining_fds.set(self.remaining_fds.get() + 1);
-            reader.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
-            let result = reader.start(self.event_loop.as_event_loop_ctx(), file.into(), true)?;
+            reader.update_flags(|f| f.insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET));
+            let result = reader.start_exclusive_pipe(self.event_loop.as_event_loop_ctx(), pipe)?;
             self.note_read_result(result);
-        }
-        #[cfg(windows)]
-        for (reader, pipe) in [
-            (&self.stdout, spawned.stdout.take()),
-            (&self.stderr, spawned.stderr.take()),
-        ] {
-            let bun_spawn::SpawnedStdio::Buffer(pipe) = pipe else {
-                continue;
-            };
-            self.remaining_fds.set(self.remaining_fds.get() + 1);
-            reader.start_with_pipe(pipe)?;
         }
 
         debug_assert!(self.process.get().is_none());

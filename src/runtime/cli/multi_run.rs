@@ -21,10 +21,9 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
+    self as spawn, SpawnOptions, SpawnResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -157,7 +156,10 @@ impl<'a> PipeReader<'a> {
 
     /// After the exit: a leftover child may hold the pipe open, so its EOF may never come.
     fn drain_and_close(&mut self) {
-        // Windows has no synchronous drain.
+        #[cfg(windows)]
+        if let Some(event) = self.reader.try_read() {
+            self.read(Some(event));
+        }
         #[cfg(unix)]
         if !self.reader.is_done() && self.reader.get_fd() != bun_sys::Fd::INVALID {
             self.read(None);
@@ -200,7 +202,7 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let mut spawned: SpawnProcessResult = {
+        let mut spawned: SpawnResult = {
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
             let mut env = scopeguard::guard(env, move |env| {
@@ -224,21 +226,6 @@ impl<'a> ProcessHandle<'a> {
             unsafe { pipe.reader.set_owner(owner) };
         }
 
-        #[cfg(windows)]
-        {
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                self.stdout_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                self.stderr_reader
-                    .reader
-                    .set_source(bun_io::Source::Pipe(pipe));
-            }
-        }
-
-        #[cfg(unix)]
         for (pipe, file) in [
             (&self.stdout_reader, stdout_pipe),
             (&self.stderr_reader, stderr_pipe),
@@ -246,19 +233,8 @@ impl<'a> ProcessHandle<'a> {
             if let Some(file) = file {
                 let _ = bun_sys::set_nonblocking(file.fd());
                 let event_loop = self.shared.event_loop.as_event_loop_ctx();
-                let _ = pipe.reader.start(event_loop, file.into(), true)?;
+                let _ = pipe.reader.start_exclusive_pipe(event_loop, file)?;
             }
-        }
-        #[cfg(not(unix))]
-        {
-            self.stdout_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
-            self.stderr_reader
-                .reader
-                .start_with_current_pipe()
-                .map_err(Error::from)?;
         }
 
         self.process = Some(ProcessSlot {
@@ -745,7 +721,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         Some(unsafe { &mut *env_ptr }),
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
-    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    // (which escape the spawn's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
@@ -969,12 +945,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
                 cwd: config.cwd.clone(),
-                #[cfg(windows)]
-                windows: spawn::WindowsOptions {
-                    loop_: EventLoopHandle::init_mini(event_loop),
-                    ..Default::default()
-                },
                 stream: true,
+                #[cfg(windows)]
+                inherits_all_handles: true,
                 ..Default::default()
             },
         });

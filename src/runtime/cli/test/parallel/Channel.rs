@@ -4,13 +4,11 @@
 //! kernel buffer never truncates a frame.
 //!
 //! POSIX backend: `uws::NewSocketHandler` adopted from a socketpair fd.
-//! Windows backend: `uv::Pipe` over the inherited duplex named-pipe end (same
-//! mechanism as `Bun.spawn({ipc})` / `process.send()`).
+//! Windows backend: a reader and a writer over the inherited duplex pipe end.
 //!
 //! Lifetime: a `Channel` is embedded as a field in an owner that outlives all
-//! uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
-//! `CoordinatorLink` which lives for the process). `Drop` assumes no write is in flight: true for both
-//! sites (start() errdefer and reap_worker after the peer has exited).
+//! callbacks (the coordinator's `Worker[]`, or the worker's
+//! `CoordinatorLink` which lives for the process).
 
 use core::cell::Cell;
 #[cfg(not(windows))]
@@ -26,11 +24,10 @@ use bun_uws as uws;
 use bun_uws_sys::thunk::ExtSlot;
 
 #[cfg(windows)]
-use bun_libuv_sys::UvStream as _;
-#[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_io::{
+    BufferedReader, IoEvent, Owner, Pipe, PollTag, ReadResult, StreamingWriter, WriteHandler,
+    WriteStatus,
+};
 
 use super::frame;
 
@@ -41,11 +38,11 @@ pub(crate) struct Channel {
     /// `in` has grown since the owner last took it.
     has_incoming: Cell<bool>,
     /// Outgoing bytes the kernel didn't accept yet.
-    pub out: JsCell<Vec<u8>>,
+    #[cfg(not(windows))]
+    out: JsCell<Vec<u8>>,
     pub(crate) done: Cell<bool>,
     /// The peer's byte stream stopped decoding as frames, i.e. something in
-    /// the peer wrote straight to fd 3: a length `next_frame` rejected, or on
-    /// Windows a read error from libuv's own IPC framing underneath ours. Set
+    /// the peer wrote straight to fd 3: a length `next_frame` rejected. Set
     /// together with `done`. The coordinator kills
     /// such a worker and reports this rather than the exit status it caused.
     pub(crate) corrupt_frame: Cell<bool>,
@@ -64,20 +61,19 @@ pub(crate) struct IncomingFrames {
 
 impl IncomingFrames {
     pub(crate) fn next_frame(&mut self) -> Option<(frame::Kind, frame::Reader<'_>)> {
-        loop {
-            let (&[ref len @ .., kind], rest) =
-                self.bytes[self.head..].split_first_chunk::<{ frame::HEADER_LEN }>()?;
-            let len = u32::from_le_bytes(*len);
-            if len > frame::MAX_PAYLOAD {
-                self.is_corrupt = true;
-                return None;
-            }
-            let p = rest.get(..len as usize)?;
-            self.head += frame::HEADER_LEN + p.len();
-            if let Ok(kind) = frame::Kind::try_from(kind) {
-                return Some((kind, frame::Reader { p }));
-            }
-        }
+        let (&[ref len @ .., kind], rest) =
+            self.bytes[self.head..].split_first_chunk::<{ frame::HEADER_LEN }>()?;
+        let len = u32::from_le_bytes(*len);
+        // `Ready` carries no payload.
+        let Some(kind) = (frame::Kind::try_from(kind).ok())
+            .filter(|&kind| len <= frame::MAX_PAYLOAD && (kind != frame::Kind::Ready || len == 0))
+        else {
+            self.is_corrupt = true;
+            return None;
+        };
+        let p = rest.get(..len as usize)?;
+        self.head += frame::HEADER_LEN + p.len();
+        Some((kind, frame::Reader { p }))
     }
 }
 
@@ -123,30 +119,20 @@ impl Channel {
     }
 }
 
-// -- Windows (uv.Pipe) -------------------------------------------------------
+// -- Windows -----------------------------------------------------------------
 
 #[cfg(windows)]
 pub(crate) struct WindowsBackend {
-    pub(crate) pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
-    /// Read scratch — libuv asks us to allocate before each read.
-    pub(crate) read_chunk: JsCell<[u8; 16 * 1024]>,
-    /// Payload owned by the in-flight uv_write; must stay stable until the
-    /// callback. New writes go to `out` until this completes, then the buffers
-    /// swap.
-    pub(crate) inflight: JsCell<Vec<u8>>,
-    pub(crate) write_req: JsCell<uv::uv_write_t>,
-    pub(crate) write_buf: JsCell<uv::uv_buf_t>,
+    reader: BufferedReader,
+    writer: StreamingWriter,
 }
 
 #[cfg(windows)]
 impl Default for WindowsBackend {
     fn default() -> Self {
         Self {
-            pipe: JsCell::new(None),
-            read_chunk: JsCell::new([0u8; 16 * 1024]),
-            inflight: JsCell::new(Vec::new()),
-            write_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_write_t>()),
-            write_buf: JsCell::new(uv::uv_buf_t::init(b"")),
+            reader: BufferedReader::init(),
+            writer: StreamingWriter::default(),
         }
     }
 }
@@ -160,33 +146,12 @@ impl Channel {
         let fd = end.fd();
         #[cfg(windows)]
         {
-            let _ = vm;
-            // With ipc=true
-            // libuv wraps reads/writes in its own framing; both ends use it so
-            // the wrapping is transparent and our payload bytes pass through
-            // unchanged. With ipc=false the parent end (created by uv_spawn for
-            // the .ipc stdio container, which always inits with ipc=true) and
-            // child end disagree on framing and the channel never delivers a
-            // frame.
-            let mut pipe = uv::Owned::<uv::Pipe>::zeroed();
-            if let Some(e) = pipe
-                .init(uv::Loop::get(), true)
-                .to_error(bun_sys::Tag::pipe)
-            {
-                bun_core::debug_warn!(
-                    "Channel.adopt: uv_pipe_init failed: {}",
-                    e.name().escape_ascii(),
-                );
+            let Ok(pipe) = Pipe::open_duplex(vm.uws_loop().port(), fd) else {
                 return false;
-            }
-            if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
-                bun_core::debug_warn!(
-                    "Channel.adopt: uv_pipe_open({}) failed: {}",
-                    fd.uv(),
-                    e.name().escape_ascii(),
-                );
-                return false;
-            }
+            };
+            pipe.enable_read_ahead();
+            pipe.update_ref(false);
+            vm.rare_data().has_test_coordinator_pipe.set(true);
             // `pipe` closes it.
             end.into_raw();
             return self.adopt_pipe(pipe);
@@ -206,30 +171,31 @@ impl Channel {
         }
     }
 
-    /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
-    /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. The pipe stays ref'd so the loop blocks for the peer's first frame.
+    /// `adopt` for the coordinator's end, which it shares with no other process.
+    pub(crate) fn adopt_exclusive(&self, vm: &VirtualMachine, end: File) -> bool {
+        #[cfg(windows)]
+        return self.adopt_pipe(Pipe::new_exclusive(vm.uws_loop().port(), end));
+        #[cfg(not(windows))]
+        self.adopt(vm, end)
+    }
+
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(&self, mut pipe: uv::Owned<uv::Pipe>) -> bool {
-        // The read callbacks are expressed via the `StreamReader` trait impl
-        // below and routed through `read_start_ctx`, which stashes `self` in
-        // `handle.data`.
-        let rc = pipe.read_start_ctx::<Self>(self);
-        if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
-            bun_core::debug_warn!(
-                "Channel.adoptPipe: readStart failed: {}",
-                e.name().escape_ascii(),
-            );
-            return false;
+    fn adopt_pipe(&self, pipe: Pipe) -> bool {
+        let this = core::ptr::from_ref(self).cast_mut();
+        let owner = Owner::new(PollTag::TestParallelChannel, this.cast());
+        // SAFETY: `owner` points to `self`, which holds the reader and the writer and does not move after adoption.
+        unsafe {
+            self.backend.reader.set_owner(owner);
+            self.backend.writer.set_owner(owner);
         }
-        self.backend.pipe.set(Some(pipe));
-        true
+        self.backend.writer.set_pipe(pipe.clone());
+        self.backend.reader.start_with_pipe(pipe).is_ok()
     }
 
     // -- write ---------------------------------------------------------------
 
     /// Queue and write a complete encoded frame. If the kernel accepts only
-    /// part of it (or there's already a backlog), the remainder lands in `out`
+    /// part of it (or there's already a backlog), the remainder is buffered
     /// and the writable callback finishes it.
     pub(crate) fn send(&self, frame_bytes: &[u8]) {
         if self.done.get() {
@@ -237,7 +203,12 @@ impl Channel {
         }
         #[cfg(windows)]
         {
-            return self.send_windows(frame_bytes);
+            let writer = &self.backend.writer;
+            if writer.has_pending_data() {
+                writer.enqueue(frame_bytes);
+            } else {
+                writer.try_write(self, &[frame_bytes]);
+            }
         }
         #[cfg(not(windows))]
         {
@@ -258,83 +229,11 @@ impl Channel {
         }
     }
 
-    #[cfg(windows)]
-    fn send_windows(&self, frame_bytes: &[u8]) {
-        // A uv_write is in flight — queue behind it.
-        if !self.backend.inflight.get().is_empty() {
-            self.out.with_mut(|out| out.extend_from_slice(frame_bytes));
-            return;
-        }
-        // Try a synchronous write first. uv_try_write on a Windows
-        // UV_NAMED_PIPE always returns EAGAIN (vendor/libuv/src/win/stream.c),
-        // so this currently always falls through to submit_windows_write —
-        // kept because EBADF/EPIPE here mean the pipe is dead and must not
-        // silently drop the frame.
-        let buf = uv::uv_buf_t::init(frame_bytes);
-        let try_write = |pipe: &mut uv::Owned<uv::Pipe>| pipe.try_write(&[buf]);
-        let Some(rc) = (self.backend.pipe).with_mut(|pipe| pipe.as_mut().map(try_write)) else {
-            return;
-        };
-        let w: usize = match rc.to_error(bun_sys::Tag::try_write) {
-            None => rc.int() as usize,
-            Some(e) => {
-                if e.get_errno() == bun_sys::E::AGAIN {
-                    0
-                } else {
-                    self.mark_failed();
-                    return;
-                }
-            }
-        };
-        if w >= frame_bytes.len() {
-            return;
-        }
-        self.out
-            .with_mut(|out| out.extend_from_slice(&frame_bytes[w..]));
-        self.submit_windows_write();
-    }
-
-    #[cfg(windows)]
-    fn submit_windows_write(&self) {
-        if self.out.get().is_empty() || !self.backend.inflight.get().is_empty() || self.done.get() {
-            return;
-        }
-        let Some(pipe) = self.backend.pipe.get() else {
-            return;
-        };
-        // Swap: out → inflight (stable for uv_write), out becomes empty.
-        let out = self.out.replace(Vec::new());
-        let prev_inflight = self.backend.inflight.replace(out);
-        self.out.set(prev_inflight);
-        self.backend
-            .write_buf
-            .set(uv::uv_buf_t::init(self.backend.inflight.get().as_slice()));
-        let this = core::ptr::from_ref(self).cast_mut();
-        // SAFETY: `p` is the `this` handed to `write` below — the live Channel
-        // stashed for the callback; every Channel method is `&self`.
-        let on_write: fn(*mut Self, uv::ReturnCode) = |p, s| unsafe { &*p }.on_write(s);
-        // SAFETY: `write_req`/`write_buf`/`inflight` live in `self`, which is
-        // address-stable and outlives the write, so libuv may hold them until
-        // `on_write` fires.
-        let rc = unsafe {
-            (*self.backend.write_req.as_ptr()).write(
-                pipe.as_ptr().cast(),
-                &*self.backend.write_buf.as_ptr(),
-                this,
-                on_write,
-            )
-        };
-        if rc.is_err() {
-            self.backend.inflight.with_mut(|inflight| inflight.clear());
-            self.mark_failed();
-        }
-    }
-
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
         #[cfg(windows)]
         {
-            !self.out.get().is_empty() || !self.backend.inflight.get().is_empty()
+            self.backend.writer.has_pending_data()
         }
         #[cfg(not(windows))]
         {
@@ -460,42 +359,32 @@ impl uws::vtable::Handler for Channel {
 
 #[cfg(windows)]
 impl Channel {
-    fn on_error(&self, err: bun_sys::E) {
-        // libuv frames this pipe itself (ipc=1), so bytes the peer writes
-        // straight to fd 3 fail its frame-header check and surface here as a
-        // read error instead of reaching `ingest`; report it like a bad frame.
-        if err != bun_sys::E::EOF {
-            self.mark_corrupt();
+    pub(crate) fn on_io(&self, event: IoEvent) {
+        if let IoEvent::Write(_) = event {
+            return self.backend.writer.on_io(self, event);
         }
-        self.backend.pipe.set(None);
-        self.done.set(true);
-    }
-    fn on_write(&self, status: uv::ReturnCode) {
-        self.backend.inflight.with_mut(|inflight| inflight.clear());
-        if self.done.get() {
-            return;
+        let reader = &self.backend.reader;
+        let result = reader.read_chunks(bun_io::js_vm_ctx(), Some(event), |chunk, _| {
+            self.ingest(&chunk);
+            true
+        });
+        if !matches!(result, ReadResult::Pending) {
+            self.done.set(true);
+            reader.deinit();
+            self.backend.writer.close(self);
         }
-        if status.is_err() {
-            self.mark_failed();
-            return;
-        }
-        self.submit_windows_write();
     }
 }
 
-// SAFETY: only these callbacks use `read_chunk`, and the pipe closes with the channel.
 #[cfg(windows)]
-unsafe impl uv::StreamReader for Channel {
-    #[inline]
-    fn on_read_alloc(this: &Self, _: usize) -> *mut [u8] {
-        this.backend.read_chunk.as_ptr()
+impl WriteHandler for Channel {
+    fn on_write(&self, _: usize, _: WriteStatus) {}
+
+    fn on_error(&self, _: bun_sys::Error) {
+        if !self.done.get() {
+            self.mark_failed();
+        }
     }
-    #[inline]
-    fn on_read_error(this: &Self, err: core::ffi::c_int) {
-        this.on_error(bun_sys::windows::translate_uv_error_to_e(err));
-    }
-    #[inline]
-    unsafe fn on_read(this: &Self, nread: usize) {
-        this.ingest(&this.backend.read_chunk.get()[..nread]);
-    }
+
+    fn on_close(&self) {}
 }

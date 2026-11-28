@@ -830,10 +830,7 @@ fn list_in(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
 
 fn modified_at(path: &[u8]) -> Option<i64> {
     let stat = bun_sys::stat(&ZBox::from_bytes(path)).ok()?;
-    #[cfg(not(windows))]
     let (seconds, nanoseconds) = (stat.st_mtime as i64, stat.st_mtime_nsec as i64);
-    #[cfg(windows)]
-    let (seconds, nanoseconds) = (stat.mtim.sec as i64, stat.mtim.nsec as i64);
     Some(seconds * 1000 + nanoseconds / 1_000_000)
 }
 

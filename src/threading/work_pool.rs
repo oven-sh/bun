@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
 use crate::ThreadPool;
+#[cfg(windows)]
+use crate::fifo_pool::{Config, FifoPool};
 
 pub use crate::thread_pool::Batch;
 pub use crate::thread_pool::Task;
@@ -56,7 +58,7 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
         // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
-        // `Batch::from_owned` leaked. The thread pool guarantees this
+        // `task_from_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
         // `Box` here is sound.
         let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
@@ -118,15 +120,37 @@ macro_rules! owned_task {
     };
 }
 
+fn task_from_owned<T: OwnedTask>(mut task: Box<T>) -> *mut Task {
+    task.task_mut().callback = T::__callback;
+    let raw = Box::into_raw(task);
+    // SAFETY: `raw` is a live heap allocation, which the task now owns. The `Task` is
+    // projected from the raw pointer, so that it covers the whole allocation.
+    unsafe { T::field_of(raw) }
+}
+
 impl Batch {
     /// [`OwnedTask::run`] gets the `Box` back on a thread of the pool that schedules the batch.
-    pub fn from_owned<T: OwnedTask>(mut task: Box<T>) -> Batch {
-        task.task_mut().callback = T::__callback;
-        let raw = Box::into_raw(task);
-        // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
-        // projected from the raw pointer, so that it covers the whole allocation.
-        Batch::from(unsafe { T::field_of(raw) })
+    pub fn from_owned<T: OwnedTask>(task: Box<T>) -> Batch {
+        Batch::from(task_from_owned(task))
     }
+}
+
+struct FnTask<F> {
+    task: Task,
+    job: F,
+}
+
+intrusive_work_task!([F] FnTask<F>, task);
+
+impl<F: FnOnce() + Send + 'static> OwnedTask for FnTask<F> {
+    fn run(self: Box<Self>) {
+        (self.job)();
+    }
+}
+
+pub(crate) fn task_from_fn(job: impl FnOnce() + Send + 'static) -> *mut Task {
+    let task = Task::default();
+    task_from_owned(Box::new(FnTask { task, job }))
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
@@ -138,6 +162,56 @@ fn create() -> ThreadPool {
         stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
     })
 }
+
+/// For calls on open files and `uv_queue_work`. On Windows an open file pins its directory, so these calls do not queue behind CPU-bound tasks.
+pub struct FilePool;
+
+impl FilePool {
+    #[cfg(windows)]
+    pub fn get() -> &'static FifoPool {
+        static POOL: std::sync::LazyLock<FifoPool> = std::sync::LazyLock::new(|| {
+            // Not `env_var`: scripts assign it to `process.env` before their first call.
+            let size = bun_sys::windows::getenv_w(bun_core::wstr!("UV_THREADPOOL_SIZE"));
+            let atoi = |text: Vec<u16>| {
+                let text = String::from_utf16_lossy(&text);
+                let digits = text
+                    .trim_start()
+                    .trim_start_matches('+')
+                    .chars()
+                    .map_while(|char| char.to_digit(10));
+                digits.fold(0, |value, digit| (value * 10 + digit as usize).min(1024))
+            };
+            FifoPool::new(Config {
+                name: "File I/O",
+                max_threads: size.map_or(4, atoi).max(1),
+                // Addons run on these threads, and libuv gives them this much.
+                stack_size: 8 * 1024 * 1024,
+                on_thread_start: bun_core::Output::Source::configure_thread_no_js,
+                has_warmup: true,
+                keeps_idle_threads: true,
+            })
+        });
+        &POOL
+    }
+
+    pub fn go(job: impl FnOnce() + Send + 'static) {
+        #[cfg(windows)]
+        Self::get().go(job);
+        #[cfg(not(windows))]
+        WorkPool::schedule(task_from_fn(job));
+    }
+}
+
+/// For calls that scripts make on pipes, consoles and other devices, which can block indefinitely.
+#[cfg(windows)]
+pub static DEVICE_POOL: FifoPool = FifoPool::new(Config {
+    name: "Device I/O",
+    max_threads: 512,
+    stack_size: 4 * 1024 * 1024,
+    on_thread_start: bun_core::Output::Source::configure_thread_no_js,
+    has_warmup: false,
+    keeps_idle_threads: false,
+});
 
 impl WorkPool {
     #[inline]
@@ -165,29 +239,7 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
-        // PERF: `function` is stored as a runtime field rather than
-        // monomorphized into the callback — profile if it shows up on a hot path.
-        #[repr(C)]
-        struct TaskType<C> {
-            task: Task,
-            context: C,
-            function: fn(C),
-        }
-
-        intrusive_work_task!([C] TaskType<C>, task);
-        impl<C: Send + 'static> OwnedTask for TaskType<C> {
-            fn run(self: Box<Self>) {
-                (self.function)(self.context);
-            }
-        }
-
-        // `schedule_new` calls `get()` between the two stores to `task.callback`, so both would stay.
-        let batch = Batch::from_owned(Box::new(TaskType {
-            task: Task::default(),
-            context,
-            function,
-        }));
-        Self::get().schedule(batch);
+        Self::schedule(task_from_fn(move || function(context)));
         Ok(())
     }
 }

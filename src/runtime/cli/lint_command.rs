@@ -238,13 +238,6 @@ fn run_to_end(
         stdin: SyncStdio::Pipe(read_end.handle()),
         cwd: Box::<[u8]>::from(cwd),
         envp: Some(envp.as_list()),
-        #[cfg(windows)]
-        windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None,
-            )),
-            ..Default::default()
-        },
         ..Default::default()
     };
     // Write the input while reading the program's output, so that neither side blocks the other.

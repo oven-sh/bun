@@ -29,7 +29,7 @@ bun_core::declare_scope!(S3Upload, hidden);
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
-pub struct NetworkSink {
+pub(crate) struct NetworkSink {
     ref_count: Cell<u32>,
     /// Until the upload finishes. `source` is attached only that long.
     self_ref: JsCell<Option<RefPtr<NetworkSink>>>,

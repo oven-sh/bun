@@ -1,6 +1,9 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { spawn as nodeSpawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -413,7 +416,7 @@ describe("ipc mode advanced", () => {
     },
   );
 
-  it.concurrent.skipIf(isWindows)(
+  it.concurrent(
     "closes the channel as soon as a frame header declares a length that's too long to deserialize",
     async () => {
       const header = `write(Buffer.from([0x02, 0x01, 0x00, 0x01, 0x00]));`;
@@ -537,12 +540,7 @@ describe.skipIf(isWindows).each(["advanced", "json"] as const)("a child's last m
   });
 });
 
-// get_ipc_instance error path: on Windows, windows_configure_client can open
-// the pipe, mark the socket open, then fail read_start, at which point
-// close_socket has queued a deferred task that holds a ref on the SendQueue.
-// get_ipc_instance detaches the queue, so the task emits no close event, and
-// drops its own ref; the task releases the last one. On POSIX no task is
-// queued and that drop frees the queue.
+// The error path of get_ipc_instance.
 it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -596,6 +594,406 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
+});
+
+// On Windows the channel is framed as in Node.js: four u32 fields (flags, reserved1, data length, reserved2), then
+// the data. reserved2 must be zero.
+describe.concurrent.skipIf(!isWindows)("Windows IPC framing", () => {
+  /** `senderSource` can call `write(bytes)`, and `await waitForReceiver()` to let the receiver's event loop run. */
+  async function receiveFrames(senderSource: string) {
+    using dir = tempDir("ipc-frames", {
+      "sender.js": `
+        const fs = require("fs");
+        const encodeHeader = (flags, length, reserved2 = 0) => Buffer.from(new Uint32Array([flags, 0, length, reserved2]).buffer);
+        const encodeFrame = text => Buffer.concat([encodeHeader(1, Buffer.byteLength(text)), Buffer.from(text)]);
+        const write = bytes => fs.writeSync(3, bytes);
+        const stdinLines = require("readline").createInterface({ input: process.stdin })[Symbol.asyncIterator]();
+        const waitForReceiver = () => {
+          console.log("waiting");
+          return stdinLines.next();
+        };
+        (async () => { ${senderSource}; console.log("done"); await stdinLines.next(); process.exit(0); })();
+      `,
+      "receiver.js": `
+        const events = [];
+        const sender = Bun.spawn([process.execPath, "sender.js"], {
+          stdio: ["pipe", "pipe", "inherit"],
+          serialization: "json",
+          ipc: message => events.push(message),
+          onDisconnect: () => events.push("disconnect"),
+        });
+        for await (const chunk of sender.stdout) {
+          for (let i = 0; i < 5; i++) await Bun.sleep(1);
+          if (String(Buffer.from(chunk)).includes("done")) events.push("done");
+          sender.stdin.write("go\\n");
+          sender.stdin.flush();
+        }
+        await sender.exited;
+        console.log(JSON.stringify(events.slice(0, events.indexOf("done"))));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "receiver.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it.each([
+    ["one message", `write(encodeFrame('1\\n'))`, [1]],
+    ["several frames in one write", `write(Buffer.concat(['1\\n', '2\\n', '3\\n'].map(encodeFrame)))`, [1, 2, 3]],
+    ["several messages in one frame", `write(encodeFrame('1\\n2\\n3\\n'))`, [1, 2, 3]],
+    [
+      "a message split across frames",
+      `for (const chunk of ['"a', 'b', 'c"', '\\n']) { write(encodeFrame(chunk)); await waitForReceiver(); }`,
+      ["abc"],
+    ],
+    [
+      "a UTF-8 character split across frames",
+      `for (const hex of ['22c3', 'a9220a']) { write(Buffer.concat([encodeHeader(1, hex.length / 2), Buffer.from(hex, "hex")])); await waitForReceiver(); }`,
+      ["\u00e9"],
+    ],
+    [
+      "empty frames",
+      `write(encodeHeader(0, 0)); await waitForReceiver(); write(encodeHeader(1, 0)); await waitForReceiver(); write(encodeFrame('1\\n'))`,
+      [1],
+    ],
+    [
+      "a frame larger than the pipe buffer",
+      `write(encodeFrame(JSON.stringify(Buffer.alloc(300000, "x").toString().length) + '\\n' + JSON.stringify([Buffer.alloc(300000, " ").toString().trim()]).padEnd(300000) + '\\n'))`,
+      [300000, [""]],
+    ],
+  ])("decodes %s", async (_, senderSource, expected) => {
+    expect(await receiveFrames(senderSource)).toEqual(expected);
+  });
+
+  it.each([
+    ["unknown flags", "encodeHeader(9, 0)"],
+    ["a length without the data flag", "encodeHeader(0, 2)"],
+    ["the connection flag without a socket", "encodeHeader(5, 0)"],
+    ["a non-zero reserved2 field", "encodeHeader(1, 0, 1)"],
+  ])("delivers earlier messages, then disconnects on an invalid header: %s", async (_, invalidHeader) => {
+    expect(
+      await receiveFrames(
+        `write(encodeFrame('1\\n')); await waitForReceiver(); write(${invalidHeader}); await waitForReceiver()`,
+      ),
+    ).toEqual([1, "disconnect"]);
+  });
+
+  it("delivers a message written together with an invalid header, then disconnects", async () => {
+    expect(
+      await receiveFrames(`write(Buffer.concat([encodeFrame('1\\n'), encodeHeader(9, 0)])); await waitForReceiver()`),
+    ).toEqual([1, "disconnect"]);
+  });
+
+  it.each(["json", "advanced"] as const)("process.send() writes well-formed frames (%s)", async serialization => {
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    const child = nodeSpawn(bunExe(), ["-e", `process.send("a"); process.send("bc", () => process.exit(0))`], {
+      env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: serialization },
+      stdio: ["ignore", "inherit", "inherit", "pipe"],
+    });
+    Array.fromAsync<Buffer>(child.stdio[3] as any).then(chunks => resolve(Buffer.concat(chunks)), reject);
+    const bytes = await promise;
+    const headers: number[][] = [];
+    const payloads: Buffer[] = [];
+    for (let offset = 0; offset < bytes.length; offset += 16 + payloads.at(-1)!.length) {
+      headers.push([bytes.readUInt32LE(offset), bytes.readUInt32LE(offset + 12)]);
+      payloads.push(bytes.subarray(offset + 16, offset + 16 + bytes.readUInt32LE(offset + 8)));
+    }
+    expect(headers.length).toBeGreaterThan(0);
+    expect(headers).toEqual(headers.map(() => [1, 0]));
+    if (serialization === "json") expect(Buffer.concat(payloads).toString()).toBe('"a"\n"bc"\n');
+    else expect(Buffer.concat(payloads).toString("latin1")).toMatch(/a[^]*bc/);
+  });
+});
+
+it.skipIf(!isWindows)("a large IPC write is received in full when the sender is killed mid-write", async () => {
+  const { OpenProcess, WaitForSingleObject, CloseHandle } = dlopen("kernel32.dll", {
+    OpenProcess: { args: ["u32", "i32", "u32"], returns: "u64" },
+    WaitForSingleObject: { args: ["u64", "u32"], returns: "u32" },
+    CloseHandle: { args: ["u64"], returns: "i32" },
+  }).symbols;
+  const SYNCHRONIZE = 0x100000;
+  const lengths: number[] = [];
+  let waitResult;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const payload = Buffer.from('"a"\\n"' + Buffer.alloc(2_000_000, "x") + '"\\n');
+       fs.writeSync(3, Buffer.concat([Buffer.from(new Uint32Array([1, 0, payload.length, 0]).buffer), payload]));
+       Bun.sleepSync(30_000);`,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "inherit", "inherit"],
+    serialization: "json",
+    ipc(message, child) {
+      if (lengths.push(message.length) > 1) return;
+      const processHandle = OpenProcess(SYNCHRONIZE, 0, child.pid);
+      child.kill("SIGKILL");
+      waitResult = WaitForSingleObject(processHandle, 4000);
+      CloseHandle(processHandle);
+    },
+    onDisconnect: () => resolve(),
+  });
+  await Promise.all([promise, child.exited]);
+  expect({ waitResult, lengths }).toEqual({ waitResult: 0, lengths: [1, 2_000_000] });
+});
+
+// Not concurrent: an exiting child waits only briefly for the parent to drain its pending write.
+describe.skipIf(!isWindows).each(["json", "advanced"] as const)("large IPC messages in %s mode", serialization => {
+  it.each([
+    ["exits", "process.exit(0)"],
+    ["throws", "throw new Error()"],
+    ["kills itself", "process.kill(process.pid, 'SIGKILL')"],
+  ])("delivers a large message sent right before the child %s", async (_, exitStatement) => {
+    const lengths: number[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [bunExe(), "-e", `process.send(Buffer.alloc(2_000_000, "x").toString()); ${exitStatement}`],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      serialization,
+      ipc: message => void lengths.push(message.length),
+      onDisconnect: () => resolve(),
+    });
+    await Promise.all([promise, child.exited]);
+    expect(lengths).toEqual([2_000_000]);
+  });
+});
+
+describe.concurrent.each(["json", "advanced"] as const)("IPC message delivery in %s mode", serialization => {
+  // On Windows the total exceeds the pipe buffer.
+  const sizeStep = isWindows ? 100 : 0;
+  function spawnChild(script: string, ipc: (message: any, child: Bun.Subprocess) => void) {
+    return spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization,
+      ipc,
+    });
+  }
+
+  it("does not deadlock when both sides send megabytes before reading", async () => {
+    const messageCount = 64;
+    const received: number[] = [];
+    const complete = Promise.withResolvers<void>();
+    await using child = spawnChild(
+      `const payload = Buffer.alloc(24 * 1024, "c").toString();
+       let nextIndex = 0;
+       process.on("message", ([i, data]) => {
+         if (i !== nextIndex++ || data.length !== 24 * 1024) process.exit(2);
+         if (nextIndex === ${messageCount}) process.send("complete");
+       });
+       for (let i = 0; i < ${messageCount}; i++) process.send([i, payload]);`,
+      message =>
+        message === "complete" ? complete.resolve() : received.push(message[1].length === 24 * 1024 ? message[0] : -1),
+    );
+    child.exited.then(code => complete.reject(new Error(`exited with ${code}`)));
+    const payload = Buffer.alloc(24 * 1024, "p").toString();
+    for (let i = 0; i < messageCount; i++) child.send([i, payload]);
+    await complete.promise;
+    expect(received).toEqual(Array.from({ length: messageCount }, (_, i) => i));
+  });
+
+  it.each([
+    ["exits normally", "process.send(lastMessage)"],
+    ["disconnects", "process.send(lastMessage); process.disconnect()"],
+    ["exits in the last send callback", "process.send(lastMessage, () => process.exit(0))"],
+  ])("delivers every message sent before the child %s", async (_, tail) => {
+    const received: number[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const lastMessage = [99, ""];
+         for (let i = 0; i < 99; i++) process.send([i, Buffer.alloc(i * ${sizeStep}, "x").toString()]);
+         ${tail}`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization,
+      ipc: message => void received.push(message[0]),
+      onDisconnect: () => resolve(),
+    });
+    await Promise.all([promise, child.exited]);
+    expect(received).toEqual(Array.from({ length: 100 }, (_, i) => i));
+    expect(child.exitCode).toBe(0);
+  });
+
+  it.each([
+    ["exits", "process.exit(0)"],
+    ["throws", "throw new Error()"],
+    ["kills itself", "process.kill(process.pid, 'SIGKILL')"],
+  ])("delivers small messages sent right before the child %s", async (_, exitStatement) => {
+    const received: number[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [bunExe(), "-e", `for (let i = 0; i < 100; i++) process.send(i); ${exitStatement}`],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      serialization,
+      ipc: message => void received.push(message),
+      onDisconnect: () => resolve(),
+    });
+    await Promise.all([promise, child.exited]);
+    expect(received).toEqual(Array.from({ length: 100 }, (_, i) => i));
+  });
+
+  it("delivers a burst sent from an unhandledRejection listener", async () => {
+    const received: number[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", index => process.send(index));
+         process.on("message", () => { for (let i = 0; i < 6; i++) Promise.reject(i); });
+         // After the engine's startup timer, which would wake the event loop.
+         setTimeout(() => process.send("ready"), 200);`,
+      ],
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization,
+      ipc(message, child) {
+        if (message === "ready") child.send("go");
+        else if (received.push(message) === 6) resolve();
+      },
+    });
+    await promise;
+    child.kill();
+    expect(received).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it.each([0, 1, 2])(
+    "delivers every message if listener call %d runs the event loop until the child exits",
+    async at => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const received = [];
+         Bun.spawn([process.execPath, "-e", "for (let i = 0; i < 6; i++) process.send(i)"], {
+           serialization: "${serialization}",
+           ipc(message, child) {
+             received.push(message);
+             if (message !== ${at}) return;
+             const setup = () => child.exited.then(() => new Promise(setImmediate));
+             Bun.build({ entrypoints: ["missing"], throw: false, plugins: [{ name: "wait", setup }] });
+           },
+         });
+         process.on("exit", () => console.log(received.join("")));`,
+        ],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      expect(await proc.stdout.text()).toBe("012345\n");
+      expect(await proc.exited).toBe(0);
+    },
+  );
+
+  it.serial.skipIf(!isWindows)("delivers no message after disconnect()", async () => {
+    using dir = tempDir("ipc-after-disconnect", {});
+    const marker = path.join(String(dir), "sent");
+    const received: number[] = [];
+    await using child = spawnChild(
+      `process.on("message", () => {});
+       process.send(1);
+       process.send(2);
+       process.send(3, () => require("fs").writeFileSync(${JSON.stringify(marker)}, ""));`,
+      (message, child) => {
+        received.push(message);
+        child.disconnect();
+      },
+    );
+    for (const deadline = Date.now() + 4000; !existsSync(marker) && Date.now() < deadline;) Bun.sleepSync(1);
+    expect(existsSync(marker)).toBe(true);
+    expect(await child.exited).toBe(0);
+    expect(received).toEqual([1]);
+  });
+
+  it("delivers every message sent before the parent disconnects", async () => {
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let count = 0; process.on("message", () => count++).on("disconnect", () => console.log(count)); process.send("ready")`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization,
+      ipc(_, child) {
+        for (let i = 0; i < 100; i++) child.send(Buffer.alloc(i * sizeStep, "x").toString());
+        child.disconnect();
+      },
+    });
+    expect(await child.stdout.text()).toBe("100\n");
+    expect(await child.exited).toBe(0);
+  });
+
+  it("disconnects when the child is killed with messages still queued", async () => {
+    const ready = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [bunExe(), "-e", `process.send("ready", () => Bun.sleepSync(30_000))`],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization,
+      ipc: () => ready.resolve(),
+      onDisconnect: () => disconnected.resolve(),
+    });
+    await ready.promise;
+    for (let i = 0; i < 20; i++) child.send(Buffer.alloc(100_000, "x").toString());
+    child.kill("SIGKILL");
+    await Promise.all([child.exited, disconnected.promise]);
+    expect(child.signalCode).toBe("SIGKILL");
+  });
+
+  it("emits 'disconnect' in the child when the parent is killed", async () => {
+    await using parent = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.spawn([process.execPath, "-e", "process.on('disconnect', () => console.log('disconnected')); process.send(0)"], {
+           detached: true,
+           stdio: ["ignore", "inherit", "inherit"],
+           serialization: ${JSON.stringify(serialization)},
+           ipc: () => process.kill(process.pid, "SIGKILL"),
+         })`,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    expect(await parent.stdout.text()).toBe("disconnected\n");
+  });
+});
+
+it.each(["json", "advanced"] as const)("delivers messages while the sender is blocked (%s)", async serialization => {
+  using dir = tempDir("ipc-busy-sender", {});
+  let count = 0;
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `for (let i = 0; i < 2; i++) process.send(i);
+       while (!require("fs").existsSync("received")) Bun.sleepSync(1);`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    serialization,
+    ipc() {
+      if (++count === 2) Bun.write(`${dir}/received`, "");
+    },
+  });
+  expect(await child.exited).toBe(0);
 });
 
 /** Runs parent.js next to child.js. Both have the helpers below. */

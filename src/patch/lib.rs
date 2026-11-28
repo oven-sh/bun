@@ -120,8 +120,6 @@ fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (file, _) = open_target_file(parent.fd(), &base, sys::O::RDONLY, 0)?;
-    // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
-    let file = file.make_lib_uv_owned_for_syscall(sys::Tag::chmod)?;
     sys::fchmod(file.fd(), change.new_mode.to_bun_mode())
 }
 
@@ -374,8 +372,8 @@ fn open_target_file(
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
     // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
-    let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
-    let file = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
+    let flags = flags | sys::O::NOFOLLOW | sys::O::NONBLOCK;
+    let file = sys::openat(parent, base, flags, mode)
         .map_err(|e| symlink_component_err(parent, base, e))
         .map(sys::CloseOnDrop::new)?;
     let stat = file.stat()?;
@@ -1349,7 +1347,6 @@ pub fn spawn_git_diff(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: bun_event_loop::EventLoopHandle,
 ) -> bun_spawn::Result<bun_sys::Result<bun_spawn::sync::Result>> {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
@@ -1391,22 +1388,12 @@ pub fn spawn_git_diff(
     let variables = path_var.as_deref().into_iter().chain(ENV_STATIC);
     envp.extend(variables.map(|variable| Some(CStrRef::from_slice_with_nul(variable))));
 
-    #[cfg(not(windows))]
-    let _ = loop_;
-
     bun_spawn::sync::spawn(&bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
         envp: Some(CStrList::from_unterminated(&mut envp)),
         argv,
-        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
-        // zeroed.
-        #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
-            loop_,
-            ..Default::default()
-        },
         ..Default::default()
     })
 }
@@ -1444,7 +1431,6 @@ pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: bun_event_loop::EventLoopHandle,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
@@ -1455,7 +1441,7 @@ pub fn git_diff_internal(
     let git = bun_which::which(bun_core::env_var::PATH.get().unwrap_or(b""), b"", b"git")
         .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
-    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, &git, loop_)??;
+    let mut result = spawn_git_diff(old_folder, new_folder, ZStr::EMPTY, &git)??;
     diff_post_process(&mut result, old_folder, new_folder)
 }
 

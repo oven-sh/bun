@@ -59,11 +59,8 @@ pub mod task_tag {
         BundleV2PluginLoadDeferred, // bun.bundle_v2.Load (`.defer()` notice to the bundle's loop)
         BundleV2ParseTaskResult,  // bun.bundle_v2.ParseTask.Result
         ChromePipeEvent,
-        CopyFileWindowsMkdirp,
-        WriteFileWindowsMkdirp,
         DnsErrorDeferred,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
-        Close,
         CppTask,
         DuplexUpgradeContext,
         DuplexUpgradeContextFree,
@@ -73,7 +70,6 @@ pub mod task_tag {
         FetchTaskletRequestDrain,
         FetchTaskletTrace,
         FSWatchTask,
-        GetAddrInfoLibuvComplete,
         GraphContextStopAgain,
         GraphContextStopAndFree,
         DeadContextStopAgain,
@@ -85,12 +81,9 @@ pub mod task_tag {
         NapiAsyncWork,            // FinishedAsyncWork
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
-        Open,
         PosixSignalTask,
         MemoryPressureTask,
         ProcessWaiterThreadTask,
-        Read,
-        Readv,
         FlushPendingFileSinkTask,
         RunTestsTask,
         RuntimeTranspilerStore,
@@ -115,7 +108,6 @@ pub mod task_tag {
         ShellRmDirTask,
         ShellRmTask,
         ShellTouchTask,
-        StatFS,
         StatWatcherTimerUpdate,
         StatWatcherHop,
         AsyncCpTask,
@@ -123,14 +115,11 @@ pub mod task_tag {
         StreamPending,
         ThreadSafeFunction,
         ThreadSafeFunctionRefRequest,
-        UvDnsPollFree,            // a closed uv_poll_t of a DNS socket (windows)
-        UvHandleClose,            // an addon's uv_close (posix)
-        UvLoopDispatch,           // an addon's uv_async_send (posix)
-        UvWorkDone,               // work that an addon thread queued (posix)
+        UvHandleClose,            // an addon's uv_close
+        UvLoopDispatch,           // an addon's uv_async_send
+        UvWorkDone,               // work that an addon thread queued
         ValkeyDeferredClose,
         WindowsNamedPipeContext,
-        Write,
-        Writev,
     }
 }
 

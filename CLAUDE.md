@@ -137,6 +137,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/runtime/crypto/` - WebCrypto + `node:crypto` (`EVP.rs`, `HMAC.rs`, `CryptoHasher.rs`, …)
 - `src/runtime/webcore/` - Web API implementations (`fetch.rs`, `streams.rs`, `Blob.rs`, `Response.rs`, `Request.rs`, …)
 - `src/event_loop/` - Event loop and task management
+- `src/iocp/` - The completion port that a Windows event loop waits on (sockets, pipes, processes, timers)
 - `src/bundler/` - JavaScript bundler (tree-shaking, CSS processing, HTML handling)
 - `src/install/` - Package manager (`lockfile/`, `npm.rs` registry client, `lifecycle_script_runner.rs`)
 - `src/shell/` - Cross-platform shell implementation
@@ -150,7 +151,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), highway (SIMD), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), highway (SIMD), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation
 

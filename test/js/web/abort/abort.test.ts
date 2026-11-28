@@ -124,8 +124,8 @@ describe("AbortSignal", () => {
     expect(ac.reason.code).toBe(23);
   });
 
-  // #33334: with nothing else ref'd, uv_run() skipped its body on Windows so
-  // uv__run_timers never ran and the whole file hung. Subprocess so a
+  // #33334: with nothing else ref'd, timers never ran on Windows and the
+  // whole file hung. Subprocess so a
   // regression is an attributable failure, not a file-level timeout.
   test("awaiting AbortSignal.timeout(n) abort event with nothing else ref'd does not hang (#33334)", async () => {
     using dir = tempDir("abort-33334", {

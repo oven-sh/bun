@@ -857,21 +857,14 @@ fn scope_index(zone: &[u8]) -> u32 {
     idx
 }
 
-#[cfg(windows)]
-pub(crate) mod inet {
-    #![allow(non_camel_case_types)]
-    use bun_sys::windows::ws2_32 as ws2;
-    pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
-    pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
-    pub(crate) use ws2::{AF_INET, AF_INET6, socklen_t};
-}
-
-#[cfg(not(windows))]
 pub(crate) mod inet {
     #![allow(non_camel_case_types)]
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
+    #[cfg(windows)]
+    pub(crate) use bun_sys::windows::ws2_32::socklen_t;
+    #[cfg(not(windows))]
     pub(crate) use libc::socklen_t;
 }

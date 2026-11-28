@@ -40,12 +40,9 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
     use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
-    // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
-    // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
-    // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
-    // reparse points — it would return the link's own mtime/size and miss an
-    // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
-    // libuv: open query-only, `GetFileInformationByHandle`, close.
+    // `GetFileAttributesExW` does NOT follow reparse points — it would return the link's own
+    // mtime/size and miss an in-place cert rotation behind a symlink (stale SSL_CTX served).
+    // Instead: open query-only, `GetFileInformationByHandle`, close.
     let mut wide = bun_paths::OSPath::from(path);
     bun_paths::to_native_in_place(wide.as_mut_slice());
     // SAFETY: `wide` is NUL-terminated. dwDesiredAccess=0 is query-
@@ -71,7 +68,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     let ft: FILETIME = data.ftLastWriteTime;
     // FILETIME = 100ns ticks since 1601-01-01. Feed raw ticks split as
     // `[sec_field, nsec_field, size]` — the digest only needs *some*
-    // deterministic encoding of mtime, not the libuv POSIX-epoch split the
+    // deterministic encoding of mtime, not the POSIX-epoch split the
     // deleted `__bun_uws_stat_file` produced. The SSL-context cache keyed on
     // this digest is in-memory process-lifetime only (no on-disk
     // persistence), so cross-version byte-compat of the key is

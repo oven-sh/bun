@@ -163,16 +163,12 @@ test.concurrent(
   60_000,
 );
 
-// us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
-// kevent on posix. On Windows the return value was ignored, so an ioctlsocket
-// FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start
-// then operated on (assertion failure at libuv win/poll.c:508 in debug,
-// undefined behaviour in release). The fd is always fresh from the kernel at
-// that point, so the failure path is unreachable without injection; each case
-// runs in a subprocess so a crash surfaces as a non-zero exit rather than
-// taking the test runner down.
+// us_poll_start_rc registers the socket with the event loop. The fd is always
+// fresh from the kernel at that point, so the failure path is unreachable
+// without injection; each case runs in a subprocess so a crash surfaces as a
+// non-zero exit rather than taking the test runner down.
 describe.skipIf(!fault.available())("poll_start failure is reported, not a crash", () => {
-  // WSAENOTSOCK is what ioctlsocket(FIONBIO) on a bad handle yields. ENOMEM is
+  // WSAENOTSOCK is what Winsock yields for a bad handle. ENOMEM is
   // one of the documented EPOLL_CTL_ADD failure modes.
   const errno = isWindows ? 10038 : "ENOMEM";
   const arm = `fault.set({ syscall: "poll_start", action: "errno", errno: ${JSON.stringify(errno)}, repeat: 1 })`;
@@ -254,7 +250,7 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
-// can. epoll only: kqueue and libuv never park the fd, so their resume is a
+// can. epoll only: other backends never park the fd, so their resume is a
 // plain filter/poll change with nothing for the hook to fail. onread mode, because
 // like in node only that mode's pause() stops the handle (a plain pause() keeps
 // reading into the stream's buffer, which would deliver the reply as data here).

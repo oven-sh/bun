@@ -2430,10 +2430,7 @@ extern "C" fn napi_get_node_version(
     env.ok()
 }
 
-#[cfg(windows)]
-type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
-#[cfg(unix)]
-type napi_event_loop = *mut super::uv_posix::UvLoop;
+type napi_event_loop = *mut super::uv::UvLoop;
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_uv_event_loop(
@@ -2443,23 +2440,12 @@ extern "C" fn napi_get_uv_event_loop(
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
-    #[cfg(windows)]
-    {
-        // A past alignment assertion here fired spuriously.
-        // TODO(@190n) investigate
-        loop_out.write(VirtualMachine::get().uv_loop());
+    // SAFETY: the env's VM is alive while the env is.
+    let uv_loop = unsafe { super::uv::UvLoop::of_vm(env.to_js().bun_vm()) };
+    if uv_loop.is_null() {
+        return env.generic_failure();
     }
-    #[cfg(unix)]
-    {
-        // Bun doesn't run libuv on POSIX. The addon gets this VM's `UvLoop`, and
-        // `uv_posix` implements the uv_* functions on this VM's event loop.
-        // SAFETY: the env's VM is alive while the env is.
-        let uv_loop = unsafe { super::uv_posix::UvLoop::of_vm(env.to_js().bun_vm()) };
-        if uv_loop.is_null() {
-            return env.generic_failure();
-        }
-        loop_out.write(uv_loop);
-    }
+    loop_out.write(uv_loop);
     env.ok()
 }
 
@@ -3120,7 +3106,7 @@ impl ThreadSafeFunction {
         }
         let this = shared.threads_ref.clone().expect("held until finalized");
         let request = Box::new(TsfnRefRequest(this));
-        let _ = (self.js.handle()).post_without_waking(self.loop_kind, request);
+        let _ = (self.js.handle()).post_without_waking::<TsfnRefRequest>(self.loop_kind, request);
     }
 
     fn acquire(&self) -> NapiStatus {
@@ -4071,11 +4057,10 @@ mod posix_platform_specific_v8_apis {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// uv_* symbol references (posix DCE suppression)
+// uv_* symbol references (DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Lists only the uv_* symbols defined in C and C++. `uv_posix` exports its own.
-#[cfg(unix)]
+/// Lists the uv_* symbols defined outside `uv`, which exports its own.
 mod uv_functions_to_export {
     unsafe extern "C" {
         pub(super) fn uv_accept();
@@ -4367,8 +4352,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_wtf8_to_utf16();
     }
 }
-#[cfg(not(unix))]
-mod uv_functions_to_export {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // fix_dead_code_elimination
@@ -4532,9 +4515,8 @@ pub(crate) fn fix_dead_code_elimination() {
     // uv_functions_to_export
     // This list is hand-maintained — keep it in sync with the
     // `uv_functions_to_export` module above.
-    #[cfg(unix)]
     {
-        super::uv_posix::fix_dead_code_elimination();
+        super::uv::fix_dead_code_elimination();
         use uv_functions_to_export::*;
         keep_symbols!(
             uv_accept,

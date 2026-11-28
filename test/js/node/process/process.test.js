@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { constants as zlibConstants } from "node:zlib";
+import { cpus, networkInterfaces } from "os";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -108,6 +109,66 @@ it("process.title with UTF-16 characters", () => {
 
   process.title = "bun";
   expect(process.title).toBe("bun");
+});
+
+describe.skipIf(!isWindows)("process.title with a dedicated console", () => {
+  async function run(code) {
+    using dir = tempDir("process-title-console", {
+      "index.js": `
+        const { symbols } = require("bun:ffi").dlopen("kernel32.dll", {
+          GetConsoleTitleW: { args: ["ptr", "u32"], returns: "u32" },
+          SetConsoleTitleW: { args: ["ptr"], returns: "i32" },
+        });
+        const getConsoleTitle = () => {
+          const buffer = Buffer.alloc(32768);
+          return buffer.toString("utf16le", 0, 2 * symbols.GetConsoleTitleW(buffer, buffer.length / 2));
+        };
+        const setConsoleTitle = title => {
+          if (!symbols.SetConsoleTitleW(Buffer.from(title + "\\0", "utf16le"))) throw new Error("SetConsoleTitleW failed");
+        };
+        require("node:fs").writeFileSync("result.json", JSON.stringify((() => { ${code} })()));
+      `,
+    });
+    let output = "";
+    await using terminal = new Bun.Terminal({ data: (_, chunk) => void (output += Buffer.from(chunk)) });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], env: bunEnv, cwd: String(dir), terminal });
+    expect(await proc.exited, output).toBe(0);
+    return await Bun.file(join(String(dir), "result.json")).json();
+  }
+  const repeat = (text, count) => Buffer.alloc(count * Buffer.byteLength(text), text).toString();
+
+  it.concurrent.each([
+    ["caf\u00e9 \u4e16\u754c \u{1f30d}", 1, true],
+    ["x", 1023, true],
+    ["x", 1024, false],
+    ["\u4e16", 341, true],
+    ["\u4e16", 342, false],
+    ["", 1, false],
+  ])("is initialized once from the console title %j x %d (used: %p)", async (text, count, isUsed) => {
+    const title = repeat(text, count);
+    const result = await run(`
+      setConsoleTitle(${JSON.stringify(title)});
+      const initialTitle = process.title;
+      setConsoleTitle("changed");
+      return [initialTitle, process.title];
+    `);
+    expect(result).toEqual(isUsed ? [title, title] : ["bun", "bun"]);
+  });
+
+  it.concurrent("updates the console title on assignment", async () => {
+    const result = await run(`
+      return ["caf\\u00e9 \\u{1f30d}", "before\\0after", "", Buffer.alloc(100_000, "x").toString()].map(title => {
+        process.title = title;
+        return [process.title === title, getConsoleTitle()];
+      });
+    `);
+    expect(result).toEqual([
+      [true, "caf\u00e9 \u{1f30d}"],
+      [true, "before"],
+      [true, ""],
+      [true, repeat("x", 8191)],
+    ]);
+  });
 });
 
 it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
@@ -820,6 +881,9 @@ it("process.versions", async () => {
 
   // The version of TypeScript that `bun check` behaves like.
   expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+$/);
+
+  expect(process.versions.uv).toBe(isWindows ? "1.51.0" : "1.48.0");
+  expect(process.report.getReport().header.componentVersions.uv).toBe(process.versions.uv);
 });
 
 it("process.config", () => {
@@ -1347,6 +1411,31 @@ describe.concurrent(() => {
     expect(maxRSS() + slack).toBeGreaterThan(rss());
   });
 
+  it.skipIf(!isWindows)("process.report cpus and networkInterfaces match node:os", () => {
+    const { header } = process.report.getReport();
+    const anyNumber = expect.any(Number);
+    expect(header.cpus).toEqual(
+      cpus().map(({ model, speed }) => ({
+        model,
+        speed,
+        user: anyNumber,
+        nice: 0,
+        sys: anyNumber,
+        idle: anyNumber,
+        irq: anyNumber,
+      })),
+    );
+    const interfacesByName = Object.groupBy(header.networkInterfaces, ({ name }) => name);
+    expect({ ...interfacesByName }).toEqual(
+      Object.fromEntries(
+        Object.entries(networkInterfaces()).map(([name, entries]) => [
+          name,
+          entries.map(({ cidr, ...entry }) => ({ name, ...entry })),
+        ]),
+      ),
+    );
+  });
+
   it("process.report's JavaScript stack names frames as error.stack does", () => {
     // The report and the error are made at the same place, and nothing here is in tail position.
     const seen = {};
@@ -1503,7 +1592,7 @@ describe.concurrent(() => {
       ).toThrow("The property 'prevValue.system' is invalid. Received -1");
     });
 
-    // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
+    // Windows reports CPU time in 15.6 ms ticks.
     it.skipIf(process.platform === "win32")("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;
@@ -1521,6 +1610,39 @@ describe.concurrent(() => {
       const delta = process.cpuUsage(init);
       expect(delta.user).toBeGreaterThan(0);
       expect(delta.system).toBeGreaterThanOrEqual(0);
+    });
+
+    it.skipIf(!isWindows).each([
+      ["cpuUsage", "GetProcessTimes", -1n, () => process.cpuUsage()],
+      ["threadCpuUsage", "GetThreadTimes", -2n, () => process.threadCpuUsage()],
+      [
+        "resourceUsage",
+        "GetProcessTimes",
+        -1n,
+        () => {
+          const { userCPUTime, systemCPUTime } = process.resourceUsage();
+          return { user: userCPUTime, system: systemCPUTime };
+        },
+      ],
+    ])("%s matches %s to the microsecond", (_, functionName, pseudoHandle, getUsage) => {
+      const { symbols } = dlopen("kernel32.dll", {
+        [functionName]: { args: ["i64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+      });
+      const [creation, exit, kernel, user] = Array.from({ length: 4 }, () => new BigUint64Array(1));
+      const queryTimes = () => {
+        expect(symbols[functionName](pseudoHandle, creation, exit, kernel, user)).not.toBe(0);
+        return { user: Number(user[0] / 10n), system: Number(kernel[0] / 10n) };
+      };
+      // CPU times advance in 15.625 ms ticks; only every eighth tick lands on a whole millisecond.
+      const distinctTotals = new Set();
+      while (distinctTotals.size < 3) {
+        const lower = queryTimes();
+        const actual = getUsage();
+        const upper = queryTimes();
+        expect(actual.user).toBeWithin(lower.user, upper.user + 1);
+        expect(actual.system).toBeWithin(lower.system, upper.system + 1);
+        distinctTotals.add(actual.user + actual.system);
+      }
     });
 
     it("throws on invalid property", () => {
@@ -2774,7 +2896,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -2795,7 +2917,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {

@@ -7,7 +7,6 @@ use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use crate::socket::{TCPSocket, TLSSocket};
 use bun_boringssl_sys as boringssl;
-use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, SysErrorJsc};
@@ -33,7 +32,7 @@ pub(crate) struct WindowsNamedPipeContext {
     /// `on_close` and `fail_connect` hand it to the socket's last event. Drops before `named_pipe`.
     socket: Option<OwnedSocket>,
     /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
-    /// (sibling module) can call `get_accepted_by` on the freshly-created
+    /// (sibling module) can call `accept` on the freshly-created
     /// client.
     pub(super) named_pipe: WindowsNamedPipe,
 
@@ -114,7 +113,7 @@ macro_rules! match_socket {
 // They are invoked from `WindowsNamedPipe::on_*` via `(self.handlers.on_x)(ctx, ..)`
 // where the caller already holds a live `&mut WindowsNamedPipe` — i.e. a
 // `&mut (*this).named_pipe` — and *uses it again after the handler returns*
-// (e.g. `self.incoming.clear()`, `self.close()`, `self.release_resources()`).
+// (e.g. `self.close()`, `self.release_resources()`).
 //
 // Forming `&mut *this` (or `&mut (*this).named_pipe`) here would retag from the
 // allocation-root provenance and pop the caller's Unique tag off the borrow
@@ -252,7 +251,6 @@ impl WindowsNamedPipeContext {
         >::new_uninit())
         .cast();
 
-        // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
         // erased ctx ptr back to `*mut Self` and forwards it RAW — the callee
         // must not form `&mut Self` (see the doc-comment on the `on_*` block
@@ -335,16 +333,9 @@ impl WindowsNamedPipeContext {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(cx, socket);
-        let named_pipe = &this.named_pipe;
-
-        if path[path.len() - 1] == 0 {
-            // is already null terminated
-            let slice_z = ZStr::from_slice_with_nul(path);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)
-        } else {
-            named_pipe.connect(&bun_paths::Path::from(path), ssl_config, owned_ctx)
-        }
-        .inspect_err(|_| this.fail_open())?;
+        this.named_pipe
+            .connect(path, ssl_config, owned_ctx)
+            .inspect_err(|_| this.fail_open())?;
 
         Ok(this.named_pipe.root.get())
     }

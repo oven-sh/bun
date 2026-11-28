@@ -68,11 +68,8 @@ impl Readable {
         max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        #[cfg(unix)]
-        {
-            if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
-            }
+        if matches!(stdio, Stdio::Pipe) {
+            let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
         }
 
         match stdio {
@@ -81,17 +78,7 @@ impl Readable {
             Stdio::Fd(fd) => Readable::Fd(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => unreachable!("Memfd at stdout/stderr"),
-            Stdio::Dup2(dup2) => {
-                #[cfg(unix)]
-                {
-                    let _ = dup2;
-                    panic!("TODO: implement dup2 support in Stdio readable");
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(dup2.out.to_fd())
-                }
-            }
+            Stdio::Dup2(_) => panic!("TODO: implement dup2 support in Stdio readable"),
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
@@ -99,12 +86,7 @@ impl Readable {
             Stdio::Capture => panic!("TODO: implement capture support in Stdio readable"),
             Stdio::ReadableStream(..) => {
                 // Nothing reads it, but closing it would fail the child's writes.
-                #[cfg(unix)]
                 let _ = result.map(bun_sys::File::into_raw);
-                #[cfg(windows)]
-                if let StdioResult::Buffer(pipe) = result {
-                    let _ = pipe.into_raw();
-                }
                 Readable::Ignore
             }
             // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
@@ -121,7 +103,6 @@ impl Readable {
     }
 
     pub(crate) fn finalize(&mut self) {
-        #[cfg(unix)]
         if let Readable::Pipe(pipe) = self {
             pipe.finalize();
         }

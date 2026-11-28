@@ -89,6 +89,7 @@
     "thread spawn": 1
   },
   "src/runtime/dns_jsc/dns.rs": {
+    "FifoPool": 5,
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
       "DNSRequestOwner",
@@ -118,8 +119,8 @@
       "AddonData"
     ]
   },
-  "src/runtime/napi/uv_posix.rs": {
-    "WorkPool::schedule*": 1,
+  "src/runtime/napi/uv.rs": {
+    "FifoPool": 1,
     "unsafe impl Send": [
       "WorkRef"
     ]
@@ -143,12 +144,11 @@
     ]
   },
   "src/runtime/node/node_fs.rs": {
-    "WorkPool::schedule*": 4,
+    "WorkPool::schedule*": 3,
     "intrusive_work_task!": [
       "NewAsyncCpTask"
     ],
     "owned_task!": [
-      "AsyncMkdirp",
       "CpSingleTask",
       "ReaddirSubtask"
     ],
@@ -200,6 +200,9 @@
     "unsafe impl Waiter": [
       "Parked"
     ]
+  },
+  "src/runtime/webcore/blob/windows/blocking.rs": {
+    "FifoPool": 1
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

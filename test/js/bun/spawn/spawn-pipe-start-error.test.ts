@@ -3,27 +3,12 @@ import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// On Windows, when the initial uv_read_start on a subprocess stdout/stderr
-// pipe fails (observed from libuv as UV_EINVAL after a bad FileAccessInformation
-// query on the pipe handle), SubprocessPipeReader::start() returned the Err
-// straight from start_with_current_pipe(). The caller in the spawn bindings
-// then threw and returned without tearing down either pipe: stdout still had
-// the extra ref from the top of start(), and stderr had never been start()ed
-// at all (refcount 1, process backref set, live uv.Pipe source).
+// When a subprocess's stdout/stderr reader fails to start, the error goes
+// through on_read_result (as a register_poll failure does on POSIX), so the pipe
+// is torn down and detached from the Subprocess before the exit callback runs.
 //
-// When the killed child's exit callback later fired, on_process_exit resumed
-// reads on both pipes; the EOF that arrived on the unstarted stderr reached
-// on_reader_done, whose trailing deref assumes the matching start() ref exists,
-// so it dereferenced a freed PipeReader. Debug builds hit the RefCount
-// MAGIC_VALID assert; release builds wrote through freed memory, which in
-// practice manifested as a process stuck idle with no error and no exit.
-//
-// The fix routes the start_with_current_pipe() error through on_read_result
-// (matching what POSIX already does for register_poll failure), so the pipe is
-// torn down and detached from the Subprocess before the exit callback runs.
-//
-// Triggering a real uv_read_start failure on a freshly-spawned stdio pipe is
-// not possible from JS, so this uses a debug-only fault-injection env var.
+// JS cannot trigger that failure on a freshly spawned stdio pipe, so this uses a
+// debug-only fault-injection env var.
 
 test.skipIf(!isWindows || !isDebug)(
   "spawn: a failed stdio pipe start is torn down instead of leaving a dangling sibling reader (windows)",
@@ -49,7 +34,7 @@ try {
       cmd: [bunExe(), "-e", fixture],
       env: {
         ...bunEnv,
-        // The injection point sits in start_with_current_pipe(), which is the
+        // The injection point sits in start_with_current_source(), which is the
         // first call the non-lazy Windows start() path makes on the stdout pipe.
         BUN_INTERNAL_FAIL_PIPE_READER_START: "1",
       },
@@ -64,6 +49,31 @@ try {
     expect(exitCode).toBe(0);
   },
 );
+
+test.skipIf(!isWindows || !isDebug)("spawn: kills the child if its IPC channel fails to start (windows)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try {
+         Bun.spawn({
+           cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+           stdio: ["ignore", "pipe", "pipe"],
+           env: { ...process.env, BUN_INTERNAL_FAIL_PIPE_READER_START: undefined },
+           ipc() {},
+           onExit: (_, code, signal) => console.log(signal),
+         });
+       } catch (error) {
+         console.log(error.code);
+       }`,
+    ],
+    env: { ...bunEnv, BUN_INTERNAL_FAIL_PIPE_READER_START: "1", BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("EINVAL\nSIGKILL\n");
+  expect(await proc.exited).toBe(0);
+});
 
 // POSIX counterpart for the writers. When a pipe writer's start() fails to
 // register its fd with the event loop, the writer no longer holds the fd and
@@ -615,6 +625,21 @@ test.skipIf(!isLinux || !cc)(
     });
   },
 );
+
+test.skipIf(!isLinux || !cc)("child_process emits error, exit and close when the pidfd fails to register", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const child = require("child_process").spawn("sleep", ["30"]);
+       for (const event of ["error", "exit", "close"]) child.on(event, () => console.log(event));`,
+    ],
+    env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("error\nexit\nclose\n");
+  expect(await proc.exited).toBe(0);
+});
 
 // The shell did not finish a command whose exit came with an error, and left one it gave up on starting to its SIGTERM
 // and unreaped.

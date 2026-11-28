@@ -65,7 +65,7 @@ process.on('disconnect', () => server.close());
   },
 );
 
-describe.skipIf(isWindows)("process.send(message, handle)", () => {
+describe("process.send(message, handle)", () => {
   test.concurrent("bun parent -> bun child: net.Server handle and message both arrive", async () => {
     using dir = tempDir("ipc-handle-bun-bun", {
       "parent.js": `
@@ -309,15 +309,18 @@ process.on('message', (m, server) => {
     });
 
   // macOS answers EMSGSIZE where Linux answers EAGAIN. The lengths leave different room behind.
-  test.concurrent.each([2, 13])("a handle waits for room in a channel filled with lines of %d bytes", async length => {
-    using dir = tempDir("ipc-handle-full-channel", {
-      "parent.js": `
+  // On Windows the channel is framed, and fs.writeSync() blocks when it is full.
+  test.concurrent.skipIf(isWindows).each([2, 13])(
+    "a handle waits for room in a channel filled with lines of %d bytes",
+    async length => {
+      using dir = tempDir("ipc-handle-full-channel", {
+        "parent.js": `
 const child = require("node:child_process").fork("child.js");
 child.on("message", (message, handle) => handle?.close(() => (console.log("got", message), child.disconnect())));
 const deadline = Date.now() + 120_000;
 while (!require("node:fs").existsSync("waited") && Date.now() < deadline) Bun.sleepSync(1);
 `,
-      "child.js": `
+        "child.js": `
 const fs = require("node:fs");
 const { getEventLoopStats } = require("bun:internal-for-testing");
 process.on("disconnect", () => server.close());
@@ -337,21 +340,22 @@ const server = require("node:net").createServer().listen(0, "127.0.0.1", () => p
   }, 100);
 }));
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--no-orphans", "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "connected true spins false\ngot server\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--no-orphans", "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "connected true spins false\ngot server\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   test.concurrent("destroying a socket right after send() does not lose the queued handle", async () => {
     using dir = tempDir("ipc-handle-destroy-race", {
@@ -549,9 +553,12 @@ process.on('message', (m, socket) => {
     });
   });
 
-  test.concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
-    using dir = tempDir("ipc-handle-dgram", {
-      "parent.js": `
+  // As in Node.js, a UDP socket cannot be sent on Windows.
+  test.concurrent.skipIf(isWindows)(
+    "dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on",
+    async () => {
+      using dir = tempDir("ipc-handle-dgram", {
+        "parent.js": `
 const { fork } = require('node:child_process');
 const dgram = require('node:dgram');
 
@@ -587,7 +594,7 @@ server.bind(0, '127.0.0.1', () => {
   });
 });
 `,
-      "child.js": `
+        "child.js": `
 const dgram = require('node:dgram');
 process.on('message', (m, socket) => {
   if (!(socket instanceof dgram.Socket)) return process.send({ error: 'handle was ' + typeof socket });
@@ -598,22 +605,23 @@ process.on('message', (m, socket) => {
   process.send('ready');
 });
 `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
-      exitCode: 0,
-      stderr: expect.any(String),
-      response: true,
-    });
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
+        exitCode: 0,
+        stderr: expect.any(String),
+        response: true,
+      });
+    },
+  );
 
   test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {
     using dir = tempDir("ipc-handle-connecting", {
@@ -773,7 +781,8 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
+  // Sockets are not file descriptors on Windows.
+  test.concurrent.skipIf(isWindows)("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
 const { fork } = require('node:child_process');
@@ -921,4 +930,27 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     });
     expect(exitCode).toBe(0);
   });
+});
+
+test.skipIf(!isWindows)("sending a dgram.Socket fails with ENOTSUP on Windows", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const child = require("child_process").spawn(process.execPath, ["-e", "process.on('message', () => {})"], {
+         stdio: ["ignore", "inherit", "inherit", "ipc"],
+       });
+       const socket = require("dgram").createSocket("udp4").bind(0, "127.0.0.1", () => {
+         child.send("x", socket, error => {
+           console.log(error.code);
+           socket.close();
+           child.disconnect();
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("ENOTSUP\n");
+  expect(await proc.exited).toBe(0);
 });

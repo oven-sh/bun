@@ -5,7 +5,7 @@
  * and then exits. We only await the `process.exited` promise without reading
  * any of the output data to test for potential memory leaks.
  */
-import { bunExe, isASAN, isCI, isWindows, rss } from "harness";
+import { bunExe, isASAN, isCI, rss } from "harness";
 
 describe.todoIf(
   /**
@@ -141,11 +141,7 @@ describe.todoIf(
     await run(dontRead);
   }, 30_000);
 
-  test.todoIf(isWindows)(
-    "'pipe' stdout if read before exit should not leak memory",
-    async () => {
-      await run(readPipeBeforeExit);
-    },
-    30_000,
-  );
+  test("'pipe' stdout if read before exit should not leak memory", async () => {
+    await run(readPipeBeforeExit);
+  }, 30_000);
 });

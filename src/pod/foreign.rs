@@ -63,7 +63,19 @@ mod windows {
     impl_zeroable!(
         w::FILE_BASIC_INFORMATION,
         w::FILE_ALL_INFORMATION,
+        w::FILE_DISPOSITION_INFORMATION,
+        w::FILE_DISPOSITION_INFORMATION_EX,
+        w::FILE_END_OF_FILE_INFORMATION,
+        w::FILE_ID_FULL_DIR_INFORMATION,
+        w::FILE_ACCESS_INFORMATION,
+        w::FILE_MODE_INFORMATION,
+        w::FILE_PIPE_INFORMATION,
+        w::FILE_PIPE_LOCAL_INFORMATION,
+        w::FILE_POSITION_INFORMATION,
+        w::FILE_STANDARD_INFORMATION,
+        w::FILE_STAT_BASIC_INFORMATION,
         w::FILE_FS_DEVICE_INFORMATION,
+        w::FILE_FS_SIZE_INFORMATION,
         w::FILE_FS_VOLUME_INFORMATION,
         w::BY_HANDLE_FILE_INFORMATION,
         w::CONSOLE_SCREEN_BUFFER_INFO,
@@ -80,11 +92,13 @@ mod windows {
 
     has_pointers!(
         w::OBJECT_ATTRIBUTES,
+        w::RTL_RELATIVE_NAME_U,
         w::UNICODE_STRING,
         w::SECURITY_ATTRIBUTES,
         w::OVERLAPPED,
         w::PROCESS_INFORMATION,
         w::STARTUPINFOW,
+        w::SYSTEM_INFO,
         ws2_32::addrinfo,
     );
 }

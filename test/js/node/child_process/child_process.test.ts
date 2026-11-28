@@ -903,7 +903,7 @@ describe("execFileSync()", () => {
 
   // chcp.com is a PE executable with a .com extension and no .exe sibling.
   // child_process always passes an env object, so the lookup runs in Bun's
-  // which, not libuv's, and it has to accept the extension as spelled. A PE
+  // which, and it has to accept the extension as spelled. A PE
   // named by path runs whatever its extension, as CreateProcessW only reads
   // the file header.
   it.if(isWindows)("runs a .com executable by absolute path or bare name", () => {
@@ -1191,7 +1191,7 @@ it.if(isLinux)("spawn still works with more than 10240 fds open", async () => {
 // GC'd, finalize_streams does not close the fd a second time (EBADF, or
 // worse, closing a reused fd number). Before the fix, Fd::close()'s
 // debug_assert!(err.is_none()) panicked under debug_assertions builds.
-it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () => {
+it("extra stdio pipes are not double-closed on GC", async () => {
   // Run in a subprocess so GC/finalize timing is isolated from the test
   // runner's own state, and so the assert abort surfaces as a non-zero
   // exit rather than taking the whole test runner down.
@@ -1230,7 +1230,7 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
 
 // Windows: the extra "pipe" slots are HANDLE values that child_process wraps
 // in net.Sockets (net.connect({fd})); each socket closes its handle. The
-// Subprocess used to keep its own uv_pipe_t on the same HANDLE and close the
+// Subprocess used to keep its own pipe on the same HANDLE and close the
 // value again when it was GC'd. Windows reuses a closed handle value at once,
 // so that second close destroyed whatever owned the value by then (here the
 // files opened right after the sockets closed, in the crash reports a worker
@@ -1510,7 +1510,7 @@ it.skipIf(!isPosix)("emits 'close' when an unread stdio pipe closed without any 
 
 // child.stdout.pause() must stop the native reader so the kernel pipe fills
 // and the child blocks on write. Previously, once the stream had flowed even
-// once the native FileReader kept the poll armed (or uv_read_start active on
+// once the native FileReader kept the poll armed (or a read pending on
 // Windows) regardless of JS state, so the child wrote its entire output into
 // the parent's heap and 'data' kept firing after #handleOnExit resumed it.
 it("child.stdout.pause() after flowing stops native reads and blocks the child", async () => {

@@ -996,7 +996,6 @@ impl File {
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.utf8_contents().len() as _;
-        // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
     }
@@ -2430,7 +2429,7 @@ pub(crate) fn inject(
             if let Err(err) = w::CopyFileW(&exe, out, false) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    err.to_system_errno()
+                    err.to_e()
                 );
                 return None;
             }
@@ -3291,7 +3290,7 @@ pub fn to_executable(
                 | windows::MOVEFILE_REPLACE_EXISTING
                 | windows::MOVEFILE_WRITE_THROUGH,
         ) {
-            let err = err.to_system_errno();
+            let err = err.to_e();
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",

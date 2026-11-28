@@ -414,16 +414,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             ipc: ipc_fd,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: `env` outlives the mini event loop.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Err(err) => {
@@ -1645,7 +1635,7 @@ impl Run<'_> {
         }
 
         // These create undefined references to externally-defined C symbols
-        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+        // (uv_* stubs, v8:: shims) so the linker pulls those archive
         // members from libbun.a in CI's split link-only mode and keeps them
         // through `--gc-sections`. Without them, dlopen'd NAPI modules see
         // `undefined symbol: uv_*` instead of the friendly crash message.
@@ -2097,16 +2087,6 @@ impl RunCommand {
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: env loader is process-lifetime.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Ok(r) => r,
@@ -2791,9 +2771,8 @@ impl RunCommand {
         };
 
         let absolute_script_path: Box<[u8]> = {
-            let Ok(file) = bun_sys::open(&to_open, bun_sys::O::RDONLY, 0)
-                .map(sys::CloseOnDrop::new)
-                .and_then(|file| file.make_lib_uv_owned_for_syscall(sys::Tag::open))
+            let Ok(file) =
+                bun_sys::open(&to_open, bun_sys::O::RDONLY, 0).map(sys::CloseOnDrop::new)
             else {
                 return false;
             };
@@ -2919,8 +2898,7 @@ impl RunCommand {
         if ctx.positionals.is_empty() {
             // Node: bare `node` on a TTY starts the REPL. Only in emulation
             // mode; bun's own `bun` with no args stays the help text. Use
-            // Output's cached stdio flag (set at startup via libuv's handle
-            // probe), which is the same check `bun update --interactive` uses.
+            // Output's cached stdio flag, as `bun update --interactive` does.
             if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }
@@ -3527,76 +3505,6 @@ pub(crate) enum BunXFastPath {}
 
 #[cfg(windows)]
 impl BunXFastPath {
-    /// Convert a
-    /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
-    /// per the canonical "Everyone quotes command line arguments the wrong way"
-    /// rules. Writes into `buffer` and returns the number of u16s written.
-    fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
-        let mut wbuf = [0u16; bun_paths::PATH_MAX_WIDE];
-        let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
-
-        if warg.is_empty() {
-            // Empty argument needs quotes.
-            buffer[0] = b'"' as u16;
-            buffer[1] = b'"' as u16;
-            return 2;
-        }
-
-        // Trigger quoting only on
-        // space/tab/quote — compare the FULL u16, not the truncated low byte.
-        let needs_quote = strings::index_of_any16(warg, bun_core::w!(" \t\"")).is_some();
-
-        if !needs_quote {
-            buffer[..warg.len()].copy_from_slice(warg);
-            return warg.len();
-        }
-
-        // Fast path: no embedded `"`/`\` → simple wrap.
-        let has_quote_or_backslash = strings::index_of_any16(warg, bun_core::w!("\"\\")).is_some();
-        if !has_quote_or_backslash {
-            buffer[0] = b'"' as u16;
-            buffer[1..1 + warg.len()].copy_from_slice(warg);
-            buffer[warg.len() + 1] = b'"' as u16;
-            return warg.len() + 2;
-        }
-
-        // Complex case: libuv reverse-walk backslash escaping.
-        let mut pos: usize = 0;
-        buffer[pos] = b'"' as u16;
-        pos += 1;
-        let start = pos;
-
-        // Walk the wide string in reverse, emitting escapes for `"` and
-        // backslash runs that precede a `"` (the closing quote we add last).
-        let mut quote_hit = true;
-        let mut i = warg.len();
-        while i > 0 {
-            i -= 1;
-            let c = warg[i];
-            buffer[pos] = c;
-            pos += 1;
-            if quote_hit && c == b'\\' as u16 {
-                buffer[pos] = b'\\' as u16;
-                pos += 1;
-            } else if c == b'"' as u16 {
-                quote_hit = true;
-                buffer[pos] = b'\\' as u16;
-                pos += 1;
-            } else {
-                quote_hit = false;
-            }
-        }
-
-        // Reverse the content we just wrote (between opening quote and current position)
-        buffer[start..pos].reverse();
-
-        // Add closing quote
-        buffer[pos] = b'"' as u16;
-        pos += 1;
-
-        pos
-    }
-
     /// If this returns, it implies the fast path cannot be taken.
     pub(crate) fn try_launch(
         ctx: &mut ContextData,
@@ -3625,13 +3533,12 @@ impl BunXFastPath {
             }
         };
 
-        let mut command_line = bun_paths::w_path_buffer_pool::get();
-        let mut i: usize = 0;
+        let mut command_line = Vec::new();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         for arg in passthrough {
-            // Add space separator before each argument
-            command_line[i] = b' ' as u16;
-            i += 1;
-            i += Self::append_windows_argument(&mut command_line[i..], arg);
+            command_line.push(u16::from(b' '));
+            let arg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..], arg);
+            sys::windows_format::command_line::push_argument(&mut command_line, arg);
         }
         // `direct_launch_callback` →
         // `Run::boot` takes `ctx.passthrough` for `vm.argv`, so the assignment must
@@ -3645,7 +3552,7 @@ impl BunXFastPath {
         let run_ctx = bun_shim_impl::FromBunRunContext {
             metadata_file,
             base_path: path_to_use,
-            arguments: &command_line[..i],
+            arguments: &command_line,
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
             cli_context: ctx,

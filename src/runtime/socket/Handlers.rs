@@ -511,7 +511,7 @@ impl SocketConfig {
                     }
                     #[cfg(not(windows))]
                     {
-                        Fd::from_uv(v)
+                        Fd::from_crt(v)
                     }
                 }),
                 ssl,

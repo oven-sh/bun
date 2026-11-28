@@ -100,7 +100,9 @@ pub(crate) enum WriterTag {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Flags {
     pub(crate) pollable: bool,
+    #[cfg(not(windows))]
     pub(crate) nonblock: bool,
+    #[cfg(not(windows))]
     pub(crate) is_socket: bool,
     pub(crate) broken_pipe: bool,
 }
@@ -158,11 +160,7 @@ const SHRINK_THRESHOLD: usize = 1024 * 128;
 /// Mutable state. Wrapped in `UnsafeCell` so `Rc<IOWriter>`-shared callers can
 /// mutate via `&self` (single-threaded shell).
 struct State {
-    #[cfg(not(windows))]
     file: sys::CloseOnDrop,
-    /// `None` once libuv has it.
-    #[cfg(windows)]
-    file: Option<sys::CloseOnDrop>,
     writers: Writers,
     buf: Vec<u8>,
     writer_idx: usize,
@@ -186,15 +184,6 @@ struct State {
     /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; `None`
     /// until then.
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
-}
-
-impl State {
-    fn fd(&self) -> Fd {
-        #[cfg(not(windows))]
-        return self.file.fd();
-        #[cfg(windows)]
-        return self.file.as_ref().map_or(Fd::INVALID, |file| file.fd());
-    }
 }
 
 pub(crate) struct IOWriter {
@@ -247,10 +236,7 @@ impl IOWriter {
             #[cfg(windows)]
             inflight_write_ref: Cell::new(None),
             state: UnsafeCell::new(State {
-                #[cfg(not(windows))]
                 file: file.into(),
-                #[cfg(windows)]
-                file: Some(file.into()),
                 writers: Writers::new(),
                 buf: Vec::new(),
                 writer_idx: 0,
@@ -282,7 +268,7 @@ impl IOWriter {
 
     #[inline]
     pub(crate) fn fd(&self) -> Fd {
-        self.state().fd()
+        self.state().file.fd()
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -312,6 +298,7 @@ impl IOWriter {
         crate::shell_log!("IOWriter(fd={}) __start()", fd);
         let file = MaybeOwnedFile::Borrowed(fd);
         let started = self.writer.start(self, self.io_evtloop(), file, pollable);
+        #[cfg(not(windows))]
         let s = self.state();
         if let Err(e) = started {
             #[cfg(not(windows))]
@@ -343,30 +330,7 @@ impl IOWriter {
                     }
                 }
             }
-            #[cfg(windows)]
-            {
-                // This might happen if the file descriptor points to NUL.
-                // On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so
-                // `this.writer.start()` will try to open it as a tty with
-                // uv_tty_init, but this returns EBADF. As a workaround,
-                // we'll try opening the file descriptor as a file.
-                if e.get_errno() == E::EBADF {
-                    s.flags.pollable = false;
-                    s.flags.nonblock = false;
-                    s.flags.is_socket = false;
-                    let file = MaybeOwnedFile::Borrowed(fd);
-                    self.writer.start_with_file(self, self.io_evtloop(), file);
-                    return Ok(());
-                }
-            }
             return Err(e);
-        }
-        #[cfg(windows)]
-        {
-            // libuv closes the HANDLE of a pipe or a tty.
-            if self.writer.is_stream() {
-                let _ = s.file.take().map(sys::CloseOnDrop::into_raw);
-            }
         }
         #[cfg(not(windows))]
         {
@@ -397,11 +361,11 @@ impl IOWriter {
         debug_assert!(s.flags.pollable);
 
         if !s.started {
-            crate::shell_log!("IOWriter(fd={}) starting", s.fd());
+            crate::shell_log!("IOWriter(fd={}) starting", s.file.fd());
             // Set before the fallible `__start` so a later enqueue does not
             // retry it.
             s.started = true;
-            // A first write that libuv refuses runs the children, which may drop every other `Rc`.
+            // A first write that fails synchronously runs the children, which may drop every other `Rc`.
             #[cfg(windows)]
             let _keepalive = self.keepalive();
             if let Err(e) = self.__start() {
@@ -425,14 +389,14 @@ impl IOWriter {
         {
             crate::shell_log!(
                 "IOWriter(fd={}) write() is_writing={}",
-                s.fd(),
+                s.file.fd(),
                 s.is_writing
             );
             if s.is_writing {
                 return WriteOutcome::Suspended;
             }
             s.is_writing = true;
-            self.writer.start_with_current_pipe(self);
+            self.writer.start_with_current_source(self);
             return WriteOutcome::Suspended;
         }
 
@@ -443,7 +407,8 @@ impl IOWriter {
             if self.writer.is_watching() {
                 return WriteOutcome::Suspended;
             }
-            let (file, pollable) = (MaybeOwnedFile::Borrowed(s.fd()), s.flags.pollable);
+            let file = MaybeOwnedFile::Borrowed(s.file.fd());
+            let pollable = s.flags.pollable;
             if let Err(e) = self.writer.start(self, self.io_evtloop(), file, pollable) {
                 return WriteOutcome::Failed(e);
             }

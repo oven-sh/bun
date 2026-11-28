@@ -458,6 +458,9 @@ impl<const SSL: bool> Response<SSL> {
             ws.state_ptr().write(state);
             c::uws_res_adopt_into(SSL.into(), ws.0, &ctx.group, kind as u8);
         }
+        // Until the socket is closed, which can be long after the close event.
+        #[cfg(windows)]
+        Loop::get().ref_();
         ws.set_timeout(ctx.timeouts.get().idle);
         (ctx.loop_data).keeping_closed_sockets(|| ws.emit(Event::Open));
         c::uws_socket_uncork(ws.socket());
@@ -1110,6 +1113,8 @@ extern "C" fn on_close(
 ) -> *mut us_socket_t {
     let ws = AnyWebSocket(socket);
     let state = ws.state();
+    #[cfg(windows)]
+    Loop::get().unref();
     c::uws_socket_on_upgraded_close(ws.socket());
     if !state.is_shutting_down() {
         ws.leave_topics();

@@ -39,7 +39,6 @@ pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::jsc_scheduler as JSCScheduler;
-#[cfg(unix)]
 pub use crate::posix_signal_handle::PosixSignalHandle;
 pub use crate::posix_signal_handle::PosixSignalTask;
 
@@ -94,9 +93,6 @@ pub struct EventLoop {
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
     virtual_machine: NonNull<VirtualMachine>,
     // see `hold_forever_poll`
-    #[cfg(windows)]
-    pub(crate) forever_timer: Cell<Option<NonNull<uws::Timer>>>,
-    #[cfg(not(windows))]
     holds_forever_poll: Cell<bool>,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
@@ -117,7 +113,6 @@ pub struct EventLoop {
     /// (link-time `__bun_run_wtf_timer`) casts it back.
     pub imminent_gc_timer: AtomicPtr<()>,
 
-    #[cfg(unix)]
     /// Boxed `PosixSignalHandle` ring buffer, leaked once by
     /// `Bun__ensureSignalHandler` and live for the process lifetime. Stored as
     /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
@@ -143,9 +138,6 @@ impl EventLoop {
             isolated_poster: OnceCell::new(),
             global: Cell::new(None),
             virtual_machine: vm,
-            #[cfg(windows)]
-            forever_timer: Cell::new(None),
-            #[cfg(not(windows))]
             holds_forever_poll: Cell::new(false),
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             uws_loop: Cell::new(None),
@@ -153,7 +145,6 @@ impl EventLoop {
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
-            #[cfg(unix)]
             signal_handler: Cell::new(None),
         }
     }
@@ -466,9 +457,6 @@ impl EventLoop {
             self.deferred_tasks.run();
         }
 
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
-        // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
-        // `event_loop_handle` (which is the libuv loop).
         if vm.event_loop_handle.get().is_some() {
             vm.uws_loop().drain_quic_if_necessary();
         }
@@ -643,11 +631,8 @@ impl EventLoop {
     pub fn tick_concurrent_with_count(&self) -> usize {
         self.apply_concurrent_ref_delta();
 
-        #[cfg(unix)]
-        {
-            if let Some(signal_handler) = self.signal_handler.get() {
-                signal_handler.drain(self);
-            }
+        if let Some(signal_handler) = self.signal_handler.get() {
+            signal_handler.drain(self);
         }
 
         self.run_imminent_gc_timer();
@@ -692,41 +677,13 @@ impl EventLoop {
     /// worker's shutdown after its stop phase (which unrefs
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
-    ///
-    /// Targets `self.usockets_loop()`, never `vm.event_loop_handle`: on Windows
-    /// `Bun.spawnSync` points the latter at its private loop, and a GC inside it
-    /// still refs this loop (FinalizationRegistry, MessagePort).
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
         let loop_ = self.usockets_loop();
-        #[cfg(windows)]
-        {
-            if delta > 0 {
-                loop_.add_active(u32::try_from(delta).expect("int cast"));
-            } else {
-                loop_.sub_active(u32::try_from(-delta).expect("int cast"));
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            if delta > 0 {
-                loop_.num_polls.set(loop_.num_polls.get() + delta);
-                loop_.active.set(
-                    loop_
-                        .active
-                        .get()
-                        .saturating_add(u32::try_from(delta).expect("int cast")),
-                );
-            } else {
-                loop_.num_polls.set(loop_.num_polls.get() - -delta);
-                loop_.active.set(
-                    loop_
-                        .active
-                        .get()
-                        .saturating_sub(u32::try_from(-delta).expect("int cast")),
-                );
-            }
-        }
+        loop_.num_polls.update(|num_polls| num_polls + delta);
+        loop_
+            .active
+            .update(|active| active.saturating_add_signed(delta));
     }
 
     /// The uws loop this `EventLoop` runs on.
@@ -734,12 +691,6 @@ impl EventLoop {
         self.uws_loop
             .get()
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
-    }
-
-    #[cfg(windows)]
-    #[inline]
-    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        self.usockets_loop().uv_loop()
     }
 
     #[inline]
@@ -1073,13 +1024,11 @@ impl EventLoop {
         if self.uws_loop.get().is_none() {
             // The VM's embedded loops run on the thread's loop, the one
             // `vm.event_loop_handle` names below.
-            #[cfg(windows)]
-            debug_assert_eq!(uws::Loop::get().uv_loop(), Async::Loop::get());
             self.uws_loop.set(Some(uws::Loop::get()));
         }
         let vm = self.vm_ref();
         if vm.event_loop_handle.get().is_none() {
-            vm.event_loop_handle.set(Some(Async::Loop::get()));
+            vm.event_loop_handle.set(Some(uws::Loop::get()));
             vm.gc_controller.init(vm);
         }
         self.as_handle().set_as_parent_of(uws::Loop::get());
@@ -1178,10 +1127,8 @@ impl EventLoop {
         }
     }
 
-    /// The ctx whose loop is the one this `EventLoop` runs on. Windows has none for a spawnSync loop:
-    /// a libuv handle knows its loop, and the counters stay on the thread's.
+    /// The ctx whose loop is the one this `EventLoop` runs on.
     pub fn event_loop_ctx(&self) -> Async::EventLoopCtx {
-        #[cfg(unix)]
         if self.isolated_poster.get().is_some() {
             // SAFETY: the VM owns the spawnSync loop, which outlives what the call makes on it.
             return unsafe {
@@ -1271,21 +1218,14 @@ impl EventLoop {
 
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
     /// instead of returning immediately on `num_polls == 0`.
-    #[cfg(not(windows))]
     fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if !self.holds_forever_poll.get() {
+            // On Windows this also marks the loop active, so unref'd timers and handles keep running.
+            #[cfg(windows)]
+            loop_.ref_();
+            #[cfg(not(windows))]
             loop_.inc();
             self.holds_forever_poll.set(true);
-        }
-    }
-
-    #[cfg(windows)]
-    fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
-        if self.forever_timer.get().is_none() {
-            let mut t = uws::Timer::create(loop_);
-            // SAFETY: t is a fresh non-null timer handle
-            unsafe { t.as_mut() }.set(Some(noop_forever_timer), 1000 * 60 * 4, 1000 * 60 * 4);
-            self.forever_timer.set(Some(t));
         }
     }
 
@@ -1293,24 +1233,27 @@ impl EventLoop {
         let loop_ = self.usockets_loop();
         let vm = self.vm_ref();
 
-        #[cfg(unix)]
-        {
-            let pending_unref = vm.take_pending_unref();
-            if pending_unref > 0 {
-                loop_.unref_count(pending_unref);
-            }
+        let pending_unref = vm.take_pending_unref();
+        if pending_unref > 0 {
+            loop_.unref_count(pending_unref);
         }
 
         if !loop_.is_active() {
             self.hold_forever_poll(loop_);
+            #[cfg(windows)]
+            if vm.is_event_loop_alive() {
+                return;
+            }
         }
 
         vm.gc_controller.process_gc_timer();
+        // An earlier tick may have consumed the wakeup of a queued task, so don't park while one is queued.
+        let sec = if self.has_pending_tasks() { 0 } else { 1 };
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
-        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
+        // timerfd used to.
         loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            Some(&bun_core::Timespec { sec, nsec: 0 }),
             uws::NOW_NS_UNKNOWN,
         );
 
@@ -1363,29 +1306,20 @@ pub(crate) fn get_active_tasks(
     // SAFETY: only the VM is taken from it.
     let vm_ref = unsafe { heap.global() }.bun_vm();
     let event_loop = vm_ref.event_loop();
-    #[cfg(windows)]
-    // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
-    let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles.get() })
-            .expect("int cast");
-    #[cfg(not(windows))]
-    let num_polls: i32 = uws::Loop::get().num_polls.get();
     crate::generated_bindgen::event_loop::ActiveTasks {
         active_tasks: vm_ref.active_tasks.get(),
         tasks: event_loop.queued_task_count(),
         immediate_tasks: event_loop.immediate_task_count(),
         concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty(),
-        loop_active: vm_ref.platform_loop_opt().is_some_and(|h| h.is_active()),
+        loop_active: vm_ref
+            .event_loop_handle
+            .get()
+            .is_some_and(|h| h.is_active()),
         event_loop_alive: vm_ref.is_event_loop_alive(),
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
-        num_polls,
+        num_polls: uws::Loop::get().poll_count(),
         iteration: event_loop.usockets_loop().iteration_number(),
     }
-}
-
-#[cfg(windows)]
-extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
-    // do nothing
 }
 
 // HOST_EXPORT(Bun__EventLoop__runCallback2, c)

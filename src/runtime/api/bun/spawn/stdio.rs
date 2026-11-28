@@ -9,15 +9,7 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
-use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
-
-// `SpawnOptions.Stdio` is platform-dependent: process.rs exposes `PosixStdio` /
-// `WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the body stays
-// platform-neutral.
-#[cfg(not(windows))]
-pub(crate) type SpawnOptionsStdio = process::PosixStdio;
-#[cfg(windows)]
-pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
+use crate::api::bun_process::{Dup2 as ProcessDup2, Stdio as SpawnOptionsStdio, StdioKind};
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
 // re-exported through `bun_sys`.
@@ -225,12 +217,7 @@ impl Stdio {
                 to: d.to,
             }),
             Self::Capture | Self::Pipe | Self::ReadableStream(_) => SpawnOptionsStdio::Buffer,
-            #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
-            // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
-            // to transfer), so `socket-fd` behaves identically to `pipe` there.
-            #[cfg(windows)]
-            Self::SocketFd => SpawnOptionsStdio::Buffer,
             Self::Ipc => SpawnOptionsStdio::Ipc,
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -388,10 +375,8 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // `bun.FD.fromUV(this.toInt32())` inlined here since the
-            // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
-            let fd = Fd::from_uv(value.to_int32());
-            let file_fd = fd.uv();
+            let fd = Fd::from_crt(value.to_int32());
+            let file_fd = fd.crt();
             if file_fd < 0 {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a positive integer"

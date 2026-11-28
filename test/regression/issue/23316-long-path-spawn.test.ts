@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("spawn should handle cwd paths >= MAX_PATH on Windows", async () => {
@@ -71,28 +71,15 @@ test("spawn should handle cwd paths with disabled 8.3 names on Windows", async (
 
   console.log(`Created path for 8.3 test (length: ${deepPath.length}): ${deepPath}`);
 
-  // Attempt to copy test.js to the deep path
-  let err;
-  try {
-    await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeInstanceOf(Error);
+  await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
 
-  // This should not panic, even if GetShortPathNameW fails
-  err = undefined;
+  // This should not panic, even if GetShortPathNameW fails. The spawn succeeds on volumes with 8.3 names.
+  let outcome;
   try {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "test.js"],
-      cwd: deepPath,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) throw new Error("process exited");
-  } catch (e) {
-    err = e;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "test.js"], cwd: deepPath, env: bunEnv, stderr: "inherit" });
+    outcome = await proc.stdout.text();
+  } catch (e: any) {
+    outcome = e.code;
   }
-  expect(err).toBeInstanceOf(Error);
+  expect(["hello\n", "ENOENT"]).toContain(outcome);
 });

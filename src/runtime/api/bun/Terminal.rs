@@ -12,14 +12,11 @@
 use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_int;
-#[cfg(windows)]
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-#[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{
     BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteHandler, WriteStatus,
 };
@@ -31,12 +28,12 @@ use bun_jsc::{
     MarkedArrayBuffer, SysErrorJsc,
 };
 use bun_ptr::OptionCellExt as _;
-use bun_sys::{self as sys, Fd, File};
+#[cfg(unix)]
+use bun_sys::Fd;
+use bun_sys::{self as sys, File};
 
 #[cfg(windows)]
 use bun_sys::windows;
-#[cfg(windows)]
-use std::os::windows::io::{IntoRawHandle as _, OwnedHandle};
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -60,8 +57,7 @@ pub(crate) struct Terminal {
     #[cfg(unix)]
     slave: JsCell<Option<File>>,
 
-    /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
-    /// uv_process_options_t.pseudoconsole.
+    /// Windows ConPTY handle. Used for resize and passed to spawn.
     #[cfg(windows)]
     hpcon: JsCell<Option<windows::PseudoConsole>>,
 
@@ -352,7 +348,7 @@ impl Terminal {
         // Start writer with the write fd - adds a ref.
         match terminal
             .writer
-            .start(&*terminal, event_loop, pty_result.write, true)
+            .start_exclusive_pipe(&*terminal, event_loop, pty_result.write)
         {
             sys::Result::Ok(()) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
@@ -366,7 +362,7 @@ impl Terminal {
         // Start reader with the read fd - adds a ref.
         let Ok(result) = terminal
             .reader
-            .start(event_loop, pty_result.read.into(), true)
+            .start_exclusive_pipe(event_loop, pty_result.read)
         else {
             return Err(terminal.fail_reader_start());
         };
@@ -376,10 +372,9 @@ impl Terminal {
             return Err(terminal.fail_reader_start());
         }
         // PTY behaves like a pipe, not a socket
-        #[cfg(unix)]
         terminal
             .reader
-            .update_flags(|f| f.insert(PosixFlags::NONBLOCKING));
+            .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
         terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
 
         // Start reading data
@@ -518,14 +513,10 @@ impl Terminal {
         self.close_internal();
     }
 
-    /// Windows: get the ConPTY handle to pass to uv_spawn via
-    /// uv_process_options_t.pseudoconsole.
+    /// Windows: get the ConPTY handle to pass to spawn.
     #[cfg(windows)]
-    pub(crate) fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
-        self.hpcon
-            .get()
-            .as_ref()
-            .map(windows::PseudoConsole::as_raw)
+    pub(crate) fn get_pseudoconsole(&self) -> Option<&windows::PseudoConsole> {
+        self.hpcon.get().as_ref()
     }
 
     /// Mark a terminal created inline by `Bun.spawn` so it cannot be reused
@@ -621,10 +612,7 @@ impl Terminal {
             Err(_) => {
                 // CreateThread failed — the process is in a bad state. Close the
                 // reader so `on_read_result` runs (releasing the reader
-                // ref) instead of hanging on an EOF that will never come. Leak hpcon;
-                // calling ClosePseudoConsole here would deadlock since reader.close()
-                // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
-                // broken-pipe once libuv's deferred close runs.
+                // ref) instead of hanging on an EOF that will never come, and leak hpcon.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                     self.on_read_result(self.reader.close());
@@ -895,74 +883,26 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 }
 
 #[cfg(windows)]
-struct PipePair {
-    /// Has a libuv fd, for `uv_pipe_open`.
-    pub server: File,
-    pub client: OwnedHandle,
-}
-
-/// Create one end of a pipe pair as an overlapped named pipe (server) and the
-/// other as a synchronous client. The "server" end is suitable for libuv (uv_pipe_open) and
-/// the "client" end is suitable for ConPTY (which uses synchronous I/O).
-#[cfg(windows)]
-fn create_overlapped_pipe_pair(
-    // PIPE_ACCESS_INBOUND: server reads, client writes.
-    // PIPE_ACCESS_OUTBOUND: server writes, client reads.
-    server_access: u32,
-) -> Result<PipePair, CreatePtyError> {
-    let pid: u32 = windows::GetCurrentProcessId();
-    let counter = PIPE_SERIAL.fetch_add(1, Ordering::Relaxed);
-    // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\` (libuv's uv__unique_pipe_name).
-    let local = if windows::is_app_container() {
-        r"LOCAL\"
-    } else {
-        ""
-    };
-    let mut name_w = bun_paths::OSPath::new();
-    write!(name_w, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}");
-
-    let server = windows::CreateNamedPipeW(
-        &name_w,
-        server_access | windows::FILE_FLAG_OVERLAPPED,
-        65536,
-    )
-    .map_err(|_| CreatePtyError::OpenPtyFailed)?;
-
-    let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
-        windows::GENERIC_WRITE
-    } else {
-        windows::GENERIC_READ
-    };
-
-    let client = windows::CreateFileW(&name_w, client_access, 0, windows::OPEN_EXISTING, 0)
-        .map_err(|_| CreatePtyError::OpenPtyFailed)?;
-
-    let server = File::from_fd(Fd::from_system(server.into_raw_handle()))
-        .make_lib_uv_owned()
-        .map_err(|_| CreatePtyError::DupFailed)?;
-    Ok(PipePair { server, client })
-}
-
-#[cfg(windows)]
-static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
-
-#[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    // Output pipe: ConPTY writes (client), we read (overlapped server).
-    let output = create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND)?;
-    // Input pipe: we write (overlapped server), ConPTY reads (client).
-    let input = create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND)?;
+    use windows::{PipeDirection, PipeMode};
+    // ConPTY uses synchronous I/O.
+    let create_pipe = |direction| {
+        windows::create_pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
+            .map_err(|_| CreatePtyError::OpenPtyFailed)
+    };
+    let output = create_pipe(PipeDirection::Inbound)?;
+    let input = create_pipe(PipeDirection::Outbound)?;
 
     let size = windows::COORD {
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    let hpcon = windows::PseudoConsole::new(size, &input.client, &output.client)
+    let hpcon = windows::PseudoConsole::new(size, &input.theirs, &output.theirs)
         .ok_or(CreatePtyError::OpenPtyFailed)?;
 
     Ok(PtyResult {
-        read: output.server,
-        write: input.server,
+        read: output.ours.into(),
+        write: input.ours.into(),
         hpcon,
     })
 }

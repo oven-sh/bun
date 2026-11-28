@@ -314,7 +314,7 @@ impl<P: Poll> System for Os<P> {
 
     fn service_name(&self, port: u16) -> Option<Box<[u8]>> {
         #[cfg(windows)]
-        bun_sys::windows::libuv::uv__winsock_ensure();
+        bun_windows_sys::ws2_32::ensure_started();
         let address = Address::from_ip(IpAddr::from([0; 4]), port);
         let (address, mut name) = (address.as_bytes(), [0u8; 64]);
         // SAFETY: each buffer is passed with its length. The name of the host is not asked for.

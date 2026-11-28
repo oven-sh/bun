@@ -2,10 +2,8 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
-#[cfg(unix)]
-use bun_io::PosixFlags;
 use bun_io::max_buf;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReaderFlags};
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSValue, JsResult};
 use bun_ptr::{Attached, Detach, ParentRef, RefCount, RefPtr};
@@ -29,7 +27,6 @@ pub(crate) struct PipeReader {
     /// Held from `start()` until the read ends or moves into a stream.
     start_ref: Cell<Option<RefPtr<PipeReader>>>,
     /// Taken by `start()`.
-    #[cfg(unix)]
     stdio_result: Cell<StdioResult>,
 }
 
@@ -55,16 +52,11 @@ impl PipeReader {
             process: Cell::new(Some(ParentRef::from(process))),
             reader,
             event_loop: event_loop.event_loop_ctx(),
-            #[cfg(unix)]
             stdio_result: Cell::new(result),
         });
         let owner = Owner::new(PollTag::SubprocessPipeReader, this.as_ptr().cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { this.reader.set_owner(owner) };
-        #[cfg(windows)]
-        if let StdioResult::Buffer(pipe) = result {
-            this.reader.set_source(bun_io::Source::Pipe(pipe));
-        }
         this.into()
     }
 
@@ -93,33 +85,25 @@ impl PipeReader {
         }
     }
 
+    /// Synchronously reads what is in the pipe, like `read_all` does on POSIX.
+    #[cfg(windows)]
+    pub(crate) fn read_available(self: &RefPtr<Self>) {
+        if let Some(event) = self.reader.try_read() {
+            self.on_read_result(self.reader.read(self.event_loop, Some(event)));
+        }
+    }
+
     pub(crate) fn start(self: &RefPtr<Self>, lazy: bool) {
         self.start_ref.set(Some(self.clone()));
-        #[cfg(windows)]
-        {
-            if lazy {
-                // Leave IS_PAUSED set (the init default) so uv_read_start is
-                // deferred until JS first pulls; the kernel pipe buffer then
-                // provides backpressure and the child blocks.
-                return;
-            }
-            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
-                // As a read error, so that the caller proceeds to the sibling pipe.
-                self.on_read_result(ReadResult::Err(err));
-            }
+        self.reader
+            .update_flags(|f| f.insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING));
+        let pipe = self.stdio_result.take().unwrap();
+        if lazy {
+            // No read until JS first pulls, so that the child blocks on the pipe.
+            return self.reader.set_exclusive_pipe(self.event_loop, pipe);
         }
-
-        #[cfg(not(windows))]
-        {
-            // No poll until JS first pulls, so that the child blocks on the pipe.
-            self.reader.update_flags(|f| {
-                f.set(PosixFlags::IS_PAUSED, lazy);
-                f.insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING);
-            });
-            let file = self.stdio_result.take().unwrap();
-            let started = self.reader.start(self.event_loop, file.into(), true);
-            self.on_read_result(started.unwrap_or_else(ReadResult::Err));
-        }
+        let started = self.reader.start_exclusive_pipe(self.event_loop, pipe);
+        self.on_read_result(started.unwrap_or_else(ReadResult::Err));
     }
 
     fn on_read_result(self: &RefPtr<Self>, result: ReadResult) {
@@ -139,13 +123,6 @@ impl PipeReader {
         }
     }
 
-    #[cfg(windows)]
-    pub(super) fn inject_error(self: &RefPtr<Self>, err: bun_sys::Error) {
-        self.reader.pause();
-        self.on_read_result(self.reader.fail(err));
-    }
-
-    #[cfg(unix)]
     pub(super) fn inject_error(self: &RefPtr<Self>, err: bun_sys::Error) {
         self.on_read_result(ReadResult::Err(err));
     }
@@ -170,7 +147,6 @@ impl PipeReader {
         stream
     }
 
-    #[cfg(unix)]
     pub(crate) fn finalize(&self) {
         if self.start_ref.take().is_some() {
             self.reader.deinit();
@@ -186,7 +162,6 @@ impl Detach for PipeReader {
 
 impl Drop for PipeReader {
     fn drop(&mut self) {
-        #[cfg(unix)]
         debug_assert!(self.reader.is_done());
     }
 }

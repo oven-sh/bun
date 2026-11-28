@@ -150,6 +150,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         Bun__askForAddressSpaceToStart();
     }
 
+    #[cfg(windows)]
+    bun_sys::windows::configure_error_handling();
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -166,8 +169,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
-
-    use_mimalloc_in_dependencies();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
@@ -198,6 +199,11 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init, which opens any missing standard handle.
+    #[cfg(windows)]
+    bun_sys::windows::disable_stdio_inheritance();
+    #[cfg(windows)]
+    bun_sys::windows::register_inherited_descriptors();
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();
@@ -219,28 +225,4 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
     let _ = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023).map(bun_sys::CloseOnDrop::new);
-}
-
-/// Point the bundled C/C++ dependencies that have an allocator hook at
-/// mimalloc, so the whole process shares one allocator (and, on Windows, one
-/// policy for transient commit-limit failures instead of the UCRT heap's
-/// immediate NULL). Runs first thing in `main()`: these hooks only swap
-/// function pointers, so nothing may have allocated through the library yet.
-///
-/// BoringSSL is switched at link time, by the `OPENSSL_memory_*` and `OPENSSL_system_*` definitions in `bun_boringssl`.
-fn use_mimalloc_in_dependencies() {
-    // libuv (only linked on Windows). Must precede the first uv call. Left on
-    // the CRT heap under ASAN like BoringSSL, so the sanitizer sees
-    // its allocations too (the global allocator is `System` there as well).
-    // SAFETY: mimalloc fns match the libuv allocator signatures; called
-    // exactly once before any uv handle is created.
-    #[cfg(all(windows, not(bun_asan)))]
-    unsafe {
-        let _ = bun_sys::windows::libuv::uv_replace_allocator(
-            Some(bun_alloc::mimalloc::mi_malloc),
-            Some(bun_alloc::mimalloc::mi_realloc),
-            Some(bun_alloc::mimalloc::mi_calloc),
-            Some(bun_alloc::mimalloc::mi_free),
-        );
-    }
 }

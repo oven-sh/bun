@@ -143,7 +143,7 @@ pub enum Tag {
     QuicEndpoint,
     FakeTimersTick,
     ViWait,
-    /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
+    /// An N-API addon's `uv_timer_t`.
     UvTimer,
     WorkerWaitsForRoom,
 }

@@ -500,7 +500,7 @@ test("connect() with a custom lookup that yields a name that cannot be a hostnam
 // Every send callback must fire with (null, byteLength) — never (null, 0) or
 // EAGAIN — even if the kernel refuses some writes (they queue and drain like
 // libuv's uv_udp_try_send → uv_udp_send fallback).
-test.skipIf(isWindows)("send() reports (null, byteLength) for every callback under a burst", async () => {
+test("send() reports (null, byteLength) for every callback under a burst", async () => {
   const receiver = createSocket("udp4");
   await new Promise<void>(resolve => receiver.bind(0, "127.0.0.1", resolve));
   const port = receiver.address().port;

@@ -7,9 +7,7 @@ pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / MiniEventLoop.
-// `EventLoopHandle::set_as_parent_of` wires the parent. The Windows-only `uv_loop` projection
-// lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
-// gate-free.
+// `EventLoopHandle::set_as_parent_of` wires the parent.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]

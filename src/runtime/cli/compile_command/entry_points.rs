@@ -244,9 +244,8 @@ fn is_native_executable(path: &[u8]) -> bool {
 
 /// The first bytes of the file, at most as many as `buffer` holds. Nothing if it can't be read.
 fn read_start<'a>(path: &[u8], buffer: &'a mut [u8]) -> &'a [u8] {
-    // Otherwise opening a named pipe waits for a writer.
-    let without_waiting = if cfg!(unix) { bun_sys::O::NONBLOCK } else { 0 };
-    let flags = bun_sys::O::RDONLY | without_waiting;
+    // Without `O_NONBLOCK`, opening a named pipe waits for a writer.
+    let flags = bun_sys::O::RDONLY | bun_sys::O::NONBLOCK;
     let length = bun_sys::File::openat(bun_core::Fd::cwd(), path, flags, 0)
         .and_then(|file| file.read_all(buffer))
         .unwrap_or(0);

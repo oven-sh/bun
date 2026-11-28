@@ -2351,7 +2351,7 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
        * shutdown. With SENT_SHUTDOWN both directions are closed; fall
        * through so a deferred graceful close completes (mirrors the
        * ZERO_RETURN path; loop.c raw-closes this case first on the
-       * epoll/kqueue backend, the libuv one reaches here). */
+       * epoll/kqueue backend, the IOCP one reaches here). */
       return s;
     }
   }
@@ -2935,7 +2935,8 @@ int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
   }
   if (!s->ssl_fatal_error) return 0;
 #ifdef _WIN32
-  return -UV_EPROTO;
+  /* -UV_EPROTO: Winsock has no EPROTO. */
+  return 4046;
 #else
   return EPROTO;
 #endif

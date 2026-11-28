@@ -1,9 +1,11 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { spawn as nodeSpawn } from "node:child_process";
 import { once } from "node:events";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { text } from "node:stream/consumers";
 import storesThatEndInADefinition from "../bun/jsc/stores-that-end-in-a-definition-fixture.js";
 
 test("exists", () => {
@@ -562,6 +564,33 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+test.skipIf(!isWindows)("prompt retries the read when it is cancelled", async () => {
+  using dir = tempDir("prompt-cancelled", {
+    "forward-fd.js": `process.exitCode = await Bun.spawn([process.execPath, "main.js"], { stdio: [3, "inherit", "inherit"] }).exited;`,
+    "main.js": `
+      new Worker("./cancel.js");
+      console.log(JSON.stringify(prompt("Q?")));
+      process.exit();`,
+    "cancel.js": `
+      const { GetStdHandle, CancelIoEx } = require("bun:ffi").dlopen("kernel32.dll", {
+        GetStdHandle: { args: ["i32"], returns: "ptr" },
+        CancelIoEx: { args: ["ptr", "ptr"], returns: "i32" },
+      }).symbols;
+      while (!CancelIoEx(GetStdHandle(-10), null)) Bun.sleepSync(1);
+      require("fs").writeSync(2, "cancelled");`,
+  });
+  // fd 3 is overlapped. On a synchronous handle CancelIoEx() would block on the retried read.
+  const child = nodeSpawn(bunExe(), ["forward-fd.js"], {
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  child.stdio[3].on("error", () => {});
+  child.stderr.once("data", () => child.stdio[3].write("yes\n"));
+  const [stdout, [exitCode]] = await Promise.all([text(child.stdout), once(child, "close")]);
+  expect({ stdout, exitCode }).toEqual({ stdout: 'Q? "yes"\n', exitCode: 0 });
 });
 
 // Only the CRLF terminator's `\r` is stripped. An earlier `\r` is part of the answer.

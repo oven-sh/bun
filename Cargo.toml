@@ -16,6 +16,7 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
+  "src/iocp",
   "src/archive",
   "src/md",
   "src/paths",
@@ -85,7 +86,6 @@ members = [
   "src/js_parser_jsc",
   "src/js_printer",
   "src/deflate",
-  "src/libuv_sys",
   "src/ast",
   "src/ast_jsc",
   "src/png",
@@ -401,6 +401,7 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
+bun_iocp = { path = "src/iocp" }
 bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
@@ -466,7 +467,6 @@ bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
 bun_deflate = { path = "src/deflate" }
-bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_png = { path = "src/png" }

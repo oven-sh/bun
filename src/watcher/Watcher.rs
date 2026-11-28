@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use bun_collections::{BoundedArray, MultiArrayList};
 use bun_core::{feature_flags, output as Output, strings, zstr};
+use bun_errno::SystemErrno;
 use bun_sys::{self as sys, CloseOnDrop, File};
 use bun_threading::Guarded;
 
@@ -130,12 +131,16 @@ impl Watcher {
         ctx: Box<dyn WatcherContext>,
         top_level_dir: &'static [u8],
     ) -> Result<OwnedWatcher, crate::Error> {
-        let thread = Box::new(WatcherThread {
+        #[cfg_attr(not(windows), expect(unused_mut))]
+        let mut thread = Box::new(WatcherThread {
             watch_events: [WatchEvent::default(); MAX_COUNT],
             #[cfg(windows)]
             platform: Platform::new(top_level_dir)?,
             ctx,
         });
+        // Changes made before the first read are not reported. `watch_loop` retries and reports a failure.
+        #[cfg(windows)]
+        let _ = thread.platform.watcher.prepare();
         let this = Arc::new(Watcher {
             #[cfg(not(windows))]
             platform: Platform::new(top_level_dir)?,
@@ -189,20 +194,7 @@ impl Watcher {
             spawn().map_err(|_| first)
         });
         handle.map(drop).map_err(|e| {
-            // Windows: raw_os_error() is a Win32 GetLastError() code, so
-            // route it through the u32 (Win32Error) mapper rather than
-            // from_errno's i64 discriminant-cast path.
-            #[cfg(windows)]
-            let errno = e
-                .raw_os_error()
-                .and_then(|c| bun_errno::SystemErrno::init(c as u32))
-                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-            #[cfg(not(windows))]
-            let errno = e
-                .raw_os_error()
-                .map(bun_errno::from_errno)
-                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-            crate::Error::Sys(errno)
+            crate::Error::Sys(SystemErrno::from_io_error(&e).unwrap_or(SystemErrno::EAGAIN))
         })
     }
 

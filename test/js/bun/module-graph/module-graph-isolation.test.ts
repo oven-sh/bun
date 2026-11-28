@@ -863,6 +863,28 @@ const dir = String(
       console.log(JSON.stringify(out));
       process.exit(0);
     `,
+    "writes-endless-stream.mjs": `
+      const stream = new ReadableStream({ start: controller => controller.enqueue(new Uint8Array(1)) });
+      export const write = path => void Bun.write(path, new Response(stream)).catch(() => {});
+    `,
+    "disposed-while-streaming.mjs": `
+      import { fileSinkInternals } from "bun:internal-for-testing";
+      import fs from "node:fs";
+      const path = import.meta.dir + "/streamed-" + process.pid;
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/writes-endless-stream.mjs");
+      const baseline = fileSinkInternals.liveCount();
+      const countLeakedSinks = () => fileSinkInternals.liveCount() - baseline;
+      graph.run(() => app.write(path));
+      const { ino, dev } = fs.statSync(path);
+      const isTargetFd = fd => { try { const stats = fs.fstatSync(fd); return stats.ino === ino && stats.dev === dev; } catch { return false; } };
+      const fd = Array.from({ length: 256 }, (_, fd) => fd).find(isTargetFd);
+      graph.dispose();
+      // The loop allocates almost nothing, because a GC would close the fd too.
+      for (const deadline = Date.now() + 2000; (isTargetFd(fd) || countLeakedSinks()) && Date.now() < deadline; ) await Bun.sleep(5);
+      console.log(JSON.stringify({ isOpenBeforeDispose: fd !== undefined, isOpenAfterDispose: isTargetFd(fd), fileSinks: countLeakedSinks() }));
+      process.exit(0);
+    `,
     "wraps-commonjs-its-own-way.cjs": `
       const Module = require("node:module");
       // A wrapper that is not at the top level: the module function closes over another function's variable.
@@ -3835,6 +3857,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({
       stdout: `{"fileSinks":0,"childHeard":[],"tls":{"writes":[],"heard":[]}}`,
+      exitCode: 0,
+    });
+  });
+  test("closes the destination file of a streaming Bun.write()", async () => {
+    expect(await runsFixture("disposed-while-streaming.mjs")).toEqual({
+      stdout: `{"isOpenBeforeDispose":true,"isOpenAfterDispose":false,"fileSinks":0}`,
       exitCode: 0,
     });
   });

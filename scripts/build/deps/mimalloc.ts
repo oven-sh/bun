@@ -108,9 +108,7 @@ export const mimalloc: Dependency = {
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time. The C deps that would
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
-    //            by one instead (libuv in bun_runtime::bin_entry's
-    //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
-    //            boringssl.ts).
+    //            by one instead (BoringSSL via the hooks in boringssl.ts).
     const override = cfg.linux && !cfg.asan;
 
     const defines: Record<string, string | number | true> = {

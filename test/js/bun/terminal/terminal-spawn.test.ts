@@ -518,36 +518,26 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Regression test for a Windows-only use-after-free: cancelling a stdin
-  // stream while a cooked-mode console read was parked used to free the
-  // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
-  // block a worker thread in ReadConsoleW and convert the result into the
-  // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
-  // injecting a VK_RETURN, so the worker still wrote "\r\n" through the
-  // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
-  // block to next (a plausible mechanism for production reports of full-GC
-  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from the
-  // handle-owned uv::Tty::read_scratch. The child adopts the
-  // previously-freed size class with ArrayBuffer probes and reports any
-  // mutation.
+  // A line read blocks a thread in ReadConsoleW and can outlive the stream
+  // that started it. The child cancels the stream, fills the heap with
+  // ArrayBuffer probes and reports any mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
     using dir = tempDir("conpty-stdin-read-cancel", {
       "child-fixture.ts": `
         const reader = Bun.stdin.stream().getReader();
         // Warm-up round-trip: arm a cooked-mode console line read and await
         // the line the parent writes once it sees CHILD-READY. Resolving
-        // proves the whole line-read machinery (libuv worker thread
+        // proves the whole line-read machinery (worker thread
         // included) works end to end before cancellation is tested.
         const warmup = reader.read();
         console.log("CHILD-READY");
         await warmup;
-        // Arm the read under test; no more input arrives, so the libuv
-        // worker parks in ReadConsoleW holding the read buffer (pre-fix:
-        // the reader's spare capacity; post-fix: the tty-owned scratch).
+        // Arm the read under test; no more input arrives, so the
+        // worker parks.
         reader.read().catch(() => {});
         // The park itself is unobservable from JS; there is no condition to
         // await. With the machinery proven warm above, a short delay makes
-        // it overwhelmingly likely the worker is inside ReadConsoleW. If it
+        // it overwhelmingly likely the worker is waiting for input. If it
         // is not yet, cancellation traps the read before any write and the
         // run is vacuous rather than wrong.
         await Bun.sleep(150);

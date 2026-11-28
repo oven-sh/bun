@@ -1042,7 +1042,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
     true
 }
 
-pub(crate) fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
+pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
     str: &[T],
     prefix: &[u8],
 ) -> bool {

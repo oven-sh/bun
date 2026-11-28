@@ -63,8 +63,6 @@ pub enum Error {
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
-    MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
-    #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
     Watcher(#[from] bun_watcher::Error),
@@ -117,7 +115,6 @@ impl Error {
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
             Self::Resolver(e) => e.name(),
-            Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Bundler(e) => e.name(),
             Self::Watcher(e) => e.name(),
             Self::Install(e) => e.name(),

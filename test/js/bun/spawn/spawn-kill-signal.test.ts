@@ -1,5 +1,6 @@
+import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isLinux, isWindows, shellExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, shellExe, tempDir } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -202,4 +203,144 @@ describe.concurrent.skipIf(!isLinux)("a signal with no name", () => {
     const { exitCode, signalCode } = Bun.spawnSync({ cmd: ["sh", "-c", "kill -40 $$"], ...quiet });
     expect({ exitCode, signalCode }).toEqual<unknown>({ exitCode: null, signalCode: 40 });
   });
+});
+
+// Windows has no signals: SIGINT, SIGQUIT, SIGKILL and SIGTERM terminate the process, 0 checks that it is alive.
+describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
+  const idleCmd = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
+  const captureErrorCode = (fn: () => unknown) => {
+    try {
+      return fn();
+    } catch (error: any) {
+      return error.code;
+    }
+  };
+
+  test.each([
+    ["SIGINT", 2],
+    ["SIGQUIT", 3],
+    ["SIGKILL", 9],
+    ["SIGTERM", 15],
+  ] as const)("subprocess.kill(%s) terminates the child and sets signalCode", async (signal, number) => {
+    await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });
+    proc.kill(signal);
+    const exited = await proc.exited;
+    expect({ exited, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      exited: 128 + number,
+      exitCode: null,
+      signalCode: signal,
+    });
+  });
+
+  test.each(["SIGINT", "SIGQUIT", "SIGKILL", "SIGTERM"] as const)(
+    "process.kill(pid, %s) terminates the child with exit code 1 and no signalCode",
+    async signal => {
+      await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });
+      expect(process.kill(proc.pid, signal)).toBe(true);
+      const exited = await proc.exited;
+      expect({ exited, signalCode: proc.signalCode }).toEqual({ exited: 1, signalCode: null });
+    },
+  );
+
+  test.each([
+    ["SIGQUIT", "REG_SZ", ["ping.exe.PID.dmp"]],
+    ["SIGQUIT", "REG_EXPAND_SZ", ["ping.exe.PID.dmp"]],
+    ["SIGTERM", "REG_SZ", []],
+  ])("dumps after %s with LocalDumps enabled and a DumpFolder of type %s: %j", async (signal, type, expected) => {
+    using dir = tempDir("local-dumps", {
+      "main.js": `
+        const advapi32 = require("bun:ffi").dlopen("advapi32.dll", {
+          RegLoadAppKeyW: { args: ["ptr", "ptr", "u32", "u32", "u32"], returns: "i32" },
+          RegSetKeyValueW: { args: ["i64", "ptr", "ptr", "u32", "ptr", "u32"], returns: "i32" },
+          RegOverridePredefKey: { args: ["i64", "i64"], returns: "i32" },
+        }).symbols;
+        const wide = text => Buffer.from(text + "\\0", "utf16le");
+        const HKEY_LOCAL_MACHINE = -0x7ffffffe;
+        const KEY_ALL_ACCESS = 0xf003f;
+        const [type, folder] = { REG_SZ: [1, process.cwd()], REG_EXPAND_SZ: [2, "%DUMP_PARENT%"] }.${type};
+        const value = wide(folder + "\\\\dumps");
+        // A private hive stands in for HKEY_LOCAL_MACHINE in this process only.
+        const hive = new BigInt64Array(1);
+        advapi32.RegLoadAppKeyW(wide(process.cwd() + "\\\\hive"), hive, KEY_ALL_ACCESS, 0, 0);
+        const key = wide("SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps");
+        advapi32.RegSetKeyValueW(hive[0], key, wide("DumpFolder"), type, value, value.length);
+        advapi32.RegOverridePredefKey(HKEY_LOCAL_MACHINE, hive[0]);
+
+        const child = Bun.spawn(["ping.exe", "-t", "127.0.0.1"], { stdout: "pipe" });
+        await child.stdout.getReader().read();
+        child.kill("${signal}");
+        await child.exited;
+        const fs = require("fs");
+        const names = fs.existsSync("dumps") ? fs.readdirSync("dumps") : [];
+        const dumps = names.filter(name => fs.readFileSync("dumps/" + name, "latin1").startsWith("MDMP"));
+        console.log(JSON.stringify(dumps.map(name => name.toLowerCase().replace(child.pid, "PID"))), child.signalCode);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, DUMP_PARENT: String(dir) },
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(`${JSON.stringify(expected)} ${signal}\n`);
+    expect(await proc.exited).toBe(0);
+  });
+
+  test("signalCode reports the first signal sent", async () => {
+    await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });
+    proc.kill("SIGTERM");
+    proc.kill(0);
+    proc.kill("SIGKILL");
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGTERM");
+  });
+
+  test("process.kill() accepts pid 0 and rejects pid -1 and invalid signals", () => {
+    expect([captureErrorCode(() => process.kill(0, 0)), captureErrorCode(() => process.kill(-1, 0))]).toEqual([
+      true,
+      "ESRCH",
+    ]);
+    expect(captureErrorCode(() => process.kill(process.pid, 64))).toBe("EINVAL");
+  });
+
+  // 259 is STILL_ACTIVE, which GetExitCodeProcess() also returns for a running process.
+  test.each([0, 259])("process.kill() throws ESRCH after exit code %d while a handle is still open", async code => {
+    const k32 = dlopen("kernel32.dll", {
+      OpenProcess: { args: ["u32", "i32", "u32"], returns: "u64" },
+      CloseHandle: { args: ["u64"], returns: "i32" },
+    });
+    await using proc = Bun.spawn({
+      cmd: [process.env.ComSpec!, "/d", "/c", `set /p line= & exit ${code}`],
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const SYNCHRONIZE = 0x100000;
+    const handle = k32.symbols.OpenProcess(SYNCHRONIZE, 0, proc.pid);
+    try {
+      expect(handle).not.toBe(0n);
+      proc.stdin.write("go\r\n");
+      await proc.stdin.end();
+      await proc.exited;
+      expect(proc.signalCode).toBeNull();
+      expect([
+        captureErrorCode(() => process.kill(proc.pid, 0)),
+        captureErrorCode(() => process.kill(proc.pid, "SIGTERM")),
+      ]).toEqual(["ESRCH", "ESRCH"]);
+    } finally {
+      k32.symbols.CloseHandle(handle);
+      k32.close();
+    }
+  });
+});
+
+test("kill(0) does not set signalCode", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "await Bun.stdin.text(); process.exit(7)"],
+    env: bunEnv,
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  proc.kill(0);
+  await proc.stdin.end();
+  const exited = await proc.exited;
+  expect({ exited, signalCode: proc.signalCode }).toEqual({ exited: 7, signalCode: null });
 });

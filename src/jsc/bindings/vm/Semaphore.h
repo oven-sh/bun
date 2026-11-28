@@ -3,7 +3,8 @@
 #include "root.h"
 
 #if OS(WINDOWS)
-#include <uv.h>
+#include <wtf/Condition.h>
+#include <wtf/Lock.h>
 #elif OS(DARWIN)
 #include <mach/task.h>
 #include <mach/semaphore.h>
@@ -23,7 +24,9 @@ public:
 
 private:
 #if OS(WINDOWS)
-    uv_sem_t m_semaphore;
+    WTF::Lock m_lock;
+    WTF::Condition m_condition;
+    unsigned int m_value WTF_GUARDED_BY_LOCK(m_lock);
 #elif OS(DARWIN)
     semaphore_t m_semaphore;
 #else

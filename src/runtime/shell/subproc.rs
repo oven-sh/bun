@@ -2,22 +2,17 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use std::rc::Rc;
 
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-#[cfg(windows)]
-use crate::api::bun::process::WindowsOptions;
 use crate::api::bun::process::{self as bun_process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, Yield};
-use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
 use bun_core::{CStrList, CStrRef};
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
-use bun_ptr::RefPtr;
 use bun_spawn::subprocess::PipeState;
 use bun_sys::{self, SystemError};
 use enumset::EnumSet;
@@ -290,48 +285,31 @@ impl ShellSubprocess {
     /// Tear down a subprocess whose stdin writer start() failed. Ends the child, marks pending pipe
     /// readers as errored so PipeReader.deinit's done-assert passes, drops the exit handler so
     /// a later onProcessExit doesn't touch the freed Subprocess, then deinits.
-    ///
-    /// Windows: leaks the subprocess, because dropping a `PipeReader` asserts that it has closed.
     fn abort_after_failed_start(this: *mut Self) {
-        #[cfg(windows)]
-        {
-            // SAFETY: `this` is the live allocation; it is deliberately leaked below,
-            // so release the Ctrl+C accounting by hand.
-            unsafe {
-                let _ = (*this).try_kill(SignalCode::SIGKILL as i32);
-                (*this).ctrl_c_child = None;
-            }
-            return;
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
-            // uniquely owned here; reclaim and tear down.
-            let subproc = unsafe { bun_core::heap::take(this) };
-            for r in [&subproc.stdout, &subproc.stderr] {
-                if let Readable::Pipe(pipe) = r {
-                    // `start()` failed before any reader callback registered.
-                    debug_assert_eq!(Rc::strong_count(pipe), 1);
-                    if pipe.state.get() == PipeReaderState::Pending {
-                        pipe.state.set(PipeReaderState::Err);
-                    }
+        // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
+        // uniquely owned here; reclaim and tear down.
+        let subproc = unsafe { bun_core::heap::take(this) };
+        for r in [&subproc.stdout, &subproc.stderr] {
+            if let Readable::Pipe(pipe) = r {
+                // `start()` failed before any reader callback registered.
+                debug_assert_eq!(Rc::strong_count(pipe), 1);
+                if pipe.state.get() == PipeReaderState::Pending {
+                    pipe.state.set(PipeReaderState::Err);
                 }
             }
-            // Nothing reports its exit from here on, so nothing would reap it either.
-            let _ = subproc
-                .proc()
-                .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
-            subproc.proc().set_exit_handler_default();
-            // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
+        // Nothing reports its exit from here on, so nothing would reap it either.
+        let _ = subproc
+            .proc()
+            .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
+        subproc.proc().set_exit_handler_default();
+        // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
     }
 
     /// Stop stdio still active because the `Cmd` is deinited mid-flight (VM
     /// shutdown); a no-op after a normal close. Readers stop without firing
     /// `on_reader_done`, queued capture chunks are cancelled (the `IOWriter`
-    /// queue holds a raw pointer into the freed `PipeReader`). POSIX-only, same tradeoff as
-    /// [`Self::abort_after_failed_start`].
-    #[cfg(not(windows))]
+    /// queue holds a raw pointer into the freed `PipeReader`).
     pub(crate) fn deinit_in_flight_io(&mut self) {
         for slot in [&self.stdout, &self.stderr] {
             let Readable::Pipe(pipe) = slot else { continue };
@@ -361,7 +339,6 @@ impl ShellSubprocess {
     ///
     /// VM-shutdown finalizer only (on a live heap this would leak the pin and
     /// GC root).
-    #[cfg(not(windows))]
     pub(crate) fn defuse_array_buffer_unpins(&mut self) {
         for slot in [&self.stdout, &self.stderr] {
             let pipe: *mut PipeReader = match slot {
@@ -444,11 +421,7 @@ impl ShellSubprocess {
             #[cfg(unix)]
             no_sigpipe,
             #[cfg(windows)]
-            windows: WindowsOptions {
-                hide_window: true,
-                loop_: event_loop,
-                ..Default::default()
-            },
+            inherits_all_handles: matches!(event_loop, EventLoopHandle::Mini(_)),
             ..Default::default()
         };
 
@@ -482,7 +455,7 @@ impl ShellSubprocess {
         // Two-phase init: allocate the Subprocess slot first so the stable
         // `*mut Subprocess` is available to `Writable::init` / `Readable::init`
         // (as the owner of the StaticPipeWriter, and a backref of the PipeReader). Freed via
-        // `heap::take` in `abort_after_failed_start` (POSIX) / Cmd teardown.
+        // `heap::take` in `abort_after_failed_start` / Cmd teardown.
         let subprocess: *mut Subprocess =
             bun_core::heap::into_raw(Box::<Subprocess>::new_uninit()).cast();
         // SAFETY: `out_subproc` points at the `SubprocExec.child` slot inside
@@ -494,15 +467,7 @@ impl ShellSubprocess {
         unsafe { *out_subproc = subprocess };
 
         // SAFETY: written to `subprocess` below.
-        let stdin = unsafe {
-            Writable::init(
-                stdio0,
-                #[cfg(windows)]
-                event_loop,
-                subprocess,
-                spawn_stdin,
-            )
-        };
+        let stdin = unsafe { Writable::init(stdio0, subprocess, spawn_stdin) };
         let stdout = Readable::init(
             OutKind::Stdout,
             &spawn_args.stdio[1],
@@ -557,37 +522,6 @@ impl ShellSubprocess {
             if let Some(context) = jsc::virtual_machine::VirtualMachine::get().graph_context(id) {
                 // SAFETY: `subprocess` is the live heap allocation; its handle is disarmed on drop.
                 unsafe { jsc::AbortHandle::arm_owner(subprocess, context) };
-            }
-        }
-
-        // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `RefPtr<FileSink>`) runs when the sink
-        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
-        // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
-        {
-            // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
-            // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::source` and dereferenced from
-            // `Writable::on_close` after this frame returns. Under Stacked
-            // Borrows a child of `subproc`'s tag would be invalidated when
-            // that borrow ends; rooting in the allocation's provenance keeps
-            // it valid for the box's lifetime.
-            // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
-            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
-            // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `source`.
-            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: shell is single-threaded; the FileSink allocation is
-                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
-                // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops it.
-                pipe.source
-                    .set(webcore::streams::SourceHandle::ShellWritable(
-                        // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
-                        unsafe { bun_ptr::BackRef::from_raw_mut(stdin_ptr) },
-                    ));
             }
         }
 
@@ -679,8 +613,7 @@ impl ShellSubprocess {
 // Writable
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Writable {
-    Pipe(RefPtr<FileSink>),
+pub(crate) enum Writable {
     Fd,
     Buffer(StaticPipeWriter),
     Inherit,
@@ -688,89 +621,36 @@ pub enum Writable {
 }
 
 impl Writable {
-    // When the stream has closed we need to be notified to prevent a use-after-free
-    // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        *self = Writable::Ignore;
-    }
-}
-
-impl Writable {
     /// # Safety
     /// The result becomes the `stdin` of `subprocess`.
-    unsafe fn init(
-        stdio: Stdio,
-        #[cfg(windows)] event_loop: EventLoopHandle,
-        subprocess: *mut Subprocess,
-        result: StdioResult,
-    ) -> Writable {
+    unsafe fn init(stdio: Stdio, subprocess: *mut Subprocess, result: StdioResult) -> Writable {
         let owner = Owner::new(PollTag::ShellStdinWriter, subprocess.cast());
         // SAFETY: fn contract.
         let create_writer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
-        #[cfg(windows)]
-        {
-            match stdio {
-                Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buf) = result {
-                        let pipe = FileSink::create_with_pipe(event_loop, buf);
-
-                        // TODO: uncoment this when is ready, commented because was not compiling
-                        // subprocess.weak_file_sink_stdin_ptr = pipe;
-                        // subprocess.flags.has_stdin_destructor_called = false;
-
-                        return Writable::Pipe(pipe);
-                    }
-                    return Writable::Inherit;
-                }
-
-                Stdio::Blob(blob) => {
-                    return Writable::Buffer(create_writer(result, blob));
-                }
-                Stdio::Fd(_) | Stdio::Dup2(_) => {
-                    return Writable::Fd;
-                }
-                Stdio::Inherit => {
-                    return Writable::Inherit;
-                }
-                Stdio::Path(_) | Stdio::Ignore => {
-                    return Writable::Ignore;
-                }
-                Stdio::Ipc | Stdio::Capture => {
-                    return Writable::Ignore;
-                }
-                Stdio::SocketFd => {
-                    // The shell never uses this; rejected at i < 3 anyway.
-                    panic!("Unimplemented stdin socket-fd");
-                }
+        match stdio {
+            Stdio::Dup2(_) => {
+                // The shell never uses this
+                panic!("Unimplemented stdin dup2");
             }
-        }
-        #[cfg(not(windows))]
-        {
-            match stdio {
-                Stdio::Dup2(_) => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin dup2");
-                }
-                Stdio::Pipe => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin pipe");
-                }
+            Stdio::Pipe => {
+                // The shell never uses this
+                panic!("Unimplemented stdin pipe");
+            }
 
-                Stdio::Blob(blob) => Writable::Buffer(create_writer(result, blob)),
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
-                Stdio::Fd(_) => Writable::Fd,
-                Stdio::Inherit => Writable::Inherit,
-                Stdio::Path(_) | Stdio::Ignore => Writable::Ignore,
-                Stdio::Ipc | Stdio::Capture => Writable::Ignore,
-                Stdio::ReadableStream(_) => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin readable_stream");
-                }
-                Stdio::SocketFd => {
-                    // The shell never uses this; rejected at i < 3 anyway.
-                    panic!("Unimplemented stdin socket-fd");
-                }
+            Stdio::Blob(blob) => Writable::Buffer(create_writer(result, blob)),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
+            Stdio::Fd(_) => Writable::Fd,
+            Stdio::Inherit => Writable::Inherit,
+            Stdio::Path(_) | Stdio::Ignore => Writable::Ignore,
+            Stdio::Ipc | Stdio::Capture => Writable::Ignore,
+            Stdio::ReadableStream(_) => {
+                // The shell never uses this
+                panic!("Unimplemented stdin readable_stream");
+            }
+            Stdio::SocketFd => {
+                // The shell never uses this; rejected at i < 3 anyway.
+                panic!("Unimplemented stdin socket-fd");
             }
         }
     }
@@ -778,9 +658,9 @@ impl Writable {
     // Note: there is intentionally no `Writable::toJS` here — the shell never
     // exposes its stdin Writable to JS.
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
-            Writable::Pipe(_) | Writable::Buffer(_) => *self = Writable::Ignore,
+            Writable::Buffer(_) => *self = Writable::Ignore,
             Writable::Ignore => {}
             Writable::Fd | Writable::Inherit => {}
         }
@@ -850,74 +730,37 @@ impl Readable {
             Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
             None => BufferedOutput::default(),
         };
-        #[cfg(windows)]
-        {
-            return match stdio {
-                Stdio::Inherit => Readable::Inherit,
-                Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-                Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(_) => Readable::Fd,
-                // blobs are immutable, so we should only ever get the case
-                // where the user passed in a Blob with an fd
-                Stdio::Blob(_) => Readable::Ignore,
-                Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop,
-                    process,
-                    result,
-                    None,
-                    buffered_output,
-                    out_type,
-                    interp,
-                )),
-                Stdio::Capture => Readable::Pipe(PipeReader::create(
-                    event_loop,
-                    process,
-                    result,
-                    shellio,
-                    buffered_output,
-                    out_type,
-                    interp,
-                )),
-                Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
-                // The shell never uses this; rejected at i < 3 anyway.
-                Stdio::SocketFd => Readable::Ignore,
-            };
-        }
-
-        #[cfg(not(windows))]
-        {
-            match stdio {
-                Stdio::Inherit => Readable::Inherit,
-                Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-                Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(_) => Readable::Fd,
-                // blobs are immutable, so we should only ever get the case
-                // where the user passed in a Blob with an fd
-                Stdio::Blob(_) => Readable::Ignore,
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
-                Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop,
-                    process,
-                    result,
-                    None,
-                    buffered_output,
-                    out_type,
-                    interp,
-                )),
-                Stdio::Capture => Readable::Pipe(PipeReader::create(
-                    event_loop,
-                    process,
-                    result,
-                    shellio,
-                    buffered_output,
-                    out_type,
-                    interp,
-                )),
-                Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
-                // The shell never uses this; rejected at i < 3 anyway.
-                Stdio::SocketFd => Readable::Ignore,
-            }
+        match stdio {
+            Stdio::Inherit => Readable::Inherit,
+            Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
+            Stdio::Path(_) => Readable::Ignore,
+            Stdio::Fd(_) => Readable::Fd,
+            // blobs are immutable, so we should only ever get the case
+            // where the user passed in a Blob with an fd
+            Stdio::Blob(_) => Readable::Ignore,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
+            Stdio::Pipe => Readable::Pipe(PipeReader::create(
+                event_loop,
+                process,
+                result,
+                None,
+                buffered_output,
+                out_type,
+                interp,
+            )),
+            Stdio::Capture => Readable::Pipe(PipeReader::create(
+                event_loop,
+                process,
+                result,
+                shellio,
+                buffered_output,
+                out_type,
+                interp,
+            )),
+            Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+            // The shell never uses this; rejected at i < 3 anyway.
+            Stdio::SocketFd => Readable::Ignore,
         }
     }
 
@@ -1068,7 +911,6 @@ pub(crate) struct PipeReader {
     state: Cell<PipeReaderState>,
     /// The read error, until `take_captured_error` takes it.
     err: Cell<Option<Box<SystemError>>>,
-    #[cfg(not(windows))]
     stdio_result: Cell<StdioResult>,
     pub(crate) out_type: OutKind,
     pub(crate) captured_writer: CapturedWriter,
@@ -1306,7 +1148,6 @@ impl PipeReader {
             process: Cell::new(Some(process)),
             reader: BufferedReader::init(),
             event_loop,
-            #[cfg(not(windows))]
             stdio_result: Cell::new(result),
             out_type,
             state: Cell::new(PipeReaderState::Pending),
@@ -1324,32 +1165,14 @@ impl PipeReader {
         let owner = Owner::new(PollTag::ShellPipeReader, this_ptr.cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { rc.reader.set_owner(owner) };
-        // `start()` goes through `start_with_current_pipe`.
-        #[cfg(windows)]
-        rc.reader.set_source(match result {
-            StdioResult::Buffer(buf) => bun_io::Source::Pipe(buf),
-            StdioResult::BufferFd(fd) => {
-                let file = bun_sys::File::from_fd(fd).into();
-                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), file))
-            }
-            StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
-        });
-
         rc
     }
 
     fn start(self: &Rc<Self>, eager: bool) {
-        #[cfg(windows)]
+        let pipe = self.stdio_result.take().unwrap();
         let started = self
             .reader
-            .start_with_current_pipe()
-            .map(|()| ReadResult::Pending);
-        #[cfg(not(windows))]
-        let started = self.reader.start(
-            self.event_loop.as_event_loop_ctx(),
-            self.stdio_result.take().unwrap().into(),
-            true,
-        );
+            .start_exclusive_pipe(self.event_loop.as_event_loop_ctx(), pipe);
         match started {
             Ok(ReadResult::Pending) => {}
             Ok(result) => return self.on_read_result(result),
@@ -1360,9 +1183,8 @@ impl PipeReader {
             }
         }
         // TODO: are these flags correct
-        #[cfg(unix)]
         self.reader
-            .update_flags(|f| f.insert(bun_io::PosixFlags::SOCKET));
+            .update_flags(|f| f.insert(bun_io::ReaderFlags::SOCKET));
         if eager {
             self.read(None);
         }
@@ -1370,6 +1192,11 @@ impl PipeReader {
 
     /// The `Cmd` may drop every other `Rc`.
     pub(crate) fn read(self: &Rc<Self>, event: Option<IoEvent>) {
+        // See `IOReader::on_io`.
+        #[cfg(windows)]
+        if let Some(IoEvent::Read(bun_io::pipe_reader::ReadEvent::VmTeardown)) = event {
+            return self.reader.deinit();
+        }
         let event_loop = self.event_loop.as_event_loop_ctx();
         let result = self.reader.read_chunks(event_loop, event, |chunk, state| {
             self.on_read_chunk(&chunk, state)
@@ -1553,11 +1380,7 @@ impl Drop for PipeReader {
             std::ptr::from_mut(self) as usize,
             out_kind_str(self.out_type)
         );
-        #[cfg(unix)]
         debug_assert!(self.reader.is_done() || self.state.get() == PipeReaderState::Err);
-
-        #[cfg(windows)]
-        debug_assert!(!self.reader.has_open_source());
 
         if !self.captured_writer.dead {
             // CapturedWriter::drop handles err.deref() and writer Rc drop.

@@ -198,7 +198,8 @@ impl Pipeline {
                         write,
                         io_writer::Flags {
                             pollable: true,
-                            is_socket: cfg!(unix),
+                            #[cfg(not(windows))]
+                            is_socket: true,
                             ..Default::default()
                         },
                         evtloop,

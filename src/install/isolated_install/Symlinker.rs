@@ -137,7 +137,7 @@ impl Symlinker<'_> {
                 };
                 let mut current_link: &[u8] = &current_link_buf[..current_link_len];
 
-                // libuv adds a trailing slash to junctions.
+                // A junction's target has a trailing slash.
                 current_link = bun_paths::without_trailing_sep(current_link);
 
                 let is_current = |target: &[u8]| {

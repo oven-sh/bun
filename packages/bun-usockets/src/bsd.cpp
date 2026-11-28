@@ -74,10 +74,9 @@ extern "C" int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
 #if defined(_WIN32)
-/* libuv initializes Winsock on first use; every entry point below that creates
+/* Winsock is initialized on first use; every entry point below that creates
  * a socket or resolves an address makes sure that has happened first. */
-extern "C" void uv__winsock_ensure(void);
-#define bsd_winsock_ensure() uv__winsock_ensure()
+extern "C" void bsd_winsock_ensure(void);
 
 /* Winsock takes the value as a `const char *`. */
 static int setsockopt(SOCKET fd, int level, int name, const void *value, int length) {
@@ -345,24 +344,12 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
     return fd;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-#if _WIN32
-    if (fd != LIBUS_SOCKET_ERROR) {
-        // libuv will set non-blocking, but only on poll init!
-        // we need it to be set on connect as well
-        DWORD yes = 1;
-        ioctlsocket(fd, FIONBIO, &yes);
-    }
-    return fd;
-#else
-    return fd;
-#endif
-}
-
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-/* Libuv will set windows sockets as non-blocking */
-#ifndef _WIN32
     if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
+#ifdef _WIN32
+        u_long yes = 1;
+        ioctlsocket(fd, FIONBIO, &yes);
+#else
         int flags = fcntl(fd, F_GETFL, 0);
 
         // F_GETFL supports O_NONBLOCK
@@ -372,8 +359,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 
         // F_GETFD supports FD_CLOEXEC
         fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
-    }
 #endif
+    }
 
     return fd;
 }
@@ -959,8 +946,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 
         internal_finalize_bsd_addr(addr);
 
-#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-        // skip the extra fcntl calls.
+#if (defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)) || defined(_WIN32)
+        // skip the extra fcntl calls. On Windows the socket inherits non-blocking mode from the listener.
         return accepted_fd.release();
 #else
         return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd.release()));
@@ -1306,16 +1293,10 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-int bsd_socket_export_size(void) {
-#ifdef _WIN32
-    return (int) sizeof(WSAPROTOCOL_INFOW);
-#else
-    return 0;
-#endif
-}
-
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out) {
 #ifdef _WIN32
+    static_assert(sizeof(WSAPROTOCOL_INFOW) == 628, "SOCKET_INFO_LEN in src/sys/windows_format/ipc_frame.rs");
+    static_assert(alignof(WSAPROTOCOL_INFOW) == 4, "ProtocolInfo in src/runtime/ipc.rs");
     if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
         return WSAGetLastError();
     }
@@ -1343,10 +1324,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
 #endif
 }
 
-/* Windows rejects listen() on a duplicate of an already-listening socket, where POSIX
- * no-ops it; cluster workers each listen on their own dup of one shared fd. libuv
- * sidesteps this by listening before the xfer (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c). */
-int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
+int bsd_socket_is_listening(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
     int listening = 0;
     int optlen = (int) sizeof(listening);
@@ -2045,8 +2023,6 @@ us_fd_t bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr
     }
 
 #ifdef _WIN32
-    win32_set_nonblocking(fd.get());
-
     // On windows we can't connect to the null address directly.
     // To match POSIX behavior, we need to connect to localhost instead.
     struct sockaddr_storage converted;
@@ -2090,8 +2066,6 @@ static us_fd_t internal_bsd_create_connect_socket_unix(const char *server_path, 
     if (!fd) {
         return {};
     }
-
-    win32_set_nonblocking(fd.get());
 
     int rc = bsd_do_connect_raw(fd.get(), (struct sockaddr *)server_address, addrlen);
     if (rc != 0) {

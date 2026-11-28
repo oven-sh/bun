@@ -115,7 +115,7 @@ impl PipeHandle {
             poll.has_flag(FilePollFlag::PollWritable) && poll.has_flag(FilePollFlag::Nonblocking)
         }) != Some(true);
         match self.take_file() {
-            MaybeOwnedFile::Owned(file) if close_async => crate::closer::Closer::close(file, ()),
+            MaybeOwnedFile::Owned(file) if close_async => crate::closer::Closer::close(file),
             MaybeOwnedFile::Owned(file) => drop(file),
             MaybeOwnedFile::Borrowed(fd) => return fd != Fd::INVALID,
         }
@@ -137,9 +137,21 @@ impl Drop for PipeHandle {
     }
 }
 
-// Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export
-// keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
-pub use crate::posix_event_loop::FileType;
+/// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum FileType {
+    File,
+    Pipe,
+    NonblockingPipe,
+    Socket,
+}
+
+#[cfg(not(windows))]
+impl FileType {
+    pub(crate) fn is_blocking(self) -> bool {
+        self == FileType::Pipe
+    }
+}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ReadState {
@@ -157,6 +169,7 @@ pub enum ReadState {
 /// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
 pub enum Chunk<'a> {
     /// The loop's shared scratch: gone once the closure returns. Copy what you keep.
+    #[cfg(not(windows))]
     Scratch(&'a [u8]),
     /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
     Buffer(&'a mut Vec<u8>),
@@ -168,6 +181,7 @@ impl Chunk<'_> {
     /// The bytes as an owned `Vec`, moving rather than copying where the variant allows.
     pub fn take(self) -> Vec<u8> {
         match self {
+            #[cfg(not(windows))]
             Chunk::Scratch(bytes) => bytes.to_vec(),
             Chunk::Buffer(buffer) => core::mem::take(buffer),
             Chunk::Owned(buffer) => buffer,
@@ -183,6 +197,7 @@ impl core::ops::Deref for Chunk<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         match self {
+            #[cfg(not(windows))]
             Chunk::Scratch(bytes) => bytes,
             Chunk::Buffer(buffer) => buffer,
             Chunk::Owned(buffer) => buffer,

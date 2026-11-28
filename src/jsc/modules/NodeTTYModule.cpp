@@ -4,6 +4,10 @@
 
 using namespace JSC;
 
+#if OS(WINDOWS)
+extern "C" bool Bun__isatty(int32_t fd);
+#endif
+
 namespace Zig {
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -20,14 +24,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
 #if !OS(WINDOWS)
     bool isTTY = isatty(fd);
 #else
-    bool isTTY = false;
-    switch (uv_guess_handle(fd)) {
-    case UV_TTY:
-        isTTY = true;
-        break;
-    default:
-        break;
-    }
+    bool isTTY = Bun__isatty(fd);
 #endif
 
     return JSValue::encode(jsBoolean(isTTY));

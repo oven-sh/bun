@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
 import source from "./uv-stub-stuff/plugin.c";
 
@@ -15,8 +15,7 @@ const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 // full set.
 const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
 
-// We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
@@ -39,7 +38,7 @@ describe.if(!isWindows)("uv stubs", () => {
           "build:napi": "node-gyp configure && node-gyp build",
         },
         "dependencies": {
-          "node-gyp": "10.2.0",
+          "node-gyp": "11.2.0",
         },
       }),
       "index.ts": `const symbol = process.argv[2]; const foo = require("./build/Release/xXx123_foo_counter_321xXx.node"); foo.callUVFunc(symbol)`,
@@ -74,7 +73,9 @@ describe.if(!isWindows)("uv stubs", () => {
 
     const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    // node-gyp copies the flags that node was built with, and MSVC rejects the ones for clang-cl.
+    const flags = isWindows ? ["--bun"] : [];
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} ${flags} build:napi`.env(bunEnv).cwd(tempdir);
     console.log("tempdir:", tempdir);
   });
 

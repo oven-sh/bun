@@ -49,7 +49,7 @@ impl Hardlinker {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
             let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
                 Ok(s) => &*s,
-                Err(_) => return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link)),
+                Err(_) => return Err(sys::Error::from_code(sys::E::EACCES, sys::Tag::link)),
             };
             // `dest` is absolute for an entry of the global virtual store.
             let mut nt_dest = OSPath::resolve(&[dest_cwd, &self.dest]);
@@ -84,11 +84,11 @@ impl Hardlinker {
                             }
                         };
                         match link_err1.get_errno() {
-                            sys::E::UV_EEXIST | sys::E::EEXIST => {
+                            sys::E::EEXIST => {
                                 print_retry("already exists");
                                 let _ = Fd::cwd().delete_tree(&bun_paths::Path::from(&dest));
                             }
-                            sys::E::UV_ENOENT | sys::E::ENOENT => {
+                            sys::E::ENOENT => {
                                 print_retry("doesn't exist");
                                 let Some(dest_parent) = dest.dirname() else {
                                     return Err(link_err1);

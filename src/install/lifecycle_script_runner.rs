@@ -7,19 +7,14 @@ use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
 use bun_core::{Global, Output};
-#[cfg(unix)]
-use bun_io::PosixFlags;
+use bun_io::ReaderFlags;
 use bun_io::heap as io_heap;
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 
 use bun_core::{CStrList, CStrRef, CStringList, ZStr};
-#[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{
-    ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, SpawnProcessResult, Status,
-};
-#[cfg(unix)]
+use bun_spawn::{ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, SpawnResult, Status};
 use bun_sys::Fd;
 
 bun_output::declare_scope!(Script, visible);
@@ -546,19 +541,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         this.handle_exit(status);
     }
 
-    /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
-    /// Only called from the `#[cfg(unix)]` branch of [`Self::start_readers`]; on Windows
-    /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
-    #[cfg(unix)]
+    /// Re-prime a recycled reader for a fresh socket fd.
     fn reset_output_flags(output: &OutputReader, fd: Fd) {
         output.update_flags(|f| {
-            f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+            f.insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET);
             f.remove(
-                PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
+                ReaderFlags::MEMFD
+                    | ReaderFlags::RECEIVED_EOF
+                    | ReaderFlags::CLOSED_WITHOUT_REPORTING,
             );
         });
 
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, unix))]
         {
             let flags = bun_sys::get_fcntl_flags(fd).expect("Failed to get fcntl flags");
             debug_assert!(flags & bun_sys::O::NONBLOCK as isize != 0);
@@ -592,7 +586,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         Global::exit(1);
     }
 
-    fn spawn(&mut self) -> Result<SpawnProcessResult, crate::Error> {
+    fn spawn(&mut self) -> Result<SpawnResult, crate::Error> {
         let original_script = self.scripts.items[self.current_script_index as usize]
             .as_ref()
             .expect("script present");
@@ -645,12 +639,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             stderr: output(),
             cwd: Box::<[u8]>::from(self.scripts.cwd.as_bytes()),
 
-            #[cfg(windows)]
-            windows: bun_spawn::WindowsOptions {
-                loop_: self.event_loop(),
-                ..Default::default()
-            },
-
             stream: false,
             // The kernel kills the child when bun dies, so no script outlives the install.
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -683,39 +671,31 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         )??)
     }
 
-    fn start_readers(&mut self, spawned: &mut SpawnProcessResult) {
+    fn start_readers(&mut self, spawned: &mut SpawnResult) {
         for (kind, stdio) in [
             (Kind::Stdout, spawned.stdout.take()),
             (Kind::Stderr, spawned.stderr.take()),
         ] {
+            let Some(pipe) = stdio else { continue };
             #[cfg(unix)]
-            if let Some(file) = stdio {
-                if spawned.memfds[kind as usize + 1] {
-                    self.reader(kind).start_memfd(file);
-                    continue;
-                }
-                let _ = bun_sys::set_nonblocking(file.fd());
-                self.remaining_fds += 1;
-
-                Self::reset_output_flags(self.reader(kind), file.fd());
-                let event_loop = self.event_loop().as_event_loop_ctx();
-                match self.reader(kind).start(event_loop, file.into(), true) {
-                    Ok(result) => _ = self.note_read_result(result),
-                    Err(err) => self.exit_with_error(err.into()),
-                }
+            if spawned.memfds[kind as usize + 1] {
+                self.reader(kind).start_memfd(pipe);
+                continue;
             }
-            #[cfg(windows)]
-            if let bun_spawn::SpawnedStdio::Buffer(pipe) = stdio {
-                self.remaining_fds += 1;
-                if let Err(err) = self.reader(kind).start_with_pipe(pipe) {
-                    self.exit_with_error(err.into());
-                }
+            let _ = bun_sys::set_nonblocking(pipe.fd());
+            self.remaining_fds += 1;
+
+            Self::reset_output_flags(self.reader(kind), pipe.fd());
+            let event_loop = self.event_loop().as_event_loop_ctx();
+            match self.reader(kind).start_exclusive_pipe(event_loop, pipe) {
+                Ok(result) => _ = self.note_read_result(result),
+                Err(err) => self.exit_with_error(err.into()),
             }
         }
     }
 
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
-    fn watch(self: Box<Self>, mut spawned: SpawnProcessResult) {
+    fn watch(self: Box<Self>, mut spawned: SpawnResult) {
         debug_assert!(self.process.is_none(), "forgot to call `reset_polls`");
         let this = bun_core::heap::into_raw(self);
         // SAFETY: `this` is live until the process has reported, which only the last statement can

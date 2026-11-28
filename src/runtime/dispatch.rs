@@ -39,25 +39,6 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{JSGlobalObject, JsResult};
 
-/// X-macro: the `node:fs` ops that are libuv requests on Windows
-/// (`UVFSRequest`); they complete on the JS thread and re-enter through the
-/// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
-/// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
-#[cfg(windows)]
-macro_rules! for_each_fs_uv_op {
-    ($m:ident) => {
-        $m! {
-            Open Open; Close Close; Read Read; Write Write; Readv Readv;
-            Writev Writev; StatFS Statfs;
-        }
-    };
-}
-/// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
-#[cfg(windows)]
-macro_rules! __fs_pat {
-    ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
-}
-
 /// Runs `$body` in a function of its own, which records itself as a part of each feature listed.
 macro_rules! in_features {
     (
@@ -151,8 +132,6 @@ use crate::bake::dev_server::DevServer;
 use crate::bake::dev_server::PendingReloadEvent as BakePendingReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
-#[cfg(windows)]
-use crate::node::fs::async_ as fs_async;
 use crate::node::memory_pressure::MemoryPressureTask;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
@@ -281,12 +260,6 @@ pub(crate) fn run_task(
         task_tag::WindowsNamedPipeContext => {
             drop(payload!(task, crate::socket::WindowsNamedPipeContext));
         }
-        #[cfg(windows)]
-        task_tag::GetAddrInfoLibuvComplete => {
-            payload!(task, crate::dns_jsc::LibuvRequest).run();
-        }
-        #[cfg(windows)]
-        task_tag::UvDnsPollFree => drop(payload!(task, crate::dns_jsc::UvDnsPoll)),
         task_tag::ValkeyDeferredClose => {
             task_arm!(
                 task,
@@ -408,22 +381,6 @@ pub(crate) fn run_task(
             })
         }
         #[cfg(windows)]
-        task_tag::CopyFileWindowsMkdirp => task_arm!(
-            task,
-            [Bodies],
-            |copy: crate::webcore::blob::copy_file::CopyFileWindows| {
-                copy.on_mkdirp_complete();
-            }
-        ),
-        #[cfg(windows)]
-        task_tag::WriteFileWindowsMkdirp => task_arm!(
-            task,
-            [Bodies],
-            |write: crate::webcore::blob::write_file::WriteFileWindows| {
-                write.on_mkdirp_complete();
-            }
-        ),
-        #[cfg(windows)]
         task_tag::ChromePipeEvent => task_arm!(
             task,
             [WebView],
@@ -518,46 +475,26 @@ pub(crate) fn run_task(
             |napi_task: NapiFinalizerTask| -> JsResult<()> { napi_task.finalizer.run() }
         )?,
         task_tag::UvLoopDispatch => {
-            #[cfg(unix)]
             in_features!([NativeAddons], (vm: &VirtualMachine = vm) {
                 crate::jsc_hooks::runtime_state_of(vm).uv_loop.dispatch(vm);
             });
-            #[cfg(not(unix))]
-            unreachable!("posix-only");
         }
         task_tag::UvHandleClose => {
-            #[cfg(unix)]
-            {
-                use crate::napi::uv_posix::HandleRef;
-                in_features!(
-                    [NativeAddons],
-                    (
-                        uv_handle: HandleRef<'static> = payload!(task, HandleRef),
-                        global: &JSGlobalObject = global,
-                    ) -> JsResult<()> {
-                        uv_handle.run_close(global)
-                    }
-                )?;
-            }
-            #[cfg(not(unix))]
-            unreachable!("posix-only");
+            in_features!([NativeAddons], (global: &JSGlobalObject = global) -> JsResult<()> {
+                crate::napi::uv::UvHandle::run_close(global)
+            })?;
         }
         task_tag::UvWorkDone => {
-            #[cfg(unix)]
-            {
-                use crate::napi::uv_posix::WorkRef;
-                in_features!(
-                    [NativeAddons],
-                    (
-                        uv_work: WorkRef = payload!(task, WorkRef),
-                        vm: &VirtualMachine = vm,
-                    ) -> JsResult<()> {
-                        uv_work.run_done(vm)
-                    }
-                )?;
-            }
-            #[cfg(not(unix))]
-            unreachable!("posix-only");
+            use crate::napi::uv::WorkRef;
+            in_features!(
+                [NativeAddons],
+                (
+                    uv_work: WorkRef = payload!(task, WorkRef),
+                    vm: &VirtualMachine = vm,
+                ) -> JsResult<()> {
+                    uv_work.run_done(vm)
+                }
+            )?;
         }
 
         // ── JSC scheduler / module loader ────────────────────────────────
@@ -595,20 +532,6 @@ pub(crate) fn run_task(
             task_arm!(task, [NodeFs], |mut watch: FSWatchTask| -> JsResult<()> {
                 watch.run()
             })?
-        }
-
-        // ── node:fs libuv-request ops (Windows) ──────────────────────────
-        #[cfg(windows)]
-        for_each_fs_uv_op!(__fs_pat) => {
-            macro_rules! __fs_run {
-                ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                    $(task_tag::$tag => task_arm!(task, [NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        request.run_from_js_thread()
-                    })?,)*
-                    _ => unreachable!(),
-                }};
-            }
-            for_each_fs_uv_op!(__fs_run);
         }
 
         // ── process / signals ────────────────────────────────────────────
@@ -715,7 +638,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 71,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -777,7 +700,7 @@ pub(crate) fn tick_queue_with_count(
 // Poll and pipe dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for polls and libuv completions. `bun_io` declares it `extern "Rust"` and
+/// Hot-path dispatcher for polls and completions. `bun_io` declares it `extern "Rust"` and
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
@@ -884,7 +807,28 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Sockets],
             <*mut _>::as_ref_unchecked,
             WindowsNamedPipe,
-            |this, _, event| this.on_writer_io(event)
+            |this, _, event| this.on_io(event)
+        ),
+        #[cfg(windows)]
+        PollTag::IpcChannel => io_arm!(
+            [Ipc],
+            <*mut _>::as_ref_unchecked,
+            crate::ipc::SendQueue,
+            |this, _, event| this.on_io(event)
+        ),
+        #[cfg(windows)]
+        PollTag::TestParallelChannel => io_arm!(
+            [TestCommand],
+            <*mut _>::as_ref_unchecked,
+            crate::cli::test::parallel::channel::Channel,
+            |this, _, event| this.on_io(event)
+        ),
+        #[cfg(windows)]
+        PollTag::ChromePipes => io_arm!(
+            [WebView],
+            <*mut _>::as_ref_unchecked,
+            crate::webview::chrome_process::WindowsPipes,
+            |this, _, event| this.on_io(event)
         ),
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
@@ -1339,27 +1283,17 @@ pub(crate) unsafe fn fire_timer(
             }
         ),
         EventLoopTimerTag::UvTimer => {
-            #[cfg(unix)]
-            {
-                use crate::napi::uv_posix::UvTimerNode;
-                in_features!(
-                    [NativeAddons],
-                    (
-                        c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer),
-                        vm: &VirtualMachine = vm,
-                    ) -> JsResult<()> {
-                        // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
-                        unsafe { UvTimerNode::on_fire(c, vm) }
-                    }
-                )
-            }
-            #[cfg(not(unix))]
-            {
-                if cfg!(debug_assertions) {
-                    unreachable!("UvTimer timer on Windows, where addons get libuv's");
+            use crate::napi::uv::UvTimerNode;
+            in_features!(
+                [NativeAddons],
+                (
+                    c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer),
+                    vm: &VirtualMachine = vm,
+                ) -> JsResult<()> {
+                    // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
+                    unsafe { UvTimerNode::on_fire(c, vm) }
                 }
-                Ok(())
-            }
+            )
         }
     };
     fired
@@ -1552,55 +1486,16 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::StreamPending => release_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
         task_tag::ThreadSafeFunctionRefRequest => release_in!([NativeAddons], TsfnRefRequest),
-        task_tag::UvLoopDispatch => {
-            #[cfg(unix)]
-            release_in!([NativeAddons], crate::napi::uv_posix::UvLoop);
-            #[cfg(not(unix))]
-            unreachable!("posix-only tag");
-        }
-        task_tag::UvHandleClose => {
-            #[cfg(unix)]
-            release_in!([NativeAddons], crate::napi::uv_posix::HandleRef<'static>);
-            #[cfg(not(unix))]
-            unreachable!("posix-only tag");
-        }
-        task_tag::UvWorkDone => {
-            #[cfg(unix)]
-            release_in!([NativeAddons], crate::napi::uv_posix::WorkRef);
-            #[cfg(not(unix))]
-            unreachable!("posix-only tag");
-        }
+        task_tag::UvLoopDispatch => release_in!([NativeAddons], crate::napi::uv::UvLoop),
+        task_tag::UvHandleClose => release_in!([NativeAddons], crate::napi::uv::UvHandle),
+        task_tag::UvWorkDone => release_in!([NativeAddons], crate::napi::uv::WorkRef),
         task_tag::ValkeyDeferredClose => {
             release_in!([Valkey], crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
         }
         // ── Windows-only producers ───────────────────────────────────────
-        task_tag::GetAddrInfoLibuvComplete => {
-            #[cfg(windows)]
-            release!(crate::dns_jsc::LibuvRequest);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::UvDnsPollFree => {
-            #[cfg(windows)]
-            release!(crate::dns_jsc::UvDnsPoll);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
         task_tag::WindowsNamedPipeContext => {
             #[cfg(windows)]
             release!(crate::socket::WindowsNamedPipeContext);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::CopyFileWindowsMkdirp => {
-            #[cfg(windows)]
-            release_in!([Bodies], crate::webcore::blob::copy_file::CopyFileWindows);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::WriteFileWindowsMkdirp => {
-            #[cfg(windows)]
-            release_in!([Bodies], crate::webcore::blob::write_file::WriteFileWindows);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
@@ -1609,26 +1504,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([WebView], crate::webview::chrome_process::QueuedEvent);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
-        }
-        task_tag::Open
-        | task_tag::Close
-        | task_tag::Read
-        | task_tag::Readv
-        | task_tag::Write
-        | task_tag::Writev
-        | task_tag::StatFS => {
-            #[cfg(windows)]
-            {
-                macro_rules! __fs_release {
-                    ($($tag:ident $ty:ident;)*) => { match task.tag() {
-                        $(task_tag::$tag => release_in!([NodeFs], fs_async::$ty),)*
-                        _ => unreachable!(),
-                    }};
-                }
-                for_each_fs_uv_op!(__fs_release);
-            }
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag (libuv fs request)");
         }
         // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
         // outside the range is a producer bug.

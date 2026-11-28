@@ -145,7 +145,7 @@ async function withCompressedAnswerServer(type, rdata, fn) {
   }
 }
 
-test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
+test("dns.resolveSrv accepts compressed target in RDATA", async () => {
   // priority=10, weight=50, port=80, target = "srv" + pointer to QNAME.
   // After decompression the target is srv.<query-name>.
   const rdata = ptr => Buffer.concat([Buffer.from([0x00, 0x0a, 0x00, 0x32, 0x00, 0x50, 0x03, 0x73, 0x72, 0x76]), ptr]);
@@ -157,7 +157,7 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
   expect(records).toEqual([{ name: "srv._test._tcp.example.test", priority: 10, weight: 50, port: 80 }]);
 });
 
-test.skipIf(isWindows)("dns.resolveNaptr accepts compressed replacement in RDATA", async () => {
+test("dns.resolveNaptr accepts compressed replacement in RDATA", async () => {
   // order=100, preference=10, flags="s", service="SIP+D2T", regexp="",
   // replacement = "sip" + pointer to QNAME.
   const rdata = ptr =>
@@ -268,7 +268,7 @@ test("dns.resolveCaa (caa.socketify.dev)", () => {
   return promise;
 });
 
-test.skipIf(isWindows)("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
+test("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
   const socket = dgram.createSocket("udp4");
   try {
     socket.on("message", (query, rinfo) => {
@@ -513,8 +513,7 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
-// On Windows, the resolver closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
-// must not run the close callback that frees the handle while libuv is still dispatching to it.
+// The resolver closes the UDP socket from inside the callback that reports it readable.
 test("dns.Resolver: a query's promise reaction can re-enter the event loop", async () => {
   const rounds = 20;
   const fixture = `
@@ -2118,4 +2117,25 @@ it("argument validation errors name the argument", () => {
       undefined,
     ],
   });
+});
+
+describe.skipIf(!isWindows)("lookup() on Windows", () => {
+  test("resolves concurrent lookups alongside file reads", async () => {
+    const families = Array.from({ length: 60 }, (_, i) => [0, 4, 6][i % 3]);
+    const [results] = await Promise.all([
+      Promise.all(
+        families.map((family, i) => dns_promises.lookup(i % 2 ? "localhost" : "LOCALHOST", { family, all: true })),
+      ),
+      Promise.all(families.map(() => Bun.file(import.meta.path).bytes())),
+    ]);
+    const loopbackByFamily = { 0: ["127.0.0.1", "::1"], 4: ["127.0.0.1"], 6: ["::1"] };
+    expect(results.map(addresses => addresses.map(({ address }) => address).sort())).toEqual(
+      families.map(family => loopbackByFamily[family]),
+    );
+  });
+});
+
+test.skipIf(!isWindows)("dns.promises.lookup maps a fullwidth hostname to ASCII", async () => {
+  const fullwidth = "localhost".replace(/./g, letter => String.fromCharCode(letter.charCodeAt(0) + 0xfee0));
+  expect(await dns.promises.lookup(fullwidth)).toEqual(await dns.promises.lookup("localhost"));
 });

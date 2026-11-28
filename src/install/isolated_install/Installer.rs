@@ -2527,7 +2527,7 @@ impl<'a> Installer<'a> {
             if !is_new {
                 match sys::readlink(&dest, current.as_mut_slice()) {
                     // Keep a link that is already correct, so the package stays loadable during the
-                    // install. libuv reports a junction's target with a trailing slash.
+                    // install. A junction's target has a trailing slash.
                     Ok(len)
                         if paths::without_trailing_sep(&current[..len])
                             == target_abs.as_bytes() =>

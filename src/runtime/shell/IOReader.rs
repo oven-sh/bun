@@ -39,9 +39,9 @@ type Readers = Vec<ChildPtr>;
 struct State {
     #[cfg(not(windows))]
     file: sys::CloseOnDrop,
-    /// The reader closes it.
+    /// `None` after EOF if `should_close_on_eof`.
     #[cfg(windows)]
-    fd: Fd,
+    file: Option<sys::CloseOnDrop>,
     buf: Vec<u8>,
     /// Listeners for the in-flight read (see `take_readers`).
     readers: Readers,
@@ -50,9 +50,11 @@ struct State {
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
-    /// True after EOF. The Windows reader closes its source and the fd at EOF, so later listeners can't read.
+    /// True after EOF. The Windows reader closes its source at EOF.
     #[cfg(windows)]
     reached_eof: bool,
+    #[cfg(windows)]
+    should_close_on_eof: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -96,7 +98,7 @@ impl IOReader {
                 #[cfg(not(windows))]
                 file: file.into(),
                 #[cfg(windows)]
-                fd,
+                file: Some(file.into()),
                 buf: Vec::new(),
                 readers: Readers::new(),
                 paused: false,
@@ -105,6 +107,8 @@ impl IOReader {
                 is_reading: false,
                 #[cfg(windows)]
                 reached_eof: false,
+                #[cfg(windows)]
+                should_close_on_eof: false,
                 self_weak: std::rc::Weak::clone(w),
                 interp: None,
             }),
@@ -113,13 +117,20 @@ impl IOReader {
         let owner = Owner::new(PollTag::ShellIoReader, ptr.cast_mut().cast());
         // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { this.reader.set_owner(owner) };
-        #[cfg(windows)]
-        this.reader
-            .set_source(bun_io::Source::File(bun_io::Source::open_file(
-                evtloop.loop_(),
-                file.into(),
-            )));
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", ptr as usize, fd);
+        this
+    }
+
+    /// For a file that no other command shares. Closes it at EOF on Windows, where an open handle blocks renaming its directory.
+    pub(crate) fn init_exclusive(
+        file: sys::File,
+        evtloop: EventLoopHandle,
+    ) -> std::rc::Rc<IOReader> {
+        let this = Self::init(file, evtloop);
+        #[cfg(windows)]
+        {
+            this.state().should_close_on_eof = true;
+        }
         this
     }
 
@@ -134,7 +145,11 @@ impl IOReader {
         #[cfg(not(windows))]
         return self.state().file.fd();
         #[cfg(windows)]
-        return self.state().fd;
+        return self
+            .state()
+            .file
+            .as_ref()
+            .map_or(Fd::INVALID, |file| file.fd());
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -199,7 +214,11 @@ impl IOReader {
             return Ok(());
         }
         s.is_reading = true;
-        self.reader.start_with_current_pipe()
+        if self.reader.has_source() {
+            return self.reader.start_with_current_source();
+        }
+        let file = sys::MaybeOwnedFile::Borrowed(self.fd());
+        self.reader.start_as_file(self.io_evtloop(), file)
     }
 
     /// A listener has written the chunks it got. Reads on if the reader was paused for that.
@@ -234,6 +253,11 @@ impl IOReader {
 
     /// A listener may drop every other `Rc`.
     pub(crate) fn on_io(self: &std::rc::Rc<Self>, event: IoEvent) {
+        // Not the end of the input: the script stops here, and `Interpreter::drop` frees its commands.
+        #[cfg(windows)]
+        if let IoEvent::Read(bun_io::pipe_reader::ReadEvent::VmTeardown) = event {
+            return self.reader.deinit();
+        }
         let result = self
             .reader
             .read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
@@ -295,7 +319,11 @@ impl IOReader {
         // Set this before notifying listeners, because a notification can start the next `cat`.
         #[cfg(windows)]
         {
-            self.state().reached_eof = true;
+            let s = self.state();
+            s.reached_eof = true;
+            if s.should_close_on_eof {
+                s.file = None;
+            }
         }
         let interp = self.state().interp;
         for r in self.take_readers() {

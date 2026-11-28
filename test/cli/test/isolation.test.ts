@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -828,6 +829,71 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Windows has no FIFOs.
+  test.skipIf(isWindows).each(isolateFlags)(
+    "with %s, a DNS lookup that joins the previous file's in-flight lookup resolves",
+    async isolate => {
+      using dir = tempDir("isolate-dns-lookup", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import fs from "node:fs";
+          test("leak a DNS lookup queued on the thread pool", async () => {
+            // Each read blocks one of the two pool threads until its writer is closed.
+            const writerFds = [];
+            for (const fifo of ["fifo-0", "fifo-1"]) {
+              fs.readFile(fifo, () => {});
+              for (;;) {
+                try {
+                  writerFds.push(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+                  break;
+                } catch (error) {
+                  if (error.code !== "ENXIO") throw error;
+                  await Bun.sleep(1);
+                }
+              }
+            }
+            fs.writeFileSync("writer-fds.json", JSON.stringify(writerFds));
+            Bun.dns.lookup("127.0.0.1", { backend: "libc" }).then(() => console.log("a: resolved"));
+            try {
+              Object.defineProperty(Array.prototype, "then", {
+                configurable: true,
+                get() {
+                  if (this[0]?.address) fs.writeSync(1, "a: then\\n");
+                },
+              });
+            } catch (error) {
+              if (!error.message.includes("read-only in compiled code")) throw error;
+            }
+          });
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          import fs from "node:fs";
+          test("a lookup of the same name resolves", async () => {
+            const lookup = Bun.dns.lookup("127.0.0.1", { backend: "libc" });
+            for (const fd of JSON.parse(fs.readFileSync("writer-fds.json", "utf8"))) fs.closeSync(fd);
+            console.log(JSON.stringify(await lookup));
+          });
+        `,
+      });
+      for (const fifo of ["fifo-0", "fifo-1"]) mkfifo(join(String(dir), fifo));
+      const { stdout, stderr, exitCode } = await runTests(String(dir), [isolate], ["./a.test.ts", "./b.test.ts"], {
+        ...bunEnv,
+        UV_THREADPOOL_SIZE: "2",
+        BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+      });
+      expect({
+        stdout: stdout.replace(/^bun test .*\n/, ""),
+        counts: stderr.match(/^ \d+ (pass|fail)$/gm),
+        exitCode,
+      }).toEqual({
+        stdout: `[{"address":"127.0.0.1","family":4,"ttl":0}]\n`,
+        counts: [" 2 pass", " 0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
+
   test("with --isolate, leaked fs.watch is closed before next file", async () => {
     using dir = tempDir("isolate-fswatch", {
       "watched/.keep": "",
@@ -1403,8 +1469,9 @@ describe.concurrent("bun test --isolate", () => {
       expect(exitCode).toBe(0);
     } finally {
       // Nothing swaps after the last file of a serial run, so its sleeper is
-      // ours to kill, as is anything an unfixed runner leaked.
-      for (const pid of loggedPids()) {
+      // ours to kill, as is anything an unfixed runner leaked. On Windows they
+      // are killed with the runner and their pids may already be reused.
+      for (const pid of isWindows ? [] : loggedPids()) {
         try {
           process.kill(Number(pid));
         } catch {}

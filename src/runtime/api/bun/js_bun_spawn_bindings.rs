@@ -22,11 +22,9 @@ use bun_sys::UV_E;
 use bun_sys::{self as sys, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
-#[cfg(unix)]
 use crate::api::bun_process::ExtraPipe;
-#[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, Rusage, SpawnOptions, Stdio as SpawnOptionsStdio};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader;
@@ -61,13 +59,6 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
-
-// Stdio is platform-dependent: process.rs defines `PosixStdio` / `WindowsStdio`
-// as siblings; alias the active one here so the body stays platform-neutral.
-#[cfg(not(windows))]
-type SpawnOptionsStdio = spawn::PosixStdio;
-#[cfg(windows)]
-type SpawnOptionsStdio = spawn::WindowsStdio;
 
 // Reading the symbol address has no precondition (the value itself is a
 // rodata `const char*`); kept `safe` to match the identical declaration in
@@ -115,7 +106,7 @@ fn get_argv0(
 
     // This mimicks libuv's behavior, which mimicks execvpe
     // Only resolve from $PATH when the command is not an absolute path.
-    // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
+    // Spawning never appends .cmd/.bat, so a `\` path without one is still completed here.
     let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
         || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
     let path_to_use: &[u8] = if names_a_file {
@@ -181,11 +172,7 @@ fn get_argv(
         cmds_array.next()?.unwrap(),
     )?;
 
-    // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
-    // re-tokenizes the command line with shell metacharacter rules
-    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
-    // quoting cannot make that safe, so reject arguments that cmd.exe would
-    // reinterpret.
+    // See `bun_which::is_batch_file`.
     let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
     if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
         return Err(global_this
@@ -380,7 +367,6 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
-    #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
@@ -734,10 +720,7 @@ fn spawn_maybe_sync(
                             },
                         )?;
                         if timeout_int > 0 {
-                            timeout = Some(
-                                i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
-                                    .expect("int cast"),
-                            );
+                            timeout = Some(i32::try_from(timeout_int).unwrap_or(i32::MAX));
                         }
                     }
                 }
@@ -842,7 +825,7 @@ fn spawn_maybe_sync(
                     #[cfg(not(unix))]
                     {
                         // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
-                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
+                        // Set stdio to .ignore so that spawn creates no pipes.
                         stdio[0] = Stdio::Ignore;
                         stdio[1] = Stdio::Ignore;
                         stdio[2] = Stdio::Ignore;
@@ -950,7 +933,7 @@ fn spawn_maybe_sync(
     // - No auto killer (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
-    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && is_sync)
+    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = is_sync
         && abort_signal.is_none()
         && timeout.is_none()
         && max_buffer.is_none()
@@ -1017,11 +1000,10 @@ fn spawn_maybe_sync(
         extra_fds: {
             // Record which extra-stdio slots are 'socket-fd' so we can
             // downgrade them from OwnedFd to UnownedFd after all fallible
-            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // init below succeeds. spawn_process pushes OwnedFd for
             // SocketFd so every error path's finalize_streams still closes
             // the bun-created fd; the caller-owns-it contract only begins
             // once the Subprocess is returned and .stdio[i] is readable.
-            #[cfg(not(windows))]
             for (j, e) in extra_fds.iter().enumerate() {
                 if matches!(e, SpawnOptionsStdio::SocketFd) {
                     socket_fd_indices.push(j);
@@ -1043,13 +1025,10 @@ fn spawn_maybe_sync(
             .as_deref()
             .or(terminal_info.0.as_deref())
             .and_then(Terminal::get_pseudoconsole),
-
         #[cfg(windows)]
-        windows: spawn::WindowsOptions {
-            hide_window: windows_hide,
-            verbatim_arguments: windows_verbatim_arguments,
-            loop_: loop_handle,
-        },
+        hide_window: windows_hide,
+        #[cfg(windows)]
+        verbatim_arguments: windows_verbatim_arguments,
         #[cfg(any(target_os = "linux", target_os = "android"))]
         cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
         ..Default::default()
@@ -1066,7 +1045,7 @@ fn spawn_maybe_sync(
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
         {
             let display_path: &ZStr = &argv.args[0];
-            let mut systemerror = sys::Error::from_code(
+            let systemerror = sys::Error::from_code(
                 if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
@@ -1076,11 +1055,6 @@ fn spawn_maybe_sync(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
-                -UV_E::MFILE
-            } else {
-                -UV_E::NFILE
-            };
             return Err(cx
                 .global()
                 .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
@@ -1101,17 +1075,14 @@ fn spawn_maybe_sync(
                         .throw_value(c.target.blame(&err).to_js(cx.global())));
                 }
                 match err.get_errno() {
-                    errno @ (sys::Errno::EACCES
+                    sys::Errno::EACCES
                     | sys::Errno::ENOENT
                     | sys::Errno::EPERM
                     | sys::Errno::EISDIR
-                    | sys::Errno::ENOTDIR) => {
+                    | sys::Errno::ENOTDIR => {
                         let display_path: &ZStr = &argv.args[0];
                         if !display_path.as_bytes().is_empty() {
-                            let mut systemerror = err.with_path(display_path).to_system_error();
-                            if errno == sys::Errno::ENOENT {
-                                systemerror.errno = -UV_E::NOENT;
-                            }
+                            let systemerror = err.with_path(display_path).to_system_error();
                             return Err(cx.global().throw_value(
                                 SystemError::from(systemerror).to_error_instance(cx.global()),
                             ));
@@ -1196,8 +1167,6 @@ fn spawn_maybe_sync(
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
     let subprocess = &*subprocess_ref;
-    #[cfg(windows)]
-    subprocess_ref.record_stdio_pipe_ownership();
     let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
@@ -1249,12 +1218,9 @@ fn spawn_maybe_sync(
             // no-op.
             drop((spawned_stdout, spawned_stderr));
             subprocess.finalize_streams();
-            #[cfg(unix)]
             let _ = subprocess
                 .process
                 .kill_and_reap(&mut bun_core::ffi::zeroed::<Rusage>());
-            #[cfg(windows)]
-            let _ = subprocess.try_kill(SignalCode::SIGKILL);
             return Err(err);
         }
     }
@@ -1348,6 +1314,8 @@ fn spawn_maybe_sync(
         (wrapper.to_js(), &*wrapper)
     };
 
+    #[cfg_attr(unix, expect(unused_mut))]
+    let mut ipc_err = None;
     if let Some(ipc_data) = subprocess.ipc() {
         #[cfg(unix)]
         {
@@ -1367,23 +1335,17 @@ fn spawn_maybe_sync(
         }
         #[cfg(not(unix))]
         {
-            let idx = usize::try_from(ipc_channel).expect("int cast");
-            // The IPC channel is always a `buffer` pipe on Windows.
-            let ipc_pipe = subprocess.stdio_pipes.with_mut(|pipes| pipes[idx].take());
-            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = ipc_pipe else {
-                unreachable!("IPC channel stdio is not a buffer pipe");
-            };
-            // `windows_configure_server` stores the pointer in `uv_handle_t.data`
-            // for the pipe's lifetime, so it must be the allocation root
-            // (write provenance), never one re-derived from `&SendQueue`.
-            // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
-            }
+            let ipc_pipe = subprocess.stdio_pipes.with_mut(|v| {
+                let slot = &mut v[usize::try_from(ipc_channel).expect("int cast")];
+                core::mem::replace(slot, ExtraPipe::Unavailable).into_owned()
+            });
+            let ipc_pipe = ipc_pipe.expect("Stdio::Ipc makes a pipe");
+            let ipc_pipe = bun_io::Pipe::new_exclusive(loop_handle.loop_().port(), ipc_pipe);
+            ipc_err = ipc_data.windows_configure_server(ipc_pipe).err();
         }
-        ipc_data.write_version_packet(cx.global());
+        if ipc_err.is_none() {
+            ipc_data.write_version_packet(cx.global());
+        }
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
@@ -1466,6 +1428,7 @@ fn spawn_maybe_sync(
     }
 
     let mut setup_err = match subprocess.stdin.get() {
+        _ if ipc_err.is_some() => ipc_err,
         Writable::Buffer(buffer) => {
             let started = buffer.start(loop_handle);
             started.map(|state| subprocess.on_stdin_state(state)).err()
@@ -1474,7 +1437,6 @@ fn spawn_maybe_sync(
     };
     if let Some(err) = &setup_err {
         // A Buffer left here pins the wrapper.
-        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.close_stdin_buffer();
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
         if !is_sync {
@@ -1493,7 +1455,6 @@ fn spawn_maybe_sync(
     // after populating stdio_pipes; on those paths the caller never receives
     // the Subprocess, so the OwnedFd slot must remain for finalize_streams to
     // close.
-    #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
@@ -1767,7 +1728,7 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         errno: -UV_E::MFILE,
         path: BunString::EMPTY,
         #[cfg(windows)]
-        syscall: BunString::static_("uv_loop_init"),
+        syscall: BunString::static_("CreateIoCompletionPort"),
         #[cfg(any(target_os = "linux", target_os = "android"))]
         syscall: BunString::static_("epoll_create1"),
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]

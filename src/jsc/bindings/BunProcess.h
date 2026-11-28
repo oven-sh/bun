@@ -6,6 +6,10 @@
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
 
+#if OS(WINDOWS)
+#include <uv/version.h>
+#endif
+
 namespace Zig {
 class GlobalObject;
 }
@@ -16,6 +20,25 @@ using namespace JSC;
 // Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
 extern "C" int getPeakRSS(size_t* peak);
+
+#if OS(WINDOWS)
+inline constexpr char reportedLibuvVersion[] = STRINGIZE_VALUE_OF(UV_VERSION_MAJOR) "." STRINGIZE_VALUE_OF(UV_VERSION_MINOR) "." STRINGIZE_VALUE_OF(UV_VERSION_PATCH);
+#else
+inline constexpr char reportedLibuvVersion[] = "1.48.0";
+#endif
+
+#if OS(WINDOWS)
+// Mirrors CpuUsage in src/sys/windows_format/cpu_time.rs. Times are in microseconds.
+struct CpuUsage {
+    uint64_t user { 0 };
+    uint64_t system { 0 };
+};
+static_assert(sizeof(CpuUsage) == 16);
+
+// Return 0 or a libuv error code.
+extern "C" int Bun__Process__getCpuUsage(CpuUsage*);
+extern "C" int Bun__Process__getThreadCpuUsage(CpuUsage*);
+#endif
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;

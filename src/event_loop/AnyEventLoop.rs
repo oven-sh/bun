@@ -330,22 +330,11 @@ impl EventLoopHandle {
         }
     }
 
-    #[inline]
-    pub fn platform_event_loop(self) -> &'static UwsLoop {
-        self.r#loop()
-    }
-
     /// Alias for [`r#loop`](Self::r#loop) so callers spell `handle.loop_()`
     /// without the raw-identifier escape.
     #[inline]
     pub fn loop_(self) -> &'static UwsLoop {
         self.r#loop()
-    }
-
-    #[cfg(windows)]
-    #[inline]
-    pub fn uv_loop(self) -> *mut bun_io::Loop {
-        self.r#loop().uv_loop()
     }
 
     pub fn env(self) -> *mut DotEnvLoader {

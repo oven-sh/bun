@@ -1,21 +1,11 @@
-#[cfg(not(windows))]
 use core::cell::Cell;
-#[cfg(not(windows))]
 use core::ffi::c_void;
-#[cfg(not(windows))]
 use core::fmt;
-#[cfg(unix)]
 use core::ptr;
 
-#[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
-#[cfg(not(windows))]
-use bun_uws_sys::Loop as UwsLoop;
+use bun_uws_sys::Loop;
 
-#[cfg(not(windows))]
-pub type Loop = UwsLoop;
-
-#[cfg(not(windows))]
 use bun_sys::syslog;
 
 /// Local `errno_sys` helper. `bun_sys`
@@ -41,7 +31,7 @@ where
 /// the kernel stores the errno *value* in `data`. That is not the -1-sentinel
 /// return-code convention `errno_sys` decodes — feeding `data` through it
 /// yields `None` for every real errno.
-#[cfg(any(target_os = "macos", all(test, not(windows))))]
+#[cfg(any(target_os = "macos", test))]
 #[inline]
 fn kevent_change_error(data: i64) -> sys::Result<()> {
     sys::Result::Err(sys::Error::from_code(
@@ -64,50 +54,13 @@ fn kevent_change_error(data: i64) -> sys::Result<()> {
 /// be cleared, which an error return would skip, leaving the poll claiming to
 /// be registered and re-issuing doomed deletes on later teardown calls. libuv
 /// ignores the same errnos for its kqueue/epoll delete operations.
-#[cfg(not(windows))]
 #[inline]
 fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-#[cfg(not(windows))]
-use crate::OpaqueCallback;
-use crate::max_buf::Kind;
-pub use crate::{EventLoopCtx, EventLoopCtxKind};
-
-unsafe extern "Rust" {
-    /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
-    // safe: the `#[no_mangle] pub fn` body in
-    // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
-    // no memory-safety preconditions.
-    safe fn __bun_get_vm_ctx() -> EventLoopCtx;
-}
-
-/// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
-/// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
-/// one definition; `bun_io::pipes` re-exports it for downstream callers.
-// Note: sunk one tier to break the
-// io↔aio cycle (FilePoll::file_type was the only aio→io edge).
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FileType {
-    File,
-    Pipe,
-    NonblockingPipe,
-    Socket,
-}
-
-#[cfg(not(windows))]
-impl FileType {
-    pub(crate) fn is_blocking(self) -> bool {
-        self == FileType::Pipe
-    }
-}
-
-/// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
-#[inline]
-pub fn js_vm_ctx() -> EventLoopCtx {
-    __bun_get_vm_ctx()
-}
+use crate::owner::{__bun_run_io, IoEvent, Owner};
+use crate::{EventLoopCtx, EventLoopCtxKind, FileType, OpaqueCallback};
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll
@@ -116,7 +69,7 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `KQueueGenerationNumber` is `usize` on macOS-debug, else a zero-size sentinel.
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
-#[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
+#[cfg(not(all(target_os = "macos", debug_assertions)))]
 type KQueueGenerationNumber = u8; // Note: conceptually zero-width; smallest Rust int is u8. Gated by cfg below.
 
 // Debug-only diagnostic; `Relaxed` (no synchronization implied).
@@ -159,113 +112,7 @@ fn make_kevent(
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
 
-// ──────────────────────────────────────────────────────────────────────────
-// FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
-// Low tier (here) stores a tag and a `*mut ()`; `bun_runtime::dispatch::__bun_run_io`
-// owns the per-tag `match` so the variant types are never named in this crate.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Closed set of [`Owner`] kinds, which `bun_runtime::dispatch::__bun_run_io` matches on.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PollTag {
-    Null = 0,
-    FileSink,
-    SubprocessStdinWriter,
-    ShellStdinWriter,
-    SecurityScanWriter,
-    #[cfg(not(windows))]
-    DnsResolver,
-    #[cfg(target_os = "macos")]
-    GetAddrInfoRequest,
-    #[cfg(not(windows))]
-    Process,
-    ShellIoWriter,
-    TerminalWriter,
-    #[cfg(windows)]
-    WindowsNamedPipe,
-    #[cfg(target_os = "macos")]
-    ParentDeathWatchdog,
-    #[cfg(not(windows))]
-    MemoryPressure,
-    SubprocessPipeReader,
-    ShellPipeReader,
-    ShellIoReader,
-    FileReader,
-    FileResponseStream,
-    TerminalReader,
-    Cron,
-    FilterRunHandle,
-    MultiRunPipeReader,
-    TestParallelWorker,
-    LifecycleScript,
-    InstallGit,
-    SecurityScanReader,
-}
-
-/// The receiver of an [`IoEvent`]. Safe to build: `set_owner` and `OwnedFilePoll::new` carry the contract.
-#[derive(Copy, Clone)]
-pub struct Owner {
-    tag: PollTag,
-    /// Tells the two readers of one owner apart.
-    kind: Kind,
-    ptr: *mut (),
-}
-
-impl Owner {
-    pub(crate) const NULL: Owner = Owner::new(PollTag::Null, core::ptr::null_mut());
-    #[inline]
-    pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
-        Owner::with_kind(tag, Kind::Stdout, ptr)
-    }
-    #[inline]
-    pub const fn with_kind(tag: PollTag, kind: Kind, ptr: *mut ()) -> Owner {
-        Owner { tag, kind, ptr }
-    }
-    #[inline]
-    pub fn tag(&self) -> PollTag {
-        self.tag
-    }
-    #[inline]
-    pub fn kind(&self) -> Kind {
-        self.kind
-    }
-    #[inline]
-    pub fn ptr(&self) -> *mut () {
-        self.ptr
-    }
-}
-
-#[cfg(windows)]
-pub enum IoEvent {
-    Read(crate::pipe_reader::ReadEvent),
-    Write(crate::pipe_writer::WriteEvent),
-}
-
-/// What a poll that fired tells its owner.
-#[cfg(not(windows))]
-#[derive(Copy, Clone)]
-pub struct IoEvent {
-    pub fd: Fd,
-    pub flags: FlagsSet,
-    pub size_or_offset: i64,
-}
-
-#[cfg(not(windows))]
-impl IoEvent {
-    pub fn is_hup(&self) -> bool {
-        self.flags.contains(Flags::Hup)
-    }
-}
-
-unsafe extern "Rust" {
-    /// # Safety
-    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
-    pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
-}
-
 /// Shared borrows only: the kernel holds its address.
-#[cfg(not(windows))]
 pub struct FilePoll {
     fd: Fd,
     flags: Cell<FlagsSet>,
@@ -283,7 +130,6 @@ pub struct FilePoll {
     event_loop: EventLoopCtx,
 }
 
-#[cfg(not(windows))]
 impl FilePoll {
     pub fn has_flag(&self, flag: Flags) -> bool {
         self.flags.get().contains(flag)
@@ -975,7 +821,6 @@ impl FilePoll {
     }
 }
 
-#[cfg(not(windows))]
 impl fmt::Display for FilePoll {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -992,7 +837,6 @@ impl fmt::Display for FilePoll {
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 #[derive(enumset::EnumSetType, strum::IntoStaticStr, Debug)]
 #[strum(serialize_all = "snake_case")]
 pub enum Flags {
@@ -1037,10 +881,8 @@ pub enum Flags {
     Tty,
 }
 
-#[cfg(not(windows))]
 pub type FlagsSet = enumset::EnumSet<Flags>;
 
-#[cfg(not(windows))]
 impl Flags {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
@@ -1097,10 +939,8 @@ impl Flags {
     }
 }
 
-#[cfg(not(windows))]
 pub(crate) struct FlagsFormatter(pub FlagsSet);
 
-#[cfg(not(windows))]
 impl fmt::Display for FlagsFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut is_first = true;
@@ -1119,21 +959,17 @@ impl fmt::Display for FlagsFormatter {
 // Store
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
-#[cfg(not(windows))]
 type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
 /// We defer freeing FilePoll until the end of the next event loop iteration
 /// This ensures that we don't free a FilePoll before the next callback is called
-#[cfg(not(windows))]
 pub struct Store {
     hive: FilePollHive,
     pending_free_head: Cell<*mut FilePoll>,
     pending_free_tail: Cell<*mut FilePoll>,
 }
 
-#[cfg(not(windows))]
 impl Store {
     pub fn init() -> Store {
         Store {
@@ -1214,7 +1050,6 @@ impl Store {
 
 /// Polls whose free is still deferred may be heap slots of the hive's fallback,
 /// which only the pending list names.
-#[cfg(not(windows))]
 impl Drop for Store {
     fn drop(&mut self) {
         self.process_deferred_frees();
@@ -1222,10 +1057,8 @@ impl Drop for Store {
 }
 
 /// A slot of the event loop's `Store`. Dropping it unregisters the poll and puts the slot back.
-#[cfg(not(windows))]
 pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(ptr::NonNull<FilePoll>);
 
-#[cfg(not(windows))]
 impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
     /// # Safety
     /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until the poll
@@ -1256,7 +1089,6 @@ impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
     }
 }
 
-#[cfg(not(windows))]
 impl<const FORCE_UNREGISTER: bool> core::ops::Deref for OwnedFilePoll<FORCE_UNREGISTER> {
     type Target = FilePoll;
     fn deref(&self) -> &FilePoll {
@@ -1265,7 +1097,6 @@ impl<const FORCE_UNREGISTER: bool> core::ops::Deref for OwnedFilePoll<FORCE_UNRE
     }
 }
 
-#[cfg(not(windows))]
 impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
     fn drop(&mut self) {
         let was_ever_registered = self.reset(FORCE_UNREGISTER);
@@ -1290,13 +1121,11 @@ impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
 // `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
 // on a tuple). Since the union has exactly one variant, wrap the raw
 // `TaggedPtr` directly with the same tag scheme (`1024 - index`).
-#[cfg(not(windows))]
 #[derive(Copy, Clone)]
 pub(crate) struct Pollable {
     repr: bun_collections::TaggedPtr,
 }
 
-#[cfg(not(windows))]
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
@@ -1331,15 +1160,6 @@ impl Pollable {
     }
 }
 
-// `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
-// on Windows the libuv loop drives readiness, so this entry point is never
-// linked there. Restrict to the platforms where the fields are present.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "freebsd"
-))]
 #[unsafe(no_mangle)]
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
@@ -1375,7 +1195,6 @@ static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_nsec: 0,
 };
 
-#[cfg(not(windows))]
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum OneShotFlag {
@@ -1384,10 +1203,9 @@ pub(crate) enum OneShotFlag {
     None,
 }
 
-#[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

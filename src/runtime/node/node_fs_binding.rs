@@ -120,19 +120,12 @@ fn split_callback<'a>(
 
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
-///
-/// `create_task` is `async_::<FunctionName>::create` — passed in because the
-/// Windows path picks `UVFSRequest` for a handful of fds-only ops while
-/// everything else uses `AsyncFSTask`, and that choice is encoded in the
-/// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
-    this: &Binding,
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
     arm: AsyncArm,
-    create_task: fn(
+    schedule: fn(
         &bun_jsc::JsThread<'_>,
-        &Binding,
         ThreadIsolated<A>,
         &VirtualMachine,
         Option<JSValue>,
@@ -147,7 +140,7 @@ fn run_async<A: FsArgument>(
     };
     let vm: &VirtualMachine = global.bun_vm();
     move_waiting_descriptors();
-    Ok(create_task(&cx, this, args, vm, callback))
+    Ok(schedule(&cx, args, vm, callback))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -287,7 +280,7 @@ impl Binding {
                 &cx, &rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
+        Ok(async_::Readdir::schedule(&cx, rd_args, vm, callback))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -350,14 +343,14 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Promise, async_::$F::schedule)
                 }
                 pub(crate) fn $callback(
                     &self,
                     cx: &mut JsScope<'_>,
                     args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Args>(cx, args, AsyncArm::Callback, async_::$F::schedule)
                 }
             )*
         }
@@ -488,7 +481,7 @@ pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) ->
         let handle =
             bun_jsc::JSBigInt::from_js(value).expect("windowsHandle is validated as a bigint");
         let fd =
-            bun_core::fd::uv_open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
+            bun_sys::windows::open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
         if fd == -1 {
             let err =
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::_open_osfhandle);
@@ -511,7 +504,7 @@ pub(crate) fn string_to_flags_for_testing(
     // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
     // fs.constants both speak MSVCRT, so translate here too.
     #[cfg(windows)]
-    let bits = bun_sys::windows::libuv::O::from_bun_o(flags.as_int());
+    let bits = bun_sys::windows_format::open_flags::to_uv(flags.as_int());
     #[cfg(not(windows))]
     let bits = flags.as_int();
     Ok(bits)

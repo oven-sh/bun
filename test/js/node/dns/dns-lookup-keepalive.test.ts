@@ -77,7 +77,7 @@ describe("a settled query does not keep the event loop alive", () => {
       resolver.setServers(dns.getServers());
 
       const outcome = await (async () => { ${query} })().catch(e => e.code);
-      // libuv needs some turns to close the resolver's sockets. The resolver's timer runs for 1000 ms.
+      // Closing the resolver's sockets can take several event loop iterations. The resolver's timer runs for 1000 ms.
       const deadline = performance.now() + 500;
       do await new Promise(resolve => setImmediate(resolve));
       while (getEventLoopStats().loopActive && performance.now() < deadline);

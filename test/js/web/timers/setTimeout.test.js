@@ -2,7 +2,17 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles, withoutAsanQuarantine } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  withoutAsanQuarantine,
+} from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -804,6 +814,135 @@ it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async ()
   expect(median).toBeLessThan(8);
   expect(min).toBeGreaterThanOrEqual(1);
   expect(exitCode).toBe(0);
+});
+
+// Not concurrent: some cases keep two threads busy, which would delay the timers of the others.
+it.skipIf(!isWindows).each([
+  ["the event loop is idle", ""],
+  [
+    "MessageChannel messages wake the event loop",
+    `const { port1, port2 } = new MessageChannel(); port2.onmessage = () => port1.postMessage(0); port1.postMessage(0);`,
+  ],
+  ["fs calls keep completing", `(async () => { for (;;) await require("fs").promises.stat("."); })();`],
+  ["an immediate is always queued", `setImmediate(function reschedule() { setImmediate(reschedule); });`],
+  ["a long timer is scheduled first", `setTimeout(() => {}, 1e6);`],
+  ["the thread blocks before each timer is scheduled", `globalThis.beforeTimer = () => Bun.sleepSync(3);`],
+])("timers fire neither early nor a system tick late when %s", async (_, setup) => {
+  const measureSource = `
+    ${setup}
+    (async () => {
+      const latenessMs = [];
+      for (const ms of [1, 2, 3, 5, 7, 15, 16, 17, 1, 2, 3, 5, 7, 31]) {
+        globalThis.beforeTimer?.();
+        const start = process.hrtime.bigint();
+        await new Promise(resolve => setTimeout(resolve, ms));
+        latenessMs.push(Number(process.hrtime.bigint() - start) / 1e6 - ms);
+      }
+      latenessMs.sort((a, b) => a - b);
+      report({ min: latenessMs[0], median: latenessMs[latenessMs.length >> 1] });
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const worker = new Worker("const report = r => require('worker_threads').parentPort.postMessage(r);" + ${JSON.stringify(measureSource)}, { eval: true });
+       const workerResult = new Promise(resolve => worker.once("message", resolve));
+       const report = async mainResult => { console.log(JSON.stringify([mainResult, await workerResult])); process.exit(0); };
+       ${measureSource}`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  for (const { min, median } of JSON.parse(stdout)) {
+    expect(min).toBeGreaterThanOrEqual(0);
+    expect(median).toBeLessThan(isDebug ? 500 : 8);
+  }
+});
+
+describe.concurrent.skipIf(!isWindows)("the event loop does not busy-wait", () => {
+  const prelude = `
+    const fs = require("fs"), net = require("net"), { once } = require("events");
+    const pipePath = "\\\\\\\\.\\\\pipe\\\\bun-test-" + crypto.randomUUID(), tcpAddress = { port: 0, host: "127.0.0.1" };
+    const idleCmd = [process.execPath, "-e", "setTimeout(() => {}, 30_000)"], largeBuffer = Buffer.alloc(8 << 20);
+    async function connectPair(address) {
+      const server = net.createServer({ pauseOnConnect: true, allowHalfOpen: true });
+      await once(server.listen(address), "listening");
+      const client = net.connect({ ...(address === tcpAddress ? server.address() : { path: address }), host: "127.0.0.1", allowHalfOpen: true });
+      const [[accepted]] = await Promise.all([once(server, "connection"), once(client, "connect")]);
+      return [client.on("error", () => {}), accepted.on("error", () => {})];
+    }
+  `;
+  it.each([
+    ["pending timer", ``],
+    ["reading TCP sockets", `(await connectPair(tcpAddress)).forEach(socket => socket.resume())`],
+    ["paused TCP socket with unread data", `(await connectPair(tcpAddress))[0].write("data")`],
+    ["paused TCP socket after peer FIN", `(await connectPair(tcpAddress))[0].end()`],
+    ["paused TCP socket with unread data after peer FIN", `(await connectPair(tcpAddress))[0].end("data")`],
+    [
+      "half-open TCP socket after EOF",
+      `const [client, server] = await connectPair(tcpAddress); client.end(); await once(server.resume(), "end")`,
+    ],
+    [
+      "half-open TCP socket after EOF and peer close",
+      `const [client, server] = await connectPair(tcpAddress); client.end(); await once(server.resume(), "end"); client.destroy()`,
+    ],
+    [
+      "TCP socket with a blocked write",
+      `const [client] = await connectPair(tcpAddress); client.write(largeBuffer); client.write(largeBuffer); client.write(largeBuffer)`,
+    ],
+    [
+      "TCP socket with a blocked write after peer FIN",
+      `const [client, server] = await connectPair(tcpAddress); client.write(largeBuffer); client.write(largeBuffer); client.write(largeBuffer); server.end()`,
+    ],
+    [
+      "UDP socket after sending to a closed port",
+      `const closedSocket = await Bun.udpSocket({}), port = closedSocket.port; closedSocket.close(); (globalThis.udp = await Bun.udpSocket({ socket: { data() {}, error() {} } })).send("x", port, "127.0.0.1")`,
+    ],
+    ["reading named pipes", `(await connectPair(pipePath)).forEach(socket => socket.resume())`],
+    ["paused named pipe with unread data", `(await connectPair(pipePath))[0].write(largeBuffer)`],
+    ["paused named pipe with unread data after peer end()", `(await connectPair(pipePath))[0].end("data")`],
+    [
+      "subprocess with stdio pipes and IPC",
+      `const child = Bun.spawn(idleCmd, { stdio: ["pipe", "pipe", "pipe"], ipc() {} }); child.stdout.text(); child.stdin.write(largeBuffer); child.stdin.flush()`,
+    ],
+    ["reading stdin", `process.stdin.resume()`],
+    ["paused stdin", `process.stdin.resume(); await Bun.sleep(1); process.stdin.pause()`],
+    ["recursive fs.watch()", `fs.watch(".", { recursive: true }, () => {})`],
+    ["signal listeners", `process.on("SIGINT", () => {}).on("SIGWINCH", () => {})`],
+    ["after a Worker exits", `await once(new (require("worker_threads").Worker)("0", { eval: true }), "exit")`],
+    ["after spawnSync() with a timeout", `Bun.spawnSync(idleCmd, { timeout: 1 })`],
+  ])("%s", async (_, setup) => {
+    using dir = tempDir("event-loop-idle", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${prelude}
+         ${setup};
+         await Bun.sleep(20);
+         const startUsage = process.threadCpuUsage();
+         // Measures the CPU time the thread uses over an idle window.
+         await Bun.sleep(400);
+         const { user, system } = process.threadCpuUsage(startUsage);
+         console.log((user + system) / 1000);
+         process.exit(0);`,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // Windows accounts CPU time in 15.6 ms ticks.
+    expect(Number(stdout)).toBeLessThan(100);
+  });
 });
 
 // Reading a timer's numeric id (`+t`, `${t}`, obj[t]=x, any Symbol.toPrimitive

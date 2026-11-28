@@ -237,10 +237,9 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
         #[cfg(windows)]
         {
-            if let Err(e) = bun_sys::sys_uv::symlink_uv(
+            if let Err(e) = bun_sys::windows::create_junction(
                 &bun_paths::Path::from_top_level_dir(),
                 &bun_paths::Path::resolve(&[pm::global_link_dir_path(manager), name]),
-                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
             ) {
                 bun_core::pretty_errorln!(
                     "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",

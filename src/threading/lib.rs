@@ -16,9 +16,13 @@ pub mod semaphore;
 pub mod thread_pool;
 pub mod work_pool;
 
+#[cfg(windows)]
+pub mod fifo_pool;
 pub mod guarded;
 pub mod io_thread_pool;
 pub mod signal_ring;
+#[cfg(any(windows, test))]
+pub mod spin;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;

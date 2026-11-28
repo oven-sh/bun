@@ -278,14 +278,8 @@ impl DirectoryRoute {
     /// Symlinks resolve as with `openat2(RESOLVE_IN_ROOT)`, whether or not the kernel has it. Windows follows them anywhere.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let zrel: &bun_core::ZStr = &bun_paths::Path::from(rel);
-        // NONBLOCK so opening a FIFO without a writer cannot block the event
-        // loop on POSIX. Not on Windows: there `openat` maps it to omitting
-        // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads
-        // FileResponseStream issues.
-        #[cfg(not(windows))]
+        // NONBLOCK so opening a FIFO without a writer cannot block the event loop.
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
-        #[cfg(windows)]
-        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(not(windows))]
         let fd = {
             use bun_sys::beneath::{Symlinks, openat};
@@ -293,9 +287,7 @@ impl DirectoryRoute {
         };
         #[cfg(windows)]
         let fd = bun_sys::openat(self.root.fd(), zrel, flags, 0).ok()?;
-        // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
-        // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
-        File::from_fd(fd).make_lib_uv_owned().ok()
+        Some(File::from_fd(fd))
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {

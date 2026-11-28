@@ -4,7 +4,6 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <uv.h>
 
 napi_value call_uv_func(napi_env env, napi_callback_info info) {
@@ -226,22 +225,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     void **arg2 = NULL;
 
     uv_dlsym(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_err_name") == 0) {
-    int arg0 = {0};
-
-    uv_err_name(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_err_name_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_err_name_r(arg0, arg1, arg2);
     return NULL;
   }
 
@@ -1738,22 +1721,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_strerror") == 0) {
-    int arg0 = {0};
-
-    uv_strerror(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_strerror_r(arg0, arg1, arg2);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_tcp_bind") == 0) {
     uv_tcp_t *arg0 = {0};
     const struct sockaddr *arg1 = {0};
@@ -1965,13 +1932,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_timer_t *arg0 = {0};
 
     uv_timer_stop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_translate_sys_error") == 0) {
-    int arg0 = {0};
-
-    uv_translate_sys_error(arg0);
     return NULL;
   }
 

@@ -960,7 +960,7 @@ extern "C" fn Bun__ThreadPool__exitWithoutAnyThread() {
 /// A refused thread is the environment's limit, not a bug: no crash reporter.
 #[cold]
 #[inline(never)]
-fn exit_spawn_failed(err: &std::io::Error) -> ! {
+pub(crate) fn exit_spawn_failed(err: &std::io::Error) -> ! {
     bun_core::err_generic!("Failed to start a thread of the thread pool: {}", err);
     if err.raw_os_error() == Some(libc::EAGAIN) {
         bun_core::note!(

@@ -332,7 +332,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn bun_initialize_process() {
-    for (stream, is_terminal) in (0..).map(bun_core::Fd::from_uv).zip(&bun_stdio_tty) {
+    for (stream, is_terminal) in (0..).map(bun_core::Fd::from_crt).zip(&bun_stdio_tty) {
         is_terminal.store(bun_sys::isatty(stream).into(), Ordering::Relaxed);
     }
 }

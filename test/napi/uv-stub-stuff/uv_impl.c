@@ -1,16 +1,85 @@
 #include <node_api.h>
 
-#include <pthread.h>
-#include <sched.h>
 #include <signal.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <uv.h>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
+#include <termios.h>
+#include <unistd.h>
+#else
+// Minimal replacements for the POSIX headers above, which MSVC lacks.
+typedef struct {
+  HANDLE handle;
+  DWORD id;
+} pthread_t;
+
+struct thread_start {
+  void *(*entry)(void *);
+  void *arg;
+};
+
+static DWORD WINAPI thread_main(void *param) {
+  struct thread_start start = *(struct thread_start *)param;
+  free(param);
+  start.entry(start.arg);
+  return 0;
+}
+
+static int pthread_create(pthread_t *thread, void *attr, void *(*entry)(void *),
+                          void *arg) {
+  struct thread_start *start = malloc(sizeof(*start));
+  start->entry = entry;
+  start->arg = arg;
+  thread->handle = CreateThread(NULL, 0, thread_main, start, 0, &thread->id);
+  return thread->handle == NULL;
+}
+
+static void pthread_join(pthread_t thread, void **result) {
+  WaitForSingleObject(thread.handle, INFINITE);
+  CloseHandle(thread.handle);
+}
+
+static void pthread_detach(pthread_t thread) { CloseHandle(thread.handle); }
+
+static pthread_t pthread_self(void) {
+  pthread_t self = {NULL, GetCurrentThreadId()};
+  return self;
+}
+
+static int pthread_equal(pthread_t a, pthread_t b) { return a.id == b.id; }
+
+typedef SRWLOCK pthread_mutex_t;
+#define PTHREAD_MUTEX_INITIALIZER SRWLOCK_INIT
+#define pthread_mutex_lock AcquireSRWLockExclusive
+#define pthread_mutex_unlock ReleaseSRWLockExclusive
+#define sched_yield SwitchToThread
+
+typedef volatile LONG atomic_int, atomic_uint, atomic_bool;
+#define atomic_load(p) InterlockedCompareExchange(p, 0, 0)
+#define atomic_store InterlockedExchange
+#define atomic_fetch_add InterlockedExchangeAdd
+
+// Sleep() counts timer ticks, so it can return before the time has passed.
+static void usleep(unsigned microseconds) {
+  LARGE_INTEGER frequency, start, now;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&start);
+  do {
+    Sleep(1);
+    QueryPerformanceCounter(&now);
+  } while ((now.QuadPart - start.QuadPart) * 1000000 <
+           microseconds * frequency.QuadPart);
+}
+#endif
 
 // Test mutex initialization and destruction
 static napi_value test_mutex_init_destroy(napi_env env,
@@ -130,9 +199,9 @@ static napi_value test_cwd(napi_env env, napi_callback_info info) {
   napi_create_int32(env, uv_cwd(dummy, &zero), &v);
   napi_set_named_property(env, obj, "zeroSize", v);
 
-  char small[2];
-  size_t small_size = sizeof(small);
-  napi_create_int32(env, uv_cwd(small, &small_size), &v);
+  char small_buf[2];
+  size_t small_size = sizeof(small_buf);
+  napi_create_int32(env, uv_cwd(small_buf, &small_size), &v);
   napi_set_named_property(env, obj, "smallRc", v);
   napi_create_int64(env, (int64_t)small_size, &v);
   napi_set_named_property(env, obj, "smallRequired", v);
@@ -178,8 +247,8 @@ static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   return obj;
 }
 
-// Test uv_tty_reset_mode, the one implemented uv_* function that lives in bun's
-// C++ (wtf-bindings.cpp) instead of uv-posix-polyfills.c, so the one that can
+// Test uv_tty_reset_mode, the one implemented uv_* function that lives with
+// bun's terminal code instead of with the others, so the one that can
 // end up missing from bun's export table. Referenced directly, like a real
 // addon would.
 static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
@@ -188,10 +257,30 @@ static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
   return ret;
 }
 
-// uv_tty_reset_mode() holds its lock across the tcsetattr() that restores the
-// snapshot, so two threads calling it back to back collide constantly once a
-// snapshot exists. Every result must be 0 or UV_EBUSY; "busy" says how many
-// collisions this run happened to produce.
+// isStdinRaw() queries the terminal mode from the OS, not from bun.
+static napi_value is_stdin_raw(napi_env env, napi_callback_info info) {
+#ifdef _WIN32
+  DWORD mode;
+  bool is_terminal = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+  bool is_raw = is_terminal && !(mode & ENABLE_LINE_INPUT);
+#else
+  struct termios mode;
+  bool is_terminal = tcgetattr(0, &mode) == 0;
+  bool is_raw = is_terminal && !(mode.c_lflag & ICANON);
+#endif
+  if (!is_terminal) {
+    napi_throw_error(env, NULL, "stdin is not a terminal");
+    return NULL;
+  }
+  napi_value ret;
+  napi_get_boolean(env, is_raw, &ret);
+  return ret;
+}
+
+// On Unix uv_tty_reset_mode() holds its lock across the tcsetattr() that
+// restores the snapshot, so two threads calling it back to back collide
+// constantly once a snapshot exists. Every result must be 0 or UV_EBUSY; "busy"
+// says how many collisions this run happened to produce.
 #define TTY_RESET_ITERATIONS 4000
 
 static pthread_mutex_t tty_reset_counts = PTHREAD_MUTEX_INITIALIZER;
@@ -325,6 +414,39 @@ static napi_value test_version(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static void set_string(napi_env env, napi_value object, const char *key,
+                       const char *text) {
+  napi_value value;
+  napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &value);
+  napi_set_named_property(env, object, key, value);
+}
+
+// describeError(systemError, bufferSize) returns the translated code with its
+// name and message, also as the *_r variants write them into bufferSize bytes.
+static napi_value describe_error(napi_env env, napi_callback_info info) {
+  static const char *name, *message;
+  size_t argc = 2;
+  napi_value argv[2], result, code;
+  int32_t error;
+  uint32_t size;
+  char buf[64];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  napi_get_value_int32(env, argv[0], &error);
+  napi_get_value_uint32(env, argv[1], &size);
+
+  error = uv_translate_sys_error(error);
+  name = uv_err_name(error);
+  message = uv_strerror(error);
+  napi_create_object(env, &result);
+  napi_create_int32(env, error, &code);
+  napi_set_named_property(env, result, "code", code);
+  set_string(env, result, "name", name);
+  set_string(env, result, "message", message);
+  set_string(env, result, "nameInBuffer", uv_err_name_r(error, buf, size));
+  set_string(env, result, "messageInBuffer", uv_strerror_r(error, buf, size));
+  return result;
+}
+
 // testSizesAndNames() checks uv_handle_size, uv_req_size and the type names
 // against the headers this addon was compiled with. Addons rely on these to
 // allocate handles dynamically.
@@ -373,6 +495,190 @@ static napi_value test_osfhandle(napi_env env, napi_callback_info info) {
   napi_value result;
   napi_create_int32(env, uv_open_osfhandle(uv_get_osfhandle(fd)), &result);
   return result;
+}
+
+// testOsfhandleWrite(fd) writes "hello" to a file opened by JS.
+static napi_value test_osfhandle_write(napi_env env, napi_callback_info info) {
+  napi_value args[1], result;
+  get_args(env, info, args, 1);
+  int32_t fd = -1;
+  napi_get_value_int32(env, args[0], &fd);
+#ifdef _WIN32
+  DWORD written = 0;
+  if (!WriteFile(uv_get_osfhandle(fd), "hello", 5, &written, NULL))
+    written = -1;
+#else
+  ssize_t written = write(uv_get_osfhandle(fd), "hello", 5);
+#endif
+  napi_create_int32(env, (int32_t)written, &result);
+  return result;
+}
+
+// testOsfhandleOpen(path) opens a file natively and returns an fd for JS.
+static napi_value test_osfhandle_open(napi_env env, napi_callback_info info) {
+  napi_value args[1], result;
+  get_args(env, info, args, 1);
+  char path[4096];
+  napi_get_value_string_utf8(env, args[0], path, sizeof(path), NULL);
+#ifdef _WIN32
+  HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+#else
+  int file = open(path, O_RDONLY);
+#endif
+  napi_create_int32(env, uv_open_osfhandle(file), &result);
+  return result;
+}
+
+struct contended_mutex {
+  uv_mutex_t mutex;
+  int32_t result;
+};
+
+static void *trylock_and_unlock(void *arg) {
+  struct contended_mutex *test = arg;
+  test->result = uv_mutex_trylock(&test->mutex);
+  if (test->result == 0)
+    uv_mutex_unlock(&test->mutex);
+  return NULL;
+}
+
+static int32_t run_trylock_thread(struct contended_mutex *test) {
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, trylock_and_unlock, test) != 0)
+    return 1;
+  pthread_join(thread, NULL);
+  return test->result;
+}
+
+// testMutexContended(isRecursive) returns uv_mutex_trylock's result on the
+// owning thread, on another thread, and on another thread after the unlock.
+static napi_value test_mutex_contended(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct contended_mutex test;
+  if (as_bool(env, args[0]))
+    uv_mutex_init_recursive(&test.mutex);
+  else
+    uv_mutex_init(&test.mutex);
+  int32_t results[3];
+  uv_mutex_lock(&test.mutex);
+  trylock_and_unlock(&test);
+  results[0] = test.result;
+  results[1] = run_trylock_thread(&test);
+  uv_mutex_unlock(&test.mutex);
+  results[2] = run_trylock_thread(&test);
+  uv_mutex_destroy(&test.mutex);
+  return make_int32_array(env, results, 3);
+}
+
+#define ONCE_THREAD_COUNT 8
+
+static uv_once_t once_race_guard = UV_ONCE_INIT;
+static atomic_int once_race_call_count;
+static atomic_int once_race_is_finished;
+static atomic_int once_race_observer_count;
+
+static void once_race_callback(void) {
+  atomic_fetch_add(&once_race_call_count, 1);
+  // Leaves time for other threads to enter the callback or return early.
+  usleep(20 * 1000);
+  atomic_store(&once_race_is_finished, 1);
+}
+
+static void *once_race_thread(void *arg) {
+  uv_once(&once_race_guard, once_race_callback);
+  atomic_fetch_add(&once_race_observer_count,
+                   atomic_load(&once_race_is_finished));
+  return NULL;
+}
+
+// testOnceRace() returns the callback's call count and the number of threads
+// that observed it finished when uv_once returned.
+static napi_value test_once_race(napi_env env, napi_callback_info info) {
+  pthread_t threads[ONCE_THREAD_COUNT];
+  for (int i = 0; i < ONCE_THREAD_COUNT; i++) {
+    if (pthread_create(&threads[i], NULL, once_race_thread, NULL) != 0)
+      abort();
+  }
+  for (int i = 0; i < ONCE_THREAD_COUNT; i++)
+    pthread_join(threads[i], NULL);
+  int32_t results[] = {atomic_load(&once_race_call_count),
+                       atomic_load(&once_race_observer_count)};
+  return make_int32_array(env, results, 2);
+}
+
+// testCwdCapacity(capacity) returns { rc, size, cwd, isSentinelModified }.
+static napi_value test_cwd_capacity(napi_env env, napi_callback_info info) {
+  napi_value args[1], result, value;
+  get_args(env, info, args, 1);
+  uint32_t capacity = 0;
+  napi_get_value_uint32(env, args[0], &capacity);
+  char *buffer = malloc(capacity + 1);
+  memset(buffer, '#', capacity + 1);
+  size_t size = capacity;
+  int rc = uv_cwd(buffer, &size);
+  napi_create_object(env, &result);
+  set_int32(env, result, "rc", rc);
+  set_int32(env, result, "size", (int32_t)size);
+  if (rc == 0) {
+    napi_create_string_utf8(env, buffer, NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, result, "cwd", value);
+  }
+  napi_get_boolean(env, buffer[capacity] != '#', &value);
+  napi_set_named_property(env, result, "isSentinelModified", value);
+  free(buffer);
+  return result;
+}
+
+static struct {
+  uv_check_t checks[4];
+  uv_idle_t idle;
+  struct reporter reporter;
+  int call_count;
+} order;
+
+static void order_idle_cb(uv_idle_t *handle) {}
+
+static void order_check_cb(uv_check_t *handle) {
+  int index = (int)(handle - order.checks);
+  report(&order.reporter, "check", index, ++order.call_count);
+  if (order.call_count == 2)
+    uv_check_start(&order.checks[3], order_check_cb);
+  if (order.call_count == 7) {
+    for (int i = 0; i < 4; i++)
+      uv_close((uv_handle_t *)&order.checks[i], NULL);
+    uv_close((uv_handle_t *)&order.idle, NULL);
+    reporter_destroy(&order.reporter);
+  }
+}
+
+// testWatcherOrder(callback) starts three check handles, and a fourth one from
+// the second callback. Reports `check <index> <call>` for two iterations.
+// The idle handle keeps the poll from blocking.
+static napi_value test_watcher_order(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  reporter_init(&order.reporter, env, args[0]);
+  uv_loop_t *loop = get_loop(env, false);
+  uv_idle_init(loop, &order.idle);
+  uv_idle_start(&order.idle, order_idle_cb);
+  for (int i = 0; i < 4; i++)
+    uv_check_init(loop, &order.checks[i]);
+  for (int i = 0; i < 3; i++)
+    uv_check_start(&order.checks[i], order_check_cb);
+  return NULL;
+}
+
+// testZeroedHandle() uses a handle that was never passed to uv_*_init.
+static napi_value test_zeroed_handle(napi_env env, napi_callback_info info) {
+  static uv_async_t async;
+  uv_handle_t *handle = (uv_handle_t *)&async;
+  uv_ref(handle);
+  uv_unref(handle);
+  int32_t results[] = {uv_is_active(handle), uv_is_closing(handle),
+                       uv_has_ref(handle), uv_async_send(&async)};
+  return make_int32_array(env, results, 4);
 }
 
 static void *call_uv_default_loop(void *out) {
@@ -457,6 +763,7 @@ static napi_value test_errors(napi_env env, napi_callback_info info) {
       uv_timer_start((uv_timer_t *)&errors_idle, unused_timer_cb, 0, 0),
       uv_timer_stop((uv_timer_t *)&errors_idle),
       uv_timer_again((uv_timer_t *)&errors_idle),
+      uv_async_send((uv_async_t *)&errors_timer),
   };
   uv_close((uv_handle_t *)&errors_idle, NULL);
   uv_close((uv_handle_t *)&errors_timer, NULL);
@@ -801,6 +1108,61 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static uv_work_t work_pair[2];
+static atomic_int works_running;
+static atomic_bool works_released;
+static atomic_bool works_overlapped;
+
+static void queue_work_pair(napi_env env, uv_work_cb work_cb) {
+  for (int i = 0; i < 2; i++) {
+    uv_queue_work(get_loop(env, false), &work_pair[i], work_cb, NULL);
+  }
+}
+
+static void blocking_work_cb(uv_work_t *req) {
+  (void)req;
+  atomic_fetch_add(&works_running, 1);
+  while (!atomic_load(&works_released)) {
+    usleep(1000);
+  }
+}
+
+// Returns once both requests occupy a thread.
+static napi_value queue_blocking_works(napi_env env, napi_callback_info info) {
+  queue_work_pair(env, blocking_work_cb);
+  while (atomic_load(&works_running) < 2) {
+    usleep(1000);
+  }
+  return NULL;
+}
+
+static napi_value release_blocking_works(napi_env env,
+                                         napi_callback_info info) {
+  atomic_store(&works_released, true);
+  return NULL;
+}
+
+static void overlapping_work_cb(uv_work_t *req) {
+  (void)req;
+  if (atomic_fetch_add(&works_running, 1) > 0) {
+    atomic_store(&works_overlapped, true);
+  }
+  usleep(50 * 1000);
+  atomic_fetch_add(&works_running, -1);
+}
+
+static napi_value queue_overlapping_works(napi_env env,
+                                          napi_callback_info info) {
+  queue_work_pair(env, overlapping_work_cb);
+  return NULL;
+}
+
+static napi_value did_works_overlap(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_get_boolean(env, atomic_load(&works_overlapped), &result);
+  return result;
+}
+
 // --- uv_default_loop on another thread ---------------------------------------
 
 static uv_work_t default_loop_work;
@@ -871,6 +1233,235 @@ static napi_value test_queue_work_from_thread(napi_env env,
   }
   pthread_join(thread, NULL);
   return make_int32_array(env, &result, 1);
+}
+
+// --- handles on a thread other than the loop's -------------------------------
+
+static uv_async_t foreign_async;
+static uv_timer_t foreign_timer;
+static atomic_bool foreign_async_ran;
+
+static void print_line(const char *line) {
+  printf("%s\n", line);
+  fflush(stdout);
+}
+
+static void foreign_close_cb(uv_handle_t *handle) { print_line("close"); }
+
+static void foreign_async_cb(uv_async_t *handle) {
+  print_line("async");
+  atomic_store(&foreign_async_ran, true);
+}
+
+static void foreign_closing_async_cb(uv_async_t *handle) {
+  print_line("async");
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static void foreign_timer_cb(uv_timer_t *handle) {
+  print_line("timer");
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static void *foreign_init_async(void *loop) {
+  uv_async_init(loop, &foreign_async, foreign_closing_async_cb);
+  uv_async_send(&foreign_async);
+  return NULL;
+}
+
+static void *foreign_unref(void *loop) {
+  uv_unref((uv_handle_t *)&foreign_async);
+  uv_unref((uv_handle_t *)&foreign_timer);
+  return NULL;
+}
+
+static void *foreign_close(void *loop) {
+  uv_close((uv_handle_t *)&foreign_async, foreign_close_cb);
+  uv_close((uv_handle_t *)&foreign_timer, foreign_close_cb);
+  return NULL;
+}
+
+static void *foreign_start_timer(void *loop) {
+  uv_timer_init(loop, &foreign_timer);
+  uv_timer_start(&foreign_timer, foreign_timer_cb, 1, 0);
+  return NULL;
+}
+
+// testFromWaitedThread(index): the JS thread waits while the other one makes
+// its calls.
+static napi_value test_from_waited_thread(napi_env env,
+                                          napi_callback_info info) {
+  static void *(*const entries[])(void *) = {
+      foreign_init_async, foreign_start_timer, foreign_unref, foreign_close};
+  napi_value arg;
+  uint32_t index;
+  pthread_t thread;
+  get_args(env, info, &arg, 1);
+  napi_get_value_uint32(env, arg, &index);
+  uv_loop_t *loop = get_loop(env, false);
+  if (index >= 2) {
+    uv_async_init(loop, &foreign_async, foreign_async_cb);
+    uv_timer_init(loop, &foreign_timer);
+    uv_timer_start(&foreign_timer, foreign_timer_cb, 1000000, 0);
+  }
+  pthread_create(&thread, NULL, entries[index], loop);
+  pthread_join(thread, NULL);
+  return NULL;
+}
+
+static void ref_around_send_work_cb(uv_work_t *req) {
+  uv_ref((uv_handle_t *)&foreign_async);
+  uv_async_send(&foreign_async);
+  while (!atomic_load(&foreign_async_ran)) {
+    sched_yield();
+  }
+  uv_unref((uv_handle_t *)&foreign_async);
+}
+
+static napi_value test_ref_around_send(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_async_init(loop, &foreign_async, foreign_async_cb);
+  uv_unref((uv_handle_t *)&foreign_async);
+  uv_queue_work(loop, &default_loop_work, ref_around_send_work_cb, NULL);
+  return NULL;
+}
+
+static napi_value test_default_loop_async(napi_env env,
+                                          napi_callback_info info) {
+  foreign_init_async(uv_default_loop());
+  return NULL;
+}
+
+static napi_value start_default_loop_timer(napi_env env,
+                                           napi_callback_info info) {
+  uv_timer_init(uv_default_loop(), &foreign_timer);
+  uv_timer_start(&foreign_timer, foreign_timer_cb, 1000000, 0);
+  return NULL;
+}
+
+static napi_value restart_default_loop_timer(napi_env env,
+                                             napi_callback_info info) {
+  uv_timer_start(&foreign_timer, foreign_timer_cb, 1, 0);
+  return NULL;
+}
+
+static void close_at_exit(void) {
+  uv_close((uv_handle_t *)&foreign_async, NULL);
+  print_line("returned");
+}
+
+// Bun counts the threads inside uv_async_send in the field after async_cb.
+static napi_value test_close_at_exit_with_sender_inside(
+    napi_env env, napi_callback_info info) {
+  uv_async_init(get_loop(env, false), &foreign_async, foreign_async_cb);
+  *(int32_t *)(&foreign_async.async_cb + 1) = 1;
+  atexit(close_at_exit);
+  return NULL;
+}
+
+static uv_async_t progress_async, blocking_async;
+static uv_work_t progress_work;
+static atomic_bool progress_allowed, progress_sent;
+
+static void progress_async_cb(uv_async_t *handle) { print_line("progress"); }
+
+static void progress_work_cb(uv_work_t *req) {
+  while (!atomic_load(&progress_allowed)) {
+    sched_yield();
+  }
+  uv_async_send(&progress_async);
+  atomic_store(&progress_sent, true);
+}
+
+static void progress_after_work_cb(uv_work_t *req, int status) {
+  print_line("after work");
+  uv_close((uv_handle_t *)&progress_async, NULL);
+}
+
+static void blocking_async_cb(uv_async_t *handle) {
+  atomic_store(&progress_allowed, true);
+  while (!atomic_load(&progress_sent)) {
+    sched_yield();
+  }
+  // The order holds without this. It lets the completion be posted first.
+  usleep(10000);
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static napi_value test_progress_before_after_work(napi_env env,
+                                                  napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_async_init(loop, &progress_async, progress_async_cb);
+  uv_async_init(loop, &blocking_async, blocking_async_cb);
+  uv_queue_work(loop, &progress_work, progress_work_cb, progress_after_work_cb);
+  uv_async_send(&blocking_async);
+  return NULL;
+}
+
+static uv_timer_t close_order_timers[3];
+
+static void close_order_cb(uv_handle_t *handle) {
+  print_line(handle->data);
+  if (handle == (uv_handle_t *)&close_order_timers[1]) {
+    uv_close((uv_handle_t *)&close_order_timers[2], close_order_cb);
+  }
+}
+
+static napi_value test_close_in_close_cb(napi_env env,
+                                         napi_callback_info info) {
+  static char *const names[] = {"first", "second", "third"};
+  for (int i = 0; i < 3; i++) {
+    uv_timer_init(get_loop(env, false), &close_order_timers[i]);
+    close_order_timers[i].data = names[i];
+  }
+  uv_close((uv_handle_t *)&close_order_timers[0], close_order_cb);
+  uv_close((uv_handle_t *)&close_order_timers[1], close_order_cb);
+  return NULL;
+}
+
+static napi_value test_init_after_close(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_async_init(loop, &foreign_async, foreign_async_cb);
+  uv_close((uv_handle_t *)&foreign_async, foreign_close_cb);
+  uv_timer_init(loop, &foreign_timer);
+  uv_close((uv_handle_t *)&foreign_timer, NULL);
+  uv_timer_init(loop, &foreign_timer);
+  uv_close((uv_handle_t *)&foreign_timer, foreign_close_cb);
+  uv_timer_init(loop, &foreign_timer);
+  return NULL;
+}
+
+static uv_async_t racing_async;
+static int racing_rounds;
+
+static void racing_async_cb(uv_async_t *handle) {}
+static void racing_close_cb(uv_handle_t *handle);
+
+static void *send_and_close(void *arg) {
+  uv_async_send(&racing_async);
+  uv_close((uv_handle_t *)&racing_async, racing_close_cb);
+  return NULL;
+}
+
+static void start_send_and_close(uv_loop_t *loop) {
+  pthread_t thread;
+  uv_async_init(loop, &racing_async, racing_async_cb);
+  pthread_create(&thread, NULL, send_and_close, NULL);
+  pthread_detach(thread);
+}
+
+static void racing_close_cb(uv_handle_t *handle) {
+  if (++racing_rounds < 2000) {
+    start_send_and_close(handle->loop);
+  } else {
+    foreign_init_async(handle->loop);
+  }
+}
+
+static napi_value test_send_and_close_on_thread(napi_env env,
+                                                napi_callback_info info) {
+  start_send_and_close(get_loop(env, false));
+  return NULL;
 }
 
 // --- uv_idle_t / uv_prepare_t / uv_check_t -----------------------------------
@@ -1290,14 +1881,41 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_version, NULL, &fn);
   napi_set_named_property(env, exports, "testVersion", fn);
 
+  napi_create_function(env, NULL, 0, describe_error, NULL, &fn);
+  napi_set_named_property(env, exports, "describeError", fn);
+
   napi_create_function(env, NULL, 0, test_sizes_and_names, NULL, &fn);
   napi_set_named_property(env, exports, "testSizesAndNames", fn);
 
   napi_create_function(env, NULL, 0, test_osfhandle, NULL, &fn);
   napi_set_named_property(env, exports, "testOsfhandle", fn);
 
+  napi_create_function(env, NULL, 0, test_osfhandle_write, NULL, &fn);
+  napi_set_named_property(env, exports, "testOsfhandleWrite", fn);
+
+  napi_create_function(env, NULL, 0, test_osfhandle_open, NULL, &fn);
+  napi_set_named_property(env, exports, "testOsfhandleOpen", fn);
+
+  napi_create_function(env, NULL, 0, test_mutex_contended, NULL, &fn);
+  napi_set_named_property(env, exports, "testMutexContended", fn);
+
+  napi_create_function(env, NULL, 0, test_once_race, NULL, &fn);
+  napi_set_named_property(env, exports, "testOnceRace", fn);
+
+  napi_create_function(env, NULL, 0, test_cwd_capacity, NULL, &fn);
+  napi_set_named_property(env, exports, "testCwdCapacity", fn);
+
+  napi_create_function(env, NULL, 0, is_stdin_raw, NULL, &fn);
+  napi_set_named_property(env, exports, "isStdinRaw", fn);
+
   napi_create_function(env, NULL, 0, test_loops, NULL, &fn);
   napi_set_named_property(env, exports, "testLoops", fn);
+
+  napi_create_function(env, NULL, 0, test_watcher_order, NULL, &fn);
+  napi_set_named_property(env, exports, "testWatcherOrder", fn);
+
+  napi_create_function(env, NULL, 0, test_zeroed_handle, NULL, &fn);
+  napi_set_named_property(env, exports, "testZeroedHandle", fn);
 
   napi_create_function(env, NULL, 0, test_errors, NULL, &fn);
   napi_set_named_property(env, exports, "testErrors", fn);
@@ -1327,6 +1945,18 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_cancel_work, NULL, &fn);
   napi_set_named_property(env, exports, "testCancelWork", fn);
 
+  napi_create_function(env, NULL, 0, queue_blocking_works, NULL, &fn);
+  napi_set_named_property(env, exports, "queueBlockingWorks", fn);
+
+  napi_create_function(env, NULL, 0, release_blocking_works, NULL, &fn);
+  napi_set_named_property(env, exports, "releaseBlockingWorks", fn);
+
+  napi_create_function(env, NULL, 0, queue_overlapping_works, NULL, &fn);
+  napi_set_named_property(env, exports, "queueOverlappingWorks", fn);
+
+  napi_create_function(env, NULL, 0, did_works_overlap, NULL, &fn);
+  napi_set_named_property(env, exports, "didWorksOverlap", fn);
+
   napi_create_function(env, NULL, 0, test_default_loop_work, NULL, &fn);
   napi_set_named_property(env, exports, "testDefaultLoopWork", fn);
 
@@ -1335,6 +1965,38 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_queue_work_from_thread, NULL, &fn);
   napi_set_named_property(env, exports, "testQueueWorkFromThread", fn);
+
+  napi_create_function(env, NULL, 0, test_from_waited_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testFromWaitedThread", fn);
+
+  napi_create_function(env, NULL, 0, test_ref_around_send, NULL, &fn);
+  napi_set_named_property(env, exports, "testRefAroundSend", fn);
+
+  napi_create_function(env, NULL, 0, test_default_loop_async, NULL, &fn);
+  napi_set_named_property(env, exports, "testDefaultLoopAsync", fn);
+
+  napi_create_function(env, NULL, 0, start_default_loop_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "startDefaultLoopTimer", fn);
+
+  napi_create_function(env, NULL, 0, restart_default_loop_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "restartDefaultLoopTimer", fn);
+
+  napi_create_function(env, NULL, 0, test_close_at_exit_with_sender_inside,
+                       NULL, &fn);
+  napi_set_named_property(env, exports, "testCloseAtExitWithSenderInside", fn);
+
+  napi_create_function(env, NULL, 0, test_init_after_close, NULL, &fn);
+  napi_set_named_property(env, exports, "testInitAfterClose", fn);
+
+  napi_create_function(env, NULL, 0, test_send_and_close_on_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testSendAndCloseOnThread", fn);
+
+  napi_create_function(env, NULL, 0, test_progress_before_after_work, NULL,
+                       &fn);
+  napi_set_named_property(env, exports, "testProgressBeforeAfterWork", fn);
+
+  napi_create_function(env, NULL, 0, test_close_in_close_cb, NULL, &fn);
+  napi_set_named_property(env, exports, "testCloseInCloseCb", fn);
 
   napi_create_function(env, NULL, 0, test_mutex_init_destroy, NULL, &fn);
   napi_set_named_property(env, exports, "testMutexInitDestroy", fn);

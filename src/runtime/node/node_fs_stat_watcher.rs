@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering, fence};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
@@ -45,6 +45,8 @@ fn stat_to_js_stats(
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct StatWatcherScheduler {
     current_interval: AtomicI32,
+    /// The shortest interval appended since the last pass was scheduled, which that pass may have missed. JS thread only.
+    appended_interval: Cell<Option<i32>>,
     /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
     /// on the thread pool, cleared by `work_pool_callback` once it has finished
     /// touching `watchers`. `shutdown_for_exit` spin-waits on this so it never
@@ -130,6 +132,7 @@ impl StatWatcherScheduler {
     pub(crate) fn init(vm: &VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
             current_interval: AtomicI32::new(0),
+            appended_interval: Cell::new(None),
             work_pool_in_flight: AtomicBool::new(false),
             is_shutdown: AtomicBool::new(false),
             task: WorkPoolTask {
@@ -157,6 +160,10 @@ impl StatWatcherScheduler {
         let interval = watcher.interval;
         debug_assert_eq!(this.main_thread, thread::current().id());
         this.watchers.push(watcher);
+        this.appended_interval
+            .update(|appended| Some(appended.map_or(interval, |appended| appended.min(interval))));
+        // Pairs with the fence in `work_pool_callback`: either it sees the watcher, or this sees its 0.
+        fence(Ordering::SeqCst);
         let current = this.get_interval();
         if current == 0 || current > interval {
             // we are not running or the new watcher has a smaller interval
@@ -208,17 +215,16 @@ impl StatWatcherScheduler {
         // from `initial_stat_success_on_main_thread` while `self.task` is
         // still in flight, so guard here: if already in flight, re-arm the
         // one-shot timer and try again next fire. `work_pool_callback` clears
-        // the flag on exit; the re-arm must be unconditional because its
-        // `!contain_watchers` branch stores `current_interval = 0` directly
-        // (no `set_interval` / no timer update) and can race an `append()`
-        // that landed after its `pop_batch()`, which would otherwise leave a
-        // live watcher with the timer disarmed. `.max(5)` matches the clamp
-        // applied to every watcher interval in `StatWatcher::init`.
+        // the flag on exit; the re-arm must be unconditional because a pass
+        // that found the queue empty posts no timer update, also if an
+        // `append()` lands before it clears the flag. `.max(5)` matches the
+        // clamp applied to every watcher interval in `StatWatcher::init`.
         if self.work_pool_in_flight.swap(true, Ordering::AcqRel) {
             self.set_timer(self.get_interval().max(5));
             return;
         }
 
+        self.appended_interval.set(None);
         self.ticket.set(Some(self.vm().ticket()));
         // SAFETY: a field projection of the live scheduler, whose ref `work_pool_callback` adopts.
         WorkPool::schedule(unsafe { &raw mut (*self.into_raw()).task });
@@ -262,14 +268,16 @@ impl StatWatcherScheduler {
             this.watchers.push(w);
         }
 
-        let rearm = contain_watchers && !this.is_shutdown.load(Ordering::Relaxed);
-        let interval = if rearm {
+        let interval = if contain_watchers {
             // choose the smallest interval or the closest time to the next check
             min_interval.min(i32::try_from(closest_next_check).expect("int cast"))
         } else {
             0
         };
         this.current_interval.store(interval, Ordering::Relaxed);
+        // Pairs with the fence in `append`.
+        fence(Ordering::SeqCst);
+        let rearm = !this.watchers.0.is_empty() && !this.is_shutdown.load(Ordering::Relaxed);
         // Publish the queue writes above before declaring the work-pool hop
         // finished; `shutdown_for_exit` Acquire-loads this and then drains.
         this.work_pool_in_flight.store(false, Ordering::Release);
@@ -810,7 +818,13 @@ impl StatWatcherTimerUpdate {
     pub(crate) fn run(self: Box<Self>) {
         // `bun test --isolate` retires a file's scheduler and goes on ticking.
         if !self.scheduler.is_shutdown.load(Ordering::Relaxed) {
-            let interval = self.scheduler.get_interval();
+            let mut interval = self.scheduler.get_interval();
+            if let Some(appended) = self.scheduler.appended_interval.get()
+                && (interval == 0 || interval > appended)
+            {
+                interval = appended;
+                (self.scheduler.current_interval).store(interval, Ordering::Relaxed);
+            }
             self.scheduler.set_timer(interval);
         }
     }

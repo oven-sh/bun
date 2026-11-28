@@ -59,19 +59,10 @@ impl IntoErrnoInt for E {
         self as Int
     }
 }
-// On POSIX `E` is a `type` alias for `SystemErrno` (same type → duplicate impl);
-// on Windows they are distinct enums, so the second impl is required.
-#[cfg(windows)]
-impl IntoErrnoInt for SystemErrno {
-    #[inline]
-    fn into_errno_int(self) -> Int {
-        self as Int
-    }
-}
 
 impl Error {
     /// `Error::new(errno, tag)` — dispatches via `IntoErrnoInt` so a single
-    /// constructor covers `E`, `SystemErrno` and (Windows) `NTSTATUS`.
+    /// constructor covers `E` and (Windows) `NTSTATUS`.
     #[inline]
     pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
         Error {
@@ -259,8 +250,7 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// 1. Convert libuv errno values into libc ones.
-    /// 2. Get the tag name as a string for printing.
+    /// Returns the errno's printable name and the errno.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
         let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
@@ -281,6 +271,15 @@ impl Error {
         Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
     }
 
+    /// Node reports libuv's codes in `err.errno` on every platform. On POSIX that is just the negated host errno.
+    pub fn js_errno(&self) -> c_int {
+        #[cfg(windows)]
+        if let Some(errno) = E::from_repr(self.errno).and_then(bun_errno::try_errno_to_uv) {
+            return errno;
+        }
+        c_int::from(self.errno).wrapping_neg()
+    }
+
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
     /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
     /// and returns the looked-up `(code, label)` so each caller can build its own
@@ -289,17 +288,8 @@ impl Error {
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
-        // Node reports libuv's codes in `err.errno` on every platform. On POSIX
-        // that is just the negated host errno; on Windows the discriminant maps
-        // back to its `UV_E*` value.
-        #[cfg(windows)]
-        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
-            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
-        #[cfg(not(windows))]
-        let js_errno = c_int::from(self.errno).wrapping_neg();
-
         let mut err = SystemError {
-            errno: js_errno,
+            errno: self.js_errno(),
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             ..Default::default()
         };
@@ -323,12 +313,12 @@ impl Error {
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
-            if valid.kind() == crate::FdKind::Uv {
-                err.fd = Some(valid.uv());
+            if valid.kind() == crate::FdKind::Crt {
+                err.fd = Some(valid.crt());
             }
             #[cfg(not(windows))]
             {
-                err.fd = Some(valid.uv());
+                err.fd = Some(valid.crt());
             }
         }
 
@@ -460,40 +450,5 @@ impl bun_core::output::ErrName for &Error {
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         (**self).as_sys_err_info()
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// `ReturnCodeExt` — `ReturnCode::to_error(tag) -> Option<Error>` lives here (not
-// in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(windows)]
-pub trait ReturnCodeExt: Sized {
-    /// `Some(errno)` when the return code is negative; `None` on success.
-    fn errno(self) -> Option<crate::E>;
-    #[inline]
-    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        self.errno().map(|e| Error::from_code(e, syscall_tag))
-    }
-    #[inline]
-    fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
-        match self.to_error(syscall_tag) {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-}
-#[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
-    #[inline]
-    fn errno(self) -> Option<crate::E> {
-        (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int()))
-    }
-}
-#[cfg(windows)]
-impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
-    #[inline]
-    fn errno(self) -> Option<crate::E> {
-        (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int() as c_int))
     }
 }

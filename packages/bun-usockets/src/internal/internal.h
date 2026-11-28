@@ -59,8 +59,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #include "internal/eventing/epoll_kqueue.h"
 #endif
 
-#ifdef LIBUS_USE_LIBUV
-#include "internal/eventing/libuv.h"
+#ifdef LIBUS_USE_IOCP
+#include "internal/eventing/iocp.h"
 #endif
 
 #ifndef LIKELY
@@ -115,7 +115,7 @@ struct us_allocated_t {
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
-/* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
+/* The Winsock code that the runtime maps to ECANCELED. */
 #define LIBUS_ECANCELED WSAEINTR
 #else
 #include <errno.h>
@@ -206,13 +206,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-#ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
 uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
-#endif
 void us_internal_free_closed_sockets(us_loop_r loop);
 /* Defers closing `s` with `code` to us_internal_loop_post. */
 void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code);
@@ -261,10 +259,16 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
-/* Closes a stopped poll's descriptor. On epoll/kqueue this is bsd_close_socket.
- * On libuv the descriptor must outlive the handle's uv_close, which can be
- * deferred (see us_poll_stop in eventing/libuv.c). */
-void us_internal_poll_close_fd(struct us_poll_t *p);
+#ifdef _WIN32
+void us_internal_poll_set_shared(struct us_poll_t *p);
+#endif
+struct timespec;
+int us_internal_loop_has_polls(us_loop_r loop);
+/* Nonzero if us_internal_loop_wait is known not to block. */
+int us_internal_loop_prepare_wait(us_loop_r loop);
+/* Must not allocate or free: the thread's heaps may be handed off to mimalloc's scavenger. */
+void us_internal_loop_wait(us_loop_r loop, const struct timespec *timeout, int will_idle);
+void us_internal_loop_dispatch(us_loop_r loop);
 
 /* SSL loop data */
 void us_internal_init_loop_ssl_data(us_loop_r loop);
@@ -529,9 +533,6 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
-#ifdef LIBUS_USE_LIBUV
-  unsigned has_added_timer_to_event_loop;
-#endif
 };
 
 #endif

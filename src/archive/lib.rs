@@ -683,7 +683,7 @@ impl Archiver {
                         }
                     };
 
-                    let output = File::from_fd(file_handle_native).make_lib_uv_owned()?;
+                    let output = File::from_fd(file_handle_native);
 
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();
 

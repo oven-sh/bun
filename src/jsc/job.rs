@@ -23,13 +23,24 @@ use core::convert::Infallible;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
+#[cfg(windows)]
+use std::sync::Arc;
 
 use bun_core::{from_field_ptr, heap};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, Taskable};
 use bun_io::{JsKeepAlive, KeepAlive};
+#[cfg(windows)]
+use bun_iocp::blocking::CancelToken;
+#[cfg(windows)]
+use bun_threading::Guarded;
+#[cfg(windows)]
+use bun_threading::fifo_pool::FifoPool;
+#[cfg(windows)]
+use bun_threading::work_pool::{DEVICE_POOL, FilePool};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
+use crate::StopReason;
 use crate::debugger::AsyncTaskTracker;
 use crate::virtual_machine::VirtualMachine;
 use crate::vm_handle::Ticket;
@@ -216,8 +227,12 @@ pub trait OwnedJob: Sized + 'static {
 
     /// As [`JobContext::OUTLIVES_SCRIPT`].
     const OUTLIVES_SCRIPT: bool;
+    /// Whether [`run`](Self::run) is also called during the VM's final wait.
+    const SHOULD_RUN_DURING_TEARDOWN: bool = false;
+    /// Whether the job runs on the `FilePool` on Windows.
+    const IS_FILE_IO: bool = false;
 
-    /// Pool thread. Not called if the VM is in its final wait by then.
+    /// Pool thread, or the caller of `UnscheduledJob::run_inline`. See `SHOULD_RUN_DURING_TEARDOWN`.
     fn run(job: Running<Self>);
     /// Pool thread.
     fn resume(job: Running<Self>, with: Self::Resume);
@@ -226,30 +241,77 @@ pub trait OwnedJob: Sized + 'static {
 }
 
 mod sealed {
+    use crate::StopReason;
+
     /// What both sides of a job can see. Sealed: `cancel` must not complete a job, because the
     /// [`JobList`](super::JobList) is being walked.
     pub trait Shared: Send + Sync + Default {
-        /// Whether `cancel` does anything. Only such jobs are tracked by the VM.
-        const CANCELLABLE: bool;
+        /// Whether `cancel` does anything. Only such jobs are tracked by the VM, so the answer must not change.
+        fn is_cancellable(&self) -> bool;
         /// JS thread, when the job's VM or context stops (possibly more than once), wherever the
         /// job is: make it finish soon.
-        fn cancel(&self);
+        fn cancel(&self, reason: StopReason);
     }
 
     impl Shared for () {
-        const CANCELLABLE: bool = false;
-        fn cancel(&self) {}
+        fn is_cancellable(&self) -> bool {
+            false
+        }
+        fn cancel(&self, _: StopReason) {}
     }
 
     #[cfg(not(windows))]
     impl<J: bun_io::fd_wait::Waiter> Shared for bun_io::fd_wait::Parking<J> {
-        const CANCELLABLE: bool = true;
-        fn cancel(&self) {
+        fn is_cancellable(&self) -> bool {
+            true
+        }
+        fn cancel(&self, _: StopReason) {
             self.cancel();
         }
     }
 }
 use sealed::Shared;
+
+/// Interrupts the blocking I/O of a job.
+#[cfg(windows)]
+#[derive(Default)]
+pub struct CancelTokens {
+    /// Cancelled when the job's context or VM stops.
+    pub on_stop: Option<CancelToken>,
+    /// Cancelled when the VM is torn down, after `VirtualMachine::on_exit` has waited for pending writes.
+    pub on_teardown: Option<CancelToken>,
+}
+
+#[cfg(windows)]
+impl Shared for CancelTokens {
+    fn is_cancellable(&self) -> bool {
+        self.on_stop.is_some() || self.on_teardown.is_some()
+    }
+    fn cancel(&self, reason: StopReason) {
+        if let Some(token) = &self.on_stop {
+            token.cancel();
+        }
+        if let Some(token) = &self.on_teardown
+            && reason == StopReason::VmTeardown
+        {
+            token.cancel();
+        }
+    }
+}
+
+/// Filled by an inline `run` that leaves an uninterruptible call to another thread. `cancel` posts the job without the result.
+#[cfg(windows)]
+impl<C: OwnedJob> Shared for Arc<Guarded<Option<Running<C>>>> {
+    fn is_cancellable(&self) -> bool {
+        true
+    }
+    fn cancel(&self, _: StopReason) {
+        let job = self.lock().take();
+        if let Some(job) = job {
+            job.finish();
+        }
+    }
+}
 
 impl<C: JobContext> OwnedJob for C {
     type OffThread = C::OffThread;
@@ -279,7 +341,7 @@ impl<C: JobContext> OwnedJob for C {
 pub struct JobHeader {
     complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
     release_unrun: unsafe fn(*mut JobHeader),
-    cancel: unsafe fn(*mut JobHeader),
+    cancel: unsafe fn(*mut JobHeader, StopReason),
     prev: *mut JobHeader,
     next: *mut JobHeader,
     /// The context whose script scheduled the job: once it stops, the
@@ -289,7 +351,7 @@ pub struct JobHeader {
     generation: u32,
 }
 
-/// A VM's live [cancellable](Shared::CANCELLABLE) jobs (JS thread only;
+/// A VM's live [cancellable](Shared::is_cancellable) jobs (JS thread only;
 /// empty by default), so its stop phase can [`cancel`](Shared::cancel) them.
 #[derive(Default)]
 pub struct JobList {
@@ -330,7 +392,7 @@ impl JobList {
             // SAFETY: as `cancel_all`.
             unsafe {
                 if (*job).context == context {
-                    ((*job).cancel)(job);
+                    ((*job).cancel)(job, StopReason::Disposed);
                 }
                 job = (*job).next;
             }
@@ -344,14 +406,14 @@ impl JobList {
             // SAFETY: linked ⇒ live (jobs unlink, on this thread, before they
             // are freed); `cancel` neither frees nor unlinks.
             unsafe {
-                ((*job).cancel)(job);
+                ((*job).cancel)(job, StopReason::VmTeardown);
                 job = (*job).next;
             }
         }
     }
 }
 
-/// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
+/// One pool-then-complete job. Heap-allocated by [`Job::create`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: OwnedJob> {
@@ -380,6 +442,17 @@ impl<C: OwnedJob> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        Self::create(cx, off, js, Default::default()).schedule();
+    }
+
+    /// Like [`schedule`](Self::schedule), but the caller hands the job to the pool.
+    #[track_caller]
+    pub fn create(
+        cx: &JsThread<'_>,
+        off: C::OffThread,
+        js: C::Js,
+        shared: C::Shared,
+    ) -> UnscheduledJob {
         let job = heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -390,7 +463,9 @@ impl<C: OwnedJob> Job<C> {
                     drop(Self::take(p.cast::<Self>(), VirtualMachine::get()))
                 },
                 // SAFETY: linked ⇒ live, and no thread borrows `shared` mutably.
-                cancel: |p| unsafe { Shared::cancel(&(*p.cast::<Self>()).pooled.shared) },
+                cancel: |p, reason| unsafe {
+                    Shared::cancel(&(*p.cast::<Self>()).pooled.shared, reason)
+                },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
                 context: if C::OUTLIVES_SCRIPT {
@@ -401,7 +476,7 @@ impl<C: OwnedJob> Job<C> {
                 generation: cx.vm().test_isolation_generation.get(),
             },
             pooled: Pooled {
-                shared: Default::default(),
+                shared,
                 next_turn: Some((cx.vm().ticket(), None)),
                 task: WorkPoolTask {
                     node: Default::default(),
@@ -413,18 +488,22 @@ impl<C: OwnedJob> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        // SAFETY: live until completed/released on this thread, which requires scheduling or running it first.
         unsafe {
-            if C::Shared::CANCELLABLE {
+            if (*job).pooled.shared.is_cancellable() {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).pooled.task);
+            UnscheduledJob {
+                task: &raw mut (*job).pooled.task,
+                #[cfg(windows)]
+                pool: C::IS_FILE_IO.then(FilePool::get),
+            }
         }
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable through the `task.callback` slot wired in
-        // `schedule`; the pool calls back with exactly that field of a live job.
+        // `create`; the pool or `run_inline` passes exactly that field of a live job.
         let this: *mut Self = unsafe {
             let pooled = from_field_ptr!(Pooled<C::Shared, C::Resume>, task, task);
             from_field_ptr!(Self, pooled, pooled)
@@ -436,7 +515,7 @@ impl<C: OwnedJob> Job<C> {
             ticket,
         };
         match resume {
-            None if job.ticket.cancelled() => job.finish(),
+            None if !C::SHOULD_RUN_DURING_TEARDOWN && job.ticket.cancelled() => job.finish(),
             None => C::run(job),
             Some(with) => C::resume(job, with),
         }
@@ -450,7 +529,7 @@ impl<C: OwnedJob> Job<C> {
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
         // SAFETY: fn contract.
         let mut job = unsafe { heap::take(this) };
-        if C::Shared::CANCELLABLE {
+        if job.pooled.shared.is_cancellable() {
             vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
         }
         (job.off, job.js)
@@ -464,6 +543,50 @@ impl<C: OwnedJob> Job<C> {
         // SAFETY: fn contract.
         let (off, js) = unsafe { Self::take(this, cx.vm()) };
         C::then(off, js, cx)
+    }
+}
+
+/// A job that has not been handed to a pool. It already holds its [`Ticket`], so teardown waits for it.
+#[must_use = "a job must be scheduled"]
+pub struct UnscheduledJob {
+    task: *mut WorkPoolTask,
+    /// `None` selects the [`WorkPool`].
+    #[cfg(windows)]
+    pool: Option<&'static FifoPool>,
+}
+// SAFETY: a pool task can be scheduled from, and run on, any thread.
+unsafe impl Send for UnscheduledJob {}
+impl UnscheduledJob {
+    #[inline]
+    pub fn schedule(self) {
+        #[cfg(windows)]
+        if let Some(pool) = self.pool {
+            return pool.schedule(self.task);
+        }
+        WorkPool::schedule(self.task);
+    }
+
+    /// See [`FifoPool::schedule_continuation`].
+    #[cfg(windows)]
+    pub fn schedule_as_continuation(self) {
+        match self.pool {
+            Some(pool) => pool.schedule_continuation(self.task),
+            None => self.schedule(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn run_inline(self) {
+        // SAFETY: `task` belongs to a live job, and consuming `self` makes this its only run.
+        unsafe { ((*self.task).callback)(self.task) };
+    }
+
+    #[cfg(windows)]
+    pub fn use_device_pool(mut self, can_block: bool) -> Self {
+        if can_block {
+            self.pool = Some(&DEVICE_POOL);
+        }
+        self
     }
 }
 
@@ -582,7 +705,7 @@ impl Taskable for FinishedJob {
         unsafe { ((*job.0).release_unrun)(job.0) }
     }
     fn context(job: &Self) -> crate::ContextId {
-        // SAFETY: `job` owns it, and the field is not written after `schedule`.
+        // SAFETY: `job` owns it, and the field is not written after `create`.
         unsafe { (*job.0).context }
     }
 }

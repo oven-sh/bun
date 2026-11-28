@@ -279,7 +279,7 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  // libuv's SIGWINCH detection on Windows requires a conhost window; ConPTY has none.
+  // ConPTY has no window to watch and reports a resize only to a process that reads console input.
   test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {

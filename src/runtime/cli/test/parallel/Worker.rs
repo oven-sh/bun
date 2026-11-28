@@ -4,20 +4,14 @@
 //! spawn/dispatch/shutdown mechanics.
 
 #[cfg(windows)]
-use std::os::windows::io::OwnedHandle;
+use std::os::windows::io::{AsHandle, OwnedHandle};
 
-#[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
-#[cfg(unix)]
-use crate::api::bun::process::SpawnResultExt as _;
-#[cfg(not(unix))]
-use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{
+    self as spawn, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio,
+};
 use bun_core::{self, Output};
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
-#[cfg(windows)]
-use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_spawn::RusageFields as _;
 
@@ -30,7 +24,7 @@ pub(crate) struct Worker {
     pub(crate) process: Option<spawn::ProcessHandle>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
-    /// Windows: `uv.Pipe` (the parent end of `.buffer` extra-fd, full-duplex).
+    /// Windows: the parent end of a duplex pipe.
     /// Commands and results both flow through this channel; backpressure is
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
@@ -58,7 +52,6 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) argv: bun_core::CStrList<'a>,
     pub(crate) envps: &'a [bun_core::CStringList],
     /// Windows hands it over as an inherited handle, which the worker's arguments name.
-    #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
     pub(crate) windows_job: Option<&'a OwnedHandle>,
@@ -69,6 +62,17 @@ impl Worker {
     /// reports and what it prints come by different pipes, so a report can be read before the text that was written ahead of it,
     /// and the text would then be printed under no file, or under the next one.
     pub(crate) fn read_output_written_so_far(&mut self) {
+        #[cfg(windows)]
+        for kind in [Kind::Stdout, Kind::Stderr] {
+            let reader = if kind == Kind::Stdout {
+                &self.out
+            } else {
+                &self.err
+            };
+            if let Some(event) = reader.try_read() {
+                self.on_io(kind, event);
+            }
+        }
         #[cfg(unix)]
         for descriptor in [self.out.get_fd(), self.err.get_fd()]
             .into_iter()
@@ -123,120 +127,55 @@ impl Worker {
             this.reset_pipes();
         });
 
-        #[cfg(unix)]
-        {
-            // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
-            // adopted into a usockets `Channel`.
-            let compiled_program = coord.compiled_program.map(Stdio::Pipe);
-            let options = SpawnOptions {
-                stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer,
-                stderr: Stdio::Buffer,
-                extra_fds: core::iter::once(Stdio::Buffer)
-                    .chain(compiled_program)
-                    .collect(),
-                cwd: coord.cwd.to_vec().into_boxed_slice(),
-                stream: true,
-                // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
-                // anything it spawned. PDEATHSIG is the SIGKILL safety net on
-                // Linux for the worker itself.
-                new_process_group: true,
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                linux_pdeathsig: Some(libc::SIGKILL as u8),
-                #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                linux_pdeathsig: None,
-                ..Default::default()
-            };
-            let envp = coord.envps[this.idx as usize].as_list();
-            let mut spawned =
-                spawn::spawn_process(&options, coord.argv, Some(envp))?.map_err(|e| {
-                    Output::err(e, "spawnProcess failed for test worker", ());
-                    crate::Error::SpawnFailed
-                })?;
-            let stdout = spawned.stdout.take();
-            let stderr = spawned.stderr.take();
-            let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-            this.process = Some(
-                spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
-                    coord.vm.event_loop_ptr(),
-                )),
-            );
-            for (reader, file) in [(&this.out, stdout), (&this.err, stderr)] {
-                if let Some(file) = file {
-                    let _ = reader
-                        .start(this.event_loop.as_event_loop_ctx(), file.into(), true)
-                        .map_err(|_| crate::Error::PipeStartFailed)?;
-                }
-            }
-            let first = extra_pipes.into_iter().next();
-            if let Some(pipe) = first.and_then(bun_spawn::ExtraPipe::into_owned) {
-                // adopt() mutates the loop's socket context via interior mutability on the C side.
-                if !this.ipc.adopt(coord.vm, pipe) {
-                    return Err(crate::Error::ChannelAdoptFailed);
-                }
-            } else {
-                this.ipc.done.set(true);
+        let compiled_program = if cfg!(unix) {
+            coord.compiled_program.map(Stdio::Pipe)
+        } else {
+            None
+        };
+        let options = SpawnOptions {
+            stdin: Stdio::Ignore,
+            stdout: Stdio::Buffer,
+            stderr: Stdio::Buffer,
+            extra_fds: core::iter::once(Stdio::Buffer)
+                .chain(compiled_program)
+                .collect(),
+            cwd: coord.cwd.to_vec().into_boxed_slice(),
+            stream: true,
+            // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
+            // anything it spawned. PDEATHSIG is the SIGKILL safety net on
+            // Linux for the worker itself.
+            new_process_group: true,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            linux_pdeathsig: Some(libc::SIGKILL as u8),
+            #[cfg(windows)]
+            job: coord.windows_job.map(AsHandle::as_handle),
+            #[cfg(windows)]
+            inherited_handle: coord.compiled_program.map(bun_sys::Fd::native),
+            ..Default::default()
+        };
+        let envp = coord.envps[this.idx as usize].as_list();
+        let mut spawned = spawn::spawn_process(&options, coord.argv, Some(envp))?.map_err(|e| {
+            Output::err(e, "spawnProcess failed for test worker", ());
+            crate::Error::SpawnFailed
+        })?;
+        let stdout = spawned.stdout.take();
+        let stderr = spawned.stderr.take();
+        let ipc_pipe = spawned.extra_pipes.swap_remove(0).into_owned();
+        this.process = Some(spawned.to_process_handle(this.event_loop));
+        for (reader, pipe) in [(&this.out, stdout), (&this.err, stderr)] {
+            if let Some(pipe) = pipe {
+                let _ = reader
+                    .start_exclusive_pipe(this.event_loop.as_event_loop_ctx(), pipe)
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
         }
-        #[cfg(not(unix))]
-        {
-            // Windows: `.ipc` extra_fd creates a duplex `uv.Pipe` (named pipe
-            // under the hood, UV_READABLE | UV_WRITABLE | UV_OVERLAPPED) and
-            // initialises the parent end with uv_pipe_init(loop, ipc=1) — the
-            // same dance Bun.spawn({ipc}) / process.send() use. The child opens
-            // CRT fd 3 with uv_pipe_init(ipc=1) + uv_pipe_open in Channel.adopt.
-            // Both ends agreeing on the libuv IPC framing is what matters; our
-            // own [u32 len][u8 kind] frames ride inside it unchanged.
-            let options = SpawnOptions {
-                stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer,
-                stderr: Stdio::Buffer,
-                extra_fds: Box::new([Stdio::Ipc]),
-                cwd: coord.cwd.to_vec().into_boxed_slice(),
-                windows: spawn::WindowsOptions {
-                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop_ptr()),
-                    ..Default::default()
-                },
-                stream: true,
-                ..Default::default()
-            };
-            let envp = coord.envps[this.idx as usize].as_list();
-            let mut spawned =
-                spawn::spawn_process(&options, coord.argv, Some(envp))?.map_err(|e| {
-                    Output::err(e, "spawnProcess failed for test worker", ());
-                    crate::Error::SpawnFailed
-                })?;
-            this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
-
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                this.out
-                    .start_with_pipe(pipe)
-                    .map_err(|_| crate::Error::PipeStartFailed)?;
-            }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                this.err
-                    .start_with_pipe(pipe)
-                    .map_err(|_| crate::Error::PipeStartFailed)?;
-            }
-            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = spawned.extra_pipes[0].take() else {
-                unreachable!("Stdio::Ipc makes a pipe");
-            };
-            if !this.ipc.adopt_pipe(ipc_pipe) {
-                return Err(crate::Error::ChannelAdoptFailed);
-            }
+        if !ipc_pipe.is_some_and(|end| this.ipc.adopt_exclusive(coord.vm, end)) {
+            return Err(crate::Error::ChannelAdoptFailed);
         }
 
         this.alive = true;
         let worker = &raw mut **this;
         let process = this.process.as_ref().expect("set above");
-        #[cfg(windows)]
-        {
-            if let Some(job) = coord.windows_job {
-                if let Some(handle) = process.os_handle() {
-                    let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
-                }
-            }
-        }
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
         process.set_exit_handler(unsafe {

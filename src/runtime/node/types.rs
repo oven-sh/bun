@@ -907,7 +907,13 @@ impl PathLikeExt for PathLike<'_> {
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
                 // The path is read after this call returns. By then a later argument's getter can
                 // shrink the buffer or grow its `WebAssembly.Memory`, which frees the pages.
-                if !buffer.copy_if_freeable_while_pinned(ctx) {
+                let is_ok =
+                    if cfg!(windows) && will_be_async && buffer.slice().len() < MAX_PATH_BYTES {
+                        buffer.snapshot(ctx)
+                    } else {
+                        buffer.copy_if_freeable_while_pinned(ctx)
+                    };
+                if !is_ok {
                     return Err(ctx.throw_out_of_memory());
                 }
                 Valid::path_buffer(buffer.slice(), ctx)?;
@@ -1474,7 +1480,9 @@ impl FileSystemFlags {
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(
+                    bun_sys::windows_format::open_flags::from_uv(flags),
+                )));
             }
             #[cfg(not(windows))]
             {
@@ -1642,7 +1650,7 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
+        use bun_errno::uv::{
             UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
             UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
         };

@@ -34,12 +34,17 @@ describe("spawnSync", () => {
     });
   }
 
+  it.each([2 ** 31, 2 ** 32 + 1])("a timeout of %d ms does not expire immediately", timeout => {
+    const result = Bun.spawnSync({ cmd: [bunExe(), "-e", "setTimeout(() => {}, 5)"], env: bunEnv, timeout });
+    expect(result.exitedDueToTimeout).toBe(false);
+    expect(result.exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33932
-  // Windows-only: the timeout timer lives on a cached libuv loop whose clock
-  // freezes between calls; the POSIX path compares against the real clock.
+  // Windows-only: it runs cmd.exe.
   it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {
     const echo = (s: string) => ["cmd", "/c", `echo ${s}`];
-    // Populate the cached isolated event loop, then let its clock go stale
+    // Populate the cached isolated event loop, then leave it idle
     // for longer than the next call's timeout.
     const first = Bun.spawnSync({ cmd: echo("first"), stdout: "pipe", stderr: "pipe" });
     expect(first.exitCode).toBe(0);
@@ -58,7 +63,7 @@ describe("spawnSync", () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
 
-  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
+  it("should use spawnSync optimizations when possible", async () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
   });
 

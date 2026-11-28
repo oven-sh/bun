@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -34,39 +34,35 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
 }
 
 for (const dir of ["dir", "©️"]) {
-  it.todoIf(isBroken && isWindows)(
-    `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
-    async () => {
-      const cwd = join(tmpdirSync(), dir);
-      const path = join(cwd, "watchee.js");
+  it(`should watch files${dir === "dir" ? "" : " (non-ascii path)"}`, async () => {
+    const cwd = join(tmpdirSync(), dir);
+    const path = join(cwd, "watchee.js");
 
-      const updateFile = async (i: number) => {
-        await Bun.write(path, `console.log(${i}, __dirname);`);
-      };
+    const updateFile = async (i: number) => {
+      await Bun.write(path, `console.log(${i}, __dirname);`);
+    };
 
-      let i = 0;
+    let i = 0;
+    await updateFile(i);
+    await Bun.sleep(1000);
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "watchee.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
+      if (i == 10) break;
+      var str = new TextDecoder().decode(line);
+      expect(str).toContain(`${i} ${cwd}`);
+      i++;
       await updateFile(i);
-      await Bun.sleep(1000);
-      watchee = spawn({
-        cwd,
-        cmd: [bunExe(), "--watch", "watchee.js"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-
-      for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
-        if (i == 10) break;
-        var str = new TextDecoder().decode(line);
-        expect(str).toContain(`${i} ${cwd}`);
-        i++;
-        await updateFile(i);
-      }
-      rmSync(path);
-    },
-    10000,
-  );
+    }
+    rmSync(path);
+  }, 10000);
 }
 
 afterEach(async () => {

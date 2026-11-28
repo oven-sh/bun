@@ -201,11 +201,6 @@ impl core::fmt::Display for PathOrFileDescriptor<'_> {
 
 impl<'a> PathOrFileDescriptor<'a> {
     #[inline]
-    pub fn is_path(&self) -> bool {
-        matches!(self, Self::Path(_))
-    }
-
-    #[inline]
     pub fn is_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }

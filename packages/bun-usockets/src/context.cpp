@@ -408,10 +408,6 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
-#ifdef LIBUS_USE_LIBUV
-extern "C" void uv__poll_set_shared(uv_poll_t *handle);
-#endif
-
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
@@ -419,7 +415,9 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
      * the fd (it may be its stdio), and a non-socket must come back untouched. */
     if (listen(fd, backlog > 0 ? backlog : 512)) {
         int listen_err = LIBUS_ERR;
-        if (!bsd_socket_listen_error_is_benign(fd)) {
+        /* Windows rejects listen() on a duplicate of an already-listening socket, where POSIX
+         * no-ops it; cluster workers each listen on their own dup of one shared fd. */
+        if (!bsd_socket_is_listening(fd)) {
             *error = listen_err;
             return 0;
         }
@@ -433,8 +431,8 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         *error = LIBUS_ERR;
         return 0;
     }
-#ifdef LIBUS_USE_LIBUV
-    uv__poll_set_shared(p->uv_p);
+#ifdef _WIN32
+    us_internal_poll_set_shared(p);
 #endif
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
@@ -476,7 +474,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
         struct us_socket_group_t *group = ls->accept_group;
         struct us_loop_t *loop = s->group->loop;
         us_poll_stop((struct us_poll_t *) s, loop);
-        us_internal_poll_close_fd((struct us_poll_t *) s);
+        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
         us_internal_listen_socket_ssl_free(ls);
 
@@ -648,11 +646,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->port = port;
     us_internal_socket_group_link_connecting_socket(group, c);
 
-#ifdef _WIN32
-    loop->uv_loop->active_handles++;
-#else
     loop->num_polls++;
-#endif
 
     Bun__addrinfo_set(ai_req, c);
 
@@ -721,7 +715,7 @@ static int start_connections(struct us_connecting_socket_t *c, int count) {
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     /* close_all() may have run between the DNS thread queuing this callback and
      * us reaching it; c->group is NULL'd at close so it can't be touched. The
-     * keep-alive (num_polls/active_handles) was already balanced by the close
+     * keep-alive (num_polls) was already balanced by the close
      * path's Bun__addrinfo_cancel branch. */
     c->pending_resolve_callback = 0;
     if (c->closed) {
@@ -734,11 +728,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     }
 
     struct us_socket_group_t *group = c->group;
-#ifdef _WIN32
-    group->loop->uv_loop->active_handles--;
-#else
     group->loop->num_polls--;
-#endif
     struct addrinfo_result result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result.error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
@@ -765,29 +755,6 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     struct us_connecting_socket_t *c = s->connect_state;
-    #if _WIN32
-    if (error == 0) {
-        if (recv(us_poll_fd((struct us_poll_t*)s), NULL, 0, MSG_PUSH_IMMEDIATE) == SOCKET_ERROR) {
-            error = WSAGetLastError();
-            switch (error) {
-                case WSAEWOULDBLOCK:
-                case WSAEINTR: {
-                    error = 0;
-                    break;
-                }
-                default: {
-                    /* The probe only says the socket is not connected
-                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
-                    int so_error = us_socket_get_error(s);
-                    if (so_error > 0) {
-                        error = so_error;
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    #endif
     if (error) {
         if (c) {
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {

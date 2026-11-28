@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -612,6 +612,47 @@ describe("event loop routing around macros", () => {
       ].join("\n"),
     });
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a macro can look up a name that the program is looking up", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export async function probe() {\n  return (await Bun.dns.lookup("localhost")).length > 0;\n}\n`,
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const value = probe();\n`,
+      "index.ts": `Bun.dns.lookup("localhost");\nconsole.log(require("./with-macro.ts").value);\n`,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["true"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Only Windows joins the messages of a burst into one write.
+  test.concurrent.skipIf(!isWindows).each([
+    ["are sent by a macro", "", "() => (burst(), 1)"],
+    ["are sent before a macro that waits for the last", "burst();", "() => echoed.then(() => 1)"],
+    ["are sent by a macro after one of the program", "child.send(-1);", "() => (burst(), echoed.then(() => 1))"],
+    [
+      "are sent before a macro that waits for the exit",
+      "burst(), child.send(null);",
+      "() => child.exited.then(() => 1)",
+    ],
+  ])("IPC messages arrive that %s", async (_, before, probe) => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export const probe = () => globalThis.probe();\n`,
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const value = probe();\n`,
+      "child.ts": `process.on("message", message => (message === null ? process.exit() : process.send(message)));\n`,
+      "index.ts": `
+        const { promise: echoed, resolve } = Promise.withResolvers();
+        const child = Bun.spawn([process.execPath, "child.ts"], { ipc: message => message === 9 && resolve() });
+        const burst = () => Array.from({ length: 10 }, (_, i) => child.send(i));
+        globalThis.probe = ${probe};
+        await new Promise(setImmediate);
+        ${before}
+        console.log(require("./with-macro.ts").value);
+        await echoed;
+        child.kill();
+      `,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["1"], stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

@@ -201,6 +201,8 @@ pub struct RareData {
     /// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
     /// per-file isolation swap so the worker keeps its link to the coordinator.
     pub(crate) test_parallel_ipc_group: SocketGroup,
+    #[cfg(windows)]
+    pub has_test_coordinator_pipe: core::cell::Cell<bool>,
     /// The client sockets of the VM's own contexts.
     pub(crate) socket_groups: SocketGroups,
 
@@ -262,6 +264,8 @@ impl Default for RareData {
             file_polls: OnceCell::new(),
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
+            #[cfg(windows)]
+            has_test_coordinator_pipe: Default::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: JsCell::new(None),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
@@ -834,7 +838,7 @@ impl RareData {
         };
         feature.fetch_add(1, Ordering::Relaxed);
         self.stdio[stdio as usize].get_or_init(|| {
-            let fd = Fd::from_uv(stdio as i32);
+            let fd = Fd::from_crt(stdio as i32);
             let mode: Mode = match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,

@@ -1447,15 +1447,7 @@ pub mod fs {
             let stat = file.stat()?;
 
             const NS_PER_S: i128 = 1_000_000_000;
-            // `bun_sys::Stat` is `libc::stat`.
-            // Reconstruct `mtime` (i128 ns) from `st_mtime` (sec) +
-            // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin
-            // `st_mtimespec` into `st_mtime`/`st_mtime_nsec`, so the access is
-            // uniform on all `unix`.
-            #[cfg(unix)]
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-            #[cfg(windows)]
-            let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
             let seconds = mtime / NS_PER_S;
 
             // We can't detect changes if the file system zeros out the

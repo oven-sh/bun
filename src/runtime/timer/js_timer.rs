@@ -43,7 +43,6 @@ impl Armed {
         self.root.get()
     }
 
-    /// After the insert: on Windows the first one into the real heap creates the handle to ref.
     #[inline]
     pub(super) fn hold_loop(&mut self, vm: &VirtualMachine, waits_in: WaitsIn) {
         self.hold.get_or_insert_with(|| LoopHold::new(vm, waits_in));

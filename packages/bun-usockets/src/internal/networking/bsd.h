@@ -236,10 +236,9 @@ int bsd_send_is_transient_error();
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-int bsd_socket_export_size(void);
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);
 LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
-int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
+int bsd_socket_is_listening(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
 

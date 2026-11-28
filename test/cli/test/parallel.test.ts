@@ -948,6 +948,24 @@ test("--parallel prints what a file printed under that file's name", async () =>
   expect(exitCode).toBe(1);
 });
 
+test.skipIf(!isWindows)("--parallel keeps writes that are larger than the pipe", async () => {
+  const fixture = `import {test} from "bun:test";
+    const line = Buffer.alloc(70_000, "#").toString();
+    for (let i = 0; i < 300; i++) test("t" + i, () => console.log(line));`;
+  using dir = tempDir("parallel-large-output", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  // The report is shorter than one line.
+  expect(Math.floor(stderr.length / 70_000)).toBe(2 * 300);
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel never interleaves console output across files", async () => {
   // Two files, each test logs a marker then sleeps so the other worker has
   // time to also log. Buffered-per-test flush means a MARK line is always
@@ -1261,9 +1279,7 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("PARALLEL");
-  // fd 3 is the worker's IPC channel. On POSIX the coordinator's own frame
-  // decoder rejects the bytes; on Windows they break libuv's IPC framing
-  // underneath it and surface as a read error. Both must end the same way:
+  // fd 3 is the worker's IPC channel. The frame decoder rejects the bytes:
   // the coordinator kills that worker and says so, rather than printing the
   // status the kill produced (SIGKILL) or, when the kill was skipped, the
   // "exit code 0" of a worker that later shut itself down. Writing to the
@@ -1334,6 +1350,26 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
   });
 });
 
+test.skipIf(!isWindows)("--parallel is idle while another process holds the channel of an exited worker", async () => {
+  const holdMs = isDebug ? 3000 : 1000;
+  using dir = tempDir("parallel-held-channel", {
+    "a.test.js": `import {test} from "bun:test"; import {spawn} from "child_process";
+      test("a", () => {
+        spawn(process.execPath, ["-e", "Bun.sleepSync(${holdMs})"], { stdio: ["ignore", "ignore", "ignore", 3], detached: true });
+        process.exit(0);
+      });`,
+    "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  expect(await proc.exited).toBe(1);
+  expect(Number(proc.resourceUsage()!.cpuTime.total)).toBeLessThan(holdMs * 500);
+});
+
 async function runOnOneWorker(dir: string, ...flags: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000", ...flags],
@@ -1346,8 +1382,7 @@ async function runOnOneWorker(dir: string, ...flags: string[]) {
   return { results: stderr.match(/^(\(pass\) \w+|✗ .*| \d+ (pass|fail))/gm), exitCode };
 }
 
-// On Windows the bytes break libuv's framing before they can be read as a frame.
-describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () => {
+describe("--parallel: a frame that a test writes to fd 3", () => {
   test.concurrent("Ready does not take the place of the file that runs", async () => {
     using dir = tempDir("parallel-forged-ready", {
       "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
@@ -1360,7 +1395,8 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
     });
   });
 
-  test.concurrent("Ready is answered with Shutdown when no file is left", async () => {
+  // On Windows the worker's own pending read on the pipe consumes the reply.
+  test.concurrent.skipIf(isWindows)("Ready is answered with Shutdown when no file is left", async () => {
     using dir = tempDir("parallel-forged-ready-in-last-file", {
       "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,
       "b.test.js": `import {expect, test} from "bun:test"; import {readSync, writeSync} from "fs";
@@ -1381,6 +1417,23 @@ describe.skipIf(isWindows)("--parallel: a frame that a test writes to fd 3", () 
     expect(await runOnOneWorker(String(dir))).toEqual({
       results: ["(pass) a", "(pass) b", " 2 pass", " 0 fail"],
       exitCode: 0,
+    });
+  });
+
+  test.concurrent("an unknown kind gets the worker killed", async () => {
+    using dir = tempDir("parallel-unknown-frame", {
+      "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+        test("a", () => { writeSync(3, "hello", null, "utf16le"); });`,
+      "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
+    });
+    expect(await runOnOneWorker(String(dir))).toEqual({
+      results: [
+        "✗ a.test.js (worker killed: corrupt IPC frame, something wrote to fd 3)",
+        "(pass) b",
+        " 1 pass",
+        " 1 fail",
+      ],
+      exitCode: 1,
     });
   });
 

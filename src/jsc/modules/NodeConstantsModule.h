@@ -35,6 +35,7 @@
 
 #if defined(_WIN32)
 #include <io.h> // _S_IREAD _S_IWRITE
+#include <uv.h> // SIGHUP, F_OK, S_IFLNK and other constants that the CRT lacks
 #ifndef S_IRUSR
 #define S_IRUSR _S_IREAD
 #endif // S_IRUSR

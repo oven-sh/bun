@@ -6,8 +6,6 @@ pub enum Error {
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
-    #[error(transparent)]
-    MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     /// `EXDEV`, which only `bun_sys::beneath` answers to this crate: a symlink is absolute or leads out of the destination.
     #[error("{0}")]
     LeavesDestination(bun_sys::Error),
@@ -34,7 +32,6 @@ impl Error {
             Self::Fail => "Fail",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
-            Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::LeavesDestination(_) => "EXDEV",
         }
     }

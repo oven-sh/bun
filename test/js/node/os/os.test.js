@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunRun, compileFixture, isGlibc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, compileFixture, isGlibc, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 import { join } from "node:path";
@@ -61,6 +61,33 @@ it("loadavg", () => {
 
 it("homedir", () => {
   expect(os.homedir() !== "unknown").toBe(true);
+});
+
+it.skipIf(!isWindows)("homedir follows process.env.USERPROFILE", async () => {
+  const result = await bunRun([
+    "-e",
+    `
+      const getHomedir = () => {
+        try {
+          return require("os").homedir();
+        } catch ({ code, errno, syscall }) {
+          return { code, errno, syscall };
+        }
+      };
+      const longPath = "C:\\\\" + Buffer.alloc(1000, "x");
+      const results = ["C:\\\\\\u4e16\\u{1f30d}\\\\", longPath, "abc", "\\u4e16", "ab", ""].map(value => {
+        process.env.USERPROFILE = value;
+        return getHomedir() === value ? "same" : getHomedir();
+      });
+      process.env.HOME = "C:\\\\not-used";
+      delete process.env.USERPROFILE;
+      results.push(getHomedir() !== process.env.HOME && require("fs").statSync(getHomedir()).isDirectory());
+      console.log(JSON.stringify(results));
+    `,
+  ]);
+  expect(result).toSpawn();
+  const ENOENT = { code: "ENOENT", errno: -4058, syscall: "uv_os_homedir" };
+  expect(JSON.parse(result.stdout)).toEqual(["same", "same", "same", "same", ENOENT, ENOENT, true]);
 });
 
 it("tmpdir", () => {
@@ -464,4 +491,52 @@ it("with new, each function does what it does in Node", () => {
   for (const name of ["freemem", "totalmem", "release", "version"]) {
     expect(() => new os[name]()).toThrow("is not a constructor");
   }
+});
+
+describe.concurrent.skipIf(!isWindows)("on Windows", () => {
+  it.each([
+    ["C:\\", "C:\\"],
+    ["C:\\Users\\\u00e9\u{1F600}", "C:\\Users\\\u00e9\u{1F600}"],
+    ["C:\\" + Buffer.alloc(600, "a"), "C:\\" + Buffer.alloc(600, "a")],
+    ["", "ENOENT"],
+    ["C:", "ENOENT"],
+  ])("homedir() with USERPROFILE=%j", async (USERPROFILE, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-p", "try { os.homedir() } catch (error) { error.info?.code ?? error.code }"],
+      env: { ...bunEnv, USERPROFILE },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+  });
+
+  it("version() matches the build in release() and machine() matches process.arch", () => {
+    expect(os.release()).toMatch(/^10\.0\.\d+$/);
+    const build = Number(os.release().split(".")[2]);
+    expect(os.version()).toMatch(build >= 22000 ? /^Windows (11|Server) / : /^Windows (10|Server) /);
+    expect(os.machine()).toBe(process.arch === "x64" ? "x86_64" : "arm64");
+  });
+
+  it("networkInterfaces() cidr prefix length matches the netmask", () => {
+    const addresses = Object.values(os.networkInterfaces()).flat();
+    expect(addresses.map(({ address, internal }) => internal && address)).toContain("127.0.0.1");
+    for (const { family, netmask, cidr, address } of addresses) {
+      const groups =
+        family === "IPv4"
+          ? netmask.split(".").map(Number)
+          : netmask.split(":").map(group => parseInt(group || "0", 16));
+      const prefixLength = groups.reduce((sum, group) => sum + group.toString(2).replaceAll("0", "").length, 0);
+      expect(cidr).toBe(`${address}/${prefixLength}`);
+    }
+  });
+
+  it("setPriority() maps values to Windows priority classes", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setInterval(() => {}, 1e6)"], env: bunEnv });
+    const setAndGetPriority = priority => {
+      os.setPriority(proc.pid, priority);
+      return os.getPriority(proc.pid);
+    };
+    expect([-14, -8, -7, -1, 0, 9, 10, 18, 19].map(setAndGetPriority)).toEqual([-14, -14, -7, -7, 0, 0, 10, 10, 19]);
+  });
 });

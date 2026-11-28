@@ -1785,27 +1785,17 @@ impl StandaloneModuleGraph {
         {
             // SAFETY: they take nothing and cannot fail.
             (stat.st_uid, stat.st_gid) = unsafe { (libc::getuid(), libc::getgid()) };
-            stat.st_atime = seconds as _;
-            stat.st_atime_nsec = nanoseconds as _;
-            stat.st_mtime = seconds as _;
-            stat.st_mtime_nsec = nanoseconds as _;
-            stat.st_ctime = seconds as _;
-            stat.st_ctime_nsec = nanoseconds as _;
         }
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        stat.st_atime = seconds as _;
+        stat.st_atime_nsec = nanoseconds as _;
+        stat.st_mtime = seconds as _;
+        stat.st_mtime_nsec = nanoseconds as _;
+        stat.st_ctime = seconds as _;
+        stat.st_ctime_nsec = nanoseconds as _;
+        #[cfg(any(target_os = "macos", target_os = "freebsd", windows))]
         {
             stat.st_birthtime = seconds as _;
             stat.st_birthtime_nsec = nanoseconds as _;
-        }
-        #[cfg(windows)]
-        for time in [
-            &mut stat.atim,
-            &mut stat.mtim,
-            &mut stat.ctim,
-            &mut stat.birthtim,
-        ] {
-            time.sec = seconds as _;
-            time.nsec = nanoseconds as _;
         }
     }
 

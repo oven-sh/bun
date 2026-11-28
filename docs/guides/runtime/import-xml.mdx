@@ -20,13 +20,24 @@ Bun natively supports `.xml` imports.
 
 Import the file like any other source file. The module is the parsed document: one key for the root element, `"@name"` keys for attributes, and arrays for repeated elements. Every value is a string.
 
+TypeScript types the module as `Bun.XML.Document`, which describes any XML document. Before you read from the module, give it the shape of your file. A child element that occurs once is a single value, not an array. See [One or many](/runtime/xml#one-or-many).
+
 ```ts config.ts icon="/icons/typescript.svg"
 import doc from "./config.xml";
 
-doc.config["@env"]; // => "production"
-doc.config.database["@host"]; // => "localhost"
-doc.config.server["@port"]; // => "3000"
-doc.config.feature.map(f => f["@name"]); // => ["auth", "rateLimit"]
+const { config } = doc as {
+  config: {
+    "@env": string;
+    database: { "@host": string; "@port": string; "@name": string };
+    server: { "@port": string; "@timeout": string };
+    feature: { "@name": string }[];
+  };
+};
+
+config["@env"]; // => "production"
+config.database["@host"]; // => "localhost"
+config.server["@port"]; // => "3000"
+config.feature.map(f => f["@name"]); // => ["auth", "rateLimit"]
 ```
 
 ---
@@ -42,20 +53,20 @@ console.log(Number(config.server["@timeout"])); // => 30
 
 ---
 
-For parsing XML strings at runtime, use `Bun.XML.parse()`:
+For parsing XML strings at runtime, use `Bun.XML.parse()`. The result is typed as a generic document, so give it the shape you expect:
 
 ```ts config.ts icon="/icons/typescript.svg"
-const data = Bun.XML.parse(`
+const { user } = Bun.XML.parse(`
   <user id="7">
     <name>John Doe</name>
     <hobby>reading</hobby>
     <hobby>coding</hobby>
   </user>
-`);
+`) as { user: { "@id": string; name: string; hobby: string[] } };
 
-console.log(data.user.name); // => "John Doe"
-console.log(data.user.hobby); // => ["reading", "coding"]
-console.log(data.user["@id"]); // => "7"
+console.log(user.name); // => "John Doe"
+console.log(user.hobby); // => ["reading", "coding"]
+console.log(user["@id"]); // => "7"
 ```
 
 ---

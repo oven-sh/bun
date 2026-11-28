@@ -24,6 +24,7 @@ import {
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
+  withoutAsanQuarantine,
 } from "harness";
 import { connect, createServer, type AddressInfo, type Socket as NetSocket } from "net";
 import { basename, join, relative, resolve, sep } from "path";
@@ -778,6 +779,94 @@ describe.concurrent("bun-install", () => {
         expect(await exists(join(ctx.package_dir, "node_modules", "holder", "package.json"))).toBeTrue();
         expect(exitCode).toBe(0);
       });
+    });
+  });
+
+  // bun locates what it finds in a file with a scan that goes on from its last finding. Each file below is as long
+  // as the one that bun read before it, at a path of the same length.
+  describe("the line and column in a file as long as the last one", () => {
+    // The package.json of every `file:` folder is read into one buffer. Each is 260 bytes here, and the finding is
+    // further into each file than into the one before.
+    // [name, line breaks before the finding, bytes of padding before it]
+    const folders = [
+      ["a", 3, 0],
+      ["b", 0, 100],
+      ["c", 5, 120],
+      ["d", 0, 150],
+    ] as const;
+    const manifest = (name: string, lineBreaks: number, padding: number, finding: string) => {
+      const before = `{"name":"${name}","version":"1.0.0",${Buffer.alloc(lineBreaks, "\n")}"p":"${Buffer.alloc(padding, "x")}",`;
+      const after = `${finding},"q":"`;
+      return `${before}${after}${Buffer.alloc(260 - before.length - after.length - 2, "y")}"}`;
+    };
+    const unnamed = `"dependencies":{"":"1.0.0"}`;
+    const duplicate = `"p":1`;
+
+    it.each([
+      ["an unnamed dependency", [unnamed, unnamed, unnamed, unnamed], ["a:4:24", "b:1:154", "c:6:144", "d:1:204"], 0],
+      ["a duplicate key", [duplicate, duplicate, duplicate, duplicate], ["a:4:8", "b:1:138", "c:6:128", "d:1:188"], 0],
+      ["a syntax error after a warning", [duplicate, "oops"], ["a:4:8", "b:1:138"], 1],
+    ] as const)("in a file: folder's package.json: %s", async (_, findings, places, exitCode) => {
+      await withContext(defaultOpts, async ctx => {
+        const names = folders.slice(0, findings.length).map(([name]) => name);
+        await Promise.all([
+          writeProject(ctx, {
+            "package.json": {
+              name: "foo",
+              dependencies: Object.fromEntries(names.map(name => [name, `file:./${name}`])),
+            },
+          }),
+          ...findings.map((finding, i) =>
+            write(join(ctx.package_dir, names[i], "package.json"), manifest(...folders[i], finding)),
+          ),
+        ]);
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [err, exited] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const located = Array.from(
+          err.matchAll(/[\\/]([a-d])[\\/]package\.json:(\d+:\d+)/g),
+          at => `${at[1]}:${at[2]}`,
+        );
+        expect(located.sort()).toEqual([...places]);
+        expect(exited).toBe(exitCode);
+      });
+    });
+
+    // The text of .bunfig.toml is freed before bunfig.toml is read, and a release build reads that to the same
+    // address. Each is 5000 bytes here.
+    it("in bunfig.toml after the global .bunfig.toml, with its token masked", async () => {
+      const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+      const padded = (text: string) => `${text}${Buffer.alloc(5000 - text.length - 1, "#")}\n`;
+      using dir = tempDir("bunfig-as-long-as-the-global-one", {
+        "h/.bunfig.toml": padded(`#${Buffer.alloc(40, "g")}\n[macros]\n"./bad" = { x = "${Buffer.alloc(40, "y")}" }\n`),
+        "pp/bunfig.toml": padded(`[install.scopes]\n"@myorg" = { token = "${token}", url = 5 }\n`),
+        "pp/package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: join(String(dir), "pp"),
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        // ASAN's quarantine would keep the address of the first text out of use.
+        env: withoutAsanQuarantine({ ...env, XDG_CONFIG_HOME: join(String(dir), "h") }),
+      });
+      const [err, exited] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain(token.slice(-8));
+      expect(err).toContain(`2 | "@myorg" = { token = "${Buffer.alloc(token.length, "*")}", url = 5 }`);
+      expect(Array.from(err.matchAll(/[\\/](\.?bunfig\.toml):(\d+:\d+)/g), at => `${at[1]}:${at[2]}`)).toEqual([
+        ".bunfig.toml:3:1",
+        "bunfig.toml:2:72",
+      ]);
+      expect(exited).toBe(1);
     });
   });
 

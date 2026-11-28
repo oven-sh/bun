@@ -2220,6 +2220,8 @@ pub mod parse_worker {
             contents: std::borrow::Cow::Borrowed(contents),
             ..Default::default()
         });
+        // `bump` frees `source` without dropping it.
+        let _release = bun_ast::ReleasePositionIndex(&source.position_index);
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(contents)

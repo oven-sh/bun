@@ -986,6 +986,7 @@ impl PackageJSON {
             contents: std::borrow::Cow::Borrowed(contents_static),
             identifier_name: json_source.identifier_name.clone(),
             index: json_source.index,
+            position_index: Default::default(),
         };
         // See SAFETY note on `contents_static` above — move ownership of the
         // backing buffer into the returned struct (replaces the prior

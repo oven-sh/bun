@@ -5200,6 +5200,11 @@ pub mod bv2_impl {
             original_target: options::Target,
             plugin_answer: &PluginAnswer,
         ) -> bool {
+            // Plugins see the project's imports, not the runtime's own `node:module`.
+            if source_index == Index::RUNTIME.get() {
+                return false;
+            }
+
             if let Some(plugins) = self.plugins_ref() {
                 // The plugins get each record once.
                 if !matches!(plugin_answer, PluginAnswer::NotAsked) {

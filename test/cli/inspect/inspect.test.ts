@@ -6,6 +6,7 @@ import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
 import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
+import { rawRequest, requestWithUnusableHosts, unusableHosts, upgradeHeaders } from "./raw-http";
 import { SocketFramer } from "./socket-framer";
 let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);
@@ -374,6 +375,93 @@ describe("http metadata endpoint", () => {
     const web = await fetch(endpoint, { headers: { "Origin": "http://inspector.example" } });
     expect(await web.text()).toBe("");
     expect(web.status).toBe(403);
+  });
+
+  const version = {
+    status: "HTTP/1.1 200 OK",
+    body: {
+      "Protocol-Version": "1.3",
+      "Browser": "Bun",
+      "User-Agent": expect.any(String),
+      "WebKit-Version": expect.any(String),
+      "Bun-Version": expect.any(String),
+      "Bun-Revision": expect.any(String),
+    },
+  };
+  const switchingProtocols = { status: "HTTP/1.1 101 Switching Protocols", body: "" };
+  const badRequest = { status: "HTTP/1.1 400 Bad Request", body: "" };
+  const notFound = { status: "HTTP/1.1 404 Not Found", body: "" };
+
+  test("answers a request without a Host header and refuses an unusable Host", async () => {
+    const { port, pathname } = await spawnInspectee();
+    const address = { port: Number(port), host: "127.0.0.1" };
+
+    expect({
+      withoutHost: await rawRequest(address, "GET /json/version HTTP/1.0"),
+      post: await rawRequest(address, "POST /json/version HTTP/1.0", ["Content-Length: 0"]),
+      emptyHost: await rawRequest(address, "GET /json/version HTTP/1.1", ["Host: ", "Connection: close"]),
+      // A target that starts with "//" is a path, with or without a Host header.
+      doubleSlash: {
+        withoutHost: await rawRequest(address, "GET //x/json/version HTTP/1.0"),
+        withHost: await rawRequest(address, "GET //x/json/version HTTP/1.1", ["Host: 127.0.0.1", "Connection: close"]),
+      },
+    }).toEqual({
+      withoutHost: version,
+      post: { status: "HTTP/1.1 405 Method Not Allowed", body: "" },
+      emptyHost: version,
+      doubleSlash: { withoutHost: notFound, withHost: notFound },
+    });
+
+    expect(await requestWithUnusableHosts(address, "/json/version", pathname)).toEqual(
+      Object.fromEntries(unusableHosts.map(host => [host, { get: badRequest, upgrade: badRequest }])),
+    );
+
+    // The accepted upgrade goes last: the inspectee can exit once this client disconnects (#45263).
+    expect(await rawRequest(address, `GET ${pathname} HTTP/1.1`, ["Host: ", ...upgradeHeaders])).toEqual(
+      switchingProtocols,
+    );
+  });
+
+  // A unix socket server does not check which Host a request names, but Bun.serve
+  // still cannot build request.url from a Host that is not an authority.
+  // POSIX only: a ws+unix:// URL cannot name a Windows drive path. `new URL("ws+unix://C:/x/i.sock")`
+  // has host "C" and pathname "/x/i.sock". On Windows the debugger connects over TCP (#14048).
+  test.skipIf(!isPosix)("bun --inspect=ws+unix:// answers a request without a Host header", async () => {
+    // Short names: a unix socket path has a length limit of about 100 bytes.
+    using dir = tempDir("insp", {});
+    const path = join(String(dir), "i.sock");
+    const notifyPath = join(String(dir), "n.sock");
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    using notifyListener = Bun.listen({ unix: notifyPath, socket: { data: () => onListening() } });
+    const inspectee = (metadataInspectee = spawn({
+      cwd: import.meta.dir,
+      cmd: [bunExe(), `--inspect=ws+unix://${path}`, "inspectee.js"],
+      env: { ...bunEnv, BUN_INSPECT_NOTIFY: `unix://${notifyPath}` },
+      stdout: "ignore",
+      stderr: "inherit",
+    }));
+    await Promise.race([
+      listening,
+      inspectee.exited.then(code => {
+        throw new Error(`the inspectee exited with code ${code} before the inspector listened`);
+      }),
+    ]);
+
+    expect({
+      withoutHost: await rawRequest({ path }, "GET /json/version HTTP/1.0"),
+      namedHost: await rawRequest({ path }, "GET /json/version HTTP/1.1", [
+        "Host: tunnel.example",
+        "Connection: close",
+      ]),
+      unusableHost: await rawRequest({ path }, "GET /json/version HTTP/1.1", ["Host: a b", "Connection: close"]),
+      // The accepted upgrade goes last: the inspectee can exit once this client disconnects (#45263).
+      emptyHostUpgrade: await rawRequest({ path }, "GET / HTTP/1.1", ["Host: ", ...upgradeHeaders]),
+    }).toEqual({
+      withoutHost: version,
+      namedHost: version,
+      unusableHost: badRequest,
+      emptyHostUpgrade: switchingProtocols,
+    });
   });
 });
 

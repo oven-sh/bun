@@ -143,10 +143,11 @@ impl List {
         Ok(())
     }
 
-    fn find_index_from_generated(
+    /// The index of the last mapping at or before `line:column`, on any line.
+    fn index_at_or_before(
         line_column_offsets: &[LineColumnOffset],
-        line: Ordinal,
-        column: Ordinal,
+        line: i32,
+        column: i32,
     ) -> Option<usize> {
         let mut count = line_column_offsets.len();
         let mut index: usize = 0;
@@ -154,9 +155,8 @@ impl List {
             let step = count / 2;
             let i: usize = index + step;
             let mapping = line_column_offsets[i];
-            if mapping.lines.zero_based() < line.zero_based()
-                || (mapping.lines.zero_based() == line.zero_based()
-                    && mapping.columns.zero_based() <= column.zero_based())
+            if mapping.lines.zero_based() < line
+                || (mapping.lines.zero_based() == line && mapping.columns.zero_based() <= column)
             {
                 index = i + 1;
                 count = count.saturating_sub(step + 1);
@@ -165,13 +165,17 @@ impl List {
             }
         }
 
-        if index > 0 {
-            if line_column_offsets[index - 1].lines.zero_based() == line.zero_based() {
-                return Some(index - 1);
-            }
-        }
+        index.checked_sub(1)
+    }
 
-        None
+    fn find_index_from_generated(
+        line_column_offsets: &[LineColumnOffset],
+        line: Ordinal,
+        column: Ordinal,
+    ) -> Option<usize> {
+        let index =
+            Self::index_at_or_before(line_column_offsets, line.zero_based(), column.zero_based())?;
+        (line_column_offsets[index].lines.zero_based() == line.zero_based()).then_some(index)
     }
 
     pub(crate) fn sort(&mut self) {
@@ -203,25 +207,32 @@ impl List {
         both_lists!(&self.r#impl, |list| list.len())
     }
 
+    /// The mapping that covers `line:column`. `None` in a segment that has no source.
     pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        match &self.r#impl {
+        let mapping = match &self.r#impl {
             ListValue::WithoutNames(list) => {
-                if let Some(i) =
-                    Self::find_index_from_generated(list.items_generated(), line, column)
-                {
-                    return Some(list.get(i).to_named());
-                }
+                let i = Self::find_index_from_generated(list.items_generated(), line, column)?;
+                list.get(i).to_named()
             }
             ListValue::WithNames(list) => {
-                if let Some(i) =
-                    Self::find_index_from_generated(list.items_generated(), line, column)
-                {
-                    return Some(*list.get(i));
-                }
+                let i = Self::find_index_from_generated(list.items_generated(), line, column)?;
+                *list.get(i)
+            }
+        };
+        mapping.has_source().then_some(mapping)
+    }
+
+    /// The last row at or before `line:column`, on any line, with or without a source. The position is signed: the `SourceMap` of node:module looks up what its caller passes.
+    pub fn find_at_or_before(&self, line: i32, column: i32) -> Option<Mapping> {
+        match &self.r#impl {
+            ListValue::WithoutNames(list) => {
+                Self::index_at_or_before(list.items_generated(), line, column)
+                    .map(|i| list.get(i).to_named())
+            }
+            ListValue::WithNames(list) => {
+                Self::index_at_or_before(list.items_generated(), line, column).map(|i| *list.get(i))
             }
         }
-
-        None
     }
 
     pub fn generated(&self) -> &[LineColumnOffset] {
@@ -381,6 +392,25 @@ impl Mapping {
     pub fn original_column(&self) -> i32 {
         self.original.columns.zero_based()
     }
+
+    /// False for the row of a one-field segment: generated code that comes from no source.
+    #[inline]
+    pub fn has_source(&self) -> bool {
+        self.source_index >= 0
+    }
+
+    /// The row of a one-field segment. No mapping has -1 as its source index, line or column.
+    fn without_source(generated: LineColumnOffset) -> Mapping {
+        Mapping {
+            generated,
+            original: LineColumnOffset {
+                lines: Ordinal::INVALID,
+                columns: Ordinal::INVALID,
+            },
+            source_index: -1,
+            name_index: -1,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -397,6 +427,21 @@ const SEMICOLON_RUN: [u8; HALF_USIZE] = [b';'; HALF_USIZE];
 /// handles the tail / anomalies. One block is 16–64 bytes depending on the
 /// runtime-dispatched ISA; 128 bytes guarantees at least two full blocks.
 const SIMD_THRESHOLD: usize = 128;
+
+// PERF: not through `List::append`. With one caller, the loop of `parse`, rustc inlines it there. With two it is a call that costs each mapped row 41 instructions.
+#[cold]
+#[inline(never)]
+fn append_without_source(mapping: &mut List, generated: LineColumnOffset) {
+    let row = Mapping::without_source(generated);
+    bun_core::handle_oom(match &mut mapping.r#impl {
+        ListValue::WithoutNames(list) => list.append(MappingWithoutName {
+            generated: row.generated,
+            original: row.original,
+            source_index: row.source_index,
+        }),
+        ListValue::WithNames(list) => list.append(row),
+    });
+}
 
 pub fn parse(
     bytes: &[u8],
@@ -516,20 +561,20 @@ pub fn parse(
 
         remain = &remain[generated_column_delta.start..];
 
-        // According to the specification, it's valid for a mapping to have 1,
-        // 4, or 5 variable-length fields. Having one field means there's no
-        // original location information, which is pretty useless. Just ignore
-        // those entries.
+        // A segment with one field. Node.js through v26.13.0 reads the one that ends the string as mapped, which ECMA-426 does not: https://github.com/nodejs/node/pull/66264
         if remain.len() == 0 {
+            append_without_source(&mut mapping, generated);
             break;
         }
 
         match remain[0] {
             b',' => {
+                append_without_source(&mut mapping, generated);
                 remain = &remain[1..];
                 continue;
             }
             b';' => {
+                append_without_source(&mut mapping, generated);
                 continue;
             }
             _ => {}

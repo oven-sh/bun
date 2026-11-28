@@ -198,12 +198,15 @@ impl ParsedSourceMap {
             self.mappings.source_index(),
         );
         for i in 0..generated.len() {
-            each(Mapping {
+            let mapping = Mapping {
                 generated: generated[i],
                 original: original[i],
                 source_index: source_index[i],
                 name_index: -1,
-            });
+            };
+            if mapping.has_source() {
+                each(mapping);
+            }
         }
     }
 
@@ -267,6 +270,10 @@ impl ParsedSourceMap {
             }
             writer.write_all(VLQ::encode(gn.columns.zero_based() - last_col).slice())?;
             last_col = gn.columns.zero_based();
+            // A row that has no source is a one-field segment.
+            if *source_index < 0 {
+                continue;
+            }
             writer.write_all(VLQ::encode(*source_index - last_src).slice())?;
             last_src = *source_index;
             writer.write_all(VLQ::encode(orig.lines.zero_based() - last_ol).slice())?;

@@ -164,7 +164,7 @@ async function assertSimdMatchesScalar(
     expect({ label, simdRan: simd.debug.includes("simd consumed") }).toEqual({ label, simdRan: true });
     expect({ label, scalarRan: scalar.debug.includes("simd consumed") }).toEqual({ label, scalarRan: false });
   }
-  return scalar;
+  return { ...scalar, simdDebug: simd.debug };
 }
 
 describe.concurrent("SourceMap SIMD mappings decode", () => {
@@ -289,7 +289,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(scalar.entries[139].name).toBe("n0");
   });
 
-  test("1-field (generated-column-only) segments are skipped but accumulate", async () => {
+  test("1-field (generated-column-only) segments move the generated column of the next segment", async () => {
     // Interleave 1-field and 4-field so the generated column a 4-field
     // segment lands on depends on the preceding 1-field deltas.
     const lines: number[][][] = [[]];
@@ -305,6 +305,69 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(scalar.entries[0].generatedColumn).toBe(5);
     expect(scalar.entries[1].generatedColumn).toBe(10);
   });
+
+  for (const withNames of [false, true]) {
+    const title = withNames
+      ? "1-field segments between segments that have a name keep a row that has no source or name"
+      : "1-field segments keep a row that has no source";
+    test(title, async () => {
+      // Line 0 is long and has no ';', so the SIMD decoder tries its batched
+      // path on it. Each of the next lines has a 1-field segment first on the
+      // line, two in a row, and one last on the line. With names, each mapped
+      // segment has a fifth field that moves to the other of two names.
+      let nameIndex = 0;
+      const mapped = (...fields: number[]) => {
+        if (!withNames) return fields;
+        const delta = nameIndex === 0 ? 1 : -1;
+        nameIndex += delta;
+        return [...fields, delta];
+      };
+      const lines: number[][][] = [[]];
+      for (let i = 0; i < 30; i++) lines[0].push([3], mapped(2, 0, 0, 1));
+      for (let li = 0; li < 12; li++) lines.push([[1], mapped(2, 0, 1, 3), [4], [5], mapped(2, 0, 0, 1), [6]]);
+      lines.push([mapped(0, 0, 1, 0)]);
+      const { mappings, sourcesLen, namesLen } = build(lines);
+      expect(mappings.length).toBeGreaterThanOrEqual(128);
+
+      // Probe the first column of every segment and the column after it.
+      const probes: Array<[number, number]> = [];
+      const expected: Entry[] = [];
+      let originalLine = 0;
+      let originalColumn = 0;
+      let name = 0;
+      lines.forEach((segments, generatedLine) => {
+        let generatedColumn = 0;
+        for (const segment of segments) {
+          generatedColumn += segment[0];
+          const hasSource = segment.length > 1;
+          if (hasSource) {
+            originalLine += segment[2];
+            originalColumn += segment[3];
+            name += segment[4] ?? 0;
+          }
+          const entry: Entry = {
+            generatedLine,
+            generatedColumn,
+            originalLine: hasSource ? originalLine : null,
+            originalColumn: hasSource ? originalColumn : null,
+            originalSource: hasSource ? "s0.js" : null,
+            name: hasSource && withNames ? `n${name}` : null,
+          };
+          probes.push([generatedLine, generatedColumn], [generatedLine, generatedColumn + 1]);
+          expected.push(entry, entry);
+        }
+      });
+
+      const scalar = await assertSimdMatchesScalar(title, mappings, sourcesLen, withNames ? namesLen : 0, probes);
+      expect({ error: scalar.error, entries: scalar.entries }).toEqual({ error: null, entries: expected });
+      if (isDebug) {
+        // The SIMD decoder hands less than one block (at most 64 bytes) to the
+        // scalar loop, so it is the one that read the 1-field segments.
+        const consumed = Number(/simd consumed (\d+)\//.exec(scalar.simdDebug)?.[1]);
+        expect(consumed).toBeGreaterThan(mappings.length - 64);
+      }
+    });
+  }
 
   test("semicolon runs (line resets) and trailing ';'", async () => {
     // 60 lines, some empty (';;'), each non-empty line has a few segments.
@@ -509,5 +572,69 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     const scalar = await assertSimdMatchesScalar("pseudo-random", mappings, sourcesLen, namesLen, probes);
     expect(scalar.error).toBeNull();
     expect(scalar.entries.length).toBeGreaterThan(1000);
+  });
+
+  test("large pseudo-random map with 1-field segments and names", async () => {
+    // Deterministic LCG so the fixture is reproducible.
+    let seed = 0x2468_ace1 >>> 0;
+    const rnd = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed;
+    };
+    // A 1-field segment has a delta of 1 to 6 VLQ digits that can be negative or zero.
+    // A mapped segment keeps to small deltas, so that no segment is longer than 10 bytes.
+    const oneFieldDeltas = [0, 1, 7, 15, 16, 300, 511, 512, 9000, 20000, 600000, 20000000];
+    const lines: number[][][] = [];
+    const probes: Array<[number, number]> = [];
+    let origCol = 0;
+    let src = 0;
+    let name = 0;
+    for (let li = 0; li < 120; li++) {
+      const segs: number[][] = [];
+      let genCol = 0;
+      const n = 5 + (rnd() % 20);
+      for (let s = 0; s < n; s++) {
+        if (rnd() % 3 === 0) {
+          let delta = oneFieldDeltas[rnd() % oneFieldDeltas.length];
+          if (rnd() % 4 === 0 && genCol - delta >= 0) delta = -delta;
+          genCol += delta;
+          segs.push([delta]);
+        } else {
+          const gc = 1 + (rnd() % 15);
+          const ds = (rnd() % 3) - 1;
+          if (src + ds < 0 || src + ds > 4) continue;
+          src += ds;
+          const dol = rnd() % 3;
+          let doc: number = (rnd() % 30) - 10;
+          if (origCol + doc < 0) doc = -origCol;
+          origCol += doc;
+          genCol += gc;
+          if (rnd() % 2 === 0) {
+            let dn = (rnd() % 5) - 2;
+            if (name + dn < 0 || name + dn > 3) dn = 0;
+            name += dn;
+            segs.push([gc, ds, dol, doc, dn]);
+          } else {
+            segs.push([gc, ds, dol, doc]);
+          }
+        }
+        probes.push([li, genCol], [li, genCol + 1]);
+      }
+      lines.push(segs);
+    }
+    const { mappings, sourcesLen } = build(lines);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const scalar = await assertSimdMatchesScalar("pseudo-random-1-field", mappings, sourcesLen, 4, probes);
+    expect(scalar.error).toBeNull();
+    // The row of a 1-field segment has a generated position and no source.
+    const withoutSource = scalar.entries.filter(e => e.generatedLine !== null && e.originalSource === null);
+    expect(withoutSource.length).toBeGreaterThan(500);
+    expect(withoutSource.filter(e => e.name !== null || e.originalLine !== null || e.originalColumn !== null)).toEqual(
+      [],
+    );
+    if (isDebug) {
+      const consumed = Number(/simd consumed (\d+)\//.exec(scalar.simdDebug)?.[1]);
+      expect(consumed).toBeGreaterThan(mappings.length - 64);
+    }
   });
 });

@@ -189,7 +189,9 @@ test/js/bun/util/inspect-error.test.js: AggregateError whose errors cannot be wa
 test/js/bun/util/inspect-error.test.js: a relative source with backslashes in an external map
 test/js/bun/util/inspect-error.test.js: a rooted source with backslashes in an external map
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > a `cause` getter that loads the throwing file again
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map that ends with a segment that has no source
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map whose original source is unavailable
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map with a segment that has no source
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction does not expose the module loader reaction
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction hides internal callees from sloppy code
 test/js/node/v8/capture-stack-trace.test.js: a stack that a collection materializes reads the same in a Worker

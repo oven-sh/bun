@@ -14,7 +14,7 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_ptr::{OptionCellExt as _, RefPtr, RefPtrCellExt as _};
+use bun_ptr::{AliasableBox, OptionCellExt as _, RefPtr, RefPtrCellExt as _};
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
@@ -110,17 +110,14 @@ macro_rules! log {
 /// per-connection `*TLSSocket` is a UAF when handshakes overlap. Read the
 /// socket back from the per-SSL ex_data slot set in `onOpen` instead.
 extern "C" fn select_alpn_callback(
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &bun_boringssl_sys::SSL,
     out: *mut *const u8,
     outlen: *mut u8,
     in_: *const u8,
     inlen: c_uint,
     _arg: *mut c_void,
 ) -> c_int {
-    // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
-    // through the const-asserted opaque-ZST accessor so the call is safe.
-    let this_ptr =
-        tls_socket_functions::ffi::SSL_get_ex_data(boringssl_sys::SSL::opaque_ref(ssl), 0);
+    let this_ptr = boringssl_sys::SSL_get_ex_data(ssl, 0);
     if this_ptr.is_null() {
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
@@ -161,7 +158,7 @@ extern "C" fn select_alpn_callback(
                 [core::ptr::null_mut(); LOOP_STATE_SLOTS];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                    boringssl_sys::SSL::opaque_ref(ssl),
+                    ssl,
                     saved_loop_state.as_mut_ptr(),
                 );
             }
@@ -192,16 +189,10 @@ extern "C" fn select_alpn_callback(
                 // and `in_` is valid for `inlen` per the callback contract.
                 unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
             }
-            // SAFETY: `ssl` is the live SSL handle passed into this ALPN
-            // callback; SSL_get_servername reads the negotiated SNI name and
-            // returns NULL or a NUL-terminated string owned by the SSL.
-            let servername_ptr = unsafe { boringssl_sys::SSL_get_servername(ssl.cast_const(), 0) };
-            let servername_js = if servername_ptr.is_null() {
-                JSValue::UNDEFINED
-            } else {
-                // SAFETY: BoringSSL hands back a NUL-terminated name.
-                let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
-                EncodedSlice::latin1(name.to_bytes()).to_js(&global)
+            // SAFETY: nothing else touches `ssl` until the name is copied.
+            let servername_js = match unsafe { NonNull::from(ssl).as_mut() }.servername() {
+                Some(name) => EncodedSlice::latin1(name).to_js(&global),
+                None => JSValue::UNDEFINED,
             };
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
@@ -277,12 +268,12 @@ extern "C" fn select_alpn_callback(
 
 /// BoringSSL reads the server ALPN callback off the *current* `ssl->ctx`, and
 /// SNI replaces that with `SSL_set_SSL_CTX` before ALPN negotiation.
-pub(in crate::socket) fn install_sni_alpn_selector(ctx: &boringssl_sys::OwnedSslCtx) {
-    tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
-        SSL_CTX::opaque_ref(ctx.as_ptr()),
-        Some(select_alpn_callback),
-        ptr::null_mut(),
-    );
+pub(in crate::socket) fn install_alpn_selector(ctx: &SSL_CTX) {
+    // SAFETY: the callback reads no `arg`, only ex_data slot 0, which `on_open` alone sets. It reports
+    // a selection only once it has written one.
+    unsafe {
+        boringssl_sys::SSL_CTX_set_alpn_select_cb(ctx, Some(select_alpn_callback), ptr::null_mut());
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -822,7 +813,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             context
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
                 .map(|sc| sc.ctx.clone())
-                .inspect(install_sni_alpn_selector)
+                .inspect(|ctx| install_alpn_selector(ctx))
         };
         socket.sni_resolve(ctx, is_error);
     }
@@ -1359,31 +1350,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Add SNI support for TLS (mongodb and others requires this)
         if SSL {
             if let Some(ssl_ptr) = self.socket.get().ssl() {
-                if tls_socket_functions::ffi::SSL_is_init_finished(boringssl_sys::SSL::opaque_ref(
-                    ssl_ptr,
-                )) == 0
-                {
+                // SAFETY: the socket has just opened, and nothing in this block closes it.
+                let ssl = unsafe { &*ssl_ptr };
+                if boringssl_sys::SSL_is_init_finished(ssl) == 0 {
                     if let Some(server_name) = self.server_name.get() {
                         let host: &[u8] = server_name.as_ref();
                         if !host.is_empty() {
-                            let host_z = bun_core::ZBox::from_bytes(host);
-                            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                            unsafe {
-                                boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr())
-                            };
+                            ssl.set_servername(&bun_core::ZBox::from_bytes(host));
                         }
                     } else if let Some(connection) = self.connection.get() {
                         if let super::listener::UnixOrHost::Host { host, .. } = connection {
                             let host = bun_core::ip_address::strip_ipv6_brackets(host.as_ref());
                             if !host.is_empty() {
-                                let host_z = bun_core::ZBox::from_bytes(host);
-                                // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                                unsafe {
-                                    boringssl_sys::SSL_set_tlsext_host_name(
-                                        ssl_ptr,
-                                        host_z.as_ptr(),
-                                    )
-                                };
+                                ssl.set_servername(&bun_core::ZBox::from_bytes(host));
                             }
                         }
                     }
@@ -1392,26 +1371,16 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // selector consults the callback first and falls back to
                     // the static list). The callback reads `self` from the SSL,
                     // not the CTX-level arg (shared across the listener).
-                    // ffi-safe-fn: opaque-ZST `&SSL`/`&SSL_CTX` redecls;
-                    // `ssl_ptr` non-null in this branch and `SSL_get_SSL_CTX`
-                    // never returns null for a live SSL.
                     if self.acts_as_tls_server()
                         && (self.protos.get().is_some()
                             || !self.get_handlers().on_alpn_callback().is_empty())
                     {
-                        let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
-                        tls_socket_functions::ffi::SSL_set_ex_data(
-                            ssl_ref,
-                            0,
-                            this_ptr.cast::<c_void>(),
-                        );
-                        tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
-                            SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(
-                                ssl_ref,
-                            )),
-                            Some(select_alpn_callback),
-                            ptr::null_mut(),
-                        );
+                        // SAFETY: slot 0 is `select_alpn_callback`'s, and the transport that drives
+                        // `ssl` holds `self`. `ssl` holds a reference to its context.
+                        unsafe {
+                            boringssl_sys::SSL_set_ex_data(ssl_ptr, 0, this_ptr.cast::<c_void>());
+                            install_alpn_selector(&*boringssl_sys::SSL_get_SSL_CTX(ssl));
+                        }
                     }
                     // A rejecting client must refuse a bad chain DURING the
                     // handshake, like node observably does (its post-verify
@@ -1426,18 +1395,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             // Registered above (selector + ex_data); nothing
                             // further to do for the static server list here.
                         } else {
-                            // SAFETY: `ssl_ptr` non-null in this branch;
-                            // `protos.as_ptr()` is readable for `protos.len()`
-                            // bytes (borrowed `&[u8]` from `self.protos`) and
-                            // BoringSSL copies the buffer internally — raw
-                            // ptr+len pair is the genuine FFI precondition here.
-                            unsafe {
-                                boringssl_sys::SSL_set_alpn_protos(
-                                    ssl_ptr,
-                                    protos.as_ptr(),
-                                    protos.len(),
-                                );
-                            }
+                            ssl.set_alpn_protos(protos);
                         }
                     }
                 }
@@ -1659,23 +1617,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
             && !self.acts_as_tls_server()
         {
-            if let Some(ssl_ptr) = self.socket.get().ssl() {
+            // SAFETY: the socket that reports its handshake is open, and this block only reads certificates.
+            if let Some(ssl) = unsafe { self.socket.get().ssl_mut() } {
                 let hostname = self.server_identity_hostname();
-                if rejected_in_handshake
-                    || !uws::check_server_identity(
-                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                        hostname,
-                    )
-                {
+                if rejected_in_handshake || !uws::check_server_identity(ssl, hostname) {
                     authorized = false;
                     hostname_mismatch = true;
                     hostname_mismatch_message = Some(
-                        bun_boringssl::server_identity_mismatch_message(
-                            boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                            hostname,
-                        )
-                        .into_bytes()
-                        .into_boxed_slice(),
+                        bun_boringssl::server_identity_mismatch_message(ssl, hostname)
+                            .into_bytes()
+                            .into_boxed_slice(),
                     );
                 }
             }
@@ -1984,6 +1935,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !self.has_handlers() {
             self.detach_native_callback();
             self.socket.set(SocketHandler::<SSL>::DETACHED);
+            // The raw twin of `upgradeTLS` gets its close only from here, as below.
+            if let Some(raw) = self.twin.take() {
+                crate::dispatch::fold(raw.on_close(socket, err, reason));
+            }
             return Ok(());
         }
         let handlers = self.get_handlers();
@@ -3252,13 +3207,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
 
         let cfg = ssl_opts.as_ref();
-        let ctx_ptr = owned_ctx.as_ref().map(|c| c.as_ptr());
-        let reject_unauthorized = upgrade_reject_policy(vm, cfg, is_server, ctx_ptr);
+        let ctx = owned_ctx.as_deref();
+        let reject_unauthorized = upgrade_reject_policy(vm, cfg, is_server, ctx);
         let (adopt_request_cert, adopt_reject_unauthorized) = match cfg {
             Some(c) => (c.request_cert != 0, c.reject_unauthorized != 0),
             None => (
-                server_ctx_requests_cert(ctx_ptr),
-                server_ctx_rejects_unauthorized(ctx_ptr),
+                server_ctx_requests_cert(ctx),
+                server_ctx_rejects_unauthorized(ctx),
             ),
         };
         let mut initial_flags = Flags::initial(reject_unauthorized);
@@ -3613,7 +3568,7 @@ fn upgrade_reject_policy(
     vm: &VirtualMachine,
     cfg: Option<&SSLConfig>,
     is_server: bool,
-    ctx: Option<*mut SSL_CTX>,
+    ctx: Option<&SSL_CTX>,
 ) -> bool {
     if cfg.is_none() && is_server {
         server_ctx_rejects_unauthorized(ctx)
@@ -3624,18 +3579,16 @@ fn upgrade_reject_policy(
 
 /// The policy a server-side `SSL_CTX` was built with: `us_ssl_ctx_from_options` sets
 /// `FAIL_IF_NO_PEER_CERT` iff the context was created with `requestCert` and `rejectUnauthorized`.
-pub(crate) fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_rejects_unauthorized(ctx: Option<&SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     const MODE: c_int =
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
-    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
+    boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE
 }
 
-pub(crate) fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_requests_cert(ctx: Option<&SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
-    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
-    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
+    boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3668,17 +3621,13 @@ impl SocketMode {
 
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
-    /// The context's one queued hop will not run. If the TLSSocket is still
-    /// attached (a `StartTLS` that never ran: no wrapper was created, so no
+    type Payload = RefPtr<Self>;
+    /// `run_start_tls` will not run. If the TLSSocket is still attached (no wrapper was created, so no
     /// close ever detached it), route it through its close first — that
     /// detaches it from the duplex, so its finalizer
-    /// during ~VM finds nothing to reach into. Then free the context, unless
-    /// an entry point holds it: the release of that ref queues the free.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the single queue entry for `this`.
-        let ctx = unsafe { &*this };
+    /// during ~VM finds nothing to reach into.
+    fn release_unrun(ctx: Self::Payload) {
         if let Some(tls) = ctx.tls.replace(None) {
-            // An entry point on the stack keeps the context past this call.
             // Neuter the listener thunks now, while the wrapper is still
             // strongly held.
             ctx.upgrade.teardown();
@@ -3686,19 +3635,23 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
             // `Err` is left pending for the release dispatcher's fold.
             let _ = tls.on_close(socket, 0, None);
         }
-        // Still `queued`, so at zero `queue_free` leaves the free to this call.
         ctx.release_connection();
-        ctx.queued.set(false);
-        if ctx.ref_count.get() == 0 {
-            // SAFETY: fn contract; nothing holds the context and no borrow of it is live.
-            unsafe { bun_core::heap::destroy(this) };
-        }
     }
     /// The hop continues the script that upgraded the duplex: once that context has stopped, a
-    /// `StartTLS` that has not run yet must not start (`release_unrun` closes what there is).
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the queued context.
-        unsafe { (*this).context }
+    /// `run_start_tls` that has not run yet must not start (`release_unrun` closes what there is).
+    fn context(ctx: &Self::Payload) -> bun_event_loop::ContextId {
+        ctx.context
+    }
+}
+
+/// [`DuplexUpgradeContext::queue_free`]'s task.
+pub(crate) struct DuplexUpgradeContextFree;
+impl bun_event_loop::Taskable for DuplexUpgradeContextFree {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContextFree;
+    type Payload = AliasableBox<DuplexUpgradeContext>;
+    fn release_unrun(_: Self::Payload) {}
+    fn context(ctx: &Self::Payload) -> bun_event_loop::ContextId {
+        ctx.context
     }
 }
 
@@ -3707,11 +3660,11 @@ pub(crate) static DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT: core::sync::atomic::AtomicU
     core::sync::atomic::AtomicUsize::new(0);
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::queue_free)]
+#[ref_count(destroy_box = Self::queue_free)]
 pub(crate) struct DuplexUpgradeContext {
-    /// One ref for the open connection (`connection_ref`) and one per entry
+    /// One ref for the open connection (`connection_ref`), one for the queued `run_start_tls` and one per entry
     /// point on the stack ([`UpgradedDuplex::ctx`]). At zero the
-    /// `Close` hop is queued, which frees the context. No ref is taken after
+    /// free is queued. No ref is taken after
     /// that.
     ref_count: Cell<u32>,
     connection_ref: Cell<Option<RefPtr<Self>>>,
@@ -3719,22 +3672,17 @@ pub(crate) struct DuplexUpgradeContext {
     pub tls: Cell<Option<RefPtr<TLSSocket>>>,
     /// JSC_BORROW: process-lifetime per-thread VM (immortal).
     pub vm: &'static VirtualMachine,
-    pub(in crate::socket) task_event: Cell<EventState>,
-    /// A `task_event` hop is in the VM's queue. The context is enqueued by
-    /// pointer, so at most one entry may exist: `StartTLS` first, and `Close`
-    /// once the ref count has reached zero.
-    queued: Cell<bool>,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
-    /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
+    /// Mutually exclusive with `owned_ctx` — `run_start_tls` prefers `owned_ctx`.
     pub ssl_config: JsCell<Option<SSLConfig>>,
     /// Prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the memoised
     /// `tls.createSecureContext` path). Moved into `start_tls_with_ctx`;
-    /// dropped with the context if Close races ahead of StartTLS.
+    /// dropped with the context if the transport closes ahead of `run_start_tls`.
     pub owned_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
     pub upgrade: UpgradedDuplex,
     pub is_open: Cell<bool>,
     /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
-    /// when `StartTLS` builds it. Unused for client upgrades.
+    /// when `run_start_tls` builds it. Unused for client upgrades.
     pub server_verify: crate::socket::upgraded_duplex::ServerVerify,
     mode: SocketMode,
     /// A TLS socket over a JS duplex is in no uSockets group, so the context
@@ -3757,20 +3705,13 @@ bun_jsc::impl_abort_handle_owner!(DuplexUpgradeContext, abort_handle, |this, _ca
     unsafe { &*this }.upgrade.close()
 });
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum EventState {
-    StartTLS,
-    Close,
-}
-
 impl DuplexUpgradeContext {
     #[inline(always)]
     pub(super) fn duplex_socket(&self) -> SocketHandler<true> {
         from_duplex::<true>(&self.upgrade)
     }
 
-    /// The transport closed, or `StartTLS` could not start it.
+    /// The transport closed, or `run_start_tls` could not start it.
     fn release_connection(&self) {
         if let Some(_connection_ref) = self.connection_ref.take() {
             // Nothing is left for the owning context to close, and its hook would take a ref.
@@ -3781,16 +3722,9 @@ impl DuplexUpgradeContext {
     /// The last ref is gone. It is usually an entry point's, which
     /// drops while that entry point's `&self` is live, so the context is not
     /// freed in place: the queued hop frees it.
-    fn queue_free(this: *mut Self) {
-        // SAFETY: the count just reached zero; `this` is live until that hop runs.
-        let (vm, queued) = unsafe {
-            (*this).task_event.set(EventState::Close);
-            ((*this).vm, (*this).queued.replace(true))
-        };
-        // An entry that is already in the queue runs the updated `task_event`.
-        if !queued {
-            vm.event_loop().enqueue_task(jsc::Task::init(this));
-        }
+    fn queue_free(this: AliasableBox<Self>) {
+        let event_loop = this.vm.event_loop();
+        event_loop.enqueue_task(jsc::Task::new::<DuplexUpgradeContextFree>(this));
     }
 
     pub(super) fn on_end(&self) {
@@ -3815,15 +3749,15 @@ impl DuplexUpgradeContext {
             }
         } else if let Some(tls) = self.tls.replace(None) {
             // Pre-open error (e.g. the duplex emitted non-Buffer data
-            // before the queued `.StartTLS` task ran). `handle_connect_error`
+            // before the queued `run_start_tls` ran). `handle_connect_error`
             // → `mark_inactive` releases `tls.handlers`; null `tls` so the
-            // still-queued `.StartTLS` → `onOpen` — and any further
+            // still-queued `run_start_tls` → `onOpen` — and any further
             // duplex events — skip the TLSSocket instead of hitting
             // `has_handlers() == false` in `onOpen`.
             //
             // Neuter the JS listener thunks now, while the wrapper is still
             // strongly held, so the `Drop` teardown later (the
-            // queued `StartTLS` releases the connection's ref, after
+            // queued `run_start_tls` releases the connection's ref, after
             // `handle_connect_error` downgrades the wrapper) is a no-op on
             // already-cleared shadows.
             self.upgrade.teardown();
@@ -3858,94 +3792,55 @@ impl DuplexUpgradeContext {
         self.release_connection();
     }
 
-    /// SAFETY: `this` is the queued context, which this may free.
-    pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: fn contract.
-        let event = unsafe {
-            (*this).queued.set(false);
-            (*this).task_event.get()
-        };
-        match event {
-            EventState::StartTLS => {
-                // `start_tls` dispatches `on_open` and the first handshake pass.
-                // SAFETY: the last ref turns the event into `Close`.
-                let this = unsafe { RefPtr::init_ref(this) };
-                // A pre-open error (onError's `!is_open` branch) may have
-                // already fired the connect-error callback, freed
-                // `tls.handlers`, and nulled `tls` while this task was
-                // queued. There is nothing to open in that case — and
-                // nothing else will release the connection's ref since the
-                // SSLWrapper (whose close callback normally does) is never
-                // created — so release it here instead of
-                // spinning up a wrapper that would dispatch `onOpen` into
-                // the dead socket.
-                if this.tls.is_none() {
-                    this.release_connection();
-                    return;
-                }
-                // The transport closed while this task was queued: an engine
-                // started now could never handshake, and nothing would free it.
-                if this.upgrade.pending_close.replace(false) {
-                    this.finish_close();
-                    return;
-                }
-                log!(
-                    "DuplexUpgradeContext.startTLS mode={}",
-                    <&'static str>::from(this.mode)
-                );
-                let is_client = this.mode == SocketMode::Client;
-                let verify = this.server_verify;
-                let started: crate::Result<()> = if let Some(ctx) = this.owned_ctx.take() {
-                    this.start_tls_with_ctx(ctx, is_client, verify)
-                } else if let Some(config) = this.ssl_config.replace(None) {
-                    // Lent out of the cell: `start_tls` dispatches `on_open` synchronously.
-                    let result = this.start_tls(&config, is_client, verify);
-                    this.ssl_config.set(Some(config));
-                    result
-                } else {
-                    Ok(())
-                };
-                if let Err(err) = started {
-                    if matches!(err, crate::Error::Alloc(_)) {
-                        bun_core::out_of_memory();
-                    }
-                    let errno = sys::SystemErrno::ECONNREFUSED as c_int;
-                    if let Some(tls) = this.tls.replace(None) {
-                        // Neuter the JS listener thunks now, while the wrapper
-                        // is still strongly held, so the `Drop`
-                        // teardown later is a no-op on already-cleared shadows.
-                        this.upgrade.teardown();
-                        crate::dispatch::fold(tls.handle_connect_error(errno, 0));
-                    }
-                    // `start_tls`/`start_tls_with_ctx` failed before the
-                    // SSLWrapper was assigned, so its close callback
-                    // was never registered and nothing else will release
-                    // the connection's ref. Same as the `tls == null`
-                    // early-return above.
-                    this.release_connection();
-                    return;
-                }
-                this.ssl_config.set(None); // Drop frees.
-                // Bytes the peer sent while this task was still queued were
-                // staged by `on_internal_receive_data` (the
-                // engine did not exist yet to receive them). Feed them now
-                // that StartTLS is fully done, so the replay is ordered
-                // exactly like an ordinary post-start delivery. Without this
-                // the bytes are dropped and the handshake never advances -
-                // e.g. both ends of a `duplexPair()` wrapped in-process, where
-                // the peer's ClientHello lands before this side starts.
-                this.drain_pending();
-            }
-            // SAFETY: `this` is the task's live context; its last ref queued this hop and no borrow of `*this` is live.
-            EventState::Close => unsafe { bun_core::heap::destroy(this) },
+    /// [`Self::queue_start_tls`]'s task.
+    pub(crate) fn run_start_tls(self: RefPtr<Self>) {
+        // After a pre-open error. No `SSLWrapper` is made, whose close would release the connection.
+        if self.tls.is_none() {
+            self.release_connection();
+            return;
         }
+        // The transport closed while this task was queued: an engine could never handshake.
+        if self.upgrade.pending_close.replace(false) {
+            self.finish_close();
+            return;
+        }
+        log!(
+            "DuplexUpgradeContext.startTLS mode={}",
+            <&'static str>::from(self.mode)
+        );
+        let is_client = self.mode == SocketMode::Client;
+        let verify = self.server_verify;
+        let started: crate::Result<()> = if let Some(ctx) = self.owned_ctx.take() {
+            self.start_tls_with_ctx(ctx, is_client, verify)
+        } else if let Some(config) = self.ssl_config.replace(None) {
+            // Lent out of the cell: `start_tls` dispatches `on_open` synchronously.
+            let result = self.start_tls(&config, is_client, verify);
+            self.ssl_config.set(Some(config));
+            result
+        } else {
+            Ok(())
+        };
+        if let Err(err) = started {
+            if matches!(err, crate::Error::Alloc(_)) {
+                bun_core::out_of_memory();
+            }
+            let errno = sys::SystemErrno::ECONNREFUSED as c_int;
+            if let Some(tls) = self.tls.replace(None) {
+                // Neuter the listener thunks while the wrapper is still strongly held.
+                self.upgrade.teardown();
+                crate::dispatch::fold(tls.handle_connect_error(errno, 0));
+            }
+            // As above: no `SSLWrapper` was assigned.
+            self.release_connection();
+            return;
+        }
+        self.ssl_config.set(None); // Drop frees.
+        self.drain_pending();
     }
 
     fn queue_start_tls(self: &RefPtr<Self>) {
-        self.queued.set(true);
-        self.vm
-            .event_loop()
-            .enqueue_task(jsc::Task::init(self.as_ptr()));
+        let task = jsc::Task::new::<Self>(self.clone());
+        self.vm.event_loop().enqueue_task(task);
     }
 }
 
@@ -4077,12 +3972,8 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         options.data.to_js()
     };
 
-    let reject_unauthorized = upgrade_reject_policy(
-        handlers.vm,
-        socket_config,
-        is_server,
-        owned_ctx.as_ref().map(|c| c.as_ptr()),
-    );
+    let reject_unauthorized =
+        upgrade_reject_policy(handlers.vm, socket_config, is_server, owned_ctx.as_deref());
     // Server-side peer-cert policy, applied per-SSL once the engine exists.
     // A bare `secureContext` carries no parsed config, so read `requestCert`
     // back off the ctx's verify mode the same way `upgrade_reject_policy` does
@@ -4090,7 +3981,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     let server_verify = crate::socket::upgraded_duplex::ServerVerify {
         request_cert: match socket_config {
             Some(cfg) => cfg.request_cert != 0,
-            None => server_ctx_requests_cert(owned_ctx.as_ref().map(|c| c.as_ptr())),
+            None => server_ctx_requests_cert(owned_ctx.as_deref()),
         },
         reject_unauthorized,
     };
@@ -4152,9 +4043,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
             .write(Cell::new(Some(RefPtr::from_raw(duplex_context))));
         ptr::addr_of_mut!((*duplex_context).tls).write(Cell::new(None));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
-        ptr::addr_of_mut!((*duplex_context).task_event).write(Cell::new(EventState::StartTLS));
-        ptr::addr_of_mut!((*duplex_context).queued).write(Cell::new(false));
-        // When `owned_ctx` is set, `runEvent` builds from it and ignores
+        // When `owned_ctx` is set, `run_start_tls` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the
         // legacy build path.

@@ -1019,6 +1019,33 @@ it.skipIf(isWindows)("should not crash when a socket from a file descriptor is c
   data.mockClear();
 });
 
+it.skipIf(isWindows).each(["close", "end"] as const)(
+  "upgradeTLS() closes both halves when open() throws while %s() waits for the peer",
+  async method => {
+    const [fd, peer] = createSocketPair();
+    const closed = Promise.withResolvers<void>();
+    const tcp = await Bun.connect({ fd, socket: { data() {}, close: () => closed.resolve() } } as any);
+    // Fill the send buffer, so that the TLS close has to wait.
+    for (const chunk of [Buffer.alloc(65536), Buffer.alloc(1)]) while (tcp.write(chunk) > 0);
+    const [raw, secure] = tcp.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: {
+        open(socket) {
+          socket.write("hello");
+          socket[method]();
+          throw new Error("open");
+        },
+        handshake() {},
+        data() {},
+        error() {},
+      },
+    });
+    closeSync(peer);
+    await closed.promise;
+    expect([raw.readyState, secure.readyState, raw.getCipher()]).toEqual([-1, -1, undefined]);
+  },
+);
+
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure.

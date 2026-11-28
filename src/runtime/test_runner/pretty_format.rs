@@ -811,11 +811,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     pub(crate) extern "C" fn for_each(
         _: *mut VM,
         global_object: &JSGlobalObject,
-        ctx: *mut c_void,
+        ctx: &mut Self,
         next_value: JSValue,
     ) {
-        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -862,11 +860,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     pub(crate) extern "C" fn for_each(
         _: *mut VM,
         global_object: &JSGlobalObject,
-        ctx: *mut c_void,
+        ctx: &mut Self,
         next_value: JSValue,
     ) {
-        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -943,7 +939,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
-        ctx_ptr: *mut c_void,
+        ctx: &mut Self,
         key: &EncodedSlice,
         value: JSValue,
         is_symbol: bool,
@@ -957,8 +953,6 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -1769,11 +1763,7 @@ impl<'a> Formatter<'a> {
                             formatter: &mut quoting,
                             writer: writer.ctx,
                         };
-                        value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        )?;
+                        value.for_each(global, &mut iter, MapIterator::for_each)?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
@@ -1808,11 +1798,7 @@ impl<'a> Formatter<'a> {
                             formatter: &mut quoting,
                             writer: writer.ctx,
                         };
-                        value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        )?;
+                        value.for_each(global, &mut iter, SetIterator::for_each)?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
@@ -2224,10 +2210,10 @@ impl<'a> Formatter<'a> {
                     let each = PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each;
                     let result = if iter.formatter.like_older_bun.is_some() {
                         value
-                            .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
+                            .for_each_property_ordered_with_non_enumerable(global, &mut iter, each)
                             .map(|()| true)
                     } else {
-                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                        value.for_each_property_ordered_calling_getters(global, &mut iter, each)
                     };
 
                     let iter_i = iter.i;

@@ -1,7 +1,7 @@
 //! DNS resolver — JSC bindings.
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use core::ptr;
@@ -177,8 +177,8 @@ pub(crate) mod lib_uv_backend {
                 this.vm().uv_loop(),
                 request.cast(),
                 Some(on_raw_libuv_complete),
-                host.as_ptr().cast::<c_char>(),
-                port_z.as_ptr().cast::<c_char>(),
+                host.as_ptr(),
+                port_z.as_ptr(),
                 hints
                     .as_ref()
                     .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
@@ -1515,16 +1515,15 @@ pub(crate) mod internal {
         prefetch(loop_.cast::<Loop>(), host, port);
     }
 
-    /// Writes a ref to `request`, for `Bun__addrinfo_freeRequest`. SAFETY: `loop_` is live; `host` is null or NUL-terminated.
+    /// Writes a ref to `request`, for `Bun__addrinfo_freeRequest`. SAFETY: `loop_` is live.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn Bun__addrinfo_get(
         loop_: *mut Loop,
-        host: *const c_char,
+        host: Option<bun_core::CStrRef<'_>>,
         port: u16,
         request: &mut MaybeUninit<*const Request>,
     ) -> c_int {
-        // SAFETY: caller passes NUL-terminated string.
-        let host = (!host.is_null()).then(|| unsafe { bun_core::ffi::cstr(host) }.to_bytes());
+        let host = host.map(|host| host.to_cstr().to_bytes());
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();
         request.write(Arc::into_raw(req));
@@ -1657,19 +1656,14 @@ pub(crate) struct UvDnsPoll {
 
 #[cfg(windows)]
 impl UvDnsPoll {
-    fn new(parent: *mut Resolver, socket: SocketId) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self {
+    fn new(parent: *mut Resolver, socket: SocketId) -> bun_ptr::AliasableBox<Self> {
+        bun_ptr::AliasableBox::new(Self {
             parent,
             socket,
             poll_cb_depth: 0,
             closed: false,
             poll: bun_core::ffi::zeroed(),
-        }))
-    }
-
-    pub(crate) fn destroy(this: *mut Self) {
-        // SAFETY: `this` came from `heap::into_raw` in `new`, and nothing uses it after this call.
-        unsafe { drop(bun_core::heap::take(this)) };
+        })
     }
 
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
@@ -1722,15 +1716,14 @@ impl bun_dns::os::Poll for DnsPoll {
         let poll = UvDnsPoll::new(owner.0, socket);
         // SAFETY: a fresh heap allocation with a zeroed `uv_poll_t`.
         let (rc, kind) = unsafe {
-            let handle = &raw mut (*poll).poll;
+            let handle = &raw mut (*poll.as_ptr()).poll;
             let rc = libuv::uv_poll_init_socket(Loop::get().uv_loop(), handle, socket as _);
             (rc, (*handle).type_)
         };
         if kind != libuv::HandleType::Poll {
-            UvDnsPoll::destroy(poll);
             return None;
         }
-        let closes_on_drop = Self(poll);
+        let closes_on_drop = Self(poll.into_raw());
         (rc >= 0).then_some(closes_on_drop)
     }
 
@@ -1763,11 +1756,10 @@ impl Drop for DnsPoll {
 #[cfg(windows)]
 impl bun_event_loop::Taskable for UvDnsPoll {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
-    unsafe fn release_unrun(this: *mut Self) {
-        Self::destroy(this);
-    }
+    type Payload = bun_ptr::AliasableBox<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// The task doesn't run JS.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -1955,7 +1947,7 @@ impl Resolver {
         events: c_int,
     ) {
         let poll = UvDnsPoll::from_poll(watcher);
-        // SAFETY: `on_close_uv` doesn't free `poll` while `poll_cb_depth` is non-zero, and an open poll's resolver is live.
+        // SAFETY: `on_close_uv` doesn't free `poll` while `poll_cb_depth` is non-zero, and leaves the free to this call then. An open poll's resolver is live.
         unsafe {
             (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
@@ -1969,7 +1961,9 @@ impl Resolver {
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
                 // The task queue isn't drained until this libuv callback returns.
-                vm.enqueue_task(jsc::Task::init(poll));
+                let poll = ptr::NonNull::new_unchecked(poll);
+                let poll = bun_ptr::AliasableBox::from_non_null(poll);
+                vm.enqueue_task(jsc::Task::new::<UvDnsPoll>(poll));
             }
         }
     }
@@ -1986,8 +1980,8 @@ impl Resolver {
                 (*poll).closed = true;
                 return;
             }
+            bun_core::heap::destroy(poll);
         }
-        UvDnsPoll::destroy(poll);
     }
 
     pub(crate) fn on_dns_poll(self: RefPtr<Self>, socket: SocketId, events: Events) {

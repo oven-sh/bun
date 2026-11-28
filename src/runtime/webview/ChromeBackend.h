@@ -223,12 +223,14 @@ private:
 // The response handler dispatches on {id → methodTag} without re-reading
 // the method string. Adding a method means adding a tag + a handler arm.
 //
+// TargetCreateBrowserContext (views with a context of their own only) +
 // TargetCreateTarget + TargetAttachToTarget + PageEnable form an internal
 // chain kicked off by the first navigate() on a view. Their responses
 // don't settle a user promise; the last one (PageEnable) sends the actual
 // Page.navigate and the promise resolves on Page.loadEventFired.
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
+    TargetCreateBrowserContext,
     TargetCreateTarget,
     TargetAttachToTarget,
     PageEnable,
@@ -488,6 +490,15 @@ public:
         if (it == m_views.end()) return nullptr;
         return it->value.get();
     }
+
+    // Still parked behind the WebSocket handshake: erasing its m_pending entry cancels it.
+    bool isQueuedUnsent(uint32_t cdpId) const
+    {
+        return m_wsPending.containsIf([cdpId](auto& cmd) { return cmd.id == cdpId; });
+    }
+
+    // Fire-and-forget, like Target.closeTarget. No JS heap, so ~JSWebView can call it.
+    void disposeBrowserContext(const WTF::String& browserContextId);
 
     // Register a fresh view. Returns its viewId and stores one Weak.
     // Called from JSWebView::createChrome after the transport is up.

@@ -133,6 +133,8 @@ JSWebView::~JSWebView()
             auto it = t.m_sessions.find(m_sessionId);
             if (it != t.m_sessions.end() && it->value == m_viewId) t.m_sessions.remove(it);
         }
+        // Before updateKeepAlive, which may close the socket once the last view goes.
+        if (!m_browserContextId.isEmpty()) t.disposeBrowserContext(m_browserContextId);
         if (m_viewId) t.m_views.remove(m_viewId);
         t.updateKeepAlive();
         return;

@@ -1,6 +1,7 @@
 //! Runs configuration files that are programs (`eslint.config.js`, `oxlint.config.ts`). The current executable runs the
 //! file in a separate process, which prints the file's exports as JSON.
 
+use crate::cli::Tool;
 use crate::paths;
 use crate::run::{Environment, Fatal, Script, Source};
 use bun_core::strings;
@@ -87,17 +88,28 @@ pub(crate) fn evaluate_with(
     path: &[u8],
     argument: &[u8],
 ) -> Result<Json, Fatal> {
-    run(environment, source, path, argument).map_err(|why| {
-        Fatal(
-            [
-                b"Cannot load the configuration file ",
-                path,
-                b":\n",
-                &why[..],
-            ]
-            .concat(),
-        )
-    })
+    let finished = run(environment, source, path, argument, None);
+    (finished.map(|it| it.config)).map_err(|why| cannot_load(path, &why))
+}
+
+/// Runs [`ESLINT`] on a file whose name doesn't say whose it is. Also returns whether it exports an oxlint config.
+pub(crate) fn evaluate_by_export(
+    environment: &Environment,
+    path: &[u8],
+    argument: &[u8],
+    project: Option<Tool>,
+) -> Result<(Json, bool), Fatal> {
+    let project: &[u8] = match project {
+        Some(Tool::Eslint) => b"eslint",
+        Some(Tool::Oxlint) => b"oxlint",
+        None => b"neither",
+    };
+    let finished = run(environment, ESLINT, path, argument, Some(project));
+    (finished.map(|it| (it.config, it.is_for_oxlint))).map_err(|why| cannot_load(path, &why))
+}
+
+fn cannot_load(path: &[u8], why: &[u8]) -> Fatal {
+    Fatal([b"Cannot load the configuration file ", path, b":\n", why].concat())
 }
 
 /// Runs the script `source` with the argument `input` and returns its result. The script treats `directory` as the
@@ -109,26 +121,39 @@ pub(crate) fn evaluate_input(
     input: &[u8],
 ) -> Result<Json, Vec<u8>> {
     // The file doesn't exist. Only its directory matters.
-    run(environment, source, &paths::join(directory, b"-"), input)
+    let path = paths::join(directory, b"-");
+    run(environment, source, &path, input, None).map(|it| it.config)
 }
 
-/// Returns the config that the script `source` passes to `finish`. `Err` has the reason it failed.
+/// What a script passes to `finish`.
+struct Finished {
+    config: Json,
+    /// Only [`evaluate_by_export`] asks for it.
+    is_for_oxlint: bool,
+}
+
+/// Returns what the script `source` passes to `finish`. `Err` has the reason it failed.
 fn run(
     environment: &Environment,
     source: Source,
     path: &[u8],
     argument: &[u8],
-) -> Result<Json, Vec<u8>> {
+    by_export: Option<&[u8]>,
+) -> Result<Finished, Vec<u8>> {
     const SILENT: &[u8] = b"It exited before it exported a config.";
     let text = |it: &[u8]| Json::String(it.to_vec());
     let command_line = environment.command_line.iter().map(|it| text(it));
-    // See evaluate-start.js.
-    let given = Json::Object(vec![
+    // See evaluate-start.js. `path` is first: `configuration_read_by` finds it there.
+    let mut given = vec![
         (b"path".to_vec(), text(path)),
         (b"marker".to_vec(), text(MARKER)),
         (b"argument".to_vec(), text(argument)),
         (b"commandLine".to_vec(), Json::Array(command_line.collect())),
-    ]);
+    ];
+    if let Some(by_export) = by_export {
+        given.push((b"byExport".to_vec(), text(by_export)));
+    }
+    let given = Json::Object(given);
     let mut head = b"const given = ".to_vec();
     write_json(&mut head, &given);
     head.extend_from_slice(b";\n");
@@ -151,11 +176,15 @@ fn run(
     let large = large.and_then(|it| it.1.as_array()).unwrap_or_default();
     let large = large.iter().filter_map(Json::as_str).map(<[u8]>::to_vec);
     environment.js_engine.expect_modules(large.collect(), false);
+    let is_for_oxlint = entries.iter().find(|it| it.0 == b"isForOxlint");
+    let is_for_oxlint = is_for_oxlint.and_then(|it| it.1.as_bool()) == Some(true);
     let config = entries.into_iter().find(|it| it.0 == b"config");
-    Ok(config.map_or(Json::Null, |mut it| {
-        restore_nan(&mut it.1);
-        it.1
-    }))
+    let mut config = config.map_or(Json::Null, |it| it.1);
+    restore_nan(&mut config);
+    Ok(Finished {
+        config,
+        is_for_oxlint,
+    })
 }
 
 /// The path that [`run`] has given `script`, unless it has escapes.

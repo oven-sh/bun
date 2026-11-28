@@ -120,6 +120,47 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
     (b"oxlint.config.mts", Flavor::Oxlint, Syntax::Program),
 ];
 
+/// The tool and the syntax of a configuration file called `name`, if the name says them. Lookup finds only [`NAMES`].
+fn by_name(name: &[u8]) -> Option<(Flavor, Syntax)> {
+    let named = NAMES.iter().find(|it| it.0 == name).map(|it| (it.1, it.2));
+    let is_oxlint_program = || {
+        let is_named = name.starts_with(b"oxlint.config.") && syntax_of(name) == Syntax::Program;
+        is_named || VITE_CONFIG_NAMES.contains(&name)
+    };
+    named.or_else(|| is_oxlint_program().then_some((Flavor::Oxlint, Syntax::Program)))
+}
+
+/// What a configuration file called `name`, which isn't one that [`by_name`] knows, is written in.
+fn syntax_of(name: &[u8]) -> Syntax {
+    match name.ends_with(b".json") || name.ends_with(b".jsonc") {
+        true => Syntax::Json,
+        false => Syntax::Program,
+    }
+}
+
+/// Whose file a JSON file is that [`by_name`] doesn't know: an object is oxlint's, an array can only be a flat config.
+fn flavor_of_json(json: &Json) -> Flavor {
+    match json.as_object() {
+        Some(_) => Flavor::Oxlint,
+        None => Flavor::Eslint,
+    }
+}
+
+/// Whose file `--config` names, as far as can be told without running it. See [`Loader::config_flag`].
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ConfigFlag {
+    /// There's no `--config`.
+    Absent,
+    /// An ESLint 8 file. A file that could also be oxlint's is not one.
+    EslintRc,
+    /// The name says whose it is: [`by_name`].
+    Named(Flavor),
+    /// JSON by another name: [`flavor_of_json`]. `None` if it can't be read or isn't JSON.
+    Json(Option<Flavor>),
+    /// A program by another name. What it exports decides, which only running it tells: `Loader::exported`.
+    Program,
+}
+
 /// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
 /// `Reader::set_severity_by_kind`, for `$framework` and `$packageType` see `Config::get_with_frameworks`, for
 /// `$withoutWarnings` see `Reader::without_warnings`, for `$sourceTypeBySyntax` and `$packageIsModule` see
@@ -333,20 +374,6 @@ pub(crate) fn eslint_config_file(cwd: &[u8]) -> Option<Vec<u8>> {
     })?
 }
 
-/// True if the file at `path`, passed with `--config`, has fields that only an oxlint config has.
-fn looks_like_oxlint_config(path: &[u8], pipes: &fs::NamedPipes) -> bool {
-    let Some(json) = (pipes.read(path))
-        .ok()
-        .and_then(|it| bun_lint::json::parse(&it))
-    else {
-        return false;
-    };
-    let oxlint_only_keys: [&[u8]; 3] = [b"categories", b"jsPlugins", b"options"];
-    let schema = json.get(b"$schema").and_then(Json::as_str);
-    oxlint_only_keys.iter().any(|it| json.get(it).is_some())
-        || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
-}
-
 /// Result of [`read_frameworks`] for one package.json.
 #[derive(Copy, Clone)]
 pub(crate) struct PackageFrameworks {
@@ -476,6 +503,10 @@ pub(crate) struct Loader<'l> {
     rulesdir: OnceLock<Result<Json, Fatal>>,
     /// [`Loader::tool`]
     tool: OnceLock<Option<Flavor>>,
+    /// [`Loader::config_flag`]
+    config_flag: OnceLock<ConfigFlag>,
+    /// Whose config a [`ConfigFlag::Program`] exports, once [`Loader::read`] has run it.
+    exported: OnceLock<Flavor>,
     /// [`Loader::ignored_eslint_config`]
     ignored_eslint_config: OnceLock<(Vec<u8>, Vec<u8>)>,
     /// [`Loader::ignored_eslint_configs_below`]
@@ -828,6 +859,8 @@ impl<'l> Loader<'l> {
             is_legacy: OnceLock::new(),
             rulesdir: OnceLock::new(),
             tool: OnceLock::new(),
+            config_flag: OnceLock::new(),
+            exported: OnceLock::new(),
             ignored_eslint_config: OnceLock::new(),
             ignored_eslint_configs_below: Default::default(),
             has_oxlint_config: Default::default(),
@@ -1864,21 +1897,33 @@ impl<'l> Loader<'l> {
     fn read(&self, path: &[u8], base_path: &[u8]) -> Found {
         let name = paths::basename(path);
         let is_vite_plus = VITE_CONFIG_NAMES.contains(&name);
-        let known = (NAMES.iter().find(|it| it.0 == name).map(|it| (it.1, it.2)))
-            .or_else(|| is_vite_plus.then_some((Flavor::Oxlint, Syntax::Program)));
-        let is_json = name.ends_with(b".json") || name.ends_with(b".jsonc");
-        let syntax = known.map_or(
-            if is_json {
-                Syntax::Json
-            } else {
-                Syntax::Program
-            },
-            |it| it.1,
-        );
+        let known = by_name(name);
+        let syntax = known.map_or_else(|| syntax_of(name), |it| it.1);
+        // Whose config a program by another name exports. Only `--config` names such a file.
+        let mut exported = None;
         let json = match syntax {
             Syntax::Program => {
+                let environment = self.environment;
                 let built_in = self.linter.registry().rules_that_replace_packages();
-                evaluate::evaluate_with(self.environment, evaluate::ESLINT, path, &built_in)?
+                match known {
+                    Some(_) => {
+                        evaluate::evaluate_with(environment, evaluate::ESLINT, path, &built_in)?
+                    }
+                    None => {
+                        // As in `bun fmt`: an object that both tools read is the config of the tool the project uses.
+                        let project = self.project_tool();
+                        let (json, is_for_oxlint) =
+                            evaluate::evaluate_by_export(environment, path, &built_in, project)?;
+                        let flavor = match is_for_oxlint {
+                            true => Flavor::Oxlint,
+                            false => Flavor::Eslint,
+                        };
+                        // Before anything below can fail, for `Loader::emulates_oxlint`.
+                        let _ = self.exported.set(flavor);
+                        exported = Some(flavor);
+                        json
+                    }
+                }
             }
             Syntax::Json => {
                 let text = self.options.pipes.read(path).map_err(|error| {
@@ -1915,13 +1960,10 @@ impl<'l> Loader<'l> {
             return Err(Fatal([HAS_NO_LINT_FIELD, path].concat()));
         }
         // A file with any other name is classified by its content.
-        let flavor = known.map_or(
-            match (&json, syntax) {
-                (Json::Object(_), Syntax::Json) => Flavor::Oxlint,
-                _ => Flavor::Eslint,
-            },
-            |it| it.0,
-        );
+        let flavor = match (known, exported) {
+            (Some((flavor, _)), _) | (None, Some(flavor)) => flavor,
+            (None, None) => flavor_of_json(&json),
+        };
         self.check_flags(flavor, Some(path))?;
         if flavor == Flavor::Oxlint {
             let cannot_use = |why: &[u8]| {
@@ -2121,10 +2163,12 @@ impl<'l> Loader<'l> {
                 let found = names.find(|it| file_exists(directory, it.0))?;
                 Some((directory, found.0, found.1))
             });
-            let config_flag_is_oxlint = (options.config.as_ref()).is_some_and(|it| {
-                let path = paths::resolve(self.cwd(), &paths::from_native(it));
-                looks_like_oxlint_config(&path, &options.pipes)
-            });
+            let config_flag = self.config_flag();
+            // An ESLint 8 flag hands the file to the ESLint 8 loader. Asked last: without `--config` it asks for the tool.
+            let config_flag_is_oxlint = matches!(
+                config_flag,
+                ConfigFlag::Named(Flavor::Oxlint) | ConfigFlag::Json(Some(Flavor::Oxlint))
+            ) && !self.is_eslint_8_command_line();
             if wanted.is_none()
                 && options.config.is_none()
                 && let Some((oxlint_config, eslint_config)) = self.nearest_oxlint_config(self.cwd())
@@ -2145,8 +2189,55 @@ impl<'l> Loader<'l> {
                 return Some(Flavor::EslintRc);
             }
             let decided = wanted.or_else(|| config_flag_is_oxlint.then_some(Flavor::Oxlint));
-            let from_package_json = self.tool_from_package_json(decided.is_some());
+            let is_decided = decided.is_some() || config_flag != ConfigFlag::Absent;
+            let from_package_json = self.tool_from_package_json(is_decided);
             decided.or(from_package_json)
+        })
+    }
+
+    /// The tool that a run without `--config` uses here: with both tools' files, [`Loader::tool`] says ESLint's.
+    fn project_tool(&self) -> Option<Tool> {
+        let has_oxlint_config =
+            || self.options.flavor.is_none() && self.nearest_oxlint_config(self.cwd()).is_some();
+        match self.tool() {
+            Some(Flavor::Oxlint) => Some(Tool::Oxlint),
+            _ if has_oxlint_config() => Some(Tool::Oxlint),
+            Some(Flavor::Eslint | Flavor::EslintRc) => Some(Tool::Eslint),
+            Some(Flavor::BuiltIn) | None => None,
+        }
+    }
+
+    /// The path that `--config` names.
+    fn named_config(&self) -> Option<Vec<u8>> {
+        let path = self.options.config.as_ref()?;
+        Some(paths::resolve(self.cwd(), &paths::from_native(path)))
+    }
+
+    /// Whose file `--config` names, for all that has to know before the file is loaded. `--flavor` has no say.
+    fn config_flag(&self) -> ConfigFlag {
+        *self.config_flag.get_or_init(|| {
+            let Some(path) = self.named_config() else {
+                return ConfigFlag::Absent;
+            };
+            let name = paths::basename(&path);
+            if eslintrc::is_eslintrc_name(name) {
+                return ConfigFlag::EslintRc;
+            }
+            let named = by_name(name);
+            let syntax = named.map_or_else(|| syntax_of(name), |it| it.1);
+            if syntax == Syntax::Program {
+                return named.map_or(ConfigFlag::Program, |it| ConfigFlag::Named(it.0));
+            }
+            let json = self.options.pipes.read(&path).ok();
+            let json = json.and_then(|it| bun_lint::json::parse(&it));
+            // A file that could be either tool's is treated as oxlint's, whatever the working directory has.
+            let is_eslintrc =
+                |it: &Json| name.ends_with(b".json") && eslintrc::is_eslintrc_json(it);
+            match (json, named) {
+                (Some(json), _) if is_eslintrc(&json) => ConfigFlag::EslintRc,
+                (_, Some(named)) => ConfigFlag::Named(named.0),
+                (json, None) => ConfigFlag::Json(json.as_ref().map(flavor_of_json)),
+            }
         })
     }
 
@@ -2420,16 +2511,11 @@ impl<'l> Loader<'l> {
             let options = self.options;
             let has_flag =
                 !options.eslintrc || !options.env.is_empty() || !options.rulesdir.is_empty();
-            let Some(path) = &options.config else {
+            if options.config.is_none() {
                 let emulates_oxlint = options.flavor == Some(Tool::Oxlint);
                 return has_flag && !emulates_oxlint && self.found(self.cwd()).is_none();
-            };
-            if has_flag {
-                return true;
             }
-            // A file that could be either tool's is treated as oxlint's, whatever the working directory has.
-            let path = paths::resolve(self.cwd(), &paths::from_native(path));
-            eslintrc::is_eslintrc_file(&path, &options.pipes)
+            has_flag || self.config_flag() == ConfigFlag::EslintRc
         })
     }
 
@@ -2660,6 +2746,10 @@ impl<'l> Loader<'l> {
     /// looked up on its own.
     fn lacks_file(&self) -> bool {
         *self.lacks_file.get_or_init(|| {
+            // `--config` names the file for every directory. Building the one without a file would check flags against it.
+            if self.options.config.is_some() && !self.is_eslint_8_command_line() {
+                return false;
+            }
             let (own, none) = (self.for_directory(self.cwd()), self.without_config_file());
             matches!((own, none), (Ok(own), Ok(none)) if Arc::ptr_eq(&own, &none))
         })
@@ -2695,11 +2785,8 @@ impl<'l> Loader<'l> {
             return self.legacy(above.find(|it| eslintrc::has_eslintrc_file(it)));
         }
         if self.has_one_configuration() {
-            return match &self.options.config {
-                Some(path) => self.load(
-                    &paths::resolve(self.cwd(), &paths::from_native(path)),
-                    &self.named_config_base_directory(),
-                ),
+            return match self.named_config() {
+                Some(path) => self.load(&path, &self.named_config_base_directory()),
                 None => self.load(b"", self.cwd()),
             };
         }
@@ -2829,12 +2916,20 @@ impl<'l> Loader<'l> {
 
     /// True if the run emulates oxlint, for when the working directory's configuration can't be read.
     pub(crate) fn emulates_oxlint(&self) -> bool {
-        let is_json = |it: &Vec<u8>| it.ends_with(b".json") || it.ends_with(b".jsonc");
-        let file_exists =
-            |it: &Vec<u8>| fs::is_file(&paths::resolve(self.cwd(), &paths::from_native(it)));
-        match &self.options.config {
-            Some(path) if file_exists(path) => is_json(path) && !self.is_eslint_8_command_line(),
-            _ => self.uses_oxlint_defaults(),
+        let file_exists = || self.named_config().is_some_and(|it| fs::is_file(&it));
+        match self.config_flag() {
+            ConfigFlag::Absent => self.uses_oxlint_defaults(),
+            ConfigFlag::EslintRc => false,
+            // An ESLint 8 flag makes any file an ESLint 8 file.
+            _ if self.is_eslint_8_command_line() => false,
+            ConfigFlag::Named(flavor) => flavor == Flavor::Oxlint,
+            // Nothing says whose a missing file is.
+            ConfigFlag::Json(_) | ConfigFlag::Program if !file_exists() => {
+                self.uses_oxlint_defaults()
+            }
+            ConfigFlag::Json(flavor) => flavor != Some(Flavor::Eslint),
+            // A program that fails before it exports anything is treated as ESLint's.
+            ConfigFlag::Program => self.exported.get() == Some(&Flavor::Oxlint),
         }
     }
 

@@ -206,18 +206,13 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     }))
 }
 
-/// True if the file at `path`, passed with `--config`, is an ESLint 8 config, as far as can be told without running it.
-pub(crate) fn is_eslintrc_file(path: &[u8], pipes: &fs::NamedPipes) -> bool {
-    let name = paths::basename(path);
-    if name.starts_with(b".eslintrc") || name.ends_with(b".yaml") || name.ends_with(b".yml") {
-        return true;
-    }
-    if !name.ends_with(b".json") {
-        return false;
-    }
-    let Some(json) = pipes.read(path).ok().and_then(|it| json::parse(&it)) else {
-        return false;
-    };
+/// True if a file called `name`, passed with `--config`, is an ESLint 8 config whatever it has in it.
+pub(crate) fn is_eslintrc_name(name: &[u8]) -> bool {
+    name.starts_with(b".eslintrc") || name.ends_with(b".yaml") || name.ends_with(b".yml")
+}
+
+/// True if `json`, from a `--config` file, looks like an ESLint 8 config. For a program: `isForOxlint`, evaluate-eslint.js.
+pub(crate) fn is_eslintrc_json(json: &Json) -> bool {
     // Keys that an `.oxlintrc.json` doesn't have.
     let eslintrc_only_keys: [&[u8]; 7] = [
         b"root",

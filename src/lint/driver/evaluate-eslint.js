@@ -232,8 +232,46 @@ function serializeConfigObject(given, index) {
   return out;
 }
 
+// Keys that not every tool reads, from `validate_object` (flat.rs), `is_eslintrc_json` (eslintrc.rs) and `KEYS` (shape.rs).
+const keysOfESLint = [
+  "basePath",
+  "files",
+  "ignores",
+  "language",
+  "languageOptions",
+  "linterOptions",
+  "name",
+  "processor",
+];
+const keysOfESLint8 = [
+  "ecmaFeatures",
+  "noInlineConfig",
+  "parser",
+  "parserOptions",
+  "reportUnusedDisableDirectives",
+  "root",
+];
+const keysOfOxlint = ["$schema", "categories", "jsPlugins", "options"];
+const keysOfOxlintAndESLint8 = ["env", "extends", "globals", "ignorePatterns", "overrides"];
+
+// True if a file whose name does not say whose it is exports an oxlint config. What only one tool reads decides first.
+function isForOxlint(exported) {
+  if (exported === null || typeof exported !== "object" || Array.isArray(exported)) return false;
+  const { plugins, extends: extended } = exported;
+  if (plugins !== null && typeof plugins === "object" && !Array.isArray(plugins)) return false;
+  if ([...keysOfESLint, ...keysOfESLint8].some(key => key in exported)) return false;
+  const isPreset = item => typeof item === "string" && /^(?:eslint|plugin):/.test(item);
+  if ([extended].flat().some(isPreset)) return false;
+  if (keysOfOxlint.some(key => key in exported)) return true;
+  // Then the tool that the project uses.
+  if (given.byExport !== "neither") return given.byExport === "oxlint";
+  // It uses neither: ESLint 8 and 9 both read what is left, unless it has what a flat config cannot have.
+  return Array.isArray(plugins) || keysOfOxlintAndESLint8.some(key => key in exported);
+}
+
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
-const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
+// `given.byExport`: only for a file by another name, for which `isForOxlint` decides once the file has run.
+let isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
 // In a function: for an `await` at the top level that never settles Bun waits forever. This way the process ends when nothing is left to
 // wait for, as node does.
 (async () => {
@@ -243,6 +281,7 @@ const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config
   exported = await exported;
   // Vite+: what `vp lint` reads.
   if (isOfVite) exported = exported?.lint ?? null;
+  if (given.byExport) isOfOxlint ||= isForOxlint(exported);
   const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
   if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
   [exported].flat(Infinity).forEach((object, index) => {
@@ -255,5 +294,5 @@ const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config
   if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
   else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
-  finish(config, stringify);
+  finish(config, stringify, given.byExport ? isOfOxlint : undefined);
 })();

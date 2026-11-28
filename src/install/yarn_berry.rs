@@ -1385,7 +1385,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         None,
     )?;
     // Without an integrity, a tarball that an edge reaches would be installed unverified.
-    let reached = reachable::packages(this, &this.buffers.resolutions, reachable::Options::all(0));
+    let reached = reachable::packages(this, &this.buffers.resolutions, reachable::Options::all());
     for (pid, res) in this.packages.items_resolution().iter().enumerate() {
         if reached.is_set(pid)
             && res.tag == ResolutionTag::Npm

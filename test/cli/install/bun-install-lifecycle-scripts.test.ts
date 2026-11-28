@@ -2842,6 +2842,79 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)
       expect(exitCode).toBe(0);
     },
   );
+
+  // The root's `workspaces` list names its members. It is not a dependency of the root.
+  describe("in a project with workspaces", () => {
+    const script = (name: string) => ({ scripts: { postinstall: `echo ${name} >> "$SCRIPT_RUNS"` } });
+    const scripted = Object.fromEntries(["of-root", "of-kept", "of-other", "tool"].map(name => [name, script(name)]));
+
+    // Returns a function that lists the packages whose postinstall ran.
+    async function writeProject(
+      ctx: Awaited<ReturnType<typeof setupScriptPackages>>,
+      root: object,
+      members: Record<string, object>,
+    ) {
+      const runs = (ctx.env.SCRIPT_RUNS = join(ctx.packageDir, "runs.txt"));
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"], ...root }));
+      for (const [name, manifest] of Object.entries(members)) {
+        await mkdir(join(ctx.packageDir, "packages", name), { recursive: true });
+        await writeFile(join(ctx.packageDir, "packages", name, "package.json"), JSON.stringify({ name, ...manifest }));
+      }
+      return () => (existsSync(runs) ? readFileSync(runs, "utf8").trim().split(/\r?\n/).sort() : []);
+    }
+
+    // `kept` is also a dependency of the root. `other` is only in the list.
+    test("a workspace that depends on the root brings the root's dependencies and no other workspace's", async () => {
+      using ctx = await setupScriptPackages(linker, scripted);
+      const ran = await writeProject(
+        ctx,
+        { dependencies: { "of-root": "1.0.0", "kept": "workspace:*" } },
+        {
+          app: {},
+          kept: { version: "1.0.0", dependencies: { "of-kept": "1.0.0" } },
+          lib: { version: "1.0.0", dependencies: { root: "workspace:*" } },
+          other: { dependencies: { "of-other": "1.0.0" } },
+        },
+      );
+
+      const { err, exitCode } = await ctx.bun("add", "--trust", "lib@workspace:*", "--cwd", join("packages", "app"));
+      expect(err).not.toContain("error:");
+      expect({
+        ran: ran(),
+        trustedDependencies: (await file(join(ctx.packageDir, "packages", "app", "package.json")).json())
+          .trustedDependencies,
+        exitCode,
+      }).toEqual({ ran: ["of-kept", "of-root"], trustedDependencies: ["of-kept", "of-root"], exitCode: 0 });
+    });
+
+    // A dependency of the root on a workspace is a row of its own, next to the entry of the list.
+    test("a workspace that the root depends on brings its dependencies", async () => {
+      using ctx = await setupScriptPackages(linker, scripted);
+      const ran = await writeProject(ctx, {}, { kept: { version: "1.0.0", dependencies: { "of-kept": "1.0.0" } } });
+
+      const { err, exitCode } = await ctx.bun("add", "--trust", "kept@workspace:*");
+      expect(err).not.toContain("error:");
+      expect({
+        ran: ran(),
+        trustedDependencies: (await file(ctx.packageJson).json()).trustedDependencies,
+        exitCode,
+      }).toEqual({ ran: ["of-kept"], trustedDependencies: ["of-kept"], exitCode: 0 });
+    });
+
+    // The root depends on the published `tool`. The workspace `tool` has a version that the range does not accept.
+    test("a name that a workspace also has is not that workspace", async () => {
+      using ctx = await setupScriptPackages(linker, scripted);
+      const ran = await writeProject(ctx, {}, { tool: { version: "2.0.0", dependencies: { "of-other": "1.0.0" } } });
+
+      const { err, exitCode } = await ctx.bun("add", "--trust", "tool@1.0.0");
+      expect(err).not.toContain("error:");
+      expect({
+        ran: ran(),
+        trustedDependencies: (await file(ctx.packageJson).json()).trustedDependencies,
+        exitCode,
+      }).toEqual({ ran: ["tool"], trustedDependencies: ["tool"], exitCode: 0 });
+    });
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("a git dependency of another package (%s)", linker => {

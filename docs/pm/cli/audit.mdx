@@ -48,6 +48,8 @@ bun audit --prod
 bun audit --omit=optional --omit=peer
 ```
 
+With `--prod` or `--omit`, the folder that you run `bun audit` in sets the scope. From a workspace root, Bun audits every workspace's dependencies. From inside a workspace package, Bun audits only that package's dependencies.
+
 **`--ignore <id>`** - Ignore an advisory by GHSA ID or numeric ID. Repeatable. (CVE IDs are not in the registry data and don't match.)
 
 ```bash terminal icon="terminal"

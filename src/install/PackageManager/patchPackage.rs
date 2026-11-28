@@ -229,7 +229,7 @@ fn resolve_target(
         lockfile.buffers.resolutions.as_slice(),
         reachable::Options {
             bundled: false,
-            ..reachable::Options::all(0)
+            ..reachable::Options::all()
         },
     );
 

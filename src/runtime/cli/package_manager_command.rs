@@ -665,7 +665,7 @@ impl PackageManagerCommand {
                     optional: features.optional_dependencies,
                     peer: features.peer_dependencies,
                     optional_peer: features.peer_dependencies,
-                    ..reachable::Options::all(0)
+                    ..reachable::Options::all()
                 },
             );
             let selected = |dep_id: DependencyID| {

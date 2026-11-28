@@ -1228,6 +1228,76 @@ describe("`bun audit --omit`", () => {
     expect(fromAAll.exitCode).toBe(1);
   });
 
+  // The root's `workspaces` list names its members. It is not a dependency of the root, but `kept` is one.
+  test.concurrent("--prod from a workspace that depends on the root leaves the other workspaces out", async () => {
+    const bulkBodies: Record<string, string[]>[] = [];
+    await using server = startRegistry({}, { bulkBodies });
+    const workspace = (name: string, dependencies: object) => JSON.stringify({ name, dependencies });
+    using dir = await setup(
+      server,
+      { name: "root", workspaces: ["packages/*"], dependencies: { "one-dep": "1.0.0", "kept": "workspace:*" } },
+      {
+        "packages/a/package.json": workspace("a", { "root": "workspace:*", "no-deps": "1.0.0" }),
+        "packages/b/package.json": workspace("b", { "a-dep": "1.0.2" }),
+        "packages/kept/package.json": workspace("kept", { "basic-1": "1.0.0" }),
+        "packages/uses-a/package.json": workspace("uses-a", { a: "workspace:*" }),
+        "packages/by-path/package.json": workspace("by-path", { root: "file:../.." }),
+      },
+    );
+    const from = (name: string, ...args: string[]) => run(join(dir, "packages", name), ["audit", ...args], dir);
+    const ofRoot = { "basic-1": ["1.0.0"], "no-deps": ["1.0.1"], "one-dep": ["1.0.0"] };
+    const ofAAndRoot = { "basic-1": ["1.0.0"], "no-deps": ["1.0.0", "1.0.1"], "one-dep": ["1.0.0"] };
+
+    expectClean(await audit(dir, "--prod"), 4);
+    expectClean(await from("a", "--prod"), 3);
+    expectClean(await from("a", "--omit=dev"), 3);
+    expectClean(await from("uses-a", "--prod"), 3);
+    expectClean(await from("by-path", "--prod"), 3);
+    expectClean(await from("b", "--prod"), 1);
+    expect(bulkBodies).toStrictEqual([
+      { "a-dep": ["1.0.2"], ...ofAAndRoot },
+      ofAAndRoot,
+      ofAAndRoot,
+      ofAAndRoot,
+      ofRoot,
+      { "a-dep": ["1.0.2"] },
+    ]);
+  });
+
+  // Before Bun 1.2.19, the dependencies of a workspace could have the workspace bit too. Bun 1.2.18 wrote
+  // fixtures/bun.lockb.v1.2.18-workspaces: foo depends on one-range-dep (which depends on no-deps), on bar (which
+  // depends on a-dep@1.0.2 and no-deps) and, for development, on a-dep@1.0.1.
+  test.concurrent("--prod from a workspace audits its dependencies with a bun.lockb from Bun 1.2.18", async () => {
+    const bulkBodies: Record<string, string[]>[] = [];
+    await using server = startRegistry({}, { bulkBodies });
+    using dir = tempDir("audit-lockb-1.2.18", {
+      "bun.lockb": Buffer.from(
+        await file(join(import.meta.dirname, "fixtures", "bun.lockb.v1.2.18-workspaces")).arrayBuffer(),
+      ),
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { "one-dep": "1.0.0" },
+      }),
+      "packages/foo/package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { "one-range-dep": "1.0.0", "bar": "workspace:*" },
+        devDependencies: { "a-dep": "1.0.1" },
+      }),
+      "packages/bar/package.json": JSON.stringify({
+        name: "bar",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.2", "no-deps": "1.0.0" },
+      }),
+    });
+    await writeBunfig(dir, server);
+
+    expectClean(await run(join(dir, "packages", "foo"), ["audit", "--prod"], dir), 3);
+    expect(bulkBodies).toStrictEqual([{ "a-dep": ["1.0.2"], "no-deps": ["1.0.0"], "one-range-dep": ["1.0.0"] }]);
+  });
+
   test.concurrent("--json --prod sends only production packages and prints the empty response", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", devDependencies: { "no-deps": "1.0.0" } });

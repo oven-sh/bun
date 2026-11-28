@@ -1457,7 +1457,7 @@ impl Lockfile {
         // versions of Bun saved it and the hash in their bun.lockb covers it.
         if moved_a_row {
             let held =
-                reachable::packages(&new, &new.buffers.resolutions, reachable::Options::all(0));
+                reachable::packages(&new, &new.buffers.resolutions, reachable::Options::all());
             if held.count() < new.packages.len() {
                 // The second pass removes nothing else: a weak peer keeps the package it is bound
                 // to.
@@ -2572,7 +2572,7 @@ impl Lockfile {
             return kept;
         }
         let resolutions = self.buffers.resolutions.as_slice();
-        let stays = reachable::packages(self, resolutions, reachable::Options::all(0));
+        let stays = reachable::packages(self, resolutions, reachable::Options::all());
         for (declarer, rows) in self.packages.items_dependencies().iter().enumerate() {
             if !stays.is_set(declarer) {
                 continue;

@@ -1642,6 +1642,53 @@ test.concurrent("a version that is the only way to reach a patched package is ke
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
+// Every has-bin-entries depends on no-deps@1.0.0. That is the workspace here, and the workspace depends on the root.
+// The root's `workspaces` list is not a dependency of the root, so has-bin-entries@1.0.0 does not lead to the packages
+// of `other`: vulnerable-dep@1.0.0, the only way to reach the patched vulnerable@1.0.0.
+test.concurrent("a version that reaches the root is not kept for a patched package of another workspace", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const app = join(packageDir, "packages", "app", "package.json");
+  const other = join(packageDir, "packages", "other", "package.json");
+  const workspace = (name: string, dependencies: object) => JSON.stringify({ name, version: "1.0.0", dependencies });
+  await Promise.all([
+    write(join(packageDir, "patches", "vulnerable@1.0.0.patch"), noDepsPatch),
+    write(join(packageDir, "packages", "no-deps", "package.json"), workspace("no-deps", { root: "workspace:*" })),
+    write(app, workspace("app", { "has-bin-entries": "1.0.0" })),
+    write(other, workspace("other", { "vulnerable-dep": "1.0.0" })),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        patchedDependencies: { "vulnerable@1.0.0": "patches/vulnerable@1.0.0.patch" },
+      }),
+    ),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await Promise.all([
+    write(app, workspace("app", { "has-bin-entries": "1.0.0", "hbe": "npm:has-bin-entries@1.5.0" })),
+    write(other, workspace("other", { "vulnerable-dep": "1.0.0", "vd": "npm:vulnerable-dep@1.1.0" })),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await widen(packageDir, app, "has-bin-entries", "^1.0.0");
+  await widen(packageDir, other, "vulnerable-dep", "^1.0.0");
+  const lockfile = await lock(packageDir);
+  expect(lockfile).toContain('"no-deps": ["no-deps@workspace:packages/no-deps"]');
+  const kept = ["  kept vulnerable-dep@1.0.0 (needed to reach patched vulnerable@1.0.0)"];
+
+  const check = await dedupe(packageDir, "--check");
+  expectWouldRemove(check, "has-bin-entries 1.0.0 -> 1.5.0", 10, kept);
+  expect(check.exitCode).toBe(1);
+
+  const { stdout, stderr, exitCode } = await dedupe(packageDir);
+  expectRemoved(stdout, "has-bin-entries 1.0.0 -> 1.5.0", { kept, checked: 10 });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  const after = await lock(packageDir);
+  expect(after).not.toContain('"has-bin-entries@1.0.0"');
+  expect(after).toContain('"vulnerable-dep@1.0.0"');
+});
+
 // pnpm/pnpm#9213 (and #6619): one-fixed-dep@1.0.0 dies in this run, so its exact no-deps@1.0.0 edge must not drag the live "^1.0.0" edges down.
 test.concurrent("a version removed by the run does not vote for its own dependencies", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();

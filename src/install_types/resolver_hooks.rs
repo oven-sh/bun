@@ -230,6 +230,11 @@ impl Behavior {
     pub fn is_workspace(self) -> bool {
         self.contains(Self::WORKSPACE)
     }
+    /// The root's implicit row for a `workspaces` entry. Before Bun 1.2.19 other rows had the bit too, and an old bun.lockb keeps it.
+    #[inline]
+    pub fn is_workspace_only(self) -> bool {
+        self == Self::WORKSPACE
+    }
     #[inline]
     pub fn is_bundled(self) -> bool {
         self.contains(Self::BUNDLED)

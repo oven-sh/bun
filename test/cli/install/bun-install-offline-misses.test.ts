@@ -70,6 +70,9 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     },
     "scanner": { "1.0.0": { main: "index.js" } },
     "scanner-with-native": { "1.0.0": { main: "index.js", optionalDependencies: { native: "1.0.0" } } },
+    "scanner-links-member": {
+      "1.0.0": { main: "index.js", dependencies: { member: "^1.0.0" }, optionalDependencies: { native: "1.0.0" } },
+    },
     "leaf": { "1.0.0": {}, "2.0.0": {} },
     "plain": { "1.0.0": {} },
   };
@@ -162,6 +165,8 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     linker: "hoisted" | "isolated",
     project: {
       manifest: object;
+      /** Other files of the project, such as the package.json of a workspace. */
+      files?: Record<string, string>;
       evict?: (cacheEntry: string) => boolean;
       offlineArgs?: string[];
       keepNodeModules?: boolean;
@@ -177,6 +182,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     await using registry = serveRegistry(requests);
     using dir = tempDir("offline-optional", {
       "package.json": JSON.stringify({ name: "app", version: "1.0.0", ...project.manifest }),
+      ...project.files,
     });
     const cwd = String(dir);
     const cache = join(cwd, ".cache");
@@ -341,6 +347,18 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.code).toBe(1);
     });
 
+    it("reports a missing package that only a workspace requires", async () => {
+      const member = { name: "member", version: "1.0.0", dependencies: { "uses-leaf": "1.0.0" } };
+      const r = await installOfflineAfterOnline(linker, {
+        manifest: { workspaces: ["packages/*"] },
+        files: { "packages/member/package.json": JSON.stringify(member) },
+        evict: cacheEntriesOf("leaf"),
+      });
+      expect(r.err).toContain('error: --offline: "leaf" is not in the cache');
+      expect(r.requests).toEqual([]);
+      expect(r.code).toBe(1);
+    });
+
     it("doesn't require the dependencies of a package that a peer resolves to but no linker places", async () => {
       // The lockfile resolves the peer of peer-mid to mid@1.0.0, which only native-mid-other-os lists.
       // The linkers bind it to mid@2.0.0 of the root, so nothing places mid@1.0.0 or requires leaf.
@@ -383,6 +401,32 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.err).toContain('error: --offline: "leaf" is not in the cache');
       expect(r.requests).toEqual([]);
       expect(r.code).toBe(1);
+    });
+
+    // The scanner's `member` is the workspace, which depends on the root. The root's `workspaces` list is not a
+    // dependency of the root, so the scanner does not require what only `other` requires.
+    it("installs a security scanner that reaches the root through a workspace", async () => {
+      const workspace = (name: string, dependencies: object) =>
+        JSON.stringify({ name, version: "1.0.0", dependencies });
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { workspaces: ["packages/*"], devDependencies: { "scanner-links-member": "1.0.0" } },
+        files: {
+          "packages/member/package.json": workspace("member", { app: "workspace:*" }),
+          "packages/other/package.json": workspace("other", { native: "1.0.0" }),
+        },
+        scanner: "scanner-links-member",
+        evict: cacheEntriesOf("native", "leaf"),
+        offlineArgs: ["--filter", "member"],
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({
+        // The hoisted linker links the root and the workspace at the top. `other` and its packages are filtered out.
+        installed: linker === "hoisted" ? ["app", "member", "scanner-links-member"] : ["scanner-links-member"],
+        requests: [],
+        lockfileChanged: false,
+        versions: {},
+      });
+      expect(code).toBe(0);
     });
 
     it("fails the install of a security scanner that is not in the cache", async () => {

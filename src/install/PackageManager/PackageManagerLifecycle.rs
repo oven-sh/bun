@@ -409,6 +409,9 @@ impl PackageManager {
             let root_deps = self.lockfile.packages.items_dependencies()[root_id];
             for dep_id in root_deps.begin()..root_deps.end() {
                 let root_dep = &self.lockfile.buffers.dependencies[dep_id as usize];
+                if root_dep.behavior.is_workspace_only() {
+                    continue;
+                }
                 for request in self.update_requests.iter() {
                     if request.matches(root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
                         let package_id = self.lockfile.buffers.resolutions[dep_id as usize];
@@ -547,7 +550,11 @@ fn add_package_to_set(
         let rows = lockfile.packages.items_dependencies()[current as usize];
         for dep_id in rows.begin()..rows.end() {
             let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
-            if dep_package_id == invalid_package_id {
+            if dep_package_id == invalid_package_id
+                || lockfile.buffers.dependencies[dep_id as usize]
+                    .behavior
+                    .is_workspace_only()
+            {
                 continue;
             }
             if !core::mem::replace(&mut visited[dep_package_id as usize], true) {

@@ -4217,7 +4217,7 @@ fn index_peer_askers(this: &mut PackageManager) {
         reachable::Options {
             peer: false,
             optional_peer: false,
-            ..reachable::Options::all(0)
+            ..reachable::Options::all()
         },
     );
     let mut askers = Vec::new();
@@ -4554,7 +4554,7 @@ impl PackageManager {
             return;
         }
         let lockfile = &*self.lockfile;
-        let all = reachable::Options::all(0);
+        let all = reachable::Options::all();
         let tree = reachable::packages(lockfile, &lockfile.buffers.resolutions, all);
         let is_in_tree = |row: DependencyID| {
             (lockfile.get_parent_pkg_of_dependency(row))
@@ -4610,7 +4610,7 @@ impl PackageManager {
     pub(crate) fn report_offline_misses(
         &self,
         misses: &crate::package_install::OfflineMisses,
-        roots: &[PackageID],
+        start: reachable::Start<'_>,
         isolated: bool,
     ) -> Result<u32, bun_alloc::AllocError> {
         if misses.missing.is_empty() {
@@ -4634,7 +4634,7 @@ impl PackageManager {
                 *resolved = invalid_package_id;
             }
         }
-        let mut roots = roots.to_vec();
+        let mut other_copies: Vec<PackageID> = Vec::new();
         let served = if isolated {
             crate::isolated_install::served_peers(self, lockfile)?
         } else {
@@ -4645,13 +4645,14 @@ impl PackageManager {
             if *resolved == invalid_package_id {
                 *resolved = package_id;
             } else {
-                roots.push(package_id);
+                other_copies.push(package_id);
             }
         }
         let required = reachable::required_without(
             lockfile,
             &resolutions,
-            &roots,
+            start,
+            &other_copies,
             reachable::Options::install(self),
             &left_out,
         );

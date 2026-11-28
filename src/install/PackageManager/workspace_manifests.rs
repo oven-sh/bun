@@ -6,7 +6,7 @@ use bun_core::{Global, Output, UnwrapOrOom as _};
 use bun_semver as Semver;
 
 use crate::dependency::{
-    Behavior, Tag as DependencyTag, Value as DependencyValue, Version as DependencyVersion,
+    Tag as DependencyTag, Value as DependencyValue, Version as DependencyVersion,
 };
 use crate::lockfile::package::{PackageColumns as _, folder_relative_to_top_level_dir};
 use crate::lockfile::{self, DependencySlice, Lockfile, Package};
@@ -526,7 +526,7 @@ pub(crate) fn relation_graph(
     let mut edges: Vec<(u32, u32)> = Vec::new();
     for (from, pkg) in &parsed {
         for dep in pkg.dependencies.get(dbuf) {
-            if dep.behavior == Behavior::WORKSPACE {
+            if dep.behavior.is_workspace_only() {
                 continue;
             }
             let version = scratch.lockfile.catalogs.resolve_range(sbuf, dep);

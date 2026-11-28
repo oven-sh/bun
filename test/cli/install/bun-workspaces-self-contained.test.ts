@@ -195,6 +195,41 @@ it("packages that the workspace no longer needs are removed from its node_module
   expect(r.code).toBe(0);
 });
 
+// The dependency that desktop drops leads to the root. The root's `workspaces` list is not a dependency of the root, so
+// `qux`, which only web depends on, was never desktop's.
+it.each([
+  ["the root", "root"],
+  ["a workspace that depends on the root", "via"],
+])(
+  "a workspace that stops depending on %s keeps an entry named like another workspace's dependency",
+  async (_, name) => {
+    const desktopJson = join(package_dir, "apps", "desktop", "package.json");
+    const desktop = { name: "desktop", version: "1.0.0" };
+    await writeProject({}, {});
+    await mkdir(join(package_dir, "packages", "via"));
+    await writeFile(
+      join(package_dir, "packages", "via", "package.json"),
+      JSON.stringify({ name: "via", version: "1.0.0", dependencies: { root: "workspace:*" } }),
+    );
+    await writeFile(
+      desktopJson,
+      JSON.stringify({ ...desktop, dependencies: { shared: "workspace:*", [name]: "workspace:*" } }),
+    );
+    expect((await install(package_dir)).code).toBe(0);
+    const desktopNm = join(package_dir, "apps", "desktop", "node_modules");
+    expect(existsSync(desktopNm)).toBeFalse();
+
+    await writeProject({}, { selfContained: ["apps/desktop"] });
+    await writeFile(desktopJson, JSON.stringify({ ...desktop, dependencies: { shared: "workspace:*" } }));
+    for (const entry of ["qux", "mine"]) await mkdir(join(desktopNm, entry), { recursive: true });
+    const r = await install(package_dir);
+
+    expect(r.err).not.toContain("error:");
+    expect(await readdirSorted(desktopNm)).toEqual(["baz", "mine", "qux", "shared"]);
+    expect(r.code).toBe(0);
+  },
+);
+
 // "none" is yarn's default: no hoisting limit, so nothing to warn about
 it('hoistingLimits "none" hoists the workspace normally and does not warn', async () => {
   await writeProject({ installConfig: { hoistingLimits: "none" } }, {});

@@ -574,9 +574,8 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
             let leads = crate::lockfile::reachable::packages_from(
                 lockfile,
                 &lockfile.buffers.resolutions,
-                core::slice::from_ref(&v),
-                true,
-                crate::lockfile::reachable::Options::all(0),
+                crate::lockfile::reachable::Start::Packages(core::slice::from_ref(&v)),
+                crate::lockfile::reachable::Options::all(),
             );
             let needed: Vec<PackageID> = orphaned
                 .iter()
@@ -768,7 +767,7 @@ fn reachable(
         resolutions,
         crate::lockfile::reachable::Options {
             bundled: frozen_below.is_none(),
-            ..crate::lockfile::reachable::Options::all(0)
+            ..crate::lockfile::reachable::Options::all()
         },
     )
 }

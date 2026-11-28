@@ -1879,14 +1879,13 @@ describe("bun update <name> semantics", () => {
     }
 
     // The no-deps version each dependent's edge resolves to: its nested row when it lost the hoisting race, else the hoisted one.
-    async function noDepsEdges(dir: string) {
+    async function noDepsEdges(dir: string, dependents: readonly string[] = DEPENDENTS) {
       const { packages } = await lock(dir);
       const versionOf = (key: string) => (packages[key] as [string] | undefined)?.[0].slice("no-deps@".length);
       return Object.fromEntries(
-        DEPENDENTS.filter(dependent => dependent in packages).map(dependent => [
-          dependent,
-          versionOf(`${dependent}/no-deps`) ?? versionOf("no-deps"),
-        ]),
+        dependents
+          .filter(dependent => dependent in packages)
+          .map(dependent => [dependent, versionOf(`${dependent}/no-deps`) ?? versionOf("no-deps")]),
       );
     }
 
@@ -1958,6 +1957,45 @@ describe("bun update <name> semantics", () => {
         expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
         expect(await texts()).toStrictEqual(packageJsons);
         await install(dir, "--frozen-lockfile");
+      },
+    );
+
+    // Before Bun 1.2.19, the dependencies of a workspace could have the workspace bit too. Bun 1.2.18 wrote
+    // fixtures/bun.lockb.v1.2.18-workspaces: foo depends on one-range-dep, whose no-deps ^1.0.0 is at 1.0.0, the
+    // version that bar pins. The root's one-dep pins no-deps 1.0.1, so the moved row shares that copy, as it does
+    // with a bun.lock, and the lockfile gets no 1.1.0. The update saves the lockfile as bun.lock.
+    it.concurrent(
+      "bun update no-deps from a workspace moves the row it reaches in a bun.lockb from Bun 1.2.18",
+      async () => {
+        const { packageDir: dir } = await verdaccio.createTestDir({
+          bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+          files: {
+            "bun.lockb": await readFile(join(import.meta.dir, "fixtures", "bun.lockb.v1.2.18-workspaces")),
+            "package.json": stringify({
+              name: "mono",
+              private: true,
+              workspaces: ["packages/*"],
+              dependencies: { "one-dep": "1.0.0" },
+            }),
+            "packages/foo/package.json": stringify({
+              name: "foo",
+              version: "1.0.0",
+              dependencies: { "one-range-dep": "1.0.0", "bar": "workspace:*" },
+              devDependencies: { "a-dep": "1.0.1" },
+            }),
+            "packages/bar/package.json": stringify(member("bar", { "a-dep": "1.0.2", "no-deps": "1.0.0" })),
+          },
+        });
+
+        const foo = join(dir, "packages", "foo");
+        const { stderr, exitCode } = await runFrom(foo, dir, "update", "no-deps", "--lockfile-only");
+        expect(stderr).not.toContain("error:");
+        expect(await noDepsEdges(dir, ["one-range-dep", "bar"])).toStrictEqual({
+          "one-range-dep": "1.0.1",
+          "bar": "1.0.0",
+        });
+        expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.0.1"]);
+        expect(exitCode).toBe(0);
       },
     );
 

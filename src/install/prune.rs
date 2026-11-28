@@ -1664,9 +1664,13 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                         .filter(|row| row.owner as usize == id)
                         .map(|row| row.package),
                 );
-                let options = reachable::Options::all(id as PackageID);
                 let resolutions = before.buffers.resolutions.as_slice();
-                reachable::packages_from(before, resolutions, &roots, true, options)
+                reachable::packages_from(
+                    before,
+                    resolutions,
+                    reachable::Start::Packages(&roots),
+                    reachable::Options::all(),
+                )
             });
         if !removes_other_entries && all_stay && reached.is_none() {
             continue;
@@ -2324,7 +2328,12 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
         reachable::packages(lockfile, resolutions, options)
     } else {
         let roots = importer_roots(manager, &|_| true);
-        reachable::packages_from(lockfile, resolutions, &roots, false, options)
+        reachable::packages_from(
+            lockfile,
+            resolutions,
+            reachable::Start::Packages(&roots),
+            options,
+        )
     };
     if let Some(sel) = selection {
         let unselected = importer_roots(manager, &|id| !sel.selected.is_set(id));
@@ -2336,8 +2345,12 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
                 optional_peer: true,
                 ..options
             };
-            let protected =
-                reachable::packages_from(lockfile, resolutions, &unselected, false, full);
+            let protected = reachable::packages_from(
+                lockfile,
+                resolutions,
+                reachable::Start::Packages(&unselected),
+                full,
+            );
             wanted.set_union(&protected);
         }
     }

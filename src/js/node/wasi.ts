@@ -824,23 +824,18 @@ class WASI {
         return WASI_ESUCCESS;
       },
       clock_res_get: (clockId: number, resolution: number) => {
-        let res;
         switch (clockId) {
+          case WASI_CLOCK_REALTIME:
           case WASI_CLOCK_MONOTONIC:
           case WASI_CLOCK_PROCESS_CPUTIME_ID:
-          case WASI_CLOCK_THREAD_CPUTIME_ID: {
-            res = BigInt(1);
+          case WASI_CLOCK_THREAD_CPUTIME_ID:
             break;
-          }
-          case WASI_CLOCK_REALTIME: {
-            res = BigInt(1e3);
-            break;
-          }
+          default:
+            return WASI_EINVAL;
         }
-        if (!res) {
-          throw Error("invalid clockId");
-        }
-        this.view.setBigUint64(resolution, res);
+        this.refreshMemory();
+        // 1 ns, as uvwasi reports for the realtime and the monotonic clock. It asks the platform for the two CPU-time clocks, which are Bun.nanoseconds() here: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L547-L558
+        this.view.setBigUint64(resolution, BigInt(1), true);
         return WASI_ESUCCESS;
       },
       clock_time_get: (clockId: number, _precision: bigint, time: number) => {
@@ -933,7 +928,12 @@ class WASI {
       }),
       fd_filestat_set_size: wrap((fd: number, stSize: bigint) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_FILESTAT_SET_SIZE);
-        fs.ftruncateSync(stats.real, Number(stSize));
+        // A u64 of 2^63 or more arrives as a negative BigInt, and ftruncateSync() truncates to 0 for a negative length.
+        const size = Number(stSize);
+        if (size < 0) {
+          return WASI_EINVAL;
+        }
+        fs.ftruncateSync(stats.real, size);
         return WASI_ESUCCESS;
       }),
       fd_filestat_set_times: wrap((fd: number, stAtim: bigint, stMtim: bigint, fstflags: number) => {
@@ -948,6 +948,10 @@ class WASI {
         }
         const mtimflags = WASI_FILESTAT_SET_MTIM | WASI_FILESTAT_SET_MTIM_NOW;
         if ((fstflags & mtimflags) === mtimflags) {
+          return WASI_EINVAL;
+        }
+        // Like uvwasi, EINVAL for a flag that is none of the four. Node narrows the flags to a uint16_t first, so 65536 passes there: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L44-L55
+        if ((fstflags & ~(atimflags | mtimflags)) !== 0) {
           return WASI_EINVAL;
         }
         if ((fstflags & WASI_FILESTAT_SET_ATIM) === WASI_FILESTAT_SET_ATIM) {
@@ -977,12 +981,17 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_pwrite: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nwritten: number) => {
+        // A u64 of 2^63 or more arrives as a negative BigInt. uvwasi refuses it before it looks at the descriptor: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L1297-L1298
+        const position = Number(offset);
+        if (position < 0) {
+          return WASI_EINVAL;
+        }
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE | WASI_RIGHT_FD_SEEK);
         let written = 0;
         getiovs(iovs, iovsLen).forEach(iov => {
           let w = 0;
           while (w < iov.byteLength) {
-            w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, Number(offset) + written + w);
+            w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, position + written + w);
           }
           written += w;
         });
@@ -1022,13 +1031,18 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_pread: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nread: number) => {
+        // As in fd_pwrite: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L1165-L1166
+        const position = Number(offset);
+        if (position < 0) {
+          return WASI_EINVAL;
+        }
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK);
         let read = 0;
         outer: for (const iov of getiovs(iovs, iovsLen)) {
           let r = 0;
           while (r < iov.byteLength) {
             const length = iov.byteLength - r;
-            const rr = fs.readSync(stats.real, iov, r, iov.byteLength - r, Number(offset) + read + r);
+            const rr = fs.readSync(stats.real, iov, r, iov.byteLength - r, position + read + r);
             r += rr;
             read += rr;
             if (rr === 0 || rr < length) {
@@ -1101,7 +1115,9 @@ class WASI {
         this.refreshMemory();
         const entries = fs.readdirSync(stats.path, { withFileTypes: true });
         const startPtr = bufPtr;
-        for (let i = Number(cookie); i < entries.length; i += 1) {
+        // A cookie is a u64: one of 2^63 or more arrives as a negative BigInt, and is past the last entry.
+        const first = Number(cookie);
+        for (let i = first < 0 ? entries.length : first; i < entries.length; i += 1) {
           const entry = entries[i];
           let nameLength = Buffer.byteLength(entry.name);
           if (bufPtr - startPtr > bufLen) {
@@ -1175,22 +1191,28 @@ class WASI {
       fd_seek: wrap((fd: number, offset: bigint, whence: number, newOffsetPtr: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_SEEK);
         this.refreshMemory();
+        let newOffset: bigint;
         switch (whence) {
           case WASI_WHENCE_CUR:
-            stats.offset = (stats.offset ? stats.offset : BigInt(0)) + BigInt(offset);
+            newOffset = (stats.offset ? stats.offset : BigInt(0)) + BigInt(offset);
             break;
           case WASI_WHENCE_END:
             const { size } = this.fstatSync(stats.real);
-            stats.offset = BigInt(size) + BigInt(offset);
+            newOffset = BigInt(size) + BigInt(offset);
             break;
           case WASI_WHENCE_SET:
-            stats.offset = BigInt(offset);
+            newOffset = BigInt(offset);
             break;
+          default:
+            // Node narrows whence to a uint8_t, so 256 seeks like WASI_WHENCE_SET there. lseek(2) refuses 256, and so does this: https://github.com/nodejs/node/blob/v26.3.0/src/node_wasi.cc#L805-L816
+            return WASI_EINVAL;
         }
-        if (stats.offset == null) {
-          throw Error("stats.offset must be defined");
+        // As lseek() does, EINVAL for a SET or END position before the start of a file. CUR waits for #40772: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L191-L193
+        if (whence !== WASI_WHENCE_CUR && newOffset < 0n && stats.filetype === WASI_FILETYPE_REGULAR_FILE) {
+          return WASI_EINVAL;
         }
-        this.view.setBigUint64(newOffsetPtr, stats.offset, true);
+        stats.offset = newOffset;
+        this.view.setBigUint64(newOffsetPtr, newOffset, true);
         return WASI_ESUCCESS;
       }),
       fd_tell: wrap((fd: number, offsetPtr: number) => {
@@ -1273,6 +1295,10 @@ class WASI {
           }
           const mtimflags = WASI_FILESTAT_SET_MTIM | WASI_FILESTAT_SET_MTIM_NOW;
           if ((fstflags & mtimflags) === mtimflags) {
+            return WASI_EINVAL;
+          }
+          // As in fd_filestat_set_times.
+          if ((fstflags & ~(atimflags | mtimflags)) !== 0) {
             return WASI_EINVAL;
           }
           if ((fstflags & WASI_FILESTAT_SET_ATIM) === WASI_FILESTAT_SET_ATIM) {

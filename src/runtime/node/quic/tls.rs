@@ -195,43 +195,21 @@ pub(super) struct TlsContext {
     _alpn: Option<Box<Vec<u8>>>,
 }
 
-unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
-    if line.is_null() {
+/// SAFETY: one of our engines is driving the handshake of `ssl`.
+unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: bun_core::CStrRef<'_>) {
+    let bytes = line.to_cstr().to_bytes().to_vec();
+    // SAFETY: lsquic is driving the handshake of `ssl`, so the conn that owns it
+    // outlives this callback.
+    let Some(conn) = (unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) }) else {
         return;
-    }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
+    };
+    let ctx = bun_lsquic_sys::lsquic_conn_get_ctx(conn);
     if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
+        let peer_ctx = bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, None);
         if !peer_ctx.is_null() {
-            // SAFETY: as above.
+            // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
             let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
+            let (_, peer_addr) = conn.sockaddrs();
             endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
         }
         return;

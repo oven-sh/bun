@@ -2,11 +2,9 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ptr::RefPtr;
-use bun_uws::Loop as UwsLoop;
 use bun_uws::quic;
 use bun_uws::quic::context::ConnectResult;
 
@@ -19,14 +17,13 @@ use crate::http_thread::WriteMessageType;
 use crate::h3_client::h3_client;
 
 pub(crate) struct ClientContext {
-    // FFI handle owned for process lifetime (never freed).
-    qctx: NonNull<quic::Context>,
+    qctx: &'static mut quic::Context,
     sessions: Vec<RefPtr<ClientSession>>,
 }
 
 /// One instance per HTTP-thread loop. Stored as a process global only
 /// because `bun.http.http_thread` is itself a process singleton — the
-/// underlying lsquic engine is bound to the `loop` passed to
+/// underlying lsquic engine is bound to the loop of the thread that calls
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
@@ -38,17 +35,6 @@ static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
     bun_core::AtomicCell::new(None);
 
 impl ClientContext {
-    /// Mutable access to the lsquic client engine.
-    ///
-    /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
-    /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
-    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
-    #[inline]
-    fn qctx_mut(&mut self) -> &mut quic::Context {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
-    }
-
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub(crate) fn get() -> Option<NonNull<ClientContext>> {
@@ -72,7 +58,8 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        let qctx = quic::Context::create_client(UwsLoop::get())?;
+        let qctx = quic::Context::create_client()?;
+        callbacks::register(qctx);
 
         // Process-lifetime singleton — published into `INSTANCE` below and
         // never torn down (the lsquic engine outlives every request).
@@ -82,11 +69,6 @@ impl ClientContext {
             qctx,
             sessions: Vec::new(),
         });
-        // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
-        // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
-        // `self_` is the freshly-boxed sole owner; callbacks don't fire until
-        // the loop runs, so registering after construction is order-neutral.
-        callbacks::register(Self::as_mut(self_).qctx_mut());
         INSTANCE.store(Some(self_));
         Some(self_)
     }
@@ -135,9 +117,9 @@ impl ClientContext {
         self.sessions.push(registry_ref);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+        let result = self
+            .qctx
+            .connect(host_z, port, host_z, reject, session.cast());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
@@ -145,7 +127,7 @@ impl ClientContext {
                 // through the centralised [`quic_socket_mut`] accessor and use
                 // the safe `&mut` ext-slot accessor it exposes (sized for
                 // `*mut ClientSession` in `get_or_create`).
-                *quic_socket_mut(qs).ext::<ClientSession>() = NonNull::new(session);
+                *quic_socket_mut(qs).ext() = NonNull::new(session.cast());
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",

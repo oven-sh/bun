@@ -1177,7 +1177,7 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn SSL_CTX_set_keylog_callback(
         ctx: *mut SSL_CTX,
-        cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: *const c_char)>,
+        cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: CStrRef<'_>)>,
     );
     pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;

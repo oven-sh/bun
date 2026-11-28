@@ -542,14 +542,11 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
     return us_quic_engine_new(flags, &api);
 }
 
-const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }
-const struct sockaddr *us_nq_spec_local(const struct lsquic_out_spec *s) { return s->local_sa; }
-void *us_nq_spec_peer_ctx(const struct lsquic_out_spec *s) { return s->peer_ctx; }
-const struct iovec *us_nq_spec_iov(const struct lsquic_out_spec *s, size_t *n) {
-    *n = s->iovlen;
-    return s->iov;
-}
-size_t us_nq_spec_stride(void) { return sizeof(struct lsquic_out_spec); }
+_Static_assert(sizeof(struct lsquic_out_spec) == 56 && offsetof(struct lsquic_out_spec, iov) == 0 &&
+    offsetof(struct lsquic_out_spec, iovlen) == 8 && offsetof(struct lsquic_out_spec, local_sa) == 16 &&
+    offsetof(struct lsquic_out_spec, dest_sa) == 24 && sizeof(struct iovec) == 16 &&
+    offsetof(struct iovec, iov_base) == 0 && offsetof(struct iovec, iov_len) == 8,
+    "update lsquic_out_spec and iovec in src/lsquic_sys/lib.rs");
 
 void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     /* RFC 9000 §3.1 allows RST in Data Sent state. */

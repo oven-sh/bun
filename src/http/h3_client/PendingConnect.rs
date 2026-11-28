@@ -65,7 +65,7 @@ impl PendingConnect {
         };
         s.qsocket = Some(qs);
         // qs.ext() returns the per-socket user storage slot for ClientSession.
-        *quic_socket_mut(qs.as_ptr()).ext::<ClientSession>() = NonNull::new(session);
+        *quic_socket_mut(qs.as_ptr()).ext() = NonNull::new(session.cast());
     }
 
     /// DNS worker may call from off the HTTP thread; mirror

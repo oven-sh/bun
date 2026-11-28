@@ -11,3 +11,5 @@ workspace = true
 
 [dependencies]
 bun_core.workspace = true
+bun_opaque.workspace = true
+bun_sys.workspace = true

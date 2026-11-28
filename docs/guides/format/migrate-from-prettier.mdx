@@ -116,7 +116,7 @@ Bun puts the keys where the plugin puts them and leaves every value as you wrote
 
 ---
 
-Astro and other languages that come from a plugin go to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+Astro, Go templates and other languages that come from a plugin go to your installed Prettier. So do the files that an override gives the plugin's parser, such as `*.html` with `parser: "go-template"` in a Hugo project. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
 
 ```txt
 Using .prettierrc (Prettier config)

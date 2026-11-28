@@ -113,6 +113,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
         supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,
         test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, defers_requires: _, debugger: _,
+        component_scripts: _,
     } = options;
 
     let is_development_server = framework.is_some() || !dev_server.is_null() || *hot_module_reloading;

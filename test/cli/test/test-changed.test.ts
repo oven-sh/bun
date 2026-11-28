@@ -11,7 +11,7 @@ import {
   tmpdirSync,
   untilEveryThreadIs,
 } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -76,6 +76,11 @@ async function runTestChanged(
  *  header in bun test's stderr). */
 function ranFiles(stderr: string, names: string[]): string[] {
   return names.filter(n => stderr.includes(n + ":")).sort();
+}
+
+/** A test file with one test. `imports` is what comes before the test, `body` is in it. */
+function testFile(name: string, imports = "", body = "expect(1).toBe(1);") {
+  return `import { expect, test } from "bun:test";\n${imports}\ntest(${JSON.stringify(name)}, async () => {\n  ${body}\n});\n`;
 }
 
 // The --watch test at the end is the slow one; everything else is independent
@@ -476,6 +481,63 @@ test("hot", () => {
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A component is a file of markup and `<script>` blocks that a plugin compiles in a run. The scan that
+// selects the tests runs no plugin: it reads what the scripts import. No plugin loads a component here.
+describe.concurrent("bun test --changed, a component", () => {
+  test("an edit behind the scripts of a component selects its tests", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "components", type: "module", sideEffects: false }),
+      "dep.ts": `export const dep = 1;\n`,
+      "types.ts": `export type Props = { label: string };\n`,
+      // The import of a type comes first, and only the markup uses Button.
+      "App.svelte": `<script lang="ts">\n  import type { Props } from "./types.ts";\n  import Button from "./Button.svelte";\n\n  export let props: Props = { label: "ok" };\n</script>\n\n<Button label={props.label} />\n`,
+      "Button.svelte": `<script lang="ts">\n  import { dep } from "./dep.ts";\n\n  export let label: string = String(dep);\n</script>\n\n<button>{label}</button>\n`,
+      // The second script has the import, and its open tag has a `>` in an attribute.
+      "Table.svelte": `<script module>\n  export const columns = 2;\n</script>\n\n<script lang="ts" generics="T extends Record<string, number>">\n  import { dep } from "./dep.ts";\n\n  export let rows: T[] = [];\n</script>\n`,
+      // TypeScript cannot parse the element, so the scan reads the script as TSX.
+      "View.vue": `<script lang="tsx">\nexport const view = <p />;\n\nimport { dep } from "./dep.ts";\nexport const title = String(dep);\n</script>\n`,
+      "Page.astro": `\uFEFF---\nimport { dep } from "./dep.ts";\n\nconst title = String(dep);\n---\n\n<h1>{title}</h1>\n`,
+      // The script does not parse, and its import is above the error. TSX takes `<T>` for an element.
+      "Broken.svelte": `<script>\n  const same = <T>(value: T) => value;\n  import { dep } from "./dep.ts";\n\n  const = same(dep);\n</script>\n`,
+      // The package has no side effects, so the barrel file ui/index.ts loads ./a only for an import that asks for it.
+      "Badge.svelte": `<script>\n  import { a } from "./ui";\n\n  export const badge = a;\n</script>\n`,
+      "ui/index.ts": `export { a } from "./a";\nexport { b } from "./b";\n`,
+      "ui/a.ts": `import { dep } from "../dep.ts";\n\nexport const a = dep;\n`,
+      "ui/b.ts": `export const b = "b";\n`,
+      // A macro does not run in the scan.
+      "Macro.svelte": `<script>\n  import { mark } from "./macro.ts" with { type: "macro" };\n  import { dep } from "./dep.ts";\n\n  export const value = mark() + dep;\n</script>\n`,
+      "macro.ts": `import { writeFileSync } from "node:fs";\n\nexport function mark() {\n  writeFileSync("macro-ran", "");\n  return 1;\n}\n`,
+      "unrelated.test.ts": testFile("unrelated"),
+    };
+    const components = [
+      "App.svelte",
+      "Table.svelte",
+      "View.vue",
+      "Page.astro",
+      "Broken.svelte",
+      "Badge.svelte",
+      "Macro.svelte",
+    ];
+    const tests = components.map(component => `${component.split(".")[0].toLowerCase()}.test.ts`);
+    components.forEach((component, i) => {
+      files[tests[i]] = testFile(
+        tests[i],
+        `import component from "./${component}";`,
+        "expect(component).toBeString();",
+      );
+    });
+    using dir = tempDir("test-changed-components", files);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "dep.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain(`--changed: 1 changed file, running ${tests.length}/${tests.length + 1} test files`);
+    expect(ranFiles(stderr, [...tests, "unrelated.test.ts"])).toEqual(tests.sort());
+    expect(existsSync(join(String(dir), "macro-ran"))).toBe(false);
     expect(exitCode).toBe(0);
   });
 });

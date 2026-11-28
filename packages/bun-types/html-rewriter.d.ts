@@ -70,7 +70,16 @@ declare namespace HTMLRewriterTypes {
   }
 
   interface Element {
-    /** The tag name in lowercase (e.g. "div", "span") */
+    /**
+     * The tag name in lowercase (e.g. "div", "span").
+     *
+     * Assigning a new name rewrites the start and end tags only. The
+     * contents are not re-parsed, so the new name should have the same
+     * content model as the old one. Renaming a `<script>`, `<style>`,
+     * `<textarea>`, `<title>` or other raw-text element to an ordinary
+     * element such as `<div>` makes a browser parse its former text
+     * contents as markup. The reverse turns child markup into text.
+     */
     tagName: string;
     /** Iterator for the element's attributes */
     readonly attributes: IterableIterator<[string, string]>;
@@ -106,7 +115,19 @@ declare namespace HTMLRewriterTypes {
     replace(content: Content, options?: ContentOptions): Element;
     /** Remove this element and its contents */
     remove(): Element;
-    /** Remove this element but keep its contents */
+    /**
+     * Remove this element's start and end tags but keep its contents.
+     *
+     * The contents are written out unchanged. Some elements hold text that
+     * the HTML parser does not read as markup: `<script>`, `<style>`,
+     * `<textarea>`, `<title>`, `<noscript>`, `<iframe>`, `<xmp>`,
+     * `<noembed>`, `<noframes>` and `<plaintext>`. Once the tags are gone,
+     * a browser parses that text as markup. For example, unwrapping
+     * `<textarea><img src=x onerror="..."></textarea>` yields a live
+     * `<img>`. A sanitizer should {@link Element.remove | remove()} these
+     * elements, or escape their text in a `text` handler, rather than
+     * unwrap them.
+     */
     removeAndKeepContent(): Element;
     /** Set the inner content of this element */
     setInnerContent(content: Content, options?: ContentOptions): Element;

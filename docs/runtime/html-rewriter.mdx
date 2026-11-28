@@ -262,6 +262,24 @@ rewriter.on("div", {
 });
 ```
 
+<Warning>
+`removeAndKeepContent()` and assigning `tagName` rewrite the element's own tags only. The contents stream through unchanged and are not re-parsed. This matters for elements whose contents are text to the HTML parser, not markup: `<script>`, `<style>`, `<textarea>`, `<title>`, `<noscript>`, `<iframe>`, `<xmp>`, `<noembed>`, `<noframes>` and `<plaintext>`. Once such an element is unwrapped, or renamed to an ordinary element like `<div>`, a browser parses its former text as markup.
+
+```ts
+new HTMLRewriter()
+  .on("textarea", {
+    element(el) {
+      el.removeAndKeepContent();
+    },
+  })
+  .transform('<textarea><img src=x onerror="alert(1)"></textarea>');
+// => '<img src=x onerror="alert(1)">', a live element rather than text
+```
+
+An allowlist-based sanitizer should `remove()` these elements instead of unwrapping them. To keep the text, add a `text` handler on the same selector and call `text.replace(text.text)`. A replacement without `{ html: true }` is escaped on output.
+
+</Warning>
+
 ### Text Operations
 
 Text chunks represent portions of text content and report their position in the text node:

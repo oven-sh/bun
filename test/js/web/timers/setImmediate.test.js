@@ -56,26 +56,18 @@ it("clearImmediate", async () => {
 });
 
 it("setImmediate should not keep the process alive forever", async () => {
-  let process = null;
-  const success = async () => {
-    process = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(import.meta.dir, "process-setImmediate-fixture.js")],
-      stdout: "ignore",
-      env: {
-        ...bunEnv,
-        NODE_ENV: undefined,
-      },
-    });
-    await process.exited;
-    process = null;
-    return true;
-  };
-
-  const fail = async () => {
-    await Bun.sleep(500);
-    process?.kill();
-    return false;
-  };
-
-  expect(await Promise.race([success(), fail()])).toBe(true);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "process-setImmediate-fixture.js")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+    },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("setImmediate\n");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

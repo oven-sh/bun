@@ -460,6 +460,10 @@ impl Evaluated {
     }
 }
 
+/// A text that is longer than this, and longer than its file, has no value: members that name one
+/// another twice double it each time.
+const MAX_CONSTANT_TEXT_BYTES: usize = 1 << 20;
+
 /// An expression that `evaluate` has started. It says how to continue once the operand being
 /// evaluated has a result.
 enum Evaluating {
@@ -469,6 +473,8 @@ enum Evaluating {
     Left(Option<BinOp>, ExprId),
     /// The right operand is being evaluated. This has the left operand's result.
     Right(Option<BinOp>, Evaluated),
+    /// The same for a `+` that joins strings, with the text of all that is on the left of it.
+    RightOfText(Vec<u8>, Evaluated),
     /// `evaluateTemplateExpression`: the span at `index` of `exprs` is being evaluated. `text` is
     /// everything before it.
     TemplateSpan {
@@ -604,14 +610,51 @@ impl<'p, 's> Checker<'p, 's> {
                         e = right;
                         continue 'operand;
                     }
+                    Evaluating::Right(Some(BinOp::Add), left)
+                        if let (Some(a), Some(b)) = (left.value, result.value)
+                            && !matches!((a, b), (EnumValue::Number(_), EnumValue::Number(_))) =>
+                    {
+                        let mut text = self.constant_text(a).to_vec();
+                        self.append_constant_text(&mut text, self.constant_text(b));
+                        let joined = self.evaluate_binary(Some(BinOp::Add), left, result);
+                        if let Some(&Evaluating::Left(Some(BinOp::Add), right)) = begun.last() {
+                            begun.pop();
+                            begun.push(Evaluating::RightOfText(text, joined));
+                            e = right;
+                            continue 'operand;
+                        }
+                        result = self.with_text(file, joined, &text);
+                    }
                     Evaluating::Right(op, left) => result = self.evaluate_binary(op, left, result),
+                    Evaluating::RightOfText(mut text, left) => {
+                        let is_within_limit = self.is_within_text_limit(file, &text);
+                        let joined = self.evaluate_binary(Some(BinOp::Add), left, result);
+                        result = match result.value {
+                            Some(value) if is_within_limit => {
+                                self.append_constant_text(&mut text, self.constant_text(value));
+                                let next = begun.last();
+                                if let Some(&Evaluating::Left(Some(BinOp::Add), right)) = next {
+                                    begun.pop();
+                                    begun.push(Evaluating::RightOfText(text, joined));
+                                    e = right;
+                                    continue 'operand;
+                                }
+                                self.with_text(file, joined, &text)
+                            }
+                            _ => Evaluated {
+                                value: None,
+                                ..joined
+                            },
+                        };
+                    }
                     Evaluating::TemplateSpan {
                         exprs,
                         index,
                         mut text,
                         result: mut template_result,
                     } => {
-                        let Some(value) = result.value else {
+                        let is_within_limit = self.is_within_text_limit(file, &text);
+                        let Some(value) = result.value.filter(|_| is_within_limit) else {
                             result = Evaluated {
                                 is_syntactically_string: true,
                                 ..Evaluated::default()
@@ -635,8 +678,7 @@ impl<'p, 's> Checker<'p, 's> {
                             });
                             continue 'operand;
                         }
-                        template_result.value = Some(EnumValue::String(self.atoms().intern(&text)));
-                        result = template_result;
+                        result = self.with_text(file, template_result, &text);
                     }
                     Evaluating::Initializer(used_at, before) => {
                         let constant = begun_constants.pop();
@@ -673,6 +715,18 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn is_within_text_limit(&self, file: FileId, text: &[u8]) -> bool {
+        text.len() <= MAX_CONSTANT_TEXT_BYTES.max(self.hir(file).text.len())
+    }
+
+    fn with_text(&self, file: FileId, result: Evaluated, text: &[u8]) -> Evaluated {
+        let is_within_limit = self.is_within_text_limit(file, text);
+        Evaluated {
+            value: is_within_limit.then(|| EnumValue::String(self.atoms().intern(text))),
+            ..result
+        }
+    }
+
     /// The result for a `BinaryExpression`, given its operands' results.
     fn evaluate_binary(&self, op: Option<BinOp>, l: Evaluated, r: Evaluated) -> Evaluated {
         let value = match (l.value, r.value, op) {
@@ -680,11 +734,8 @@ impl<'p, 's> Checker<'p, 's> {
                 number_operation(op, f64::from_bits(a), f64::from_bits(b))
                     .and_then(|n| Evaluated::number(n).value)
             }
-            (Some(a), Some(b), Some(BinOp::Add)) => {
-                let mut text = self.constant_text(a).to_vec();
-                self.append_constant_text(&mut text, self.constant_text(b));
-                Some(EnumValue::String(self.atoms().intern(&text)))
-            }
+            // The text is the caller's.
+            (Some(_), Some(_), Some(BinOp::Add)) => Some(EnumValue::String(known::empty)),
             _ => None,
         };
         Evaluated {

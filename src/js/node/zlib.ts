@@ -335,8 +335,14 @@ ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
   },
 });
 
+// Out of line: with the throw in its body, reset() is too large for the DFG to inline.
+function throwBindingClosed(): never {
+  throw $ERR_INTERNAL_ASSERTION("zlib binding closed" + require("internal/shared").kInternalAssertionSuffix);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/zlib.js#L323-L326
 ZlibBase.prototype.reset = function (this: $Node.ZlibBase) {
-  $assert(this._handle, "zlib binding closed");
+  if (!this._handle) throwBindingClosed();
   return this._handle.reset();
 };
 

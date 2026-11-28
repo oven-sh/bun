@@ -455,6 +455,7 @@ fn write_body(
         let in_html = InHtml {
             root: HtmlRoot::Program,
             has_babel_tree: syntax == Syntax::BabelTs,
+            is_svelte_script: true,
             ..InHtml::default()
         };
         let (source_type, flavor) = (SourceType::Unknown, settings.script_flavor);

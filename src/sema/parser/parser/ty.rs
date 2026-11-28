@@ -1098,6 +1098,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
+    /// `tsParseTypeReference` of Babel and acorn-typescript, where it's all of a type: a name and its type arguments.
+    pub(crate) fn type_reference_alone(&mut self) -> TypeNodeId {
+        let saved = self.enter_context(ctx::TYPE, self.cleared_in_types);
+        let ty = self.type_reference();
+        self.context = saved;
+        ty
+    }
+
     /// `parseTypeReference`
     fn type_reference(&mut self) -> TypeNodeId {
         let start = self.pos();

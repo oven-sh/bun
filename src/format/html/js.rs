@@ -106,7 +106,14 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
 
 /// A way to parse code.
 #[derive(Copy, Clone)]
-pub(crate) enum Parse<'p> {
+pub(crate) struct Parse<'p> {
+    parser: Parser<'p>,
+    /// [`InHtml::is_read_by_babel`]
+    is_read_by_babel: bool,
+}
+
+#[derive(Copy, Clone)]
+enum Parser<'p> {
     Function(ParseJavaScript),
     Closure(JavaScriptParser<'p>),
 }
@@ -117,10 +124,14 @@ impl<'p> Parse<'p> {
         parse: Option<JavaScriptParser<'p>>,
         options: &FormatOptions,
     ) -> Option<Parse<'p>> {
-        match parse {
-            Some(parse) => Some(Parse::Closure(parse)),
-            None => options.parse_javascript.map(Parse::Function),
-        }
+        let parser = match parse {
+            Some(parse) => Parser::Closure(parse),
+            None => Parser::Function(options.parse_javascript?),
+        };
+        Some(Parse {
+            parser,
+            is_read_by_babel: false,
+        })
     }
 
     /// Returns the parser for the code in the HTML that `f` writes.
@@ -128,15 +139,24 @@ impl<'p> Parse<'p> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
+    /// The same parser for code that has [`InHtml::is_read_by_babel`] if `yes`.
+    pub(crate) fn read_by_babel(self, yes: bool) -> Parse<'p> {
+        Parse {
+            is_read_by_babel: self.is_read_by_babel || yes,
+            ..self
+        }
+    }
+
     pub(crate) fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
         let code = Code {
             path,
             text,
             is_script,
+            is_read_by_babel: self.is_read_by_babel,
         };
-        match self {
-            Parse::Function(parse) => parse(code, then),
-            Parse::Closure(parse) => parse(code, then),
+        match self.parser {
+            Parser::Function(parse) => parse(code, then),
+            Parser::Closure(parse) => parse(code, then),
         }
     }
 }
@@ -179,6 +199,9 @@ pub(crate) fn with_file(
     let Some(parse) = Parse::from_formatter(f) else {
         return false;
     };
+    // Prettier parses a binding with Babel, like an expression.
+    let is_binding = matches!(piece, Piece::Binding(_));
+    let parse = parse.read_by_babel(is_binding || in_html.is_read_by_babel());
     let mut options = options_in_html(f.options(), in_html);
     // In Prettier the file name is still the HTML file's, so `<T,>() => {}` keeps its comma because the name isn't
     // `.ts`. oxfmt prints a script like a separate file.
@@ -403,6 +426,8 @@ pub(crate) fn with_sorted_classes(
     const BEFORE: &[u8] = b"let __prettier_temp__ = ";
     let source = [BEFORE, code].concat();
     let mut changes = None;
+    // What sorts the classes reads the expression as what prints it does.
+    let parse = parse.read_by_babel(true);
     for path in paths_of(Syntax::BabelTs, code) {
         parse.call(path, &source, false, &mut |file| {
             if !file.has_parse_errors() {

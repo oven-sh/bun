@@ -59,7 +59,7 @@ impl<'p> Parsers<'p> {
         options: &FormatOptions,
     ) -> Option<Parsers<'p>> {
         Some(Parsers {
-            program: Parse::new(parse_javascript, options)?,
+            program: Parse::new(parse_javascript, options)?.read_by_babel(true),
             parts: options.parse_parts?,
         })
     }

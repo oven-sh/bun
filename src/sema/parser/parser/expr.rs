@@ -3,9 +3,13 @@
 use super::stmt::ModifiersOf;
 use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Rejection;
+use crate::lexer::Mark;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
+
+#[cfg(test)]
+mod tests;
 
 #[inline]
 fn binary_operator(token: T) -> BinOp {
@@ -726,24 +730,24 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         return left;
                     }
                     self.next();
-                    let kind =
-                        if token == T::As && self.token() == T::Const && self.is_at_bare_const() {
-                            self.js_error((self.lx.start, self.lx.end), 8016, b"");
-                            self.const_assertion_type();
-                            ExprKind::AsConst(left)
-                        } else {
-                            let ty = match self.is_flow() {
-                                true => self.flow_type(),
-                                false => self.ty(),
-                            };
-                            if self.options.is_javascript {
-                                self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
-                            }
-                            match token {
-                                T::As => ExprKind::As { expr: left, ty },
-                                _ => ExprKind::Satisfies { expr: left, ty },
-                            }
+                    let kind = if token == T::As && self.token() == T::Const {
+                        match self.const_assertion_type() {
+                            Some(ty) => ExprKind::As { expr: left, ty },
+                            None => ExprKind::AsConst(left),
+                        }
+                    } else {
+                        let ty = match self.is_flow() {
+                            true => self.flow_type(),
+                            false => self.ty(),
                         };
+                        if self.options.is_javascript {
+                            self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
+                        }
+                        match token {
+                            T::As => ExprKind::As { expr: left, ty },
+                            _ => ExprKind::Satisfies { expr: left, ty },
+                        }
+                    };
                     left = self.finish_expr(kind, start);
                     // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
                     // the `as T` could not be erased, and typescript-go reports the `*`. `bun run` reads
@@ -820,45 +824,88 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ) && !self.f.parens.iter().rev().take(2).any(|it| it.0 == e)
     }
 
-    /// `IsConstTypeReference`, at a `const` in type position: true if the type doesn't continue after it, except with
-    /// an empty type argument list. Without recovery, see `const_assertion_type`.
-    #[inline(always)]
-    fn is_at_bare_const(&mut self) -> bool {
-        !self.recovers() || self.is_at_bare_const_slow()
+    /// `parseType` at the `const` after `as` or `<`. `None`: it's the whole type, a const assertion with no type node.
+    #[inline(never)]
+    fn const_assertion_type(&mut self) -> Option<TypeNodeId> {
+        // Inlined, the mark would grow the frame of a caller that recurses.
+        let at_const = self.lx.mark();
+        // The error about an escape in the keyword stays, so nothing is made of what follows.
+        let is_escaped = GENERAL && self.lx.has_escape;
+        self.next();
+        let token = self.token();
+        // No type continues with these, so most const assertions end here.
+        let is_whole_type = token.ends_expression()
+            || matches!(token, T::GreaterThan | T::As | T::Satisfies)
+            || self.newline_before() && token.is_identifier_or_keyword()
+            || is_escaped;
+        if is_whole_type && !self.options.is_javascript {
+            return None;
+        }
+        self.type_from_const(at_const, is_whole_type)
     }
 
+    /// The same after the `const` at `at_const`: goes back and parses the type, unless `is_whole_type` says it ends.
     #[cold]
     #[inline(never)]
-    fn is_at_bare_const_slow(&mut self) -> bool {
-        self.look_ahead(|p| {
-            p.next();
-            match p.token() {
-                T::Dot => false,
-                T::OpenBracket => p.newline_before(),
-                T::LessThan => {
+    fn type_from_const(&mut self, at_const: Mark, mut is_whole_type: bool) -> Option<TypeNodeId> {
+        if self.has_failed() {
+            return None;
+        }
+        let token = self.token();
+        let is_on_same_line = !self.newline_before();
+        // flow-parser has no type `const`, and no parser recovers in Flow.
+        if self.is_flow() {
+            if matches!(token, T::Dot | T::LessThan) || token == T::OpenBracket && is_on_same_line {
+                self.reject(Rejection::Reported);
+            }
+            return None;
+        }
+        // `Dialect::babel_ts`
+        let is_reference = self.options.dialect.babel_ts;
+        // `bun run` ends the type before these, and neither starts the type arguments of Babel's reference.
+        is_whole_type |= is_on_same_line
+            && match token {
+                T::Question => self.options.compiles,
+                T::LessThanLessThan => self.options.compiles || is_reference,
+                _ => false,
+            };
+        self.lx.reset(at_const);
+        let at = (self.lx.start, self.lx.end);
+        // `const<>` is a const assertion too (`IsConstTypeReference`), and TypeScript 7.0 reports nothing about the list.
+        let has_empty_type_arguments = !is_whole_type
+            && self.look_ahead(|p| {
+                p.next();
+                p.token() == T::LessThan && {
                     p.next();
                     p.token() == T::GreaterThan
                 }
-                _ => true,
-            }
-        })
-    }
-
-    /// Consumes the `const` of `e as const` or `<const>e`.
-    fn const_assertion_type(&mut self) {
-        self.next();
-        // `const<>`
-        if self.recovers() && self.token() == T::LessThan {
-            self.next();
-            self.next();
-            return;
-        }
-        // The type continues after `const`.
-        if matches!(self.token(), T::Dot | T::LessThan | T::OpenBracket) && !self.newline_before()
-            || matches!(self.token(), T::Dot | T::LessThan)
-        {
+            });
+        if has_empty_type_arguments && !self.recovers() {
             self.reject(Rejection::Reported);
+            return None;
         }
+        if !is_whole_type && !has_empty_type_arguments {
+            let checkpoint = self.checkpoint();
+            let ty = match is_reference {
+                true => self.type_reference_alone(),
+                false => self.ty(),
+            };
+            if self.has_failed() || self.prev_end() != at.1 {
+                if self.options.is_javascript {
+                    self.js_error_at_type(ty, 8016);
+                }
+                return Some(ty);
+            }
+            // The type ended after `const`, and that word makes no type node.
+            self.rollback(&checkpoint);
+        }
+        self.js_error(at, 8016, b"");
+        self.next();
+        if has_empty_type_arguments {
+            self.next();
+            self.next();
+        }
+        None
     }
 
     /// `parseUnaryExpressionOrHigher`
@@ -1122,10 +1169,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         self.expect(T::LessThan);
         let ty = match self.token() {
-            T::Const if self.is_at_bare_const() => {
-                self.const_assertion_type();
-                None
-            }
+            T::Const => self.const_assertion_type(),
             _ => Some(self.ty()),
         };
         self.expect(T::GreaterThan);

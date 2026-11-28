@@ -954,6 +954,15 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       });
     });
 
+    // Babel, which the plugin and Vue's compiler parse the attribute with, takes the string for an operand of `|`.
+    test("in Vue it reads an attribute with `as const |` as what prints the attribute does", async () => {
+      const vue = (value: string) =>
+        `<script setup lang="ts">\nlet ok = 1;\n</script>\n\n<template>\n  <a :class="${value}"></a>\n</template>\n`;
+      const files = { ...project, ...config({}), "a.vue": vue("ok as const | 'p-4 flex'") };
+      const result = await format(files, ["a.vue"]);
+      expect(result).toMatchObject({ stderr: "", files: [vue("(ok as const) | 'flex p-4'")], exitCode: 0 });
+    });
+
     test("in Angular it looks at a template's text parts as written", async () => {
       const before = "<a [ngClass]=\"`x${a ? ' p-4 flex' : ''}`\" [class]=\"`x ${a ? ' p-4 flex ' : ''} y`\"></a>\n";
       const after =

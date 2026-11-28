@@ -127,6 +127,8 @@ pub struct Code<'c> {
     pub path: &'c [u8],
     pub text: &'c [u8],
     pub is_script: bool,
+    /// [`InHtml::is_read_by_babel`]
+    pub is_read_by_babel: bool,
 }
 
 /// The callback that gets the file parsed from [`Code`], with or without errors.
@@ -197,6 +199,17 @@ pub struct InHtml {
     pub has_single_quotes: bool,
     /// The parser is `babel-ts`: TypeScript in Babel's tree.
     pub has_babel_tree: bool,
+    /// The code is the `<script>` of a Svelte component.
+    pub is_svelte_script: bool,
+}
+
+impl InHtml {
+    /// `Dialect::babel_ts`: what runs the code reads it with Babel (a template) or acorn-typescript (Svelte).
+    pub fn is_read_by_babel(&self) -> bool {
+        self.has_babel_tree
+            || self.is_svelte_script
+            || !matches!(self.root, HtmlRoot::None | HtmlRoot::Program)
+    }
 }
 
 /// The kind of code.

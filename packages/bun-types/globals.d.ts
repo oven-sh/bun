@@ -1566,7 +1566,7 @@ interface Navigator {
 declare var navigator: Navigator;
 
 interface BlobPropertyBag {
-  /** Set a default "type". Not yet implemented. */
+  /** The MIME type of the `Blob`, for example `"text/html"`. */
   type?: string;
   /** Not implemented in Bun yet. */
   // endings?: "transparent" | "native";

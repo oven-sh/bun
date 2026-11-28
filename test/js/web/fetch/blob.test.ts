@@ -4,6 +4,7 @@ import { bunEnv, bunExe, expectRssDeltaBelow, gcTick, isASAN, tempDir } from "ha
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
+import { MIMEType } from "node:util";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
   const blob = new Blob(
@@ -133,6 +134,254 @@ test("a Content-Type header made from a Blob still names the charset of text", a
   expect(new Request("http://localhost/", { method: "POST", body: blob }).headers.get("content-type")).toBe(
     "text/plain;charset=utf-8",
   );
+});
+
+// The File API declares the `type` of `new Blob()` and `new File()` and the contentType
+// of `slice()` as a DOMString: undefined is absent, and ToString converts any other value.
+describe("a type that is not a string", () => {
+  const fixture = path.join(import.meta.dir, "fixtures", "slice.txt");
+  const proxyOf = (type: unknown) => new Proxy({}, { get: (_, key) => (key === "type" ? type : undefined) });
+  // [label, what makes the Blob, the type of that Blob when it is given none]
+  const receivers: [string, (type?: any) => Blob, string][] = [
+    ["new Blob(parts, { type })", type => new Blob(["ab"], { type }), ""],
+    ["new Blob(parts, proxy)", type => new Blob(["ab"], proxyOf(type)), ""],
+    ["new File(bits, name, { type })", type => new File(["ab"], "name", { type }), ""],
+    ["new File(bits, name, proxy)", type => new File(["ab"], "name", proxyOf(type)), ""],
+    ["blob.slice(start, end, type)", type => new Blob(["ab"]).slice(0, 1, type), ""],
+    ["file.slice(start, end, type)", type => new File(["ab"], "name").slice(0, 1, type), ""],
+    ["Bun.file(path).slice(start, end, type)", type => Bun.file(fixture).slice(0, 1, type), "text/plain;charset=utf-8"],
+  ];
+  const conversions: [string, () => unknown, string][] = [
+    ["a MIMEType of node:util", () => new MIMEType("text/made-up"), "text/made-up"],
+    ["an object with toString", () => ({ toString: () => "Text/Made-Up" }), "text/made-up"],
+    ["an object with Symbol.toPrimitive", () => ({ [Symbol.toPrimitive]: () => "x/primitive" }), "x/primitive"],
+    [
+      "a String object with its own toString",
+      () => Object.assign(new String("x/no"), { toString: () => "x/own" }),
+      "x/own",
+    ],
+    ["an array", () => ["text/made-up"], "text/made-up"],
+    ["a number", () => 1, "1"],
+    ["true", () => true, "true"],
+    ["false", () => false, "false"],
+    ["a bigint", () => 10n, "10"],
+    ["null", () => null, "null"],
+  ];
+  const thrownBy = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+  };
+
+  describe.each(receivers)("%s", (_, make, untyped) => {
+    test("is converted with ToString", () => {
+      const types = Object.fromEntries(conversions.map(([label, value]) => [label, make(value()).type]));
+      expect(types).toEqual(Object.fromEntries(conversions.map(([label, , type]) => [label, type])));
+    });
+
+    test("is converted once, inside the call", () => {
+      let calls = 0;
+      const type = { toString: () => (calls++, "x/once") };
+      const blob = make(type);
+      expect({ calls, type: blob.type }).toEqual({ calls: 1, type: "x/once" });
+    });
+
+    test("is absent when it is undefined", () => {
+      expect({ undefined: make(undefined).type, absent: make().type }).toEqual({ undefined: untyped, absent: untyped });
+    });
+
+    test("gives no type when its text has a character that a type cannot have", () => {
+      expect(make({ toString: () => "text/\u00e9" }).type).toBe(untyped);
+    });
+
+    test("throws what the conversion throws", () => {
+      const error = new RangeError("thrown by toString");
+      const throws = {
+        toString() {
+          throw error;
+        },
+      };
+      expect(thrownBy(() => make(throws))).toBe(error);
+      expect(thrownBy(() => make(Symbol("type")))).toEqual(new TypeError("Cannot convert a symbol to a string"));
+      expect(thrownBy(() => make(Object.create(null)))).toEqual(new TypeError("No default value"));
+    });
+  });
+
+  test("replaces the type that Bun takes from a part or from the receiver", () => {
+    const part = new Blob(["ab"], { type: "x/part" });
+    const receiver = new Blob(["ab"], { type: "text/html" });
+    const type: any = 1;
+    expect({
+      "new Blob([part], { type })": new Blob([part], { type }).type,
+      "new File([part], name, { type })": new File([part], "name", { type }).type,
+      "receiver.slice(0, 1, type)": receiver.slice(0, 1, type).type,
+    }).toEqual({
+      "new Blob([part], { type })": "1",
+      "new File([part], name, { type })": "1",
+      "receiver.slice(0, 1, type)": "1",
+    });
+  });
+
+  // A value whose text is empty is a type that is given, and it is the empty type.
+  test.each([
+    ["an empty string", () => ""],
+    ["an empty array", () => []],
+    ["an object whose toString gives an empty string", () => ({ toString: () => "" })],
+  ] as [string, () => any][])("%s replaces the type of a part", (_, type) => {
+    const part = new Blob(["ab"], { type: "x/part" });
+    const html = new Blob(["ab"], { type: "text/html" });
+    expect({
+      "new Blob([part], { type })": new Blob([part], { type: type() }).type,
+      "new File([part], name, { type })": new File([part], "name", { type: type() }).type,
+      "new Blob([Bun.file(path)], { type })": new Blob([Bun.file(fixture)], { type: type() }).type,
+      "Content-Type of a Response": new Response(new Blob([html], { type: type() })).headers.get("content-type"),
+      // An empty contentType gives slice no type, and Bun then keeps a registered type of the receiver.
+      "html.slice(0, 1, type)": html.slice(0, 1, type()).type,
+      "part.slice(0, 1, type)": part.slice(0, 1, type()).type,
+    }).toEqual({
+      "new Blob([part], { type })": "",
+      "new File([part], name, { type })": "",
+      "new Blob([Bun.file(path)], { type })": "",
+      "Content-Type of a Response": null,
+      "html.slice(0, 1, type)": "text/html",
+      "part.slice(0, 1, type)": "",
+    });
+  });
+
+  test("text that is not a valid type leaves the type that Bun takes from a part", () => {
+    const part = new Blob(["ab"], { type: "x/part" });
+    const type: any = { toString: () => "text/\u00e9" };
+    expect({
+      "new Blob([part], { type })": new Blob([part], { type }).type,
+      "new File([part], name, { type })": new File([part], "name", { type }).type,
+    }).toEqual({
+      "new Blob([part], { type })": "x/part",
+      "new File([part], name, { type })": "x/part",
+    });
+  });
+
+  test("new Blob converts its parts, then reads the type, then converts it", () => {
+    const log: string[] = [];
+    const options: any = {
+      get type() {
+        log.push("get type");
+        return { toString: () => (log.push("convert type"), "x/ordered") };
+      },
+    };
+    const part: any = { toString: () => (log.push("convert part"), "ab") };
+    expect(new Blob([part], options).type).toBe("x/ordered");
+    expect(log).toEqual(["convert part", "get type", "convert type"]);
+
+    log.length = 0;
+    const error = new RangeError("thrown by a part");
+    const throws: any = {
+      toString() {
+        throw error;
+      },
+    };
+    expect(thrownBy(() => new Blob([throws], options))).toBe(error);
+    expect(log).toEqual([]);
+  });
+
+  test("new File converts the type before it reads lastModified", () => {
+    const log: string[] = [];
+    const options = (typeText: () => string): any => ({
+      get type() {
+        log.push("get type");
+        return { toString: () => (log.push("convert type"), typeText()) };
+      },
+      get lastModified() {
+        log.push("get lastModified");
+        return { valueOf: () => (log.push("convert lastModified"), 7) };
+      },
+    });
+    const ordered = options(() => "x/ordered");
+    const file = new File(["ab"], "name", ordered);
+    expect({ type: file.type, lastModified: file.lastModified }).toEqual({ type: "x/ordered", lastModified: 7 });
+    expect(log).toEqual(["get type", "convert type", "get lastModified", "convert lastModified"]);
+
+    log.length = 0;
+    const error = new RangeError("thrown by toString");
+    const throwing = options(() => {
+      throw error;
+    });
+    expect(thrownBy(() => new File(["ab"], "name", throwing))).toBe(error);
+    expect(log).toEqual(["get type", "convert type"]);
+  });
+
+  test("slice converts only the operand that is its contentType", () => {
+    const blob: any = new Blob(["abcd"]);
+    let calls = 0;
+    const counted = { toString: () => (calls++, "x/counted") };
+    let ownCalls = 0;
+    const boxed = () => Object.assign(new String("x/no"), { toString: () => (ownCalls++, "x/own") });
+    // A string in the place of start or end is the contentType, and so is a String object: Bun's own forms of slice.
+    expect({
+      "slice(type, 1, object)": blob.slice("a/b", 1, counted).type,
+      "slice(1, type, object)": blob.slice(1, "a/b", counted).type,
+      "slice(stringObject, 1, object)": blob.slice(boxed(), 1, counted).type,
+      "slice(1, stringObject, object)": blob.slice(1, boxed(), counted).type,
+      "slice(object)": blob.slice(counted).type,
+      "slice(1, object)": blob.slice(1, counted).type,
+      calls,
+      ownCalls,
+    }).toEqual({
+      "slice(type, 1, object)": "a/b",
+      "slice(1, type, object)": "a/b",
+      "slice(stringObject, 1, object)": "x/own",
+      "slice(1, stringObject, object)": "x/own",
+      "slice(object)": "",
+      "slice(1, object)": "",
+      calls: 0,
+      ownCalls: 2,
+    });
+  });
+
+  test("BuildArtifact.slice converts it", async () => {
+    using dir = tempDir("blob-type-artifact", { "entry.js": "console.log(1);" });
+    const { outputs } = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")] });
+    const type: any = new MIMEType("text/made-up");
+    expect(outputs[0].slice(0, 1, type).type).toBe("text/made-up");
+  });
+
+  test("a Response made from the Blob has the converted type as its Content-Type", async () => {
+    const type: any = new MIMEType("text/html");
+    const blob = new Blob(["<p>"], { type });
+    expect(new Response(blob).headers.get("content-type")).toBe("text/html;charset=utf-8");
+
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(blob) });
+    const response = await fetch(server.url);
+    expect({ type: response.headers.get("content-type"), body: await response.text() }).toEqual({
+      type: "text/html;charset=utf-8",
+      body: "<p>",
+    });
+  });
+
+  // `fetch` sends the type of a Blob body only when the caller gave that type.
+  test("a fetch upload sends the converted type as its Content-Type", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: request => Response.json(request.headers.get("content-type")),
+    });
+    const sent = async (body: Blob) => await (await fetch(server.url, { method: "POST", body })).json();
+    const type: any = { toString: () => "x/converted" };
+    const none: any = null;
+    expect({
+      "new Blob(parts, { type })": await sent(new Blob(["ab"], { type })),
+      "new File(bits, name, { type })": await sent(new File(["ab"], "name", { type })),
+      "blob.slice(start, end, type)": await sent(new Blob(["ab"]).slice(0, 1, type)),
+      "file.slice(start, end, type)": await sent(new File(["ab"], "name").slice(0, 1, type)),
+      "new Blob(parts, { type: null })": await sent(new Blob(["ab"], { type: none })),
+    }).toEqual({
+      "new Blob(parts, { type })": "x/converted",
+      "new File(bits, name, { type })": "x/converted",
+      "blob.slice(start, end, type)": "x/converted",
+      "file.slice(start, end, type)": "x/converted",
+      "new Blob(parts, { type: null })": "null",
+    });
+  });
 });
 
 test("new Blob stringifies non-Blob object parts in order", async () => {

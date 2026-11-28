@@ -768,45 +768,77 @@ Zlib.prototype.params = function params(this: $Node.Zlib, level: number, strateg
   }
 };
 
+// Node's deprecateInstantiation() (https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util.js#L220-L226),
+// but the caller constructs: `return f()` is a tail call here, and the class must stay on the stack. It is the `ctor`
+// of the warning, the frame that its stack trace is cut at.
+function warnInstantiation(target: ZlibFunction) {
+  require("internal/util/deprecate").getDeprecationWarningEmitter(
+    "DEP0184",
+    `Instantiating ${target.name} without the 'new' keyword has been deprecated.`,
+    target,
+  )();
+}
+
 function Deflate(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Deflate)) return new Deflate(opts) as any;
+  if (!(this instanceof Deflate)) {
+    warnInstantiation(Deflate);
+    return new Deflate(opts) as any;
+  }
   Zlib.$apply(this, [opts, DEFLATE]);
 }
 $toClass(Deflate, "Deflate", Zlib);
 
 function Inflate(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Inflate)) return new Inflate(opts) as any;
+  if (!(this instanceof Inflate)) {
+    warnInstantiation(Inflate);
+    return new Inflate(opts) as any;
+  }
   Zlib.$apply(this, [opts, INFLATE]);
 }
 $toClass(Inflate, "Inflate", Zlib);
 
 function Gzip(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Gzip)) return new Gzip(opts) as any;
+  if (!(this instanceof Gzip)) {
+    warnInstantiation(Gzip);
+    return new Gzip(opts) as any;
+  }
   Zlib.$apply(this, [opts, GZIP]);
 }
 $toClass(Gzip, "Gzip", Zlib);
 
 function Gunzip(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Gunzip)) return new Gunzip(opts) as any;
+  if (!(this instanceof Gunzip)) {
+    warnInstantiation(Gunzip);
+    return new Gunzip(opts) as any;
+  }
   Zlib.$apply(this, [opts, GUNZIP]);
 }
 $toClass(Gunzip, "Gunzip", Zlib);
 
 function DeflateRaw(this: $Node.Zlib, opts?: ZlibOptions): void {
   if (opts && opts.windowBits === 8) opts.windowBits = 9;
-  if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts) as any;
+  if (!(this instanceof DeflateRaw)) {
+    warnInstantiation(DeflateRaw);
+    return new DeflateRaw(opts) as any;
+  }
   Zlib.$apply(this, [opts, DEFLATERAW]);
 }
 $toClass(DeflateRaw, "DeflateRaw", Zlib);
 
 function InflateRaw(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof InflateRaw)) return new InflateRaw(opts) as any;
+  if (!(this instanceof InflateRaw)) {
+    warnInstantiation(InflateRaw);
+    return new InflateRaw(opts) as any;
+  }
   Zlib.$apply(this, [opts, INFLATERAW]);
 }
 $toClass(InflateRaw, "InflateRaw", Zlib);
 
 function Unzip(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Unzip)) return new Unzip(opts) as any;
+  if (!(this instanceof Unzip)) {
+    warnInstantiation(Unzip);
+    return new Unzip(opts) as any;
+  }
   Zlib.$apply(this, [opts, UNZIP]);
 }
 $toClass(Unzip, "Unzip", Zlib);
@@ -901,13 +933,19 @@ $toClass(Brotli, "Brotli", Zlib);
 Brotli.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_BROTLI];
 
 function BrotliCompress(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts) as any;
+  if (!(this instanceof BrotliCompress)) {
+    warnInstantiation(BrotliCompress);
+    return new BrotliCompress(opts) as any;
+  }
   Brotli.$apply(this, [opts, BROTLI_ENCODE]);
 }
 $toClass(BrotliCompress, "BrotliCompress", Brotli);
 
 function BrotliDecompress(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts) as any;
+  if (!(this instanceof BrotliDecompress)) {
+    warnInstantiation(BrotliDecompress);
+    return new BrotliDecompress(opts) as any;
+  }
   Brotli.$apply(this, [opts, BROTLI_DECODE]);
 }
 $toClass(BrotliDecompress, "BrotliDecompress", Brotli);

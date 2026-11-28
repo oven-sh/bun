@@ -825,6 +825,190 @@ it.each([
   expect(new C()).toBeInstanceOf(C);
 });
 
+// Node's DEP0184. A deprecation code warns once, so each case runs in a process of its own.
+describe.concurrent("DEP0184: a class called without `new`", () => {
+  const classes = [
+    "Deflate",
+    "Inflate",
+    "Gzip",
+    "Gunzip",
+    "DeflateRaw",
+    "InflateRaw",
+    "Unzip",
+    "BrotliCompress",
+    "BrotliDecompress",
+  ];
+  const message = name => `Instantiating ${name} without the 'new' keyword has been deprecated.`;
+  const printed = name => `[DEP0184] DeprecationWarning: ${message(name)}\n`;
+  const prelude = /* js */ `
+    const zlib = require("node:zlib");
+    const warnings = [];
+    process.on("warning", warning => warnings.push(warning.message));
+  `;
+
+  // `stderr` comes without the process id of a warning, and without the hint after it, which names the executable.
+  async function run(source, ...flags) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", prelude + source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: stdout.trim(),
+      stderr: stderr
+        .replace(/^\(node:\d+\) /gm, "")
+        .replace(/^\(Use `.+` to show where the warning was created\)\n/gm, ""),
+      exitCode,
+    };
+  }
+
+  it.each(classes)("%s() warns and returns an instance", async name => {
+    const result = await run(/* js */ `
+      const Class = zlib.${name};
+      // Node gives the class to process.emitWarning(), which takes the frames from the class up off the stack.
+      const calls = [];
+      const { emitWarning } = process;
+      process.emitWarning = function (text, type, code, ctor) {
+        const trimmed = {};
+        Error.captureStackTrace(trimmed, ctor);
+        calls.push({ type, code, ctor: ctor === Class, caller: /at ([a-z]+)/.exec(trimmed.stack)?.[1] });
+        return emitWarning.apply(this, arguments);
+      };
+      function user() {
+        const stream = Class({ chunkSize: 128 });
+        return [stream instanceof Class, stream._chunkSize];
+      }
+      const result = user();
+      setImmediate(() => console.log(JSON.stringify({ result, calls, warnings })));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({
+        result: [true, 128],
+        calls: [{ type: "DeprecationWarning", code: "DEP0184", ctor: true, caller: "user" }],
+        warnings: [message(name)],
+      }),
+      stderr: printed(name),
+      exitCode: 0,
+    });
+  });
+
+  it("warns once, for the first of the nine classes that is called", async () => {
+    const result = await run(/* js */ `
+      let instances = 0;
+      for (const name of ${JSON.stringify(classes)}) {
+        const Class = zlib[name];
+        for (const stream of [Class(), Class(), Class.call({})]) instances += stream instanceof Class;
+      }
+      setImmediate(() => console.log(JSON.stringify({ instances, warnings })));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ instances: 27, warnings: [message("Deflate")] }),
+      stderr: printed("Deflate"),
+      exitCode: 0,
+    });
+  });
+
+  it("only a call without `new` warns, and only it loads the module that warns", async () => {
+    const result = await run(/* js */ `
+      const { internalModulesCompiledFromSource } = require("bun:internal-for-testing");
+      for (const name of ${JSON.stringify(classes)}) {
+        const Class = zlib[name];
+        function Inherits(options) {
+          Class.call(this, options);
+        }
+        Object.setPrototypeOf(Inherits.prototype, Class.prototype);
+        new Class();
+        zlib["create" + name]();
+        new (class extends Class {})();
+        new Inherits();
+        Class.call(Object.create(Class.prototype));
+        Reflect.construct(Class, []);
+      }
+      zlib.inflateSync(zlib.deflateSync("x"));
+      zlib.inflateRawSync(zlib.deflateRawSync("x"));
+      zlib.gunzipSync(zlib.gzipSync("x"));
+      zlib.unzipSync(zlib.gzipSync("x"));
+      zlib.brotliDecompressSync(zlib.brotliCompressSync("x"));
+      zlib.gzip("x", () => {
+        const before = [...warnings];
+        const modules = internalModulesCompiledFromSource();
+        zlib.Gzip();
+        const loaded = internalModulesCompiledFromSource() - modules;
+        setImmediate(() => console.log(JSON.stringify({ before, loaded, warnings })));
+      });
+    `);
+    // The one module is internal/util/deprecate: code that always uses `new` never loads it.
+    expect(result).toEqual({
+      stdout: JSON.stringify({ before: [], loaded: 1, warnings: [message("Gzip")] }),
+      stderr: printed("Gzip"),
+      exitCode: 0,
+    });
+  });
+
+  it("shares its code with util.deprecate()", async () => {
+    const inOrder = calls =>
+      run(/* js */ `
+        const deprecated = require("node:util").deprecate(() => {}, "custom", "DEP0184");
+        ${calls}
+        setImmediate(() => console.log(JSON.stringify(warnings)));
+      `);
+    const results = await Promise.all([inOrder("deprecated(); zlib.Gzip();"), inOrder("zlib.Gzip(); deprecated();")]);
+    expect(results).toEqual([
+      { stdout: JSON.stringify(["custom"]), stderr: "[DEP0184] DeprecationWarning: custom\n", exitCode: 0 },
+      { stdout: JSON.stringify([message("Gzip")]), stderr: printed("Gzip"), exitCode: 0 },
+    ]);
+  });
+
+  it("a call while process.noDeprecation is set uses up the code", async () => {
+    const result = await run(/* js */ `
+      process.noDeprecation = true;
+      const instance = zlib.Gzip() instanceof zlib.Gzip;
+      process.noDeprecation = false;
+      zlib.Gzip();
+      zlib.Deflate();
+      require("node:util").deprecate(() => {}, "custom", "DEP0184")();
+      setImmediate(() => console.log(JSON.stringify({ instance, warnings })));
+    `);
+    expect(result).toEqual({ stdout: JSON.stringify({ instance: true, warnings: [] }), stderr: "", exitCode: 0 });
+  });
+
+  it("warns before it constructs the stream", async () => {
+    const result = await run(/* js */ `
+      let code;
+      try {
+        zlib.Deflate({ windowBits: 99 });
+      } catch (error) {
+        code = error.code;
+      }
+      setImmediate(() => console.log(JSON.stringify({ code, warnings })));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ code: "ERR_OUT_OF_RANGE", warnings: [message("Deflate")] }),
+      stderr: printed("Deflate"),
+      exitCode: 0,
+    });
+  });
+
+  it("--no-deprecation silences the warning and --throw-deprecation throws it", async () => {
+    const [silenced, thrown] = await Promise.all([
+      run(
+        /* js */ `
+          const instance = zlib.Gzip() instanceof zlib.Gzip;
+          setImmediate(() => console.log(JSON.stringify({ instance, warnings })));
+        `,
+        "--no-deprecation",
+      ),
+      run(`console.log(zlib.Gzip() instanceof zlib.Gzip);`, "--throw-deprecation"),
+    ]);
+    expect(silenced).toEqual({ stdout: JSON.stringify({ instance: true, warnings: [] }), stderr: "", exitCode: 0 });
+    // The call returns, and the warning is thrown on the next tick. The rest of stderr is the report of an uncaught error.
+    expect(thrown.stderr).toContain(`DeprecationWarning: ${message("Gzip")}`);
+    expect({ stdout: thrown.stdout, exitCode: thrown.exitCode }).toEqual({ stdout: "true", exitCode: 1 });
+  });
+});
+
 describe.each(["Deflate", "DeflateRaw", "Gzip"])("%s", constructor_name => {
   describe.each(["chunkSize", "level", "windowBits", "memLevel", "strategy", "maxOutputLength"])(
     "should throw if options.%s is",

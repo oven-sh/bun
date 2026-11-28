@@ -6249,6 +6249,50 @@ describe("rows or changes", () => {
     expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
   });
 
+  // SQLite refuses each of these while another statement is in progress, and an explain is over when it has listed its rows.
+  test.each([
+    ["objects", `explain query plan select * from t; drop table t`, `select count(*) as n from sqlite_master`, 0],
+    ["values", `explain query plan select * from t; drop table t`, `select count(*) as n from sqlite_master`, 0],
+    ["raw", `explain query plan select * from t; drop table t`, `select count(*) as n from sqlite_master`, 0],
+    ["objects", `explain delete from t; drop table t`, `select count(*) as n from sqlite_master`, 0],
+    ["objects", `explain delete from t; vacuum`, `select count(*) as n from t`, 3],
+    [
+      "objects",
+      `explain delete from t; begin; insert into t (v) values ('x'); commit`,
+      `select count(*) as n from t`,
+      4,
+    ],
+  ] as const)("as %s, %s: what follows the explain runs", async (mode, text, check, n) => {
+    await using sql = await seeded();
+    const query = sql.unsafe(text);
+    const outcome = await (mode === "objects" ? query : query[mode]()).then(
+      plan => plan.command,
+      error => error.message,
+    );
+    expect(outcome).toBe("EXPLAIN");
+    expect(await sql.unsafe(check)).toEqual([{ n }]);
+  });
+
+  test("a commit that fails in what follows an explain rejects the query", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql.unsafe(`pragma foreign_keys = on`);
+    await sql.unsafe(`
+      create table parent (id integer primary key);
+      create table child (id integer primary key, pid integer references parent (id) deferrable initially deferred);
+    `);
+    // There is no parent 999. The check waits for the commit, which the insert makes when it ends.
+    const insert = `insert into child (id, pid) values (1, 999)`;
+    const settle = (text: string) => sql.unsafe(text).then(result => result.count, error => error.code); // prettier-ignore
+    expect({
+      alone: await settle(insert),
+      behindAnExplain: await settle(`explain delete from child; ${insert}`),
+    }).toEqual({
+      alone: "SQLITE_CONSTRAINT_FOREIGNKEY",
+      behindAnExplain: "SQLITE_CONSTRAINT_FOREIGNKEY",
+    });
+    expect(await sql`select count(*) as n from child`).toEqual([{ n: 0 }]);
+  });
+
   test("objects, values() and raw() of a write that returns rows", async () => {
     await using sql = await seeded();
     expect([...(await sql`insert into t (v) values (${"x"}) returning id, v`)]).toEqual([{ id: 4, v: "x" }]);

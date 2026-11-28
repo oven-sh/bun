@@ -3487,6 +3487,7 @@ describe.concurrent("bun pm refuses a flag that only other subcommands take", ()
     ["pm cache --stat", "--stat", "`bun pm diff`"],
     ["pm pack --max-age=1", "--max-age", "`bun pm cache`"],
     ["pm pkg get name --filename=x", "--filename", "`bun pm pack`"],
+    ["pm ls --sbom-format cyclonedx", "--sbom-format", "`bun pm sbom`"],
   ])("bun %s", async (cmd, flag, commands) => {
     using dir = tempDir("bun-pm-flags", {
       "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
@@ -3554,6 +3555,13 @@ describe.concurrent("usage text keeps its indent", () => {
       "  ├ --prod                    omit devDependencies",
       "  └ -g                        list the tree of globally installed dependencies",
       "  bun pm why <pkg>            show dependency tree explaining why a package is installed",
+    ]);
+    const diffEnd = lines.indexOf("  └ --json                    one JSON document (files, patch text, notes, totals)");
+    expect(lines.slice(diffEnd + 1, diffEnd + 5)).toEqual([
+      "  bun pm sbom                 print a Software Bill of Materials (SBOM) for the current workspace as JSON",
+      "  ├ --sbom-format <format>    cyclonedx (CycloneDX 1.5) or spdx (SPDX 2.3), required",
+      "  └ --prod                    omit devDependencies",
+      "  bun pm licenses             list installed packages grouped by license",
     ]);
     expect(lines).toContain("  bun pm default-trusted      print the default trusted dependencies list");
 

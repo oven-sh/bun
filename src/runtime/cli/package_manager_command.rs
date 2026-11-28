@@ -21,6 +21,7 @@ use crate::cli::pm_cache_prune_command::{DEFAULT_MAX_AGE_DAYS, PmCachePruneComma
 use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{BunStore, LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
+use crate::cli::pm_sbom_command::PmSbomCommand;
 use crate::cli::pm_trusted_command::{
     DefaultTrustedCommand, TrustCommand, UntrustedCommand, read_trusted_dependencies,
 };
@@ -837,6 +838,12 @@ impl PackageManagerCommand {
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"sbom") {
+            let format = cli
+                .sbom_format
+                .expect("parse exits when `bun pm sbom` has no --sbom-format");
+            PmSbomCommand::exec(pm, positionals, format)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;

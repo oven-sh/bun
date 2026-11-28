@@ -142,6 +142,9 @@ _bun_completions() {
         --libc)
             COMPREPLY=( $(compgen -W "glibc musl" -- "${cur_word}") );
             return;;
+        --sbom-format)
+            COMPREPLY=( $(compgen -W "cyclonedx spdx" -- "${cur_word}") );
+            return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
@@ -227,9 +230,11 @@ _bun_completions() {
             _read_scripts_in_package_json;
             return;;
         pm)
+            local pm_long_options="${PM_OPTIONS[LONG_OPTIONS]}";
+            [[ " ${COMP_WORDS[*]} " == *" sbom "* ]] && pm_long_options+=" --sbom-format";
             _long_short_completion \
-                "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}") );
+                "${pm_long_options} ${PM_OPTIONS[SHORT_OPTIONS]}";
+            COMPREPLY+=( $(compgen -W "bin ls licenses sbom cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;

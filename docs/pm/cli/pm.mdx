@@ -256,6 +256,111 @@ From a workspace root, Bun lists every workspace's dependencies. From inside a w
 
 Requires both `bun.lock` and `node_modules`. Bun skips packages that are in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) and prints a warning.
 
+## sbom
+
+Print a Software Bill of Materials (SBOM) for the current workspace. An SBOM lists the packages that a project depends on, in a format that tools such as vulnerability scanners read. Bun reads the packages from the lockfile (no `node_modules` required).
+
+`--sbom-format` is required. It takes `cyclonedx` for [CycloneDX 1.5](https://github.com/CycloneDX/specification/tree/1.5) or `spdx` for [SPDX 2.3](https://github.com/spdx/spdx-spec/tree/v2.3). Bun prints the document as JSON to standard output and prints nothing else there, so you can redirect the output to a file:
+
+```bash terminal icon="terminal"
+bun pm sbom --sbom-format cyclonedx
+bun pm sbom --sbom-format spdx > sbom.spdx.json
+```
+
+For a project named `my-app` that depends on `is-number@7.0.0`, the CycloneDX document is:
+
+```json
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:ddcaf597-0f78-4a88-959c-6a39e9b715f6",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-17T23:16:18.159Z",
+    "lifecycles": [{ "phase": "pre-build" }],
+    "tools": {
+      "components": [{ "type": "application", "name": "bun", "version": "1.4.5" }]
+    },
+    "component": {
+      "type": "library",
+      "bom-ref": "my-app@1.0.0",
+      "name": "my-app",
+      "version": "1.0.0",
+      "scope": "required",
+      "purl": "pkg:npm/my-app@1.0.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "is-number@7.0.0",
+      "name": "is-number",
+      "version": "7.0.0",
+      "scope": "required",
+      "purl": "pkg:npm/is-number@7.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e350a27e483a7bc4f2952a5db53a5e2d532abd20445734edb47bc4443ef8d7ea6767c00dbf4d34e0c44be3740a3c394af5c1af369e8d6566540656c65d8c719e"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    { "ref": "my-app@1.0.0", "dependsOn": ["is-number@7.0.0"] },
+    { "ref": "is-number@7.0.0", "dependsOn": [] }
+  ]
+}
+```
+
+Every run has a new serial number and the current time as its timestamp. In SPDX, these are the last part of `documentNamespace` and `creationInfo.created`.
+
+| Flag                           | Description                                   |
+| ------------------------------ | --------------------------------------------- |
+| `--sbom-format <format>`       | `cyclonedx` or `spdx` (required)              |
+| `--prod`, `-p`                 | Skip `devDependencies` (same as `--omit=dev`) |
+| `--omit=<dev\|optional\|peer>` | Skip a dependency type, as with `bun install` |
+
+The [`install.production`](/runtime/bunfig#install-production), `install.dev`, `install.optional` and `install.peer` settings in `bunfig.toml` apply too.
+
+The document is rooted at the current workspace. From the project root, it describes the root package and lists every workspace and its dependencies. From inside a workspace package, it describes that package and lists only what that package depends on. The lockfile must have that workspace package, so run `bun install` after you add or rename a workspace package. Until then, `bun pm sbom` exits with an error in that directory. The described package is `metadata.component` in CycloneDX and the target of the `DESCRIBES` relationship in SPDX.
+
+`bun pm scan` covers the whole project from any directory, and so does [`bun audit`](/pm/cli/audit) when it skips no dependency type. To get the SBOM of the whole project from inside a workspace package, pass the project root with `--cwd`, for example `bun pm sbom --cwd ../.. --sbom-format spdx`.
+
+What the document has about a package depends on the kind of package:
+
+- A package from the npm registry has its name, its version, a [package URL](https://github.com/package-url/purl-spec) such as `pkg:npm/is-number@7.0.0`, and its integrity hash.
+- A package of the project (the root package or a workspace package) has the name and version from its `package.json`, and a package URL when it has a version and a valid npm package name. It has no hash. A root package without a name has the name of its directory. A workspace package whose `package.json` is not in the checkout has the version in the lockfile.
+- A `git` or GitHub dependency has its lockfile specifier as its version, for example `github:owner/repo#abc1234`. It has no package URL. A GitHub dependency also has its integrity hash.
+- A tarball URL dependency has the URL as its download location (`externalReferences` in CycloneDX, `downloadLocation` in SPDX) and its integrity hash. It has no version and no package URL.
+- A package that another package ships inside its own tarball (`bundleDependencies`) has the version in the lockfile, which can differ from the copy in that tarball. CycloneDX marks it with the property `cdx:npm:package:bundled`.
+- A folder or `link:` dependency has its name only. A local tarball dependency has its name and its integrity hash. Their lockfile specifier is only in their identifier (`bom-ref` or `SPDXID`).
+
+Bun removes the `user:password@` part and the query string from a git or tarball URL of the lockfile. It keeps the `git@` login of an ssh URL. In the rest of the URL, it replaces a UUID-shaped or `npm_` token with `***`. In a download location, it also percent-encodes the characters that a URL cannot contain.
+
+The document also records which package depends on which. CycloneDX has this in `dependencies`. SPDX has one `DEPENDS_ON` relationship from a package to each package that it depends on. CycloneDX also gives each package a `scope`:
+
+- `required`: a package that the described package needs at runtime
+- `optional`: a package that only `optionalDependencies` or optional peer dependencies need at runtime
+- `excluded`: a package that only `devDependencies` need
+
+SPDX has no scope. Use `--prod` or `--omit` to leave a dependency type out of the document.
+
+The document lists the packages of every platform: the optional dependencies for all operating systems and CPU architectures in the lockfile. `bun pm sbom` refuses `--cpu`, `--os`, `--libc` and `--global`.
+
+The document does not contain:
+
+- **Licenses, authors and suppliers.** The lockfile does not record them. [`bun pm licenses --json`](#licenses) reads licenses from `node_modules`. In SPDX, the license fields are `NOASSERTION`.
+- **Registry tarball URLs.** For a package from the default registry, `bun.lock` stores no download URL. The document identifies a registry package by its package URL and hash. In SPDX, its `downloadLocation` is `NOASSERTION`.
+- **Packages that no dependency path reaches.** Inside a workspace package, the document leaves out what only the rest of the project needs. With `--prod` or `--omit`, it leaves out what only the skipped dependency types need.
+
+Vulnerability scanners match the npm registry packages against advisories. They do not match git, GitHub, tarball or folder dependencies, which have no package URL.
+
+`bun pm sbom` needs a lockfile. Run [`bun install`](/pm/cli/install) to create one. `bun install` writes no `bun.lock` for a project that has no dependencies and no workspaces, so `bun pm sbom` reports a missing lockfile there. Without a `bun.lock`, Bun reads `bun.lockb`. Without either, Bun migrates a `package-lock.json`, `yarn.lock` or `pnpm-lock.yaml` in memory. `bun pm sbom` writes no lockfile and changes no file of the project. While Bun migrates another package manager's lockfile, it can ask the registry for package metadata and save that metadata in its cache.
+
+`bun pm sbom` does not compare the lockfile with `package.json`. The packages in the document come from the lockfile, as the last install saved it. [`bun install --frozen-lockfile`](/pm/cli/install#production-mode) exits with an error when an edit to `package.json` adds a package, removes one or changes a version. It does not fail when a dependency only moves to another group, for example to `devDependencies`.
+
 ## diff
 
 Show what changed between two versions of a package: a summary of the files and lines touched, the `package.json` changes worth a second look (new install scripts, dependencies, entry points, binaries), then a unified diff of every file. Each side can be a registry spec, a local folder, or a `.tgz`.

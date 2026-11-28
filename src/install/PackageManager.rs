@@ -150,6 +150,9 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks
   <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)
   <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)
+  <b><green>bun pm<r> <blue>sbom<r>                 print a Software Bill of Materials (SBOM) for the current workspace as JSON
+  <d>├<r> <cyan>--sbom-format<r> <d>\<format\><r>    cyclonedx (CycloneDX 1.5) or spdx (SPDX 2.3), required
+  <d>└<r> <cyan>--prod<r>                    omit devDependencies
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON
   <d>├<r> <cyan>--prod<r>                    omit devDependencies

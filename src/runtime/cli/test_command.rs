@@ -887,7 +887,7 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 }
 
 /// Writes a Unix time in milliseconds the way `Date.prototype.toISOString` does.
-fn write_iso_8601(out: &mut Vec<u8>, unix_ms: i64) {
+pub(crate) fn write_iso_8601(out: &mut Vec<u8>, unix_ms: i64) {
     let days = unix_ms.div_euclid(86_400_000);
     let ms = unix_ms.rem_euclid(86_400_000);
     // Days to a civil date: https://howardhinnant.github.io/date_algorithms.html#civil_from_days

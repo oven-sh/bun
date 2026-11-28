@@ -11,6 +11,7 @@
 //! - bun audit
 
 use crate::bun_schema::api::BunInstall;
+use crate::lockfile_real::printer::Sbom;
 use crate::package_install;
 use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
@@ -339,6 +340,9 @@ pub(crate) static PM_PARAMS: ParamTable = &[
         clap::param!(
             "--max-age <NUM>                        Remove cache entries older than this many days (bun pm cache prune, default 30)"
         ),
+        clap::param!(
+            "--sbom-format <STR>                    The SBOM format to print, cyclonedx or spdx (bun pm sbom)"
+        ),
         clap::param!("<POS> ...                         "),
     ],
 ];
@@ -366,6 +370,7 @@ const PM_SUBCOMMAND_FLAGS: &[(&[u8], &[&[u8]])] = &[
     (b"ls", &[b"--all", b"--trusted", b"--depth"]),
     (b"pack", &[b"--destination", b"--filename", b"--gzip-level"]),
     (b"pkg", &[b"--json"]),
+    (b"sbom", &[b"--sbom-format"]),
     (b"trust", &[b"--all"]),
     (
         b"version",
@@ -895,6 +900,9 @@ pub struct CommandLineArguments {
     // `bun pm licenses` options
     pub dev_only: bool,
     pub long: bool,
+
+    // `bun pm sbom` options
+    pub sbom_format: Option<Sbom::Format>,
 
     // `bun pm diff` options
     pub diff_args: Vec<&'static [u8]>,
@@ -2054,6 +2062,40 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                         "{} is only supported by {}",
                         (bstr::BStr::new(flag), commands.join(", ")),
                     );
+                    Global::exit(1);
+                }
+            }
+            if let Some(value) = args.option(b"--sbom-format") {
+                cli.sbom_format = Some(match value {
+                    b"cyclonedx" => Sbom::Format::CycloneDx,
+                    b"spdx" => Sbom::Format::Spdx,
+                    _ => {
+                        Output::err_generic(
+                            "invalid --sbom-format value: {}, expected cyclonedx or spdx",
+                            (bun_core::fmt::quote(value),),
+                        );
+                        Global::exit(1);
+                    }
+                });
+            }
+            if pm_command == b"sbom" && cli.sbom_format.is_none() {
+                Output::err_generic("bun pm sbom needs --sbom-format", ());
+                bun_core::note!("pass --sbom-format cyclonedx or --sbom-format spdx");
+                Global::exit(1);
+            }
+            if pm_command == b"sbom" {
+                let platform_flags = [
+                    ("--cpu", cli.cpu.is_some()),
+                    ("--os", cli.os.is_some()),
+                    ("--libc", cli.libc.is_some()),
+                ];
+                if let Some((flag, _)) = platform_flags.into_iter().find(|&(_, given)| given) {
+                    Output::err_generic("{} is not supported by bun pm sbom", (flag,));
+                    bun_core::note!("the document lists the packages of every platform");
+                    Global::exit(1);
+                }
+                if cli.global {
+                    Output::err_generic("--global cannot be used with bun pm sbom", ());
                     Global::exit(1);
                 }
             }

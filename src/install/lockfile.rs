@@ -74,6 +74,8 @@ pub mod reachable;
 pub mod tree;
 #[path = "lockfile/printer"]
 pub mod printer_mods {
+    #[path = "Sbom.rs"]
+    pub mod sbom;
     #[path = "tree_printer.rs"]
     pub mod tree_printer;
     #[path = "Yarn.rs"]
@@ -1986,6 +1988,7 @@ pub struct Printer<'a> {
 }
 
 pub mod printer {
+    pub use super::printer_mods::sbom as Sbom;
     pub use super::printer_mods::tree_printer as Tree;
     pub use super::printer_mods::yarn as Yarn;
 }

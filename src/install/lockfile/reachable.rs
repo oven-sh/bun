@@ -187,6 +187,26 @@ pub(crate) fn required_without(
     required
 }
 
+// Calls `each(parent, target, behavior)` for every edge the walk follows between packages in `reached`.
+pub(crate) fn followed_edges(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    follow_workspace_edges: bool,
+    options: Options,
+    reached: &DynamicBitSet,
+    mut each: impl FnMut(PackageID, PackageID, Behavior),
+) {
+    let walk = Walk::new(lockfile, resolutions, follow_workspace_edges, options);
+    let mut parents = reached.iterator::<true, true>();
+    while let Some(parent) = parents.next() {
+        for (target, behavior) in walk.edges(parent as PackageID) {
+            if reached.is_set_allow_out_of_bound(target as usize, false) {
+                each(parent as PackageID, target, behavior);
+            }
+        }
+    }
+}
+
 // Out-of-range ids (invalid_package_id) are treated as already seen.
 /// Returns the dependency of `owner` that provides `name_hash` to the packages below it. Any regular
 /// dependency does. So does a peer dependency of the root or of a workspace, resolved or not,

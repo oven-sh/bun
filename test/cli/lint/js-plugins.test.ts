@@ -293,6 +293,49 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     timeout,
   );
 
+  // From ESLint 8.57.1, 9.39.5 and 10.12.0, and oxlint 1.87.0. `unicorn/prefer-string-slice` of eslint-plugin-unicorn 56 passes a
+  // number.
+  test.each([
+    ["8.57.1", "1 + 2;\n", 0],
+    ["9.39.5", "1 + 2;\n", 0],
+    ["10.12.0", "f;\n", 2],
+    ["oxlint", "1 + 2;\n", 0],
+  ])(
+    "only ESLint 10 refuses a fix whose text isn't a string: %s",
+    async (version, fixed, code) => {
+      const number = `{
+        meta: { fixable: "code" },
+        create: context => ({
+          Identifier: node =>
+            context.report({
+              node,
+              message: "no",
+              fix: fixer => [fixer.replaceText(node, 1), fixer.insertTextAfter(node, " + "), fixer.insertTextAfter(node, 2)],
+            }),
+        }),
+      }`;
+      const rules = { "demo/number": "error" };
+      const config =
+        version === "oxlint"
+          ? {
+              ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules }),
+              "plugin.mjs": `export default { meta: { name: "demo" }, rules: { number: ${number} } };`,
+            }
+          : {
+              "eslint.config.mjs": `export default [{
+                plugins: { demo: { rules: { number: ${number} } } },
+                rules: ${JSON.stringify(rules)},
+              }];`,
+              "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }),
+            };
+      const { files, stderr, exitCode } = await lint({ ...config, "a.js": "f;\n" }, ["--fix", "a.js"], ["a.js"]);
+      expect(files).toEqual({ "a.js": fixed });
+      expect(stderr.includes("'text' must be a string")).toBe(code === 2);
+      expect(exitCode).toBe(code);
+    },
+    timeout,
+  );
+
   test(
     "provides tokens, comments, scopes and locations",
     async () => {
@@ -2955,6 +2998,72 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
       expect(stderr.split("\n").filter(line => line.startsWith("at exit:"))).toEqual([
         'at exit: undefined {"range":[0,21],"text":""}',
         'at exit: undefined {"range":[0,2],"text":""}',
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // `--fix` writes the same with ESLint 8.57.1, ESLint 9.39.5 and oxlint 1.70.0. In `-f json`, ESLint 8 and 9 have the RegExp
+  // itself as the text of the fix that isn't one of several.
+  test.each(["eslint.config.cjs", ".eslintrc.json", ".oxlintrc.json"])(
+    "a fix whose text isn't a string, alone or one of several, from the node and the range methods: %s",
+    async name => {
+      const plugin = `
+        module.exports = {
+          meta: { name: "demo" },
+          rules: {
+            text: {
+              meta: { fixable: "code", hasSuggestions: true },
+              create: context => ({
+                Identifier(node) {
+                  if (node.name === "b")
+                    context.report({
+                      node,
+                      message: "three fixes",
+                      fix: fixer => [fixer.insertTextBefore(node, /y/), fixer.insertTextBeforeRange(node.range, "."), fixer.insertTextAfterRange(node.range, 1)],
+                    });
+                  if (node.name === "c")
+                    context.report({
+                      node,
+                      message: "one fix",
+                      fix: fixer => fixer.replaceText(node, /x/),
+                      suggest: [{ desc: "two fixes", fix: fixer => [fixer.insertTextBeforeRange(node.range, 3), fixer.insertTextAfter(node, null)] }],
+                    });
+                },
+              }),
+            },
+          },
+        };`;
+      const rules = { "demo/text": "error" };
+      const configs: Record<string, Record<string, string>> = {
+        "eslint.config.cjs": {
+          "plugin.cjs": plugin,
+          "eslint.config.cjs": `module.exports = [{ plugins: { demo: require("./plugin.cjs") }, rules: ${JSON.stringify(rules)} }];`,
+          "node_modules/eslint/package.json": `{ "name": "eslint", "version": "9.39.5" }`,
+        },
+        ".eslintrc.json": {
+          ".eslintrc.json": JSON.stringify({ root: true, plugins: ["demo"], rules }),
+          "node_modules/eslint-plugin-demo/package.json": `{ "name": "eslint-plugin-demo", "main": "index.js" }`,
+          "node_modules/eslint-plugin-demo/index.js": plugin,
+        },
+        ".oxlintrc.json": {
+          "plugin.cjs": plugin,
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.cjs"], rules }),
+        },
+      };
+      const files = { ...configs[name], "a.js": "a; b; c;\n" };
+      const fixed = await lint(files, ["--fix", "a.js"], ["a.js"]);
+      expect(fixed.files).toEqual({ "a.js": "a; /y/.b1; /x/;\n" });
+      expect(fixed.exitCode).toBe(0);
+      // With an oxlint config, `-f json` has neither the fixes nor the suggestions.
+      if (name === ".oxlintrc.json") return;
+
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+      const messages = JSON.parse(raw)[0].messages.map((it: any) => [it.message, it.fix, it.suggestions]);
+      expect(messages).toEqual([
+        ["three fixes", { range: [3, 4], text: "/y/.b1" }, undefined],
+        ["one fix", { range: [6, 7], text: "/x/" }, [{ desc: "two fixes", fix: { range: [6, 7], text: "3cnull" } }]],
       ]);
       expect(exitCode).toBe(1);
     },

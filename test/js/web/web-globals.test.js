@@ -1045,13 +1045,16 @@ describe("dispatchEvent does not report a handleEvent that is not callable while
         entered.push("first");
         spin();
       });
-      target.addEventListener("a", () => {});
+      target.addEventListener("a", () => {
+        if (entered.length > 0) entered.push("second");
+      });
       // Both listeners have run once, so the second one is entered again after the timeout cut the first one short.
+      // That entry is the state under test: it empties the VM's last exception, which was the termination.
       target.dispatchEvent(new Event("a"));
       target.addEventListener("a", { handleEvent: 123 });
       spins = true;
     });
-    expect(result).toEqual({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", entered: ["first"] });
+    expect(result).toEqual({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", entered: ["first", "second"] });
   });
 
   test("when the deadline passed inside its getter", () => {

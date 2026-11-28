@@ -1367,6 +1367,8 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
           break;
         case "ignoreNextChar":
           state = c === 0x1b ? "gotEsc" : "start"; // ESC aborts the nF sequence
+          // Any other final character is one code point.
+          if (c >= 0xd800 && c <= 0xdbff && (str.charCodeAt(k + 1) & 0xfc00) === 0xdc00) k++;
           break;
         case "inCsi": {
           // Final byte in [0x40, 0x7E], or an aborting ESC / CAN / SUB / C1 ST.
@@ -1602,6 +1604,42 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
         viaSlice: Bun.stringWidth(Bun.sliceAnsi(s, -w)),
       }).toEqual({ s, viaStrip: w, viaSlice: w });
     }
+  });
+
+  // Bun.sliceAnsi has its own tokenizer. A slice from column 2 of "ab" + s drops the escape tokens in
+  // front of the first visible character of s, so that prefix must be the one consumeANSI takes.
+  test("sliceAnsi tokenizes every short escape form the way consumeANSI does", () => {
+    // Both ends of the intermediate, parameter and final byte ranges, the abort bytes, every introducer,
+    // an astral character. No "m" and no "8": a slice starts with the SGR and OSC 8 state, not the tokens.
+    const units = [..."\x1b\x18\x1a\x07\x7f\x9c\x9b\x9d\x90\x98\x9e\x9f[]PX^_ /0?@~\\a\x01\x80\xa0\xff\u{1F600}"];
+    // ESC \ closes a control string that the units left open: sliceAnsi keeps an unterminated one
+    // visible, on purpose. A trailing ESC aborts it. The visible character selects the encoding.
+    const endings = ["\x1b\\c", "\x1b\\\u4E2D", "\x1b"];
+    const escapeRun = (s: string) => {
+      let i = 0;
+      while (i < s.length) {
+        const c = s.charCodeAt(i);
+        if (c === 0x9c)
+          i++; // a C1 ST that closes nothing is a control token for sliceAnsi only
+        else if (!isEscapeIntroducer(c)) break;
+        else i = consumeAnsi(s, i);
+      }
+      return i;
+    };
+    const mismatches: string[] = [];
+    const walk = (t: string, depth: number) => {
+      for (const ending of endings) {
+        const s = t + ending;
+        const sliced = Bun.sliceAnsi("ab" + s, 2);
+        if (sliced !== s.slice(escapeRun(s))) {
+          const hex = (x: string) => [...x].map(c => c.codePointAt(0)!.toString(16)).join(" ");
+          mismatches.push(`${hex(s)}: sliceAnsi kept [${hex(sliced)}]`);
+        }
+      }
+      if (depth < 3) for (const unit of units) walk(t + unit, depth + 1);
+    };
+    for (const unit of units) if (unit === "\x9c" || isEscapeIntroducer(unit.charCodeAt(0))) walk(unit, 1);
+    expect(mismatches.slice(0, 10)).toEqual([]);
   });
 
   test("Latin-1 high bytes, C1 controls and soft hyphen mixed with escapes", () => {

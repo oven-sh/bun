@@ -732,6 +732,111 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("\u001B\u001BcA", 0, 1)).toBe("A");
     });
 
+    test("an nF escape takes a whole code point as its final character", () => {
+      const input = "ab\u001B(\u{1F600}cd";
+      expect({
+        fromTwo: Bun.sliceAnsi(input, 2),
+        withEllipsis: Bun.sliceAnsi(input, 0, 3, "\u2026"),
+        width: Bun.stringWidth(input),
+      }).toEqual({ fromTwo: "cd", withEllipsis: "ab\u001B(\u{1F600}\u2026", width: 4 });
+    });
+
+    // Bun.stringWidth and Bun.stripANSI consume an ESC that starts no sequence, alone or with the
+    // CAN, SUB or C1 ST that aborts it. Bun.sliceAnsi takes the same code units as one control code.
+    describe("an ESC that starts no sequence", () => {
+      test.each([
+        ["ESC", "\u001B"],
+        ["ESC CAN", "\u001B\u0018"],
+        ["ESC SUB", "\u001B\u001A"],
+        ["ESC C1 ST", "\u001B\u009C"],
+        ["ESC ESC", "\u001B\u001B"],
+        ["an nF escape aborted by ESC", "\u001B(\u001B"],
+        ["an OSC aborted by ESC", "\u001B]x\u001B"],
+        ["a DCS aborted by ESC", "\u001BPq\u001B"],
+        ["a CSI aborted by ESC", "\u001B[3\u001B"],
+        ["a C1 CSI aborted by ESC", "\u009B\u001B"],
+      ])("%s does not end the grapheme cluster around it", (_, form) => {
+        // One ZWJ sequence, 2 columns, with the form between its two halves.
+        const input = `\u{1F614}\u200D${form}\u{1F601}`;
+        expect({
+          width: Bun.stringWidth(input),
+          firstTwo: Bun.sliceAnsi(input, 0, 2),
+          fromTwo: Bun.sliceAnsi(input, 2),
+          lastTwo: Bun.sliceAnsi(input, -2),
+          withEllipsis: Bun.sliceAnsi(input, 0, 3, "\u2026"),
+        }).toEqual({ width: 2, firstTwo: input, fromTwo: "", lastTwo: input, withEllipsis: input });
+      });
+
+      test("keeps a combining mark with its base", () => {
+        expect(Bun.sliceAnsi("e\u001B\u0301", 0, 1)).toBe("e\u001B\u0301");
+      });
+
+      test("is dropped in front of the first visible character, like any control code", () => {
+        expect({
+          latin1: Bun.sliceAnsi("ab\u001B\u00E9", 2),
+          abortedByCan: Bun.sliceAnsi("a\u001B\u0018b", 1, 2),
+          utf16: Bun.sliceAnsi("ab\u001B\u4E2D", 2),
+          atColumnZero: Bun.sliceAnsi("\u001B\u00E9b", 0, 100),
+          wholeString: Bun.sliceAnsi("\u001B\u00E9b", 0),
+        }).toEqual({
+          latin1: "\u00E9",
+          abortedByCan: "b",
+          utf16: "\u4E2D",
+          atColumnZero: "\u00E9b",
+          wholeString: "\u001B\u00E9b",
+        });
+      });
+
+      test("leaves the text that Bun.stripANSI leaves, for every code unit after the ESC", () => {
+        // Not the introducers of a control string: with no terminator, sliceAnsi keeps that text visible.
+        const opensControlString = new Set([..."]PX^_\u0090\u0098\u009D\u009E\u009F"].map(c => c.charCodeAt(0)));
+        const mismatches: string[] = [];
+        for (const visible of ["c", "\u4E2D"]) {
+          for (let unit = 0; unit < 0x100; unit++) {
+            if (opensControlString.has(unit)) continue;
+            const tail = "\u001B" + String.fromCharCode(unit) + visible;
+            const sliced = Bun.sliceAnsi("ab" + tail, 2);
+            const stripped = Bun.stripANSI(tail);
+            if (sliced !== stripped)
+              mismatches.push(
+                `ESC 0x${unit.toString(16)} ${visible}: ${JSON.stringify(sliced)} != ${JSON.stringify(stripped)}`,
+              );
+          }
+        }
+        expect(mismatches).toEqual([]);
+      });
+
+      // In front of the ellipsis, an ESC or a sequence that an ESC cut short would take its first characters.
+      test("an end ellipsis does not follow an unfinished sequence", () => {
+        const wide = "\u4E2D\u6587\u5B57";
+        expect({
+          lazyCut: Bun.sliceAnsi(`ab\u001B${wide}`, 0, 5, "..."),
+          knownCut: Bun.sliceAnsi(`ab\u001B${wide}`, 0, -3, "..."),
+          afterEscEsc: Bun.sliceAnsi("a\u001B\u001B\u4E2D", 0, 2, "."),
+          afterCutShortCsi: Bun.sliceAnsi("a\u001B[3\u001B\u001B\u4E2D", 0, 2, "\u2026"),
+          beforeCutShortC1Csi: Bun.sliceAnsi(`ab\u001B\u009B\u001B${wide}`, 0, 5, "..."),
+          afterCompleteSequence: Bun.sliceAnsi("ab\u001B\u0018\u001B[\u001B\u0001cdefgh", 0, 5, "..."),
+          afterSgr: Bun.sliceAnsi(`ab\u001B[31m\u001B${wide}`, 0, 5, "..."),
+          noCut: Bun.sliceAnsi("ab\u001B\u4E2D", 0, 5, "..."),
+          ellipsisEndsInEsc: Bun.sliceAnsi("a\u4E2Dbcdefgh", 1, 4, "\u2026\u001B"),
+        }).toEqual({
+          lazyCut: "ab...",
+          knownCut: "ab...",
+          afterEscEsc: "a.",
+          afterCutShortCsi: "a\u2026",
+          beforeCutShortC1Csi: "ab...",
+          afterCompleteSequence: "ab\u001B\u0018...",
+          afterSgr: "ab\u001B[31m...\u001B[39m",
+          noCut: "ab\u001B\u4E2D",
+          ellipsisEndsInEsc: "\u2026\u001B\u2026\u001B",
+        });
+      });
+
+      test("an unterminated control string keeps its introducer and its text visible", () => {
+        expect(Bun.sliceAnsi("a\u001B]b", 1)).toBe("\u001B]b");
+      });
+    });
+
     test("preserves style state across private CSI m control codes", () => {
       const input = "\u001B[31mA\u001B[?25mB\u001B[39m";
       expect(Bun.sliceAnsi(input, 0, 2)).toBe(input);
@@ -1628,6 +1733,11 @@ describe("Bun.sliceAnsi", () => {
             // A lone C1 ST is the shortest sequence that waits.
             c1AtBound: ["a" + "\\x9c".repeat(2730) + "b", 0, 2],
             c1PastBound: ["a" + "\\x9c".repeat(2731) + "b", 0, 2],
+            // An ESC that starts no sequence waits too. ESC CAN and ESC + C1 ST are one entry each.
+            escCanAtBound: ["a" + "\\x1b\\x18".repeat(2730) + "b", 0, 2],
+            escCanPastBound: ["a" + "\\x1b\\x18".repeat(2731) + "b", 0, 2],
+            escStAtBound: ["a" + "\\x1b\\x9c".repeat(2730) + "b", 0, 2],
+            escStPastBound: ["a" + "\\x1b\\x9c".repeat(2731) + "b", 0, 2],
             // A hyperlink also takes an entry in the list of hyperlink codes.
             linksAtBound: ["a" + link.repeat(2730) + "b", 0, 2],
             linksPastBound: ["a" + link.repeat(2731) + "b", 0, 2],
@@ -1637,6 +1747,7 @@ describe("Bun.sliceAnsi", () => {
             runsUnderBound: [("a" + sgr.repeat(2000)).repeat(3), 0, 4],
             // Sequences before the range update the style state and never wait.
             beforeTheRange: ["a" + sgr.repeat(10000) + "bcd", 2, 4],
+            escCanBeforeTheRange: ["a" + "\\x1b\\x18".repeat(10000) + "bcd", 2, 4],
           };
           const results = {};
           for (const [name, args] of Object.entries(cases)) {
@@ -1661,12 +1772,17 @@ describe("Bun.sliceAnsi", () => {
           wideSgrPastBound: outOfMemory,
           c1AtBound: 2732,
           c1PastBound: outOfMemory,
+          escCanAtBound: 5462,
+          escCanPastBound: outOfMemory,
+          escStAtBound: 5462,
+          escStPastBound: outOfMemory,
           // The open hyperlink is closed at the end of the slice: 6 more characters.
           linksAtBound: 65528,
           linksPastBound: outOfMemory,
           trailingPastBound: outOfMemory,
           runsUnderBound: 18003,
           beforeTheRange: 2,
+          escCanBeforeTheRange: 2,
         },
         stderr: "",
         exitCode: 0,

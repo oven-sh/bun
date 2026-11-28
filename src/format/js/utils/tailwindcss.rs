@@ -26,8 +26,6 @@ pub(crate) struct TailwindContext {
     has_whitespace_after: bool,
     /// Which ends of the current template can lose their whitespace, given the `+`s around it.
     outer_collapse: Collapse,
-    /// It's in a call of another function. Strings there aren't sorted.
-    pub(crate) is_disabled: bool,
     /// See [`Tailwind::follows_plugin`].
     pub(crate) follows_plugin: bool,
     /// The current template's texts are sorted. oxfmt sorts every template that's in a context.
@@ -78,7 +76,6 @@ impl TailwindContext {
             has_whitespace_before: true,
             has_whitespace_after: true,
             outer_collapse: Collapse::ALL,
-            is_disabled: false,
             follows_plugin: false,
             sorts_template: true,
         }
@@ -134,7 +131,6 @@ impl TailwindContext {
             has_whitespace_before: ends_with_white_space(before),
             has_whitespace_after: starts_with_white_space(following),
             outer_collapse: Collapse::ALL,
-            is_disabled: false,
             sorts_template: !self.follows_plugin,
             ..self
         }
@@ -183,11 +179,9 @@ pub(crate) fn context_of_attribute(name: &[u8], f: &Formatter<'_>) -> Option<Tai
         .map(TailwindContext::new)
 }
 
-/// The context of the string literal `source`, if it should be sorted. A single class isn't.
-pub(crate) fn context_of_string(source: &[u8], f: &Formatter<'_>) -> Option<TailwindContext> {
-    f.context()
-        .tailwind_context()
-        .filter(|context| !context.is_disabled && has_white_space(source))
+/// The context of the string literal or template text `source`, if it should be sorted. A single class isn't.
+pub(crate) fn context_of_class_list(source: &[u8], f: &Formatter<'_>) -> Option<TailwindContext> {
+    (f.context().tailwind_context()).filter(|_| has_white_space(source))
 }
 
 /// True if the plugin has already joined the string `e` onto one line by the time Prettier sees it.

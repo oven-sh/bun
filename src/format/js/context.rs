@@ -36,8 +36,8 @@ pub(crate) struct JsFormatContext<'a> {
     cached_elements: FxHashMap<Span, FormatElement>,
     /// With `quoteProps: "consistent"`, one entry per enclosing object: true if its properties are quoted.
     quote_needed_stack: Vec<bool>,
-    /// See `utils/tailwindcss.rs`. The last one is active.
-    tailwind_contexts: Vec<TailwindContext>,
+    /// See `utils/tailwindcss.rs`. The last one is active. `None` hides the ones below it.
+    tailwind_contexts: Vec<Option<TailwindContext>>,
     /// See `Formatter::is_quiet`.
     pub(crate) is_quiet: bool,
     pub(crate) cursor: CursorRegion,
@@ -85,7 +85,7 @@ impl<'a> JsFormatContext<'a> {
             skip_trailing_comments: false,
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
-            tailwind_contexts: plugin_context.into_iter().collect(),
+            tailwind_contexts: plugin_context.map(Some).into_iter().collect(),
             is_quiet: false,
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
@@ -168,7 +168,12 @@ impl<'a> JsFormatContext<'a> {
     }
 
     pub(crate) fn push_tailwind_context(&mut self, context: TailwindContext) {
-        self.tailwind_contexts.push(context);
+        self.tailwind_contexts.push(Some(context));
+    }
+
+    /// Until the matching `pop_tailwind_context`, `tailwind_context` is `None`.
+    pub(crate) fn hide_tailwind_context(&mut self) {
+        self.tailwind_contexts.push(None);
     }
 
     pub(crate) fn pop_tailwind_context(&mut self) {
@@ -177,14 +182,6 @@ impl<'a> JsFormatContext<'a> {
 
     #[inline]
     pub(crate) fn tailwind_context(&self) -> Option<TailwindContext> {
-        self.tailwind_contexts.last().copied()
-    }
-
-    /// Sets whether the content being written is inside a call to a function that doesn't take classes. Returns the
-    /// previous value, if there is a context.
-    #[inline]
-    pub(crate) fn disable_tailwind_context(&mut self, is_disabled: bool) -> Option<bool> {
-        let context = (self.tailwind_contexts.last_mut()).filter(|it| !it.follows_plugin)?;
-        Some(std::mem::replace(&mut context.is_disabled, is_disabled))
+        self.tailwind_contexts.last().copied().flatten()
     }
 }

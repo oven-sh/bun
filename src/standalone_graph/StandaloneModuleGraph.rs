@@ -2502,15 +2502,22 @@ type ExecutableFile = bun_sys::close_on_fork::File;
 #[cfg(windows)]
 type ExecutableFile = bun_sys::File;
 
-/// Returns the mode that the umask leaves to a new executable, which is never for others to write. The file itself is the owner's alone while it is written.
+/// Returns the mode that the umask leaves to a new executable, which is never for others to write. What tells it is an empty file that is gone again.
 #[cfg(unix)]
-fn create_unfinished_executable(path: &ZStr) -> bun_sys::Maybe<(ExecutableFile, bun_sys::Mode)> {
+fn mode_of_executable(path: &ZStr) -> bun_sys::Maybe<bun_sys::Mode> {
     let flags = bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL;
     let file = ExecutableFile::openat(Fd::cwd(), path, flags, 0o755)?;
-    let mode = Syscall::fstat(file.fd()).map_or(0o755, |stat| (stat.st_mode & 0o755) as _);
+    let _unlink = UnlinkOnDrop::new(Fd::cwd(), path);
+    Ok(Syscall::fstat(file.fd()).map_or(0o755, |stat| (stat.st_mode & 0o755) as _))
+}
+
+/// The file is the owner's alone while it is written: whoever has it open then can read all of it.
+#[cfg(unix)]
+fn create_unfinished_executable(path: &ZStr) -> bun_sys::Maybe<(ExecutableFile, bun_sys::Mode)> {
+    let mode = mode_of_executable(path)?;
+    let flags = bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL;
     // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
-    let _ = Syscall::fchmod(file.fd(), 0o600);
-    Ok((file, mode))
+    Ok((ExecutableFile::openat(Fd::cwd(), path, flags, 0o600)?, mode))
 }
 
 pub(crate) fn inject(
@@ -2611,11 +2618,7 @@ pub(crate) fn inject(
         {
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
-            let probed = create_unfinished_executable(zname).map(|(_, mode)| {
-                let _ = Syscall::unlink(zname);
-                mode
-            });
-            if let Ok(mode) = probed
+            if let Ok(mode) = mode_of_executable(zname)
                 && let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname)
             {
                 let name = UnlinkOnDrop::new(Fd::cwd(), zname);

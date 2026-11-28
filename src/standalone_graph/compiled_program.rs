@@ -911,12 +911,14 @@ fn only_this_user_can_write(path: &[u8]) -> bool {
     let mut at: Vec<u8> = Vec::new();
     let mut pending: Vec<Box<[u8]>> = Vec::new();
     let push_components = |pending: &mut Vec<Box<[u8]>>, path: &[u8]| {
-        let components = path.rsplit(|&it| it == b'/');
+        let first = pending.len();
+        let components = strings::split(path, b"/");
         pending.extend(
             components
                 .filter(|it| !matches!(*it, b"" | b"."))
                 .map(Box::from),
         );
+        pending[first..].reverse();
     };
     push_components(&mut pending, path);
     let Ok(root) = bun_sys::lstat(bun_core::zstr!("/")) else {

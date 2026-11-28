@@ -8405,13 +8405,18 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let mode = (st.st_mode & 0o777) as Mode;
     #[cfg(not(unix))]
     let mode = 0o644;
+    #[cfg(unix)]
+    let is_folder_of_system = fstat(to_dir).is_ok_and(|it| it.st_uid == 0)
+        && !bun_core::strings::contains_char(destination.as_bytes(), b'/');
+    #[cfg(not(unix))]
+    let is_folder_of_system = true;
     let mut attempts_left = 8;
     let dst = loop {
         // Unlink dest first — fixes ETXTBUSY on Linux.
-        // Whoever else can write to the folder may put something there before it is opened: a link of theirs is not followed. In a folder that this user cannot write, a link is the user's choice.
+        // Whoever else can write to the folder may put something there before it is opened: a link of theirs is not followed. In a folder of the system that this user cannot write, a link is the system's, such as `/dev/stdout`.
         let flags = match unlinkat(to_dir, destination).map_err(|e| e.get_errno()) {
             Ok(()) | Err(E::ENOENT) => O::EXCL,
-            Err(E::EACCES | E::EROFS) => O::TRUNC,
+            Err(E::EACCES | E::EROFS) if is_folder_of_system => O::TRUNC,
             Err(_) => O::TRUNC | O::NOFOLLOW,
         };
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | flags;

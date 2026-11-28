@@ -530,6 +530,45 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       // google's pprof addon uses the title-keyed overloads (#19678).
       await checkSameOutput("test_v8_cpu_profiler_title_api");
     });
+    it("reports the time the event loop waits as (idle)", async () => {
+      const output = await checkSameOutput("test_v8_cpu_profiler_idle");
+      expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1", "1", "0"]);
+    });
+    it("keeps the samples of a profile when another one stops", async () => {
+      const output = await checkSameOutput("test_v8_cpu_profiler_keeps_samples_across_another_stop");
+      expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1"]);
+    });
+    it("lists the first max_samples samples and counts all of them", async () => {
+      const output = await checkSameOutput("test_v8_cpu_profiler_max_samples");
+      expect(output.match(/\d+(?=\r?$)/gm)).toEqual(["3", "1"]);
+    });
+    // What Node 26.12.1 prints for the timer. 26.3.0 has the same ABI and reports (idle), so this is not checkSameOutput().
+    async function expectMostSamplesToBeProgram(testName: string) {
+      const output = await runOn(Runtime.bun, BuildMode.release, testName);
+      expect(output.split(/\r?\n/)).toEqual([
+        "root_samples = 0",
+        "root->GetHitCount() = 0",
+        "node != nullptr = 1",
+        "is_child_of_root = 1",
+        "node->GetLineNumber() = 0",
+        "node->GetColumnNumber() = 0",
+        "node->GetChildrenCount() = 0",
+        "has_most_samples = 1",
+        "(int)node->GetHitCount() >= node_samples = 1",
+        "profile->GetEndTime() - profile->GetStartTime() + 1000 >= elapsed = 1",
+      ]);
+    }
+    it("reports native code before the end of the profile as (program)", async () => {
+      await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_in_uv_timer");
+    });
+    // Node reports it as (idle), like all native code between uv_prepare_cb and uv_check_cb:
+    // https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1489-L1498
+    it("does not report native code in an I/O callback as (idle)", async () => {
+      await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_in_uv_after_work");
+    });
+    it("does not bill native code between two calls to a function", async () => {
+      await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_between_calls");
+    });
   });
 
   describe("uv_os_getpid", () => {

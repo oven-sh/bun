@@ -39,6 +39,66 @@ module.exports = debugMode => {
       }
     },
 
+    test_v8_cpu_profiler_idle() {
+      const { start_cpu_profile: start, stop_cpu_profile_and_log_idle_node: stop } = nativeModule;
+      const steps = [
+        () => start("first"),
+        // How @datadog/pprof restarts.
+        () => (start("second"), stop("first")),
+        () => (start("third"), stop("second")),
+        () => start("started between two waits"),
+        () => stop("started between two waits"),
+        () => (start("started after the wait"), stop("started after the wait"), nativeModule.dispose_cpu_profiler()),
+      ];
+      // These timers are the waits being profiled.
+      (function next(delay) {
+        setTimeout(() => {
+          steps.shift()();
+          if (steps.length) next(250);
+        }, delay);
+      })(0);
+    },
+
+    test_v8_cpu_profiler_keeps_samples_across_another_stop() {
+      const { start_cpu_profile: start, stop_cpu_profile_and_log_idle_node: stop } = nativeModule;
+      start("outer");
+      start("inner");
+      // This timer is the wait being profiled.
+      setTimeout(() => (stop("inner"), stop("outer"), nativeModule.dispose_cpu_profiler()), 500);
+    },
+
+    test_v8_cpu_profiler_max_samples() {
+      nativeModule.start_cpu_profile_of_three_samples("profile");
+      // This timer is the wait being profiled.
+      setTimeout(() => nativeModule.finish_cpu_profile_and_log_counts(), 500);
+    },
+
+    test_v8_cpu_profiler_program_in_uv_timer() {
+      nativeModule.start_cpu_profile("profile");
+      nativeModule.finish_cpu_profile_in_uv_timer();
+    },
+
+    test_v8_cpu_profiler_program_in_uv_after_work() {
+      nativeModule.start_cpu_profile("profile");
+      nativeModule.finish_cpu_profile_in_uv_after_work();
+    },
+
+    test_v8_cpu_profiler_program_between_calls() {
+      function busy() {
+        const end = performance.now() + 50;
+        while (performance.now() < end);
+      }
+      nativeModule.start_cpu_profile("profile");
+      busy();
+      nativeModule.spin_in_uv_after_work();
+      const interval = setInterval(() => {
+        if (!nativeModule.has_spun_in_uv_after_work()) return;
+        clearInterval(interval);
+        busy();
+        nativeModule.finish_cpu_profile();
+      }, 1);
+    },
+
     test_v8_value_to_int32() {
       const cases = [
         ["int", 42],

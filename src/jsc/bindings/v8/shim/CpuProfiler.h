@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "BunCPUProfiler.h"
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
@@ -57,8 +58,7 @@ struct CpuProfilerImpl {
     struct Session {
         uint32_t id;
         WTF::String title;
-        int64_t startTime;
-        bool recordSamples;
+        std::unique_ptr<Bun::RunningCPUProfile> profile;
     };
 
     explicit CpuProfilerImpl(Isolate* isolate)
@@ -66,7 +66,7 @@ struct CpuProfilerImpl {
     {
     }
 
-    uint32_t start(WTF::String&& title, bool recordSamples);
+    uint32_t start(WTF::String&& title, unsigned sampleLimit);
     CpuProfileImpl* stop(uint32_t id);
     // Running sessions have distinct titles (v8::CpuProfiler::Start refuses a
     // duplicate), so at most one session matches.

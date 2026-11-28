@@ -1280,10 +1280,8 @@ pub(crate) fn start_profilers(vm: &VirtualMachine, ctx: &ContextData) {
                 dir: opts.dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
-                interval: opts.interval,
             }));
-        bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-        bun_jsc::bun_cpu_profiler::start_cpu_profiler(vm.jsc_vm());
+        bun_jsc::bun_cpu_profiler::start_cpu_profiler(vm.jsc_vm(), opts.interval);
         bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
     }
 

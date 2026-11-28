@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/worker_threads.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3df5d2644db4a035b3d4fdc2597dd4def4a570466397f5de1010dd7ad4427d60.
+// Written against that file with the SHA-256 aa1939c7ff93319b4ed8b149bf5ad0d1f41de6d440ae6c72805b6fa83fe720e2.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 declare const self: EventTarget & {
@@ -849,6 +849,15 @@ function moveMessagePortToContext(port, _context) {
 
 const workerThreadsChannel = builtinChannel("worker_threads");
 
+function makeProfileHandle(stop: () => Promise<string>) {
+  return {
+    stop,
+    async [Symbol.asyncDispose]() {
+      await stop();
+    },
+  };
+}
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -1151,23 +1160,26 @@ class Worker extends EventEmitter {
   }
 
   startCpuProfile(options?: { sampleInterval?: number; maxBufferSize?: number }) {
-    // node validates synchronously before starting; the underlying JSC sampler
-    // ignores these knobs but the range checks must still match.
-    if (options !== undefined && options !== null) {
+    let intervalMicroseconds = 0;
+    let sampleLimit = 0xffffffff;
+    if (options !== undefined) {
       validateObject(options, "options");
-      const { maxBufferSize, sampleInterval } = options;
-      if (maxBufferSize !== undefined) validateInteger(maxBufferSize, "options.maxBufferSize", 1);
-      if (sampleInterval !== undefined) validateNumber(sampleInterval, "options.sampleInterval");
+      const { sampleInterval, maxBufferSize } = options;
+      if (sampleInterval !== undefined) {
+        validateNumber(sampleInterval, "options.sampleInterval", 0, 0x7fffffff / 1000);
+        if (sampleInterval > 0) intervalMicroseconds = Math.max(1, Math.floor(sampleInterval * 1000));
+      }
+      if (maxBufferSize !== undefined) {
+        validateNumber(maxBufferSize, "options.maxBufferSize", 1, 0xffffffff);
+        sampleLimit = Math.floor(maxBufferSize);
+      }
     }
-    // JSC has one thread-local sampler; cache stop() on the WORKER so overlapping
-    // handles resolve to the same profile instead of empty JSON. Cleared on start
-    // so a fresh non-overlapping run gets a fresh profile.
-    this.#pendingCpuProfileStop = undefined;
-    return this.#worker.startCpuProfileInternal().then(() => {
-      return { stop: () => (this.#pendingCpuProfileStop ??= this.#worker.stopCpuProfileInternal()) };
+    return this.#worker.startCpuProfileInternal(intervalMicroseconds, sampleLimit).then(id => {
+      if (!id) throw $ERR_CPU_PROFILE_TOO_MANY("There are too many CPU profiles");
+      let profile: Promise<string> | undefined;
+      return makeProfileHandle(() => (profile ??= this.#worker.stopCpuProfileInternal(id)));
     });
   }
-  #pendingCpuProfileStop: Promise<string> | undefined;
 
   cpuUsage(prevValue?: { user: number; system: number }) {
     let prevUser = 0;
@@ -1214,7 +1226,7 @@ class Worker extends EventEmitter {
     // v8 sampling-heap-profile so the handle/stop() shape matches node.
     const empty =
       '{"head":{"callFrame":{"functionName":"(root)","scriptId":"0","url":"","lineNumber":-1,"columnNumber":-1},"selfSize":0,"id":1,"children":[]},"samples":[]}';
-    return Promise.$resolve({ stop: () => Promise.$resolve(empty) });
+    return Promise.$resolve(makeProfileHandle(() => Promise.$resolve(empty)));
   }
 
   #onClose(e) {

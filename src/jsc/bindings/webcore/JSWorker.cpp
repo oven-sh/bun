@@ -783,11 +783,14 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        if (!Bun::isCPUProfilerRunning())
-            Bun::startCPUProfiler(workerCtx.vm());
-        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
-            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject*) -> JSValue { return jsUndefined(); });
+    JSValue intervalValue = callFrame->argument(0);
+    uint32_t interval = intervalValue.isUInt32AsAnyInt() ? intervalValue.asUInt32AsAnyInt() : 0;
+    JSValue sampleLimitValue = callFrame->argument(1);
+    uint32_t sampleLimit = sampleLimitValue.isUInt32AsAnyInt() ? sampleLimitValue.asUInt32AsAnyInt() : Bun::noCPUProfileSampleLimit;
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, interval, sampleLimit, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        uint32_t id = clientData(workerCtx.vm())->cpuProfiles.size() < Bun::maximumSimultaneousCPUProfiles ? Bun::startCPUProfiler(workerCtx.vm(), interval, sampleLimit) : 0;
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, id, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [id](VM&, JSGlobalObject*) -> JSValue { return jsNumber(id); });
         });
     });
     if (!accepted) {
@@ -808,10 +811,10 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        WTF::String result;
-        if (Bun::isCPUProfilerRunning())
-            Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
+    JSValue idValue = callFrame->argument(0);
+    uint32_t id = idValue.isUInt32AsAnyInt() ? idValue.asUInt32AsAnyInt() : 0;
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, id, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        WTF::String result = Bun::stopCPUProfiler(workerCtx.vm(), id);
         if (result.isEmpty())
             result = kEmptyCpuProfileJSON;
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) {
@@ -819,10 +822,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
         });
     });
     if (!accepted) {
-        // Worker already gone: resolve with an empty profile rather than reject,
-        // so a handle.stop() after terminate still yields parseable JSON.
         worker.contextProxy().takeCrossVMRequest(reqId);
-        promise->resolve(globalObject, vm, jsString(vm, String(kEmptyCpuProfileJSON)));
+        rejectWorkerNotRunning(vm, globalObject, promise);
     }
     return JSValue::encode(promise);
 }

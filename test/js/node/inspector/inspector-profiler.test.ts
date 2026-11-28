@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+import { join } from "node:path";
 
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
@@ -377,6 +378,15 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
     });
 
+    test.each([1.5, 2 ** 31, NaN])("Profiler.setSamplingInterval rejects %p", async interval => {
+      const { promise, resolve } = Promise.withResolvers<any>();
+      session.post("Profiler.setSamplingInterval", { interval }, resolve);
+      expect(await promise).toMatchObject({
+        code: "ERR_INSPECTOR_COMMAND",
+        message: "Inspector error -32602: Invalid parameters",
+      });
+    });
+
     test("double Profiler.start is a no-op", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
@@ -419,6 +429,346 @@ describe("node:inspector", () => {
       const result: any = session2.post("Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
       session2.disconnect();
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/44077
+  // The timers in these fixtures are the waits being profiled.
+  describe.concurrent("(idle)", () => {
+    async function run(script: string) {
+      const fixture = `
+        import { Session } from "node:inspector";
+
+        const session = new Session();
+        session.connect();
+        session.post("Profiler.enable");
+        // On Windows, starting the collector's threads blocks until they have run, which is long on a busy machine.
+        Bun.gc(true);
+
+        const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+        function busy(ms) {
+          const end = performance.now() + ms;
+          while (performance.now() < end);
+        }
+
+        async function profileWait() {
+          let result;
+          for (let ms = 20; ms < 2000 && !result?.idleSamples; ms *= 2) {
+            session.post("Profiler.start");
+            await sleep(ms);
+            result = await stop();
+          }
+          return result;
+        }
+
+        function stop() {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          session.post("Profiler.stop", (error, result) => (error ? reject(error) : resolve(summarize(result.profile))));
+          return promise;
+        }
+
+        function summarize({ nodes, samples, timeDeltas, startTime, endTime }) {
+          const idleNode = nodes.find(node => node.callFrame.functionName === "(idle)");
+          const untilEnd = endTime - startTime - timeDeltas.reduce((sum, delta) => sum + delta, 0);
+          let idle = 0;
+          samples.forEach((id, i) => {
+            if (id === idleNode?.id) idle += (timeDeltas[i + 1] ?? untilEnd) / 1000;
+          });
+          const programNode = nodes.find(node => node.callFrame.functionName === "(program)" && !node.callFrame.url);
+          return {
+            callFrame: idleNode?.callFrame,
+            isChildOfRoot: !!nodes[0].children?.includes(idleNode?.id),
+            idleSamples: samples.filter(id => id === idleNode?.id).length,
+            programSamples: samples.filter(id => id === programNode?.id).length,
+            idle,
+            sampleCount: samples.length,
+            duration: (endTime - startTime) / 1000,
+          };
+        }
+
+        ${script}
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    test("a wait between two calls", async () => {
+      const { waited, idle, callFrame, isChildOfRoot } = await run(`
+        session.post("Profiler.start");
+        busy(100);
+        const start = performance.now();
+        await sleep(400);
+        const waited = performance.now() - start;
+        busy(300);
+        console.log(JSON.stringify({ waited, ...(await stop()) }));
+      `);
+      expect({ callFrame, isChildOfRoot }).toEqual({
+        callFrame: { functionName: "(idle)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+        isChildOfRoot: true,
+      });
+      expect(idle).toBeWithin(waited / 2, waited + 150);
+    });
+
+    test("native code between two calls is (program)", async () => {
+      using dir = tempDir("inspector-profiler-program", {
+        "strings.json": JSON.stringify(Array.from({ length: 30_000 }, (_, i) => `string ${i}`)),
+      });
+      const { programSamples, idleSamples, sampleCount } = await run(`
+        const file = Bun.file(${JSON.stringify(join(String(dir), "strings.json"))});
+        let result;
+        // A thread that is kept from running collects samples wherever it happens to be.
+        for (let ms = 100; ms < 2000; ms *= 2) {
+          session.post("Profiler.start");
+          // It is parsed once it has been read.
+          for (const end = performance.now() + ms; performance.now() < end; ) await file.json();
+          busy(5);
+          result = await stop();
+          if (result.programSamples > Math.max(5, (result.sampleCount - result.idleSamples) / 2)) break;
+        }
+        console.log(JSON.stringify(result));
+      `);
+      expect(programSamples).toBeGreaterThan(Math.max(5, (sampleCount - idleSamples) / 2));
+    });
+
+    test("is not sampled more often than the sampling interval", async () => {
+      const { waited, idleSamples } = await run(`
+        session.post("Profiler.setSamplingInterval", { interval: 50_000 });
+        session.post("Profiler.start");
+        const start = performance.now();
+        await sleep(400);
+        const waited = performance.now() - start;
+        console.log(JSON.stringify({ waited, ...(await stop()) }));
+      `);
+      // Each interval varies by up to a fifth.
+      expect(idleSamples).toBeWithin(1, waited / 40 + 2);
+    });
+
+    test("a profile has none of the waits from before it started", async () => {
+      const { first, second } = await run(`
+        const first = await profileWait();
+        await sleep(100);
+        session.post("Profiler.start");
+        busy(50);
+        console.log(JSON.stringify({ first, second: await stop() }));
+      `);
+      expect(first.idleSamples).toBeGreaterThan(0);
+      expect(second.idleSamples).toBe(0);
+    });
+
+    test("a profile has none of the calls from before it started", async () => {
+      const names = await run(`
+        require("bun:jsc").startSamplingProfiler();
+        (function before() {
+          busy(200);
+        })();
+        session.post("Profiler.start");
+        busy(50);
+        session.post("Profiler.stop", (error, { profile }) => {
+          console.log(JSON.stringify(profile.nodes.map(node => node.callFrame.functionName)));
+        });
+      `);
+      expect(names).not.toContain("before");
+    });
+
+    test("a profile ends when it is stopped, not with its last sample", async () => {
+      const { elapsed, duration } = await run(`
+        session.post("Profiler.setSamplingInterval", { interval: 60_000_000 });
+        session.post("Profiler.start");
+        const start = performance.now();
+        busy(100);
+        const elapsed = performance.now() - start;
+        console.log(JSON.stringify({ elapsed, ...(await stop()) }));
+      `);
+      expect(duration).toBeGreaterThan(elapsed - 1);
+    });
+
+    test("sessions do not share a profile or an interval", async () => {
+      const result = await run(`
+        import { noInline } from "bun:jsc";
+        const post = (session, method, params) => new Promise(resolve => session.post(method, params, (error, result) => resolve(error?.code ?? result)));
+        const names = ({ profile }) => ["first", "second", "third"].filter(name => profile.nodes.some(node => node.callFrame.functionName === name));
+        const [first, second, third] = [function first(ms) { busy(ms); }, function second(ms) { busy(ms); }, function third(ms) { busy(ms); }];
+        [first, second, third].forEach(noInline);
+
+        let result;
+        // On a busy machine the sampler may not run once in the shorter times.
+        for (let ms = 30; ms < 500 && !(result?.inner.length && result.outer.length === 3 && !result.isSlow[2]); ms *= 4) {
+          const [other, slow] = [new Session(), new Session()];
+          for (const session of [other, slow]) session.connect(), session.post("Profiler.enable");
+
+          session.post("Profiler.start");
+          first(ms);
+          const stopBeforeStart = await post(other, "Profiler.stop");
+          const intervalOfRunning = await post(session, "Profiler.setSamplingInterval", { interval: 500 });
+          const intervalOfAnother = await post(slow, "Profiler.setSamplingInterval", { interval: 60_000_000 });
+          slow.post("Profiler.start");
+          other.post("Profiler.start");
+          second(ms);
+          const inner = await post(other, "Profiler.stop");
+          other.disconnect();
+          third(ms);
+          const outer = await post(session, "Profiler.stop");
+          const slowSamples = (await post(slow, "Profiler.stop")).profile.samples.length;
+
+          slow.post("Profiler.disable");
+          slow.post("Profiler.enable");
+          slow.post("Profiler.start");
+          first(ms);
+          const afterDisable = (await post(slow, "Profiler.stop")).profile.samples.length;
+          slow.disconnect();
+          slow.connect();
+          slow.post("Profiler.enable");
+          slow.post("Profiler.start");
+          first(ms);
+          const afterDisconnect = (await post(slow, "Profiler.stop")).profile.samples.length;
+          slow.disconnect();
+
+          result = {
+            stopBeforeStart, intervalOfRunning, intervalOfAnother, inner: names(inner), outer: names(outer),
+            isSlow: [slowSamples, afterDisable, afterDisconnect].map(count => count <= 1),
+          };
+        }
+        console.log(JSON.stringify(result));
+      `);
+      expect(result).toEqual({
+        stopBeforeStart: "ERR_INSPECTOR_COMMAND",
+        intervalOfRunning: "ERR_INSPECTOR_COMMAND",
+        intervalOfAnother: {},
+        inner: ["second"],
+        outer: ["first", "second", "third"],
+        isSlow: [true, true, false],
+      });
+    });
+
+    test("a profile does not wait for the interval of the one before it", async () => {
+      const { sampleCount } = await run(`
+        let result;
+        for (let ms = 30; ms < 2000 && !(result?.sampleCount > 1); ms *= 4) {
+          session.post("Profiler.setSamplingInterval", { interval: 60_000_000 });
+          session.post("Profiler.start");
+          await sleep(ms);
+          await stop();
+          session.post("Profiler.setSamplingInterval", { interval: 1000 });
+          session.post("Profiler.start");
+          await sleep(ms);
+          result = await stop();
+        }
+        console.log(JSON.stringify(result));
+      `);
+      expect(sampleCount).toBeGreaterThan(1);
+    });
+
+    test("a profile leaves bun:jsc's profile() without a limit on the depth", async () => {
+      const depth = await run(`
+        import { noInline, profile } from "bun:jsc";
+        session.post("Profiler.start");
+        await stop();
+        function recurse(depth) {
+          return depth ? recurse(depth - 1) + 1 : busy(100);
+        }
+        noInline(recurse);
+        let depth = 0;
+        // There is room for a quarter more after each sample that did not fit.
+        for (const end = performance.now() + 3000; depth <= 260 && performance.now() < end; ) {
+          const { traces } = profile(recurse, 30_000, 270).stackTraces;
+          depth = Math.max(depth, ...traces.map(trace => trace.frames.length));
+        }
+        console.log(depth);
+      `);
+      expect(depth).toBeGreaterThan(260);
+    });
+
+    test.if(isLinux).each([
+      ["Profiler.stop", `session.post("Profiler.start"); during(); await stop();`],
+      ["Profiler.disable", `session.post("Profiler.start"); during(); session.post("Profiler.disable");`],
+      ["disconnect()", `session.post("Profiler.start"); during(); session.disconnect();`],
+      ["profile()", `profile(during);`],
+      ["profile() of a function that throws", `try { profile(() => { during(); throw 0; }); } catch {}`],
+      ["profile() of an async function", `await profile(async () => during());`],
+      ["profile() of a function that rejects", `await profile(async () => { during(); throw 0; }).catch(() => {});`],
+      [
+        "a promise that profile() waits for in vain",
+        `(() => void profile(() => (during(), new Promise(() => {}))))();`,
+      ],
+    ])("the sampler's thread ends with %s", async (_, statements) => {
+      const samplers = await run(`
+        import { profile } from "bun:jsc";
+        import { readdirSync, readFileSync } from "node:fs";
+        // What is left of "jsc.sampling-profiler.thread".
+        const count = () =>
+          readdirSync("/proc/self/task").filter(thread => {
+            try {
+              return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
+            } catch {}
+          }).length;
+        function during() {
+          for (const end = performance.now() + 3000; !count(); ) if (performance.now() > end) process.exit(1);
+        }
+        ${statements}
+        for (const end = performance.now() + 3000; count() && performance.now() < end; Bun.gc(true)) await sleep(1);
+        console.log(count());
+      `);
+      expect(samplers).toBe(0);
+    });
+
+    // Node reports most of this as (idle), like all native code after a callback:
+    // https://github.com/nodejs/node/blob/v26.12.1/src/api/callback.cc#L156
+    test("is not the time of a poll that cannot block", async () => {
+      const { polling, waiting } = await run(`
+        session.post("Profiler.start");
+        const end = performance.now() + 300;
+        while (performance.now() < end) await new Promise(setImmediate);
+        const polling = await stop();
+        console.log(JSON.stringify({ polling, waiting: await profileWait() }));
+      `);
+      expect(polling.idleSamples).toBe(0);
+      expect(waiting.idleSamples).toBeGreaterThan(0);
+    });
+
+    // On Windows the handler runs inside the uv_run() that waited.
+    test("ends where an I/O callback begins, also if that callback stops the profile", async () => {
+      using peer = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, delay) {
+            setTimeout(() => socket.write("."), Number(delay.toString()));
+          },
+        },
+      });
+      const { waited, idle } = await run(`
+        const delays = [50, 400];
+        let start;
+        let waited = 0;
+        function next(socket) {
+          socket.write(String(delays.shift()));
+          start = performance.now();
+        }
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${peer.port},
+          socket: {
+            open(socket) {
+              session.post("Profiler.setSamplingInterval", { interval: 5000 });
+              session.post("Profiler.start");
+              next(socket);
+            },
+            async data(socket) {
+              waited += performance.now() - start;
+              busy(500);
+              if (delays.length) return next(socket);
+              const profile = stop();
+              socket.end();
+              console.log(JSON.stringify({ waited, ...(await profile) }));
+            },
+          },
+        });
+      `);
+      expect(waited).toBeGreaterThan(400);
+      expect(idle).toBeWithin(waited / 2, waited + 250);
     });
   });
 

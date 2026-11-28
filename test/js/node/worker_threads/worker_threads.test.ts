@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -904,6 +904,228 @@ describe("getHeapSnapshot", () => {
     ]);
     worker.postMessage(0);
   });
+});
+
+// https://github.com/oven-sh/bun/issues/44077
+test("startCpuProfile() reports the time a worker waits for messages as (idle)", async () => {
+  const worker = new Worker("require('worker_threads').parentPort.on('message', () => {}).postMessage('ready')", {
+    eval: true,
+  });
+  try {
+    await once(worker, "message");
+    let profile, waited;
+    for (let ms = 50; ms < 2000 && !(profile?.samples.length >= 10); ms *= 2) {
+      const handle = await worker.startCpuProfile();
+      const start = performance.now();
+      // The wait being profiled.
+      await Bun.sleep(ms);
+      waited = performance.now() - start;
+      profile = JSON.parse(await handle.stop());
+    }
+    const { nodes, samples, startTime, endTime } = profile;
+
+    const idleNode = nodes.find(node => node.callFrame.functionName === "(idle)");
+    expect(idleNode?.callFrame).toMatchObject({ functionName: "(idle)", url: "", lineNumber: -1, columnNumber: -1 });
+    expect(samples.filter(id => id === idleNode.id).length).toBeGreaterThan(samples.length / 2);
+    expect((endTime - startTime) / 1000).toBeGreaterThan(waited - 1);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("each handle of startCpuProfile() has a profile and an interval of its own", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("worker_threads");
+     const busy = ms => { for (const end = performance.now() + ms; performance.now() < end; ); };
+     const functions = { first(ms) { busy(ms); }, second(ms) { busy(ms); }, third(ms) { busy(ms); } };
+     Object.values(functions).forEach(require("bun:jsc").noInline);
+     parentPort.on("message", ([name, ms]) => (functions[name](ms), parentPort.postMessage(name)));`,
+    { eval: true },
+  );
+  const call = (name: string, ms: number) => (worker.postMessage([name, ms]), once(worker, "message"));
+  const names = (profile: string) =>
+    ["first", "second", "third"].filter(name =>
+      JSON.parse(profile).nodes.some(node => node.callFrame.functionName === name),
+    );
+  try {
+    let result;
+    // On a busy machine the sampler may not run once in the shorter times.
+    for (let ms = 30; ms < 500 && !(result?.inner.length && result.outer.length === 3); ms *= 4) {
+      const outer = await worker.startCpuProfile();
+      const slow = await worker.startCpuProfile({ sampleInterval: 60_000 });
+      await call("first", ms);
+      const inner = await worker.startCpuProfile();
+      await call("second", ms);
+      const innerProfile = inner.stop();
+      expect(inner.stop()).toBe(innerProfile);
+      await innerProfile;
+      await call("third", ms);
+      result = {
+        inner: names(await innerProfile),
+        outer: names(await outer.stop()),
+        isSlow: JSON.parse(await slow.stop()).samples.length <= 1,
+      };
+    }
+    expect(result).toEqual({ inner: ["second"], outer: ["first", "second", "third"], isSlow: true });
+
+    for (const sampleInterval of [-1, 2 ** 31 / 1000, NaN]) {
+      expect(() => worker.startCpuProfile({ sampleInterval })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+    await worker.startCpuProfile();
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("startCpuProfile() allows 100 profiles at a time", async () => {
+  const worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  const start = () => worker.startCpuProfile({ sampleInterval: 60_000 });
+  try {
+    const handles = await Promise.all(Array.from({ length: 100 }, start));
+    expect(await start().catch(error => error)).toMatchObject({
+      name: "Error",
+      code: "ERR_CPU_PROFILE_TOO_MANY",
+      message: "There are too many CPU profiles",
+    });
+    await handles[0].stop();
+    await start();
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("startCpuProfile() lists the first maxBufferSize samples and counts all of them", async () => {
+  const worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  const hits = profile => profile.nodes.reduce((sum, node) => sum + node.hitCount, 0);
+  try {
+    let profile;
+    // This timer is the wait being profiled.
+    for (let ms = 50; !profile || hits(profile) < 10; ms *= 2) {
+      const handle = await worker.startCpuProfile({ maxBufferSize: 3.9 });
+      await Bun.sleep(ms);
+      profile = JSON.parse(await handle.stop());
+    }
+    expect(profile.samples).toHaveLength(3);
+    expect(profile.timeDeltas).toHaveLength(3);
+
+    for (const maxBufferSize of [0.9, 2 ** 32, NaN]) {
+      expect(() => worker.startCpuProfile({ maxBufferSize })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+    expect(() => worker.startCpuProfile(null as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("the handles of startCpuProfile() and startHeapProfile() can be disposed", async () => {
+  await using worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  for (let i = 0; i < 101; i++) {
+    await using _ = await worker.startCpuProfile({ sampleInterval: 60_000 });
+  }
+  await using _ = await worker.startHeapProfile();
+});
+
+test("a handle of startCpuProfile() rejects once the worker has exited", async () => {
+  const worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  const handle = await worker.startCpuProfile();
+  await worker.terminate();
+  expect(await handle.stop().catch(error => error)).toMatchObject({
+    name: "Error",
+    code: "ERR_WORKER_NOT_RUNNING",
+    message: "Worker instance not running",
+  });
+});
+
+test.if(isLinux)("the profiles of a worker share the thread that samples it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { once } = require("events");
+       const { readdirSync, readFileSync } = require("fs");
+       const { Worker } = require("worker_threads");
+       const worker = new Worker(
+         'const { parentPort } = require("worker_threads"); parentPort.on("message", () => { for (const end = performance.now() + 50; performance.now() < end; ); parentPort.postMessage(0); });',
+         { eval: true },
+       );
+       const handles = [];
+       for (let i = 0; i < 20; i++) handles.push(await worker.startCpuProfile());
+       worker.postMessage(0);
+       await once(worker, "message");
+       // What is left of "jsc.sampling-profiler.thread".
+       const samplers = readdirSync("/proc/self/task").filter(thread => {
+         try {
+           return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
+         } catch {}
+       }).length;
+       const profiles = new Set(await Promise.all(handles.map(handle => handle.stop()))).size;
+       console.log(JSON.stringify({ samplers, profiles }));
+       await worker.terminate();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ samplers: 1, profiles: 20 });
+  expect(exitCode).toBe(0);
+});
+
+test.if(isLinux)("the thread that samples a worker ends with the worker and gives its stack back", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { once } = require("events");
+       const { readdirSync, readFileSync } = require("fs");
+       const { Worker } = require("worker_threads");
+       // What is left of "jsc.sampling-profiler.thread".
+       const samplers = () =>
+         readdirSync("/proc/self/task").filter(thread => {
+           try {
+             return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
+           } catch {}
+         }).length;
+       // The stack of a thread that was detached or joined is used again.
+       const stacks = () =>
+         [...readFileSync("/proc/self/maps", "utf8").matchAll(/^(\\w+)-(\\w+) ---p .*\\n\\2-\\w+ rw-p /gm)].filter(
+           ([, guardStart, guardEnd]) => parseInt(guardEnd, 16) - parseInt(guardStart, 16) <= 65536,
+         ).length;
+       async function profileWorkers(count) {
+         for (let i = 0; i < count; i++) {
+           const worker = new Worker(
+             'require("bun:jsc").startSamplingProfiler(undefined, 60_000_000); setInterval(() => {}, 1e6); postMessage(0);',
+             { eval: true },
+           );
+           await once(worker, "message");
+           await worker.terminate();
+           for (const end = performance.now() + 2000; samplers(); await Bun.sleep(1)) {
+             if (performance.now() > end) throw new Error("the sampler outlived the worker");
+           }
+         }
+       }
+       await profileWorkers(2);
+       const before = stacks();
+       await profileWorkers(8);
+       console.log(stacks() - before);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(Number(stdout)).toBeLessThan(5);
+  expect(exitCode).toBe(0);
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {

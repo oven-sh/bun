@@ -70,6 +70,7 @@
 #include "JavaScriptCore/VM.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
+#include "BunCPUProfiler.h"
 #include "BunClientData.h"
 #include "BunObject.h"
 #include "GeneratedBlob.h"
@@ -5426,6 +5427,7 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    WebCore::clientData(globalObject->vm())->cpuProfiles.clear();
     // Again, to catch realms that close handlers created since the first pass.
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
     for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
@@ -5438,6 +5440,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
 extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
+    WebCore::clientData(globalObject->vm())->cpuProfiles.clear();
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
     for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
         if (derived)

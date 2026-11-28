@@ -1,5 +1,3 @@
-use core::ffi::c_int;
-
 use crate::VM;
 use bun_core::String as BunString;
 use bun_paths::{NameTooLong, Path};
@@ -26,14 +24,13 @@ pub struct CPUProfilerConfig {
     pub dir: &'static [u8],
     pub md_format: bool,
     pub json_format: bool,
-    pub interval: u32,
 }
 
 // C++ function declarations
 unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&VM` is
     /// ABI-identical to a non-null `VM*`.
-    safe fn Bun__startCPUProfiler(vm: &VM);
+    safe fn Bun__startCPUProfiler(vm: &VM, interval_microseconds: u32);
     /// `Option<&mut BunString>` is ABI-identical to a nullable `*mut BunString`
     /// via the guaranteed null-pointer optimization; the C++ side writes a +1
     /// ref into each non-null out-param and ignores nulls.
@@ -42,21 +39,12 @@ unsafe extern "C" {
         out_json: Option<&mut BunString>,
         out_text: Option<&mut BunString>,
     );
-    /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
-    safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
     /// Writes a +1 ref into `out`. Doesn't write to `out` if the VM has no sampling profiler.
     safe fn Bun__SamplingProfiler__report(vm: &VM, out: &mut BunString);
 }
 
-pub fn set_sampling_interval(interval: u32) {
-    // Reachable from a Worker's execArgv: 0 stalls the sampler and the process
-    // never exits, and a value past c_int would panic the cast.
-    let clamped = interval.clamp(1, c_int::MAX as u32);
-    Bun__setSamplingInterval(clamped as c_int);
-}
-
-pub fn start_cpu_profiler(vm: &VM) {
-    Bun__startCPUProfiler(vm);
+pub fn start_cpu_profiler(vm: &VM, interval_microseconds: u32) {
+    Bun__startCPUProfiler(vm, interval_microseconds);
 }
 
 /// Writes `vm`'s sampling profiler report into `directory` (absolute UTF-8), creating it if missing.

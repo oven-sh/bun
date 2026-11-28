@@ -474,6 +474,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
+extern void Bun__CPUProfiler__setIdle(void * _Nonnull jsc_vm, int is_idle);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -503,7 +504,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
-    const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    const int has_time_to_wait = !timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0);
+    const int will_idle_inside_event_loop = had_wakeups == 0 && has_time_to_wait;
     /* `now_ns` is the reading the JS side took to pick `timeout`
      * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
      * if it had none to share. Nothing measures a deadline against it. */
@@ -528,6 +530,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+#ifdef LIBUS_USE_EPOLL
+    /* had_wakeups also counts a wakeup that ended the previous poll. */
+    const int may_block = has_time_to_wait;
+#else
+    const int may_block = will_idle_inside_event_loop;
+#endif
+    if (may_block && loop->data.jsc_vm)
+        Bun__CPUProfiler__setIdle(loop->data.jsc_vm, 1);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -548,6 +559,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
     loop->current_ready_poll = 0;
+    if (may_block && loop->data.jsc_vm)
+        Bun__CPUProfiler__setIdle(loop->data.jsc_vm, 0);
     /* Before anything can allocate again. */
     if (handed_off)
         mi_on_thread_idle_end();

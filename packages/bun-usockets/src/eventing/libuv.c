@@ -149,6 +149,15 @@ static void prepare_cb(uv_prepare_t *p) {
   us_internal_loop_pre(loop);
 }
 
+extern void Bun__CPUProfiler__setIdle(void *jsc_vm, int is_idle);
+
+static void wait_cb(void *data, int is_waiting) {
+  struct us_loop_t *loop = data;
+  if (loop->data.jsc_vm) {
+    Bun__CPUProfiler__setIdle(loop->data.jsc_vm, is_waiting);
+  }
+}
+
 /* Note: libuv timers execute AFTER the post callback */
 static void check_cb(uv_check_t *p) {
   struct us_loop_t *loop = p->data;
@@ -378,6 +387,8 @@ struct us_loop_t *us_create_loop(void *hint,
   uv_check_start(loop->uv_check, check_cb);
   loop->uv_check->data = loop;
 
+  uv_loop_set_wait_cb(loop->uv_loop, wait_cb, loop);
+
   // here we create two unreffed handles - timer and async
   // Cannot fail here: this backend's us_internal_create_async acquires no OS resource.
   (void)us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
@@ -399,6 +410,8 @@ static void close_walk_cb(uv_handle_t *h, void *arg) {
 
 // based on if this was default loop or not
 void us_loop_free(struct us_loop_t *loop) {
+  uv_loop_set_wait_cb(loop->uv_loop, 0, 0);
+
   // ref and close down prepare and check
   uv_ref((uv_handle_t *)loop->uv_pre);
   uv_prepare_stop(loop->uv_pre);

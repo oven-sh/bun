@@ -393,6 +393,7 @@ const aotTestsThatAskTheSystem = [
   "aot/native-fault-still-crashes",
   "aot/fault-inside-a-removed-range",
   "aot/crash-in-compiled-code",
+  "aot/cpu-profile-urls",
   "aot/abort-is-reported",
   "aot/memory-",
   "aot/small-program-memory",

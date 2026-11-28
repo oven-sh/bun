@@ -2044,8 +2044,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Writes each configured profile once. The sampling report is written first because
-    /// `stopCPUProfiler` clears its traces.
+    /// Writes each configured profile once.
     pub fn write_profiles(&self) {
         if let Some(directory) = self.sampling_profiler_directory.take() {
             if let Err(e) =
@@ -2368,9 +2367,11 @@ impl VirtualMachine {
                 VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
             }
         }
+        let uws_loop = self.uws_loop();
+        uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        self.uws_loop().drain_closed_sockets();
+        uws_loop.drain_closed_sockets();
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
@@ -2388,8 +2389,6 @@ impl VirtualMachine {
             if let Some(rare) = self.rare_data.get() {
                 rare.detach_socket_groups_from_loop();
             }
-            let uws_loop = self.uws_loop();
-            uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             // SAFETY: what was on the loop has been closed, and the thread only frees from here on.
             unsafe {
                 bun_uws::free_thread_loop();

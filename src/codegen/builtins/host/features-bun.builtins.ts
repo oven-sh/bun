@@ -592,8 +592,6 @@ export default b.declarations(
       "NewCppFunction",
       "JSInspectorProfiler.cpp",
       "jsFunction_collectPreciseCoverage",
-      "jsFunction_isCPUProfilerRunning",
-      "jsFunction_setCPUSamplingInterval",
       "jsFunction_startCPUProfiler",
       "jsFunction_startPreciseCoverage",
       "jsFunction_stopCPUProfiler",

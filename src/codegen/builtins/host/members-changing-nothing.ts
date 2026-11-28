@@ -134,20 +134,6 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [0, 1],
     refused: [],
   },
-  "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_isCPUProfilerRunning": {
-    functions: 1,
-    sets: 192,
-    returned: 192,
-    taken: [],
-    refused: [],
-  },
-  "native:NewCppFunction:JSInspectorProfiler.cpp:jsFunction_setCPUSamplingInterval": {
-    functions: 1,
-    sets: 324,
-    returned: 74,
-    taken: [],
-    refused: [0],
-  },
   "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled": {
     functions: 1,
     sets: 192,

@@ -42,6 +42,9 @@ declare module "bun:test" {
   export interface ModuleMockOptions {
     /**
      * Keep each exported function's real implementation and record its calls.
+     *
+     * The spies can be on the module's own classes and objects. They stay until the test file ends, also after
+     * `vi.restoreAllMocks()`.
      */
     spy?: boolean | undefined;
   }
@@ -426,7 +429,7 @@ declare module "bun:test" {
      * kept.
      *
      * With `{ spy: true }`, functions keep their implementation, arrays keep their elements, and objects are modified
-     * in place instead of copied.
+     * in place instead of copied. The spies stay until the test file ends, also after `vi.restoreAllMocks()`.
      *
      * @example
      * ```ts
@@ -446,7 +449,8 @@ declare module "bun:test" {
      *
      * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
      * isn't one, it's replaced with a copy of the module where every function is a mock. With `{ spy: true }`, the
-     * functions keep their implementation.
+     * functions keep their implementation, and the spies can be on the module's own classes and objects. See
+     * {@link ModuleMockOptions.spy}.
      *
      * @example
      * ```ts
@@ -498,7 +502,8 @@ declare module "bun:test" {
      */
     hoisted<T>(factory: () => T): T;
     /**
-     * Restore every spied-on property. A `vi.spyOn()` spy keeps its recorded calls and its implementation.
+     * Restore every property that `spyOn()` replaced. A `vi.spyOn()` spy keeps its recorded calls and its
+     * implementation.
      */
     restoreAllMocks(): typeof vi;
     /**

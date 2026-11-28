@@ -472,3 +472,11 @@ controller.signal.addEventListener("abort", event => {
 controller.signal.removeEventListener("abort", event => {
   expectType(event).is<Event>();
 });
+
+expectType(Bun.escapeHTML(null)).is<string>();
+expectType(Bun.escapeHTML(undefined)).is<string>();
+expectType(Bun.escapeHTML(42n)).is<string>();
+declare const nullableHTML: string | null | undefined;
+expectType(Bun.escapeHTML(nullableHTML)).is<string>();
+// @ts-expect-error symbols cannot be converted to strings
+Bun.escapeHTML(Symbol.iterator);

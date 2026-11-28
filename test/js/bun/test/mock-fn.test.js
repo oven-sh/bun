@@ -1672,6 +1672,15 @@ describe("spyOn", () => {
         },
       );
 
+      test("leaves the sandbox unchanged once a spy on an index is restored", () => {
+        if (!isBun) return;
+        const { sandbox, context, global } = makeContext(contextify);
+        const descriptors = Object.getOwnPropertyDescriptors(sandbox);
+        spyOn(global, 0).mockRestore();
+        expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
+        expect(vm.runInContext("0 in globalThis", context)).toBe(false);
+      });
+
       test("leaves the sandbox unchanged after restoreAllMocks()", () => {
         const { sandbox, global } = makeContext(contextify);
         const descriptors = Object.getOwnPropertyDescriptors(sandbox);

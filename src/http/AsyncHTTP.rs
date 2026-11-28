@@ -53,7 +53,8 @@ struct OriginalClientState<'a> {
 
 bun_core::intrusive_field!(AsyncHTTP<'static>, next: bun_threading::Link<Self>);
 
-// SAFETY: what belongs to the HTTP thread is `None` outside an attempt, and callbacks are registered for that thread.
+// SAFETY: what belongs to the HTTP thread is `None` outside an attempt, `signals` point to atomics, and
+// callbacks are registered for that thread.
 unsafe impl Send for AsyncHTTP<'static> {}
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);

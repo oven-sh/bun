@@ -18,12 +18,12 @@ unsafe impl<T> IntrusivePtr for Box<T> {
     type Target = T;
 
     fn into_raw(self) -> *mut T {
-        Box::into_raw(self)
+        bun_core::heap::into_raw(self)
     }
 
     unsafe fn from_raw(ptr: *mut T) -> Self {
         // SAFETY: fn contract.
-        unsafe { Box::from_raw(ptr) }
+        unsafe { bun_core::heap::take(ptr) }
     }
 }
 

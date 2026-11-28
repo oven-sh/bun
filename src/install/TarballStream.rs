@@ -708,11 +708,11 @@ impl TarballStream {
                 "TarballStream::finish: network.tarball_stream != this",
             );
             drop((*network).tarball_stream.take());
+            *source = TarballSource::Network(Some(Unique::from_raw(network)));
 
             // Publish last: once the task is on `resolve_tasks` the main
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
-            *source = TarballSource::Network(Some(Unique::from_raw(network)));
             (INBOX.resolve_tasks).push(Unique::from_raw(task));
             INBOX.wake();
         } // unsafe

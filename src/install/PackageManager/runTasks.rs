@@ -151,7 +151,7 @@ impl Drop for ReturnResolveTask<'_> {
             | Task::Job::Extract {
                 source: Task::TarballSource::Network(Some(network)),
                 ..
-            } = &mut self.task.job
+            } = &self.task.job
             {
                 (self.manager.preallocated_network_tasks).put(network.as_ptr());
             }

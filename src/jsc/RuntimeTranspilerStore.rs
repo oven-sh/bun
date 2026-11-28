@@ -213,9 +213,7 @@ impl RuntimeTranspilerStore {
 
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
     /// turn of the wait): jobs already handed back whose completion will not
-    /// run release their source, log and module promise here instead. Queued ⇒
-    /// the pool thread's last touch of the slot was the push (its ticket was
-    /// moved out first), so the slot is this thread's again.
+    /// run release their source, log and module promise here instead.
     pub fn release_queued_jobs_for_teardown(&self) {
         for job in self.queue.pop_batch() {
             self.put(job);

@@ -4,7 +4,7 @@ import { cp, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isArm64, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// esbuild@0.19.8 does not support win32-arm64 at runtime
+// esbuild@0.11.23, the version that estrella installs, has no win32-arm64 binary
 const isWindowsArm64 = isWindows && isArm64;
 
 beforeAll(() => {
@@ -22,7 +22,7 @@ describe.concurrent("esbuild integration test", () => {
     const packageDir = dir + "";
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "esbuild@0.19.8"],
+      cmd: [bunExe(), "install", "esbuild@0.28.2"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -33,7 +33,7 @@ describe.concurrent("esbuild integration test", () => {
     var err = await stderr.text();
     var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
-    expect(out).toContain("esbuild@0.19.8");
+    expect(out).toContain("esbuild@0.28.2");
     expect(await exited).toBe(0);
 
     ({ stdout, stderr, exited } = spawn({
@@ -48,7 +48,7 @@ describe.concurrent("esbuild integration test", () => {
     err = await stderr.text();
     out = await stdout.text();
     expect(err).toBe("");
-    expect(out).toContain("0.19.8");
+    expect(out).toContain("0.28.2");
     expect(await exited).toBe(0);
   });
 
@@ -116,7 +116,7 @@ describe.concurrent("esbuild integration test", () => {
         dependencies: {
           "estrella": "1.4.1",
           // different version of esbuild
-          "esbuild": "0.19.8",
+          "esbuild": "0.28.2",
         },
       }),
     );
@@ -133,7 +133,7 @@ describe.concurrent("esbuild integration test", () => {
     [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("estrella@1.4.1");
-    expect(out).toContain("esbuild@0.19.8");
+    expect(out).toContain("esbuild@0.28.2");
     expect(exitCode).toBe(0);
 
     ({ stdout, stderr, exited } = spawn({
@@ -161,7 +161,7 @@ describe.concurrent("esbuild integration test", () => {
 
     [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
     expect(err).toBe("");
-    expect(out).toContain("0.19.8");
+    expect(out).toContain("0.28.2");
     expect(exitCode).toBe(0);
 
     ({ stdout, stderr, exited } = spawn({

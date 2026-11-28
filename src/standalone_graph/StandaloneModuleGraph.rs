@@ -26,7 +26,7 @@ use bun_sourcemap as SourceMap;
 use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
 use bun_sys::{self as Syscall, E, Fd, Stat, UnlinkOnDrop};
 
-use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
+use crate::compiled_program::{self, CompiledProgramInput, DiskWins, ImagePlace, Payload};
 use crate::executable_file::{
     ElfWriteError, ImageRange, MappedFile, Original, PayloadParts, TemplateBytes,
     with_executable_image, write_elf,
@@ -173,7 +173,7 @@ impl StandaloneModuleGraph {
     }
 
     /// `find_ref`, also for a file that was written on the disk.
-    fn find_embedded_file(&self, name: &[u8]) -> Option<&File> {
+    pub(crate) fn find_embedded_file(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return self.find_at_source_path(name);
         }
@@ -187,13 +187,16 @@ impl StandaloneModuleGraph {
         self.find_ref(name).filter(|file| self.has_data(file))
     }
 
-    /// What a program loads as a library. What the program itself has written is on the disk: `find_written_code`. What another process has written there is not trusted, so the embedded file is loaded.
+    /// What a program loads as a library. What the program itself has written is on the disk: `find_written_code`. What another process has written there is not trusted, so the embedded file is loaded. In the folder of the build it is the file on the disk, unless other users can write it.
     pub fn find_library(&self, name: &[u8]) -> Option<&File> {
         if compiled_program::find_written_code(name).is_some() {
             return None;
         }
-        self.find_embedded_file(name)
-            .filter(|file| self.has_data(file))
+        let found = match is_bun_standalone_file_path(name) {
+            true => self.find_embedded_file(name),
+            false => self.find_at_source_path_beside(name, DiskWins::IfOnlyThisUserCanWrite),
+        };
+        found.filter(|file| self.has_data(file))
     }
 
     fn has_data(&self, file: &File) -> bool {

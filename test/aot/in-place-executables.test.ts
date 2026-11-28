@@ -947,6 +947,68 @@ test.skipIf(!systemCC)(
   },
 );
 
+// `__dirname` holds the folder of the build. On another machine anybody may be able to make that folder.
+test.skipIf(!systemCC || isWindows)(
+  "an embedded library is not looked for in the folder of the build where other users can write it",
+  async () => {
+    using dir = tempDir("aot-library-laid-in-the-folder-of-the-build", {
+      "library.c": "int number(void) { return NUMBER; }\n",
+      "app/native/.keep": "",
+      "app/main.cjs": `const { copyFileSync, symlinkSync, unlinkSync } = require("node:fs");
+const path = require("node:path");
+const { dlopen } = require("bun:ffi");
+const name = path.join(__dirname, "native", ["library", "bin"].join("."));
+const [how, from] = process.argv.slice(2);
+if (how === "write") copyFileSync(from, name);
+if (how === "link") (unlinkSync(name), symlinkSync(from, name));
+console.log(dlopen(name, { number: { args: [], returns: "int" } }).symbols.number());
+`,
+    });
+    const folder = String(dir);
+    const [app, native] = [join(folder, "app"), join(folder, "app", "native")];
+    for (const [number, to] of [
+      [1, join(native, "library.bin")],
+      [2, join(folder, "other.bin")],
+    ]) {
+      const command = [systemCC!, "-shared", "-fPIC", `-DNUMBER=${number}`];
+      expect(await run(folder, [...command, "library.c", "-o", `${to}`])).toMatchObject({ exitCode: 0 });
+    }
+    const built = await run(app, [
+      ...[bunExe(), "build", "--compile", "--aot", "./main.cjs"],
+      ...["--asset", "./native/library.bin", "--outfile", "../built.exe"],
+    ]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const executable = join(folder, "built.exe");
+    const env = { ...bunEnv, BUN_TMPDIR: folder };
+    const loads = (...args: string[]) => run(folder, [executable, ...args], env);
+    const loaded = (number: number) => ({ stdout: `${number}\n`, stderr: "", exitCode: 0 });
+
+    const other = join(folder, "other.bin");
+    const laid = join(native, "library.bin");
+    renameSync(app, join(folder, "moved-away"));
+    expect(await loads()).toEqual(loaded(1));
+    mkdirSync(native, { recursive: true });
+    copyFileSync(other, laid);
+    for (const path of [laid, native, app]) {
+      chmodSync(path, 0o777);
+      expect({ path, loads: await loads() }).toEqual({ path, loads: loaded(1) });
+      chmodSync(path, 0o755);
+    }
+    // What the user lays there is loaded, and so is what the program does, then and at the next start.
+    expect(await loads()).toEqual(loaded(2));
+    rmSync(laid);
+    expect(await loads()).toEqual(loaded(1));
+    expect(await loads("write", other)).toEqual(loaded(2));
+    expect(await loads("link", other)).toEqual(loaded(2));
+    expect(await loads()).toEqual(loaded(2));
+    chmodSync(other, 0o777);
+    expect(await loads()).toEqual(loaded(1));
+  },
+);
+
 // Without a C compiler the scene has no addon, and its test is skipped.
 const writtenAddon = !systemCC
   ? undefined

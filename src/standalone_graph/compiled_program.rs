@@ -894,6 +894,85 @@ pub fn normalize_source_path(name: &[u8]) -> Option<Box<[u8]>> {
     Some(absolute_key(name)?.as_bytes().into())
 }
 
+/// Whether nobody but this user and the system can have laid `path` where it is, or can replace it. Every folder and link on the way counts.
+#[cfg(unix)]
+fn only_this_user_can_write(path: &[u8]) -> bool {
+    // SAFETY: both take no arguments and cannot fail.
+    let (user, group) = unsafe { (libc::geteuid(), libc::getegid()) };
+    // The group of administrators, who can become root.
+    let administrators = if cfg!(target_os = "macos") { 80 } else { 0 };
+    let is_safe = |it: &bun_sys::Stat, may_be_sticky: bool| {
+        let mode = it.st_mode as u32;
+        let is_sticky = may_be_sticky && mode & 0o1000 != 0;
+        let is_groups_own = it.st_gid == group || it.st_gid == 0 || it.st_gid == administrators;
+        let others = if is_groups_own { 0o002 } else { 0o022 };
+        (it.st_uid == user || it.st_uid == 0) && (is_sticky || mode & others == 0)
+    };
+    let mut at: Vec<u8> = Vec::new();
+    let mut pending: Vec<Box<[u8]>> = Vec::new();
+    let push_components = |pending: &mut Vec<Box<[u8]>>, path: &[u8]| {
+        let components = path.rsplit(|&it| it == b'/');
+        pending.extend(
+            components
+                .filter(|it| !matches!(*it, b"" | b"."))
+                .map(Box::from),
+        );
+    };
+    push_components(&mut pending, path);
+    let Ok(root) = bun_sys::lstat(bun_core::zstr!("/")) else {
+        return false;
+    };
+    if !is_safe(&root, true) {
+        return false;
+    }
+    let mut links = 0;
+    while let Some(component) = pending.pop() {
+        let parent = at.len();
+        if *component == *b".." {
+            at.truncate(at.iter().rposition(|&it| it == b'/').unwrap_or(0));
+            continue;
+        }
+        at.push(b'/');
+        at.extend_from_slice(&component);
+        let name = bun_core::ZBox::from_bytes(&at);
+        let Ok(stat) = bun_sys::lstat(&name) else {
+            return false;
+        };
+        if !bun_sys::S::ISLNK(stat.st_mode as u32) {
+            if !is_safe(&stat, bun_sys::S::ISDIR(stat.st_mode as u32)) {
+                return false;
+            }
+            continue;
+        }
+        links += 1;
+        if links > 40 || (stat.st_uid != user && stat.st_uid != 0) {
+            return false;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let Ok(length) = bun_sys::readlink(&name, &mut buffer[..]) else {
+            return false;
+        };
+        let target = &buffer[..length];
+        at.truncate(if target.starts_with(b"/") { 0 } else { parent });
+        push_components(&mut pending, target);
+    }
+    true
+}
+
+#[cfg(windows)]
+fn only_this_user_can_write(_path: &[u8]) -> bool {
+    true
+}
+
+/// Which of the two is meant by a source path at which the disk has a file and the executable too.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DiskWins {
+    /// For data: the file may have been written since the build, and the program may write it.
+    Always,
+    /// For a library: the folder of the build is any folder elsewhere, and what another user can lay there is not trusted.
+    IfOnlyThisUserCanWrite,
+}
+
 pub fn has_written_files() -> bool {
     HAS_WRITTEN_FILES.load(core::sync::atomic::Ordering::Acquire)
 }
@@ -2315,12 +2394,26 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
+        self.find_at_source_path_beside(name, DiskWins::Always)
+    }
+
+    pub(crate) fn find_at_source_path_beside(
+        &self,
+        name: &[u8],
+        disk_wins: DiskWins,
+    ) -> Option<&File> {
         let program = self.compiled_program.as_ref()?;
         if !bun_paths::is_absolute(name) {
             // It may lead into the executable.
             let key: &[u8] = &absolute_key(name)?;
             if is_bun_standalone_file_path(key) {
-                return self.find_ref(key);
+                return match disk_wins {
+                    DiskWins::Always => self.find_ref(key),
+                    DiskWins::IfOnlyThisUserCanWrite => {
+                        let is_written = find_written_code(key).is_some();
+                        self.find_embedded_file(key).filter(|_| !is_written)
+                    }
+                };
             }
         }
         if !program.preserves_source_paths && program.root_on_build_machine().is_none() {
@@ -2347,10 +2440,14 @@ impl StandaloneModuleGraph {
             return None;
         }
         // As for a directory, the disk wins: the file may have been written since the build, and the program may write it.
-        if bun_sys::exists(key.as_bytes()) {
-            return None;
-        }
         let file = &self.files.values()[file_index];
+        if bun_sys::exists(key.as_bytes()) {
+            let is_embedded_meant = disk_wins == DiskWins::IfOnlyThisUserCanWrite
+                && !program.preserves_source_paths
+                && *file.name == *key_in_graph
+                && !only_this_user_can_write(key.as_bytes());
+            return is_embedded_meant.then_some(file);
+        }
         let has_source = |it: &[u8]| self.has_source_on_disk(it, key.as_bytes());
         let is_gone = self.has_file_vanished(file.name)
             || self.is_file_for_file_system_alone(file)

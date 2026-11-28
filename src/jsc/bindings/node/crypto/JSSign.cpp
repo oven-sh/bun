@@ -114,7 +114,7 @@ void JSSignPrototype::finishCreation(JSC::VM& vm)
 
 JSSignPrototype* JSSignPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    JSSignPrototype* prototype = new (NotNull, JSC::allocateCell<JSSignPrototype>(vm)) JSSignPrototype(vm, structure);
+    JSSignPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSSignPrototype>(vm)) JSSignPrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
 }

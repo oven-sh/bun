@@ -14,15 +14,9 @@ public:
 
     static JSKeyObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSKeyObjectPrototype* prototype = new (NotNull, JSC::allocateCell<JSKeyObjectPrototype>(vm)) JSKeyObjectPrototype(vm, structure);
+        JSKeyObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSKeyObjectPrototype>(vm)) JSKeyObjectPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

@@ -1,6 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
@@ -1242,7 +1243,7 @@ const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s,
 
 ProcessBindingConstants* ProcessBindingConstants::create(VM& vm, Structure* structure)
 {
-    ProcessBindingConstants* obj = new (NotNull, allocateCell<ProcessBindingConstants>(vm)) ProcessBindingConstants(vm, structure);
+    ProcessBindingConstants* obj = new (NotNull, Bun::allocatePlainObjectCell<ProcessBindingConstants>(vm)) ProcessBindingConstants(vm, structure);
     obj->finishCreation(vm);
     return obj;
 }

@@ -161,7 +161,7 @@ public:
 
     static JSBunRequestPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunRequestPrototype))) JSBunRequestPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSBunRequestPrototype>(vm)) JSBunRequestPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -174,13 +174,6 @@ public:
     }
 
     DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunRequestPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
 
 private:
     JSBunRequestPrototype(JSC::VM& vm, JSC::Structure* structure)

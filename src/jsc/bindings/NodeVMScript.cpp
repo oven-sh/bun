@@ -543,18 +543,12 @@ public:
 
     static NodeVMScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        NodeVMScriptPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(NodeVMScriptPrototype))) NodeVMScriptPrototype(vm, structure);
+        NodeVMScriptPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell<NodeVMScriptPrototype>(vm)) NodeVMScriptPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
 
     DECLARE_INFO;
-    template<typename CellType, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
@@ -568,7 +562,6 @@ private:
 
     void finishCreation(VM&);
 };
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, NodeVMScriptPrototype::Base);
 
 static const struct HashTableValue scriptPrototypeTableValues[] = {
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 1 } },

@@ -1156,12 +1156,6 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunObject, Base);
-        return &vm.plainObjectSpace();
-    }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -1176,7 +1170,7 @@ public:
     static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        auto* object = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunObject))) JSBunObject(vm, structure);
+        auto* object = new (NotNull, Bun::allocatePlainObjectCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
         return object;
     }

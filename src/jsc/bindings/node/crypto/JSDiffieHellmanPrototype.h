@@ -14,15 +14,9 @@ public:
 
     static JSDiffieHellmanPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSDiffieHellmanPrototype* prototype = new (NotNull, JSC::allocateCell<JSDiffieHellmanPrototype>(vm)) JSDiffieHellmanPrototype(vm, structure);
+        JSDiffieHellmanPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSDiffieHellmanPrototype>(vm)) JSDiffieHellmanPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

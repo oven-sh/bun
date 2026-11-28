@@ -18,15 +18,9 @@ public:
 
     static JSX509CertificatePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSX509CertificatePrototype* prototype = new (NotNull, allocateCell<JSX509CertificatePrototype>(vm)) JSX509CertificatePrototype(vm, structure);
+        JSX509CertificatePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSX509CertificatePrototype>(vm)) JSX509CertificatePrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

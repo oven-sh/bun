@@ -1,5 +1,6 @@
 
 #include "ProcessBindingBuffer.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JSBuffer.h"
 
@@ -127,7 +128,7 @@ const ClassInfo ProcessBindingBuffer::s_info = { "ProcessBindingBuffer"_s, &Base
 
 ProcessBindingBuffer* ProcessBindingBuffer::create(VM& vm, Structure* structure)
 {
-    ProcessBindingBuffer* obj = new (NotNull, allocateCell<ProcessBindingBuffer>(vm)) ProcessBindingBuffer(vm, structure);
+    ProcessBindingBuffer* obj = new (NotNull, Bun::allocatePlainObjectCell<ProcessBindingBuffer>(vm)) ProcessBindingBuffer(vm, structure);
     obj->finishCreation(vm);
     return obj;
 }

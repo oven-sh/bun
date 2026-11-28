@@ -3571,17 +3571,10 @@ public:
 
     DECLARE_INFO;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NativeGlobals, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static NativeGlobals* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
         auto* structure = JSC::Structure::create(vm, globalObject, jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        auto* object = new (NotNull, JSC::allocateCell<NativeGlobals>(vm)) NativeGlobals(vm, structure);
+        auto* object = new (NotNull, Bun::allocatePlainObjectCell<NativeGlobals>(vm)) NativeGlobals(vm, structure);
         object->finishCreation(vm);
         // Otherwise each lazy putDirect makes a new Structure, per global object, and deopts code compiled against the last one.
         object->convertToDictionary(vm);

@@ -55,18 +55,12 @@ public:
 
     static JSHmacPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSHmacPrototype* prototype = new (NotNull, JSC::allocateCell<JSHmacPrototype>(vm)) JSHmacPrototype(vm, structure);
+        JSHmacPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSHmacPrototype>(vm)) JSHmacPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
 
     DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

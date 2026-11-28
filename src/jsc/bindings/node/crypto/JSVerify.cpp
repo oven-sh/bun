@@ -121,7 +121,7 @@ void JSVerifyPrototype::finishCreation(JSC::VM& vm)
 
 JSVerifyPrototype* JSVerifyPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    JSVerifyPrototype* prototype = new (NotNull, JSC::allocateCell<JSVerifyPrototype>(vm)) JSVerifyPrototype(vm, structure);
+    JSVerifyPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSVerifyPrototype>(vm)) JSVerifyPrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
 }

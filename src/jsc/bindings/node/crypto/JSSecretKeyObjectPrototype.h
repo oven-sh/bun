@@ -15,15 +15,9 @@ public:
 
     static JSSecretKeyObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSSecretKeyObjectPrototype* prototype = new (NotNull, JSC::allocateCell<JSSecretKeyObjectPrototype>(vm)) JSSecretKeyObjectPrototype(vm, structure);
+        JSSecretKeyObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSSecretKeyObjectPrototype>(vm)) JSSecretKeyObjectPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

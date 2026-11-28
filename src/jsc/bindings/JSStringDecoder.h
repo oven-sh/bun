@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "BunClientData.h"
 #include "BufferEncodingType.h"
 
 namespace WebCore {
@@ -74,18 +75,12 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSStringDecoderPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStringDecoderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStringDecoderPrototype))) JSStringDecoderPrototype(vm, structure);
+        JSStringDecoderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSStringDecoderPrototype>(vm)) JSStringDecoderPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());

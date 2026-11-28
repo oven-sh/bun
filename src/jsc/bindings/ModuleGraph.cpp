@@ -895,17 +895,11 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static JSModuleGraphPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        auto* prototype = new (NotNull, allocatePlainObjectCell(vm, sizeof(JSModuleGraphPrototype))) JSModuleGraphPrototype(vm, structure);
+        auto* prototype = new (NotNull, allocatePlainObjectCell<JSModuleGraphPrototype>(vm)) JSModuleGraphPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
     DECLARE_INFO;
-    template<typename CellType, SubspaceAccess>
-    static GCClient::IsoSubspace* subspaceFor(VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSModuleGraphPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         auto* structure = createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());

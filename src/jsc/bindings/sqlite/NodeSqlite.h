@@ -252,16 +252,9 @@ public:
 
     static JSDatabaseSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDatabaseSyncPrototype))) JSDatabaseSyncPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSDatabaseSyncPrototype>(vm)) JSDatabaseSyncPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDatabaseSyncPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -470,16 +463,9 @@ public:
 
     static JSStatementSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatementSyncPrototype))) JSStatementSyncPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSStatementSyncPrototype>(vm)) JSStatementSyncPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -580,16 +566,9 @@ public:
 
     static JSStatementSyncIteratorPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatementSyncIteratorPrototype))) JSStatementSyncIteratorPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSStatementSyncIteratorPrototype>(vm)) JSStatementSyncIteratorPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatementSyncIteratorPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -669,16 +648,9 @@ public:
 
     static JSNodeSqliteSessionPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSNodeSqliteSessionPrototype))) JSNodeSqliteSessionPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSNodeSqliteSessionPrototype>(vm)) JSNodeSqliteSessionPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteSessionPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -848,16 +820,9 @@ public:
 
     static JSNodeSqliteTagStorePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSNodeSqliteTagStorePrototype))) JSNodeSqliteTagStorePrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSNodeSqliteTagStorePrototype>(vm)) JSNodeSqliteTagStorePrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeSqliteTagStorePrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

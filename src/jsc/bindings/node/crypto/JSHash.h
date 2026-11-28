@@ -63,18 +63,12 @@ public:
 
     static JSHashPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSHashPrototype* prototype = new (NotNull, JSC::allocateCell<JSHashPrototype>(vm)) JSHashPrototype(vm, structure);
+        JSHashPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSHashPrototype>(vm)) JSHashPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
 
     DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

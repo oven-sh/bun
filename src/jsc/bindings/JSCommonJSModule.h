@@ -249,13 +249,6 @@ public:
     {
     }
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireResolveFunctionPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     void finishCreation(JSC::VM& vm);
 };
 
@@ -273,13 +266,6 @@ public:
         JSC::Structure* structure)
         : Base(vm, structure)
     {
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireFunctionPrototype, Base);
-        return &vm.plainObjectSpace();
     }
 
     void finishCreation(JSC::VM&);

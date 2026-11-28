@@ -146,8 +146,24 @@ namespace Bun {
 // once-per-class setup paths, so each wrapper class doesn't inline them.
 JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype, JSC::TypeInfo, const JSC::ClassInfo*, JSC::IndexingType = JSC::NonArray, unsigned inlineCapacity = 0);
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
-// `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
-void* allocatePlainObjectCell(JSC::VM&, size_t);
+// `JSC::allocateCell<T>` for a `JSNonFinalObject` subclass that adds no field (a prototype object, a singleton). They share `vm.plainObjectSpace()`.
+template<typename T> void* allocatePlainObjectCell(JSC::VM&);
+class PlainObjectSpace {
+    template<typename T> friend void* allocatePlainObjectCell(JSC::VM&);
+    static void* allocate(JSC::VM&);
+};
+template<typename T>
+ALWAYS_INLINE void* allocatePlainObjectCell(JSC::VM& vm)
+{
+    static_assert(std::is_base_of_v<JSC::JSNonFinalObject, T>);
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(T, JSC::JSNonFinalObject);
+    void* cell = PlainObjectSpace::allocate(vm);
+#if ENABLE(GC_VALIDATION)
+    // As in `JSC::allocateCell<T>`: the assertion for a `finishCreation` that skips its base names `T`.
+    vm.setInitializingObjectClass(T::info());
+#endif
+    return cell;
+}
 // `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.
 void putToStringTagWithoutTransition(JSC::VM&, JSC::JSObject*, const JSC::ClassInfo*);
 }

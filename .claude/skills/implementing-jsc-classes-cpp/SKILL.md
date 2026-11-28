@@ -38,6 +38,8 @@ static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) {
 
 `subspaceForImpl` only reads the slots inline. The subspaces themselves are created by `subspaceForImplSlow` in `src/jsc/bindings/BunClientData.cpp`, which is the only place that constructs an `IsoSubspace` (`test/internal/source-lints/iso-subspace-creation.test.ts` checks this).
 
+A class without C++ fields (a prototype, a singleton object) needs no `subspaceFor`. It allocates with `Bun::allocatePlainObjectCell<T>(vm)` from `BunClientData.h`. The compiler then rejects a `T` that adds a field or its own `destroy`.
+
 ## Property Definitions
 
 ```cpp
@@ -59,13 +61,10 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSFooPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure) {
-        JSFooPrototype* prototype = new (NotNull, allocateCell<JSFooPrototype>(vm)) JSFooPrototype(vm, structure);
+        JSFooPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSFooPrototype>(vm)) JSFooPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) { return &vm.plainObjectSpace(); }
 
     DECLARE_INFO;
 

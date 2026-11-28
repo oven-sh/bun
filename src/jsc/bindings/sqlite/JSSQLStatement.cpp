@@ -728,18 +728,12 @@ public:
 
     static JSSQLStatementPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSSQLStatementPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSQLStatementPrototype))) JSSQLStatementPrototype(vm, globalObject, structure);
+        JSSQLStatementPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell<JSSQLStatementPrototype>(vm)) JSSQLStatementPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSQLStatementPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());

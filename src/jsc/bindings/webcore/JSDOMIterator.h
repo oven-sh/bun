@@ -52,17 +52,9 @@ public:
     using Base = JSC::JSNonFinalObject;
     using DOMWrapped = typename JSWrapper::DOMWrapped;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMIteratorPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
     static JSDOMIteratorPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMIteratorPrototype, JSDOMIteratorPrototype::Base);
-        JSDOMIteratorPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMIteratorPrototype))) JSDOMIteratorPrototype(vm, structure);
+        JSDOMIteratorPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSDOMIteratorPrototype>(vm)) JSDOMIteratorPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }

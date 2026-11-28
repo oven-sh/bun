@@ -418,7 +418,7 @@ static const HashTableValue NodeVMModulePrototypeTableValues[] = {
 
 NodeVMModulePrototype* NodeVMModulePrototype::create(VM& vm, Structure* structure)
 {
-    NodeVMModulePrototype* prototype = new (NotNull, allocateCell<NodeVMModulePrototype>(vm)) NodeVMModulePrototype(vm, structure);
+    NodeVMModulePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<NodeVMModulePrototype>(vm)) NodeVMModulePrototype(vm, structure);
     prototype->finishCreation(vm);
     return prototype;
 }

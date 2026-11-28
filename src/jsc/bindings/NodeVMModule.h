@@ -93,12 +93,6 @@ public:
     static NodeVMModulePrototype* create(VM& vm, Structure* structure);
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMModulePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
 
@@ -107,8 +101,6 @@ private:
 
     void finishCreation(VM& vm);
 };
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMModulePrototype, NodeVMModulePrototype::Base);
 
 class NodeVMModuleConstructor final : public JSC::InternalFunction {
 public:

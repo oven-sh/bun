@@ -201,7 +201,7 @@ const ClassInfo ProcessBindingFs::s_info = { "ProcessBindingFs"_s, &Base::s_info
 
 ProcessBindingFs* ProcessBindingFs::create(VM& vm, Structure* structure)
 {
-    ProcessBindingFs* obj = new (NotNull, allocateCell<ProcessBindingFs>(vm)) ProcessBindingFs(vm, structure);
+    ProcessBindingFs* obj = new (NotNull, Bun::allocatePlainObjectCell<ProcessBindingFs>(vm)) ProcessBindingFs(vm, structure);
     obj->finishCreation(vm);
     return obj;
 }

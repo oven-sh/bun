@@ -12,15 +12,9 @@ public:
 
     static JSConnectionsListPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSConnectionsListPrototype* prototype = new (NotNull, JSC::allocateCell<JSConnectionsListPrototype>(vm)) JSConnectionsListPrototype(vm, structure);
+        JSConnectionsListPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSConnectionsListPrototype>(vm)) JSConnectionsListPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
-    }
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;

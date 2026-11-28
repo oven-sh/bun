@@ -13,9 +13,8 @@ public:
 
     static JSDOMPrototype* create(JSC::VM& vm, JSDOMGlobalObject& globalObject, JSC::JSObject* parentPrototype)
     {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMPrototype, Base);
         auto* structure = Bun::createClassStructure(vm, &globalObject, parentPrototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        auto* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMPrototype))) JSDOMPrototype(vm, structure);
+        auto* prototype = new (NotNull, Bun::allocatePlainObjectCell<JSDOMPrototype>(vm)) JSDOMPrototype(vm, structure);
         prototype->finishCreation(vm);
         // Last: a put on a possible prototype flushes the VM's prototype chain caches.
         prototype->structure()->setMayBePrototype(true);

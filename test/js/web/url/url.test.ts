@@ -127,6 +127,97 @@ describe("url", () => {
     expect(h1.port).toBe("8");
   });
 
+  // The URL Standard forbids 17 code points in a host, all of them ASCII. A supplementary code point with the same
+  // low 16 bits (U+10020 for U+0020) is an ordinary host code point.
+  describe("opaque hosts: supplementary code points whose low 16 bits are a forbidden host code point", () => {
+    const forbiddenHostCodePoints = [
+      0x00, 0x09, 0x0a, 0x0d, 0x20, 0x23, 0x2f, 0x3a, 0x3c, 0x3e, 0x3f, 0x40, 0x5b, 0x5c, 0x5d, 0x5e, 0x7c,
+    ];
+
+    it("are percent-encoded, in each of the 16 planes", () => {
+      // The parser reads the authority 16 code units at a time. The long hosts put the code point at the start of a
+      // block, across the edge of two blocks and after the last full block.
+      const h = (length: number) => Buffer.alloc(length, "h").toString();
+      const wrong: string[] = [];
+      for (let plane = 1; plane <= 16; plane++) {
+        for (const low of forbiddenHostCodePoints) {
+          const codePoint = plane * 0x10000 + low;
+          const char = String.fromCodePoint(codePoint);
+          const encoded = encodeURIComponent(char);
+          const hosts = [["a" + char + "b", "a" + encoded + "b"]];
+          for (const offset of [0, 15, 16, 31, 32]) {
+            hosts.push([h(offset) + char + h(32 - offset), h(offset) + encoded + h(32 - offset)]);
+          }
+          for (const [host, expected] of hosts) {
+            const results = [
+              [URL.parse(`zz://${host}/`)?.href, `zz://${expected}/`],
+              [URL.parse(`zz://u:p@${host}/`)?.href, `zz://u:p@${expected}/`],
+              [URL.parse(`//${host}/q`, "zz://b/")?.href, `zz://${expected}/q`],
+            ];
+            if (results.some(([actual, want]) => actual !== want)) {
+              wrong.push(`U+${codePoint.toString(16).toUpperCase()} (host of ${host.length} code units)`);
+              break;
+            }
+          }
+        }
+      }
+      expect(wrong.join(", ")).toBe("");
+      // Neighbours whose low 16 bits are not a forbidden host code point.
+      expect(new URL("zz://a\uFFFFb/").host).toBe("a%EF%BF%BFb");
+      expect(new URL("zz://a\u{1007D}b/").host).toBe("a%F0%90%81%BDb");
+    });
+
+    it("parse at every entry point", () => {
+      expect(new URL("zz://a\u{10020}/").host).toBe("a%F0%90%80%A0");
+      expect(new URL("zz://\u{10000}").href).toBe("zz://%F0%90%80%80");
+      expect(new URL("zz://a\u{1002F}b:80/p").href).toBe("zz://a%F0%90%80%AFb:80/p");
+      expect(new URL("//a\u{1003A}/x", "zz://h/").href).toBe("zz://a%F0%90%80%BA/x");
+      expect(new URL("x", "zz://a\u{1007C}/").href).toBe("zz://a%F0%90%81%BC/x");
+      expect(new URL("zz://u@a\u{10020}b/").host).toBe("a%F0%90%80%A0b");
+      expect(URL.canParse("zz://a\u{10020}/")).toBe(true);
+      expect(URL.canParse("//a\u{10020}/", "zz://h/")).toBe(true);
+      expect(URL.parse("zz://a\u{10020}/")?.href).toBe("zz://a%F0%90%80%A0/");
+      expect(new Request("zz://a\u{10020}b/").url).toBe("zz://a%F0%90%80%A0b/");
+      expect(Response.redirect("zz://a\u{10020}b/").headers.get("location")).toBe("zz://a%F0%90%80%A0b/");
+      const pattern = new URLPattern({ protocol: "zz", hostname: "*" });
+      expect(pattern.test("zz://a\u{10020}b/")).toBe(true);
+      expect(pattern.exec("zz://a\u{10020}b/")?.hostname.input).toBe("a%F0%90%80%A0b");
+    });
+
+    it("are accepted by the href, host and hostname setters", () => {
+      const url = new URL("zz://h/p");
+      url.host = "a\u{10020}b";
+      expect(url.href).toBe("zz://a%F0%90%80%A0b/p");
+      url.host = "c\u{1002F}d:81";
+      expect(url.href).toBe("zz://c%F0%90%80%AFd:81/p");
+      url.hostname = "e\u{10000}f";
+      expect(url.href).toBe("zz://e%F0%90%80%80f:81/p");
+      // The hostname setter refuses a port, with or without such a code point.
+      url.hostname = "g\u{1003A}h:82";
+      expect(url.href).toBe("zz://e%F0%90%80%80f:81/p");
+      url.href = "zz://\u{1005B}\u{1005D}/";
+      expect(url.href).toBe("zz://%F0%90%81%9B%F0%90%81%9D/");
+    });
+
+    it("the forbidden host code points themselves are still refused", () => {
+      // The ones the parser gives no other role: tab, LF and CR are removed from the input, # / ? end the authority,
+      // : starts the port and @ ends the userinfo (the host starts after it).
+      for (const low of [0x00, 0x20, 0x3c, 0x3e, 0x5b, 0x5c, 0x5d, 0x5e, 0x7c]) {
+        const char = String.fromCharCode(low);
+        // An 8-bit string, then a 16-bit string with a supplementary code point beside the forbidden one.
+        for (const input of [`zz://a${char}b/`, `zz://a${char}\u{10020}b/`]) {
+          expect([low, URL.canParse(input)]).toEqual([low, false]);
+          expect(() => new URL(input)).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
+        }
+        const url = new URL("zz://h/p");
+        url.host = `a${char}\u{10020}b`;
+        url.hostname = `a${char}\u{10020}b`;
+        expect([low, url.href]).toEqual([low, "zz://h/p"]);
+      }
+      expect(new URL("zz://a\u{10020}\tb\n\u{1002F}\rc/").host).toBe("a%F0%90%80%A0b%F0%90%80%AFc");
+    });
+  });
+
   // Unicode 16 changed these code points' UTS #46 status; ICU 76 is the first release with that table.
   it.skipIf(parseInt(process.versions.icu!) < 76)("special-scheme hosts use the Unicode 16 IDNA table", () => {
     expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");

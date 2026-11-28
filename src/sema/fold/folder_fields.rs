@@ -470,54 +470,65 @@ impl Folder<'_, '_> {
             })
     }
 
-    fn evaluates_constants_alone(&self, e: ExprId) -> bool {
+    fn evaluates_constants_alone(&self, mut e: ExprId) -> bool {
         let hir = self.hir;
-        let e = hir.skip_type_assertions(e);
-        match hir[e].kind {
-            ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::Regex { .. }
-            | ExprKind::This
-            | ExprKind::Fn(_) => true,
-            ExprKind::Ident(_) => matches!(
-                self.bound.static_binding(e),
-                Some(Binding::Symbol(_) | Binding::CommonJs(_))
-            ),
-            ExprKind::Unary {
-                op: UnOp::Typeof | UnOp::Not | UnOp::Void,
-                operand,
-            } => self.evaluates_constants_alone(operand),
-            ExprKind::Binary {
-                op:
-                    BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq | BinOp::And | BinOp::Or,
-                left,
-                right,
-            } => {
-                self.evaluates_type_test_or_constant(left)
-                    && self.evaluates_type_test_or_constant(right)
+        loop {
+            e = hir.skip_type_assertions(e);
+            match hir[e].kind {
+                ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::Regex { .. }
+                | ExprKind::This
+                | ExprKind::Fn(_) => return true,
+                ExprKind::Ident(_) => {
+                    return matches!(
+                        self.bound.static_binding(e),
+                        Some(Binding::Symbol(_) | Binding::CommonJs(_))
+                    );
+                }
+                ExprKind::Unary {
+                    op: UnOp::Typeof | UnOp::Not | UnOp::Void,
+                    operand,
+                } => e = operand,
+                // A chain of operators leans left, as deep as it is long.
+                ExprKind::Binary {
+                    op:
+                        BinOp::EqEqEq
+                        | BinOp::NotEqEq
+                        | BinOp::EqEq
+                        | BinOp::NotEq
+                        | BinOp::And
+                        | BinOp::Or,
+                    left,
+                    right,
+                } => {
+                    if self.may_be_object(left)
+                        || self.may_be_object(right)
+                        || !self.evaluates_constants_alone(right)
+                    {
+                        return false;
+                    }
+                    e = left;
+                }
+                ExprKind::Object(properties) => return properties.len() == 0,
+                ExprKind::Array(items) => return items.is_empty(),
+                _ => return false,
             }
-            ExprKind::Object(properties) => properties.len() == 0,
-            ExprKind::Array(items) => items.is_empty(),
-            _ => false,
         }
     }
 
-    fn evaluates_type_test_or_constant(&self, e: ExprId) -> bool {
-        let is_object = |e: ExprId| {
-            matches!(
-                self.hir[e].kind,
-                ExprKind::Ident(_)
-                    | ExprKind::This
-                    | ExprKind::Fn(_)
-                    | ExprKind::Regex { .. }
-                    | ExprKind::Object(_)
-                    | ExprKind::Array(_)
-            )
-        };
-        let e = self.hir.skip_type_assertions(e);
-        !is_object(e) && self.evaluates_constants_alone(e)
+    fn may_be_object(&self, e: ExprId) -> bool {
+        matches!(
+            self.hir[self.hir.skip_type_assertions(e)].kind,
+            ExprKind::Ident(_)
+                | ExprKind::This
+                | ExprKind::Fn(_)
+                | ExprKind::Regex { .. }
+                | ExprKind::Object(_)
+                | ExprKind::Array(_)
+        )
     }
 }

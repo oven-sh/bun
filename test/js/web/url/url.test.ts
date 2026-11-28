@@ -66,6 +66,9 @@ describe("url", () => {
     url = new URL("ftp://example.com");
     expect(url.protocol).toBe("ftp:");
     expect(url.origin).toBe("ftp://example.com");
+    url = new URL("ftps://example.com");
+    expect(url.protocol).toBe("ftps:");
+    expect(url.origin).toBe("null");
     url = new URL("file://example.com");
     expect(url.protocol).toBe("file:");
     expect(url.origin).toBe("null");
@@ -97,7 +100,7 @@ describe("url", () => {
     expect(url.origin).toBe("https://example.com");
     url = new URL("blob:file://text.txt");
     expect(url.protocol).toBe("blob:");
-    expect(url.origin).toBe("file://text.txt");
+    expect(url.origin).toBe("null");
     url = new URL("blob:kjka://example.com");
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("null");
@@ -109,10 +112,14 @@ describe("url", () => {
     expect(url.origin).toBe("null");
     url = new URL("blob:ws://example.com");
     expect(url.protocol).toBe("blob:");
-    expect(url.origin).toBe("ws://example.com");
+    expect(url.origin).toBe("null");
     url = new URL("blob:file:///folder/else/text.txt");
     expect(url.protocol).toBe("blob:");
-    expect(url.origin).toBe("file://");
+    expect(url.origin).toBe(new URL("file:///folder/else/text.txt").origin);
+    expect(url.origin).toBe("null");
+    url = new URL("blob:http://example.org:88/");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("http://example.org:88");
   });
   it("leaves opaque (non-special-scheme) hosts unchanged", () => {
     expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");

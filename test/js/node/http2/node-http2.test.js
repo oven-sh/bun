@@ -3150,6 +3150,68 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
   ]);
 });
 
+it("http2 session.altsvc() and session.origin() refuse a URL with an opaque origin, like Node", async () => {
+  // Both calls read URL.origin of a string or a URL and refuse "null". That is the origin of an ftps URL and of a
+  // blob URL whose inner URL is not http or https.
+  const outcomes = [];
+  const server = http2.createServer();
+  let client;
+  let serverSession;
+  try {
+    server.on("session", session => {
+      serverSession = session;
+      for (const origin of [
+        "ftps://a.example/path",
+        new URL("blob:ws://b.example/"),
+        "blob:file:///a/b",
+        "https://c.example/path",
+      ]) {
+        for (const send of [() => session.altsvc('h2=":8000"', origin), () => session.origin(origin)]) {
+          try {
+            send();
+            outcomes.push("SENT");
+          } catch (err) {
+            outcomes.push(err.code);
+          }
+        }
+      }
+    });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const { promise: closed, resolve: onClose, reject } = Promise.withResolvers();
+    server.on("error", reject);
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", reject);
+    // The "session" handler runs before the server answers, so the request closes after every call above.
+    const req = client.request({ ":path": "/" });
+    req.on("error", reject);
+    req.on("close", onClose);
+    req.resume();
+    req.end();
+    await closed;
+
+    expect(outcomes).toEqual([
+      "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+      "ERR_HTTP2_INVALID_ORIGIN",
+      "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+      "ERR_HTTP2_INVALID_ORIGIN",
+      "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+      "ERR_HTTP2_INVALID_ORIGIN",
+      "SENT",
+      "SENT",
+    ]);
+  } finally {
+    client?.destroy();
+    serverSession?.destroy();
+    server.close();
+  }
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.

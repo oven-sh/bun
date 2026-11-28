@@ -42,15 +42,15 @@ String URLDecomposition::origin() const
 {
     auto fullURL = this->fullURL();
 
-    if (fullURL.protocolIsInHTTPFamily() or fullURL.protocolIsInFTPFamily() or fullURL.protocolIs("ws"_s) or fullURL.protocolIs("wss"_s))
+    // https://url.spec.whatwg.org/#concept-url-origin lists "ftp" but not "ftps".
+    if (fullURL.protocolIsInHTTPFamily() or fullURL.protocolIs("ftp"_s) or fullURL.protocolIs("ws"_s) or fullURL.protocolIs("wss"_s))
         return fullURL.protocolHostAndPort();
     if (fullURL.protocolIsBlob()) {
         const String& path = fullURL.path().toString();
         const URL subUrl { URL {}, path };
-        if (subUrl.isValid()) {
-            if (subUrl.protocolIsInHTTPFamily() or subUrl.protocolIsInFTPFamily() or subUrl.protocolIs("ws"_s) or subUrl.protocolIs("wss"_s) or subUrl.protocolIsFile())
-                return subUrl.protocolHostAndPort();
-        }
+        // An inner "file" URL has the opaque origin that a "file" URL has by itself.
+        if (subUrl.isValid() && subUrl.protocolIsInHTTPFamily())
+            return subUrl.protocolHostAndPort();
     }
     return "null"_s;
 }

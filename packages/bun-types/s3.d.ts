@@ -89,13 +89,6 @@ declare module "bun" {
      * @returns Number of bytes written or a Promise resolving to the number of bytes
      */
     end(error?: Error): number | Promise<number>;
-
-    /**
-     * Get the stat of the file.
-     *
-     * @returns Promise resolving to the file stats
-     */
-    stat(): Promise<import("node:fs").Stats>;
   }
 
   /**
@@ -618,7 +611,6 @@ declare module "bun" {
      * }
      * ```
      */
-    readonly readable: ReadableStream<Uint8Array<ArrayBuffer>>;
     stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
 
     /**

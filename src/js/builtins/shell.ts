@@ -21,7 +21,7 @@ export function createBunShellTemplateFunction(
     return this.toString();
   }
 
-  class ShellError extends Error {
+  class ShellError extends Error implements Bun.$.ShellError {
     #output?: ShellOutput = undefined;
     info;
     exitCode!: number;
@@ -79,7 +79,7 @@ export function createBunShellTemplateFunction(
     }
   }
 
-  class ShellOutput {
+  class ShellOutput implements Bun.$.ShellOutput {
     stdout: Buffer;
     stderr: Buffer;
     exitCode: number;
@@ -99,7 +99,7 @@ export function createBunShellTemplateFunction(
     }
 
     arrayBuffer() {
-      return this.stdout.buffer;
+      return this.stdout.buffer as ArrayBuffer;
     }
 
     bytes() {
@@ -111,7 +111,7 @@ export function createBunShellTemplateFunction(
     }
   }
 
-  class ShellPromise extends Promise<ShellOutput> {
+  class ShellPromise extends Promise<ShellOutput> implements Bun.$.ShellPromise {
     #args: $Bindgen.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
@@ -232,7 +232,7 @@ export function createBunShellTemplateFunction(
 
     async arrayBuffer() {
       const { stdout } = (await this.#quiet(true)) as ShellOutput;
-      return stdout.buffer;
+      return stdout.buffer as ArrayBuffer;
     }
 
     async bytes() {

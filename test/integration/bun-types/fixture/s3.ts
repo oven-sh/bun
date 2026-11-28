@@ -11,7 +11,7 @@ async function doFileOps(file: Bun.S3File) {
   await file.delete();
   await file.formData();
 
-  for await (const chunk of file.readable) {
+  for await (const chunk of file.stream()) {
     console.log(chunk);
   }
 }

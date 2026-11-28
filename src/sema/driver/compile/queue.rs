@@ -30,6 +30,7 @@ pub(super) fn run_queue<'s>(
         explains_files: false,
         explain_files: &|_| Vec::new(),
         lists_files_only: false,
+        first_left_out: None,
         about_options: Vec::new(),
         always_reported: 0,
         checking: Instant::now(),

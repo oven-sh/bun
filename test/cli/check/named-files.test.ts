@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const tsconfig = JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ["*.ts"] });
 
@@ -332,4 +334,332 @@ test.concurrent.skipIf(isWindows)("a named file with a backslash in its name is 
   ).toEqual([wrong, wrong, wrong, wrong, { errors: [], exitCode: 0 }]);
   const excluded = { ...files, "tsconfig.json": JSON.stringify({ files: ["fine.ts"] }) };
   expect(await check(excluded, "--no-follow-imports", "a\\b.ts")).toEqual({ errors: [], exitCode: 1 });
+});
+
+describe.concurrent("--no-follow-imports with references", () => {
+  const project = (references: string[], options = {}, more = {}) =>
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        composite: true,
+        skipLibCheck: true,
+        types: [],
+        lib: ["es2022"],
+        module: "preserve",
+        outDir: "out",
+        rootDir: "src",
+        ...options,
+      },
+      include: ["src"],
+      references: references.map(it => ({ path: `../${it}` })),
+      ...more,
+    });
+  const shows = (from: string) => `import { value } from "${from}";\nexport const shown: never = value;\n`;
+  const isShown = (type: string) =>
+    `app/src/a.ts(2,14): error TS2322: Type '${type}' is not assignable to type 'never'.`;
+  const isNotBuilt = expect.stringMatching(/^app\/src\/a\.ts\(1,23\): error TS6305: /);
+  const unused = "export const unused: string = 1;\n";
+  // The type of `span` is `any` if the check enters the cycle through `Tags` at `addsTag`.
+  const showsSpan = `import { Time } from "../../lib/src/b";\nexport const shown: never = new Time().span;\n`;
+  const addsTag = `
+    export class Time { static readonly tag = "time"; readonly span = create("span"); }
+    declare global { interface Tags { [Time.tag]: Time } }
+  `;
+  const declaresTags = `
+    export class Popover { static readonly tag: string = "popover"; }
+    declare global {
+      interface Tags { span: { hidden: boolean }; [Popover.tag]: Popover }
+      function create<K extends keyof Tags>(tag: K): Tags[K];
+    }
+  `;
+
+  async function run(files: Record<string, string>, named = ["app/src/a.ts"], links: Record<string, string> = {}) {
+    using dir = tempDir("check-no-follow-imports-references", { "app/tsconfig.json": project(["lib"]), ...files });
+    for (const [link, target] of Object.entries(links)) {
+      mkdirSync(dirname(join(String(dir), link)), { recursive: true });
+      symlinkSync(join(String(dir), target), join(String(dir), link), "junction");
+    }
+    const spawn = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "check", "--no-pretty", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = (stdout + stderr).replaceAll("\\", "/").split(/\r?\n/);
+      return {
+        errors: lines.filter(it => it.includes("error TS")),
+        checked: lines.flatMap(it => it.match(/^ +[\d.]+ms  (.*)$/)?.[1] ?? []).sort(),
+        exitCode,
+      };
+    };
+    const [some, whole] = await Promise.all([spawn("--no-follow-imports", "--timing", ...named), spawn("-p", "app")]);
+    return {
+      errors: some.errors,
+      checked: some.checked,
+      whole: whole.errors,
+      exitCodes: [some.exitCode, whole.exitCode],
+    };
+  }
+
+  test.each<[string, Record<string, string>, unknown[], string[], Record<string, string>?]>([
+    ["the imported file", { "lib/src/used.ts": "export const value = 1;\n" }, [isShown("1")], ["lib/src/used.ts"]],
+    [
+      "what that file imports",
+      {
+        "lib/src/used.ts": `export * from "./inner";\n`,
+        "lib/src/inner.ts": "export const value = 2;\n",
+      },
+      [isShown("2")],
+      ["lib/src/inner.ts", "lib/src/used.ts"],
+    ],
+    [
+      "what only its declaration file imports",
+      {
+        "lib/src/used.ts": "export const value = fromGlobal;\n",
+        "lib/src/global.ts": `declare const fromGlobal: import("./far").Far;\n`,
+        "lib/src/far.ts": "export interface Far { far: 1 }\n",
+      },
+      [isShown("Far")],
+      ["lib/src/far.ts", "lib/src/used.ts"],
+    ],
+    [
+      "what any file of a project in between imports",
+      {
+        "lib/tsconfig.json": project(["base"]),
+        "lib/src/used.ts": `import { base } from "../../base/src/one";\nexport const value = base;\n`,
+        "lib/src/other.ts": `export * from "../../base/src/two";\n`,
+        "base/tsconfig.json": project([]),
+        "base/src/one.ts": "export const base = 3;\n",
+        "base/src/two.ts": "export const two = 2;\n",
+        "base/src/unused.ts": unused,
+      },
+      [isShown("3")],
+      ["base/src/one.ts", "base/src/two.ts", "lib/src/used.ts"],
+    ],
+    [
+      "what another file of the named file's project imports",
+      {
+        "app/src/a.ts": `import "./b";\nexport const shown: never = added;\n`,
+        "app/src/b.ts": "export {};\n",
+        "app/src/c.ts": `import "../../lib/src/adds";\n`,
+        "lib/src/adds.ts": "export {};\ndeclare global { var added: 4 }\n",
+      },
+      [isShown("4")],
+      ["lib/src/adds.ts"],
+    ],
+    [
+      "the types of a linked package",
+      {
+        "app/src/a.ts": shows("lib"),
+        "lib/package.json": JSON.stringify({ name: "lib", types: "./out/used.d.ts" }),
+        "lib/src/used.ts": "export const value = 5;\n",
+      },
+      [isShown("5")],
+      ["lib/src/used.ts"],
+      { "app/node_modules/lib": "lib" },
+    ],
+    [
+      "a file with an outdated declaration file on disk",
+      { "lib/src/used.ts": "export const value = 6;\n", "lib/out/used.d.ts": "export declare const value = 0;\n" },
+      [isShown("6")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "a file with the options of its project",
+      {
+        "lib/tsconfig.json": project([], { strict: false }),
+        "lib/src/used.ts": "export let value = [null, 7];\n",
+      },
+      [isShown("number[]")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "a file under stripInternal",
+      {
+        "lib/tsconfig.json": project([], { stripInternal: true }),
+        "lib/src/used.ts": "/** @internal */\nexport const value = 8;\nexport {};\n",
+      },
+      [expect.stringMatching(/^app\/src\/a\.ts\(1,10\): error TS2305: /), isShown("any")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "a file for which no declaration file can be emitted",
+      { "lib/src/used.ts": "export const value = class { private hidden = 1 };\n" },
+      [isNotBuilt, isShown("any")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "a file that the project does not include",
+      {
+        "app/src/a.ts": shows("../../lib/out/extra"),
+        "lib/tsconfig.json": project([], {}, { exclude: ["src/extra.ts"] }),
+        "lib/src/other.ts": `import "./extra";\n`,
+        "lib/src/extra.ts": "export const value = 9;\n",
+      },
+      [isShown("9")],
+      ["lib/src/extra.ts"],
+    ],
+    [
+      "the output of a project that the reader does not reference",
+      {
+        "app/tsconfig.json": project(["base", "lib"]),
+        "lib/src/used.ts": `import { base } from "../../base/out/one";\nexport const value = base;\n`,
+        "base/tsconfig.json": project([]),
+        "base/src/one.ts": "export const base = 10;\n",
+        "base/src/unused.ts": unused,
+      },
+      [isShown("10")],
+      ["base/src/one.ts", "lib/src/used.ts"],
+    ],
+    ["nothing, if nothing is imported", { "app/src/a.ts": "\nexport const shown: never = 11;\n" }, [isShown("11")], []],
+    [
+      "nothing under noEmit",
+      { "lib/tsconfig.json": project([], { noEmit: true }), "app/src/a.ts": "\nexport const shown: never = 12;\n" },
+      [expect.stringContaining("error TS6310: ")],
+      [],
+    ],
+    [
+      "every file under noEmitOnError",
+      { "lib/tsconfig.json": project([], { noEmitOnError: true }), "lib/src/used.ts": "export const value = 1;\n" },
+      [isNotBuilt, isShown("any")],
+      ["lib/src/unused.ts", "lib/src/used.ts"],
+    ],
+    [
+      "every file after a long chain of declaration files",
+      {
+        "app/src/a.ts": `import { value } from "../../lib/src/used";\nexport const shown: never = value.next.next.next;\n`,
+        "lib/src/used.ts": "export const value = g1;\n",
+        "lib/src/global.ts": [1, 2, 3, 4].map(it => `declare const g${it}: import("./c${it}").C;\n`).join(""),
+        "lib/src/c1.ts": "export class C { next = g2 }\n",
+        "lib/src/c2.ts": "export class C { next = g3 }\n",
+        "lib/src/c3.ts": "export class C { next = g4 }\n",
+        "lib/src/c4.ts": "export type C = 13;\n",
+      },
+      [isShown("13")],
+      ["c1", "c2", "c3", "c4", "global", "unused", "used"].map(it => `lib/src/${it}.ts`),
+    ],
+    [
+      "every file if a type depends on the order of the check",
+      {
+        "app/src/a.ts": showsSpan,
+        "lib/src/a.ts": declaresTags,
+        "lib/src/b.ts": addsTag,
+      },
+      [isShown("{ hidden: boolean; }")],
+      ["lib/src/a.ts", "lib/src/b.ts", "lib/src/unused.ts"],
+    ],
+    [
+      "the imported source of a package",
+      {
+        "app/src/a.ts": showsSpan,
+        "lib/src/b.ts": `import "tags";\n${addsTag}`,
+        "node_modules/tags/index.ts": declaresTags,
+        "node_modules/tags/package.json": JSON.stringify({ name: "tags", version: "1.0.0", types: "index.ts" }),
+      },
+      [isShown("{ hidden: boolean; }")],
+      ["lib/src/b.ts", "node_modules/tags/index.ts"],
+    ],
+    [
+      "a project only once the output that it reads is final",
+      {
+        "app/tsconfig.json": project(["base", "lib"]),
+        "base/tsconfig.json": project([], {}, { exclude: ["src/extra.ts"] }),
+        "base/src/other.ts": `import "./extra";\n`,
+        "base/src/extra.ts": "export const extra = 14;\n",
+        "lib/tsconfig.json": project([], { noEmitOnError: true }),
+        "lib/src/used.ts": `import { extra } from "../../base/out/extra";\nexport const value = extra;\n`,
+        "lib/src/unused.ts": "export {};\n",
+      },
+      [isShown("14")],
+      ["base/src/extra.ts", "lib/src/unused.ts", "lib/src/used.ts"],
+    ],
+    [
+      "the imported file of projects that reference each other",
+      {
+        "lib/tsconfig.json": project([], {}, { references: [{ path: "../base", circular: true }] }),
+        "lib/src/used.ts": "export const value = 15;\n",
+        "base/tsconfig.json": project(["lib"]),
+        "base/src/unused.ts": unused,
+      },
+      [isShown("15")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "every file of a project that is much smaller than the named file's",
+      {
+        ...Object.fromEntries([1, 2, 3, 4].map(it => [`app/src/more${it}.ts`, "export {};\n"])),
+        "lib/src/used.ts": "export const value = 16;\n",
+      },
+      [isShown("16")],
+      ["lib/src/unused.ts", "lib/src/used.ts"],
+    ],
+    [
+      "every file of a much smaller project beside one with noEmitOnError",
+      {
+        "app/tsconfig.json": project(["base", "lib"]),
+        ...Object.fromEntries([1, 2, 3, 4].map(it => [`app/src/more${it}.ts`, "export {};\n"])),
+        "base/tsconfig.json": project([], { noEmitOnError: true }),
+        "base/src/one.ts": "export {};\n",
+        "lib/src/used.ts": "export const value = 17;\n",
+      },
+      [isShown("17")],
+      ["base/src/one.ts", "lib/src/unused.ts", "lib/src/used.ts"],
+    ],
+    [
+      "the imported file of a project with half as many files as the named file's",
+      {
+        ...Object.fromEntries([1, 2, 3].map(it => [`app/src/more${it}.ts`, "export {};\n"])),
+        "lib/src/used.ts": "export const value = 18;\n",
+      },
+      [isShown("18")],
+      ["lib/src/used.ts"],
+    ],
+    [
+      "every file under traceResolution",
+      {
+        "app/tsconfig.json": project(["lib"], { traceResolution: true }),
+        "lib/src/used.ts": "export const value = 19;\n",
+      },
+      [isShown("19")],
+      ["lib/src/unused.ts", "lib/src/used.ts"],
+    ],
+  ])("checks %s", async (_, files, errors, checked, links = {}) => {
+    const result = await run(
+      {
+        "app/src/a.ts": shows("../../lib/src/used"),
+        "lib/tsconfig.json": project([]),
+        "lib/src/unused.ts": unused,
+        ...files,
+      },
+      undefined,
+      links,
+    );
+    expect({ ...result, checked: result.checked.filter(it => !it.startsWith("app/")) }).toEqual({
+      errors,
+      whole: result.errors,
+      checked,
+      exitCodes: [1, 1],
+    });
+  });
+
+  test("files of a project and of its reference are named together", async () => {
+    const { errors, checked, exitCodes } = await run(
+      {
+        "app/src/a.ts": shows("../../lib/src/used"),
+        "lib/tsconfig.json": project([]),
+        "lib/src/used.ts": "export const value = 1;\n",
+        "lib/src/named.ts": "export const named: string = 1;\n",
+        "lib/src/unused.ts": unused,
+      },
+      ["app/src/a.ts", "lib/src/named.ts"],
+    );
+    expect({ errors, checked, exitCodes }).toEqual({
+      errors: [isShown("1"), "lib/src/named.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."],
+      checked: ["app/src/a.ts", "lib/src/named.ts", "lib/src/used.ts"],
+      exitCodes: [1, 1],
+    });
+  });
 });

@@ -312,6 +312,8 @@ pub mod c {
             err: &mut create_bun_socket_error_t,
         ) -> Option<OwnedSslCtx>;
         // safe: no args; reads a process-global counter — no preconditions.
+        pub safe fn us_ssl_ca_certs_parsed() -> c_long;
+        // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
         /// Appends the certificates in the NUL-terminated PEM `content` to
         /// `ctx`'s trust store; returns 0 when nothing could be added.

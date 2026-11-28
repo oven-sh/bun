@@ -833,9 +833,28 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   return store;
 }
 
-/* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`. User-supplied certificates are validated
- * with a full parse here so a bad one fails the context rather than a later handshake; the parsed object is dropped and
- * the store keeps the DER lazily. Returns the number appended, or -1 for content that is not PEM or whose first
+/* Certificates of `ca` options that were parsed whole to validate them. Tests read it. */
+static std::atomic<long> ca_certs_parsed = 0;
+
+long us_ssl_ca_certs_parsed(void) {
+  return ca_certs_parsed;
+}
+
+/* `der` in a buffer for the store if it is a certificate, and NULL if not. A user-supplied certificate is validated
+ * with a full parse so a bad one fails the context rather than a later handshake, where the store takes a certificate
+ * that does not parse as absent; the parsed object is dropped. A bundled root is known to parse, and its embedded bytes
+ * live as long as the process, so it is neither parsed nor copied. */
+static CRYPTO_BUFFER *us_ca_cert_buffer(const uint8_t *der, size_t len) {
+  if (const uint8_t *bundled = us_find_bundled_root_cert(der, len)) {
+    return CRYPTO_BUFFER_new_from_static_data_unsafe(bundled, len, NULL);
+  }
+  ca_certs_parsed++;
+  us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der, len, NULL)};
+  return buf != NULL && us_x509_ptr{X509_parse_from_buffer(buf.get())} ? buf.release() : NULL;
+}
+
+/* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`, each validated by us_ca_cert_buffer; the
+ * store keeps the DER lazily. Returns the number appended, or -1 for content that is not PEM or whose first
  * certificate block does not decode or parse. As with a PEM_read_bio_X509 loop, a PEM document with no certificates
  * (Node's tests pass a private key) counts as zero, and blocks after one that fails are ignored. */
 static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
@@ -852,8 +871,8 @@ static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_
       break;
     }
     us_unique_ptr<uint8_t, OPENSSL_free> der{out};
-    us_crypto_buffer_ptr buf{CRYPTO_BUFFER_new(der.get(), der_len, NULL)};
-    if (buf == NULL || !us_x509_ptr{X509_parse_from_buffer(buf.get())} || !sk_CRYPTO_BUFFER_push(certs, buf.get())) {
+    us_crypto_buffer_ptr buf{us_ca_cert_buffer(der.get(), der_len)};
+    if (buf == NULL || !sk_CRYPTO_BUFFER_push(certs, buf.get())) {
       if (count == 0) count = -1;
       break;
     }

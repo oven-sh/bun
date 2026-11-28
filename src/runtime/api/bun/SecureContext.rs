@@ -47,6 +47,11 @@ pub(crate) fn live_count() -> f64 {
     c::us_ssl_ctx_live_count() as f64
 }
 
+/// For `bun:internal-for-testing`: how many `ca` certificates were parsed to validate them.
+pub(crate) fn ca_certs_parsed() -> f64 {
+    c::us_ssl_ca_certs_parsed() as f64
+}
+
 /// An out-string of `us_ssl_parse_pkcs12`: null, or `len` bytes from libc `malloc`.
 #[derive(Default)]
 struct MallocPem {

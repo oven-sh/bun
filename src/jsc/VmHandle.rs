@@ -194,6 +194,36 @@ impl Shared {
         let _ = el.concurrent_ref.fetch_add(delta, Ordering::SeqCst);
         el.wakeup();
     }
+
+    #[inline]
+    fn enter(&self) -> Option<Access<'_>> {
+        self.active.fetch_add(1, Ordering::SeqCst);
+        let a = Access(self);
+        (self.state() != State::Closed).then_some(a)
+    }
+
+    fn wake(&self) {
+        if let Some(_a) = self.enter() {
+            self.loop_of(LoopKind::Regular).wakeup();
+        }
+    }
+
+    /// Runs `queue` unless the VM is closed.
+    fn post_with<T>(&self, tag: TaskTag, task: T, queue: impl FnOnce(T)) -> Posted<T> {
+        test_gate::weak_post(self, tag, || {
+            let Some(_a) = self.enter() else {
+                return Posted::Refused(task);
+            };
+            queue(task);
+            Posted::Queued
+        })
+    }
+
+    pub(crate) fn post<T: Taskable>(&self, kind: LoopKind, task: T::Payload) -> Posted<T::Payload> {
+        self.post_with(T::TAG, task, |task| {
+            self.deliver(kind, ConcurrentTaskItem::create::<T>(task));
+        })
+    }
 }
 
 // ── Ticket ────────────────────────────────────────────────────────────────
@@ -337,32 +367,12 @@ impl VmHandle {
         }))
     }
 
-    #[inline]
-    fn enter(&self) -> Option<Access<'_>> {
-        self.0.active.fetch_add(1, Ordering::SeqCst);
-        let a = Access(&self.0);
-        (self.0.state() != State::Closed).then_some(a)
-    }
-
     // ── any-thread API ─────────────────────────────────────────────────────
-
-    /// Runs `queue` unless the VM is closed.
-    fn post_with<T>(&self, tag: TaskTag, task: T, queue: impl FnOnce(T)) -> Posted<T> {
-        test_gate::weak_post(&self.0, tag, || {
-            let Some(_a) = self.enter() else {
-                return Posted::Refused(task);
-            };
-            queue(task);
-            Posted::Queued
-        })
-    }
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back if
     /// the VM is closed. For posters that hold no ticket.
     pub fn post<T: Taskable>(&self, kind: LoopKind, task: T::Payload) -> Posted<T::Payload> {
-        self.post_with(T::TAG, task, |task| {
-            self.0.deliver(kind, ConcurrentTaskItem::create::<T>(task));
-        })
+        self.0.post::<T>(kind, task)
     }
 
     /// As [`post`](Self::post), but a loop that is asleep stays asleep until something else wakes it.
@@ -371,7 +381,7 @@ impl VmHandle {
         kind: LoopKind,
         task: Box<T>,
     ) -> Posted<Box<T>> {
-        self.post_with(T::TAG, task, |task| {
+        self.0.post_with(T::TAG, task, |task| {
             let node = ConcurrentTaskItem::create_boxed(task);
             self.0.loop_of(kind).post(node);
         })
@@ -384,7 +394,7 @@ impl VmHandle {
         task: Box<T>,
         node: fn(&mut T) -> &mut ConcurrentTaskItem,
     ) -> Posted<Box<T>> {
-        self.post_with(T::TAG, task, |task| {
+        self.0.post_with(T::TAG, task, |task| {
             self.0.deliver(kind, ConcurrentTaskItem::in_box(task, node));
         })
     }
@@ -399,7 +409,7 @@ impl VmHandle {
 
     /// Adjust the VM's keep-alive from another thread (no-op once closed).
     pub fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
-        if let Some(_a) = self.enter() {
+        if let Some(_a) = self.0.enter() {
             self.0.add_keep_alive(kind, delta);
         }
     }
@@ -423,7 +433,7 @@ impl VmHandle {
     /// `worker.terminate()`); no-op once the VM is closed.
     pub fn request_termination(&self) {
         self.stop();
-        if let Some(_a) = self.enter() {
+        if let Some(_a) = self.0.enter() {
             // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
             // `notify_need_termination` is thread-safe (VMTraps). Raw field
             // read, no `&VirtualMachine` formed off-thread.
@@ -434,9 +444,7 @@ impl VmHandle {
 
     /// Wake the VM's loop (no-op once closed). Any thread.
     pub fn wake(&self) {
-        if let Some(_a) = self.enter() {
-            self.0.loop_of(LoopKind::Regular).wakeup();
-        }
+        self.0.wake();
     }
 
     /// May native code call into user JS / settle its promises right now?
@@ -734,15 +742,6 @@ mod test_gate {
 // `EventLoopTaskNoContext`) is carried by a Rust task that holds the ticket
 // (`ConcurrentCppTask`), so no ticket crosses the FFI.
 
-/// A `VmHandle` view over a reference C++ holds, for the duration of one call.
-pub struct BorrowedRef(core::mem::ManuallyDrop<VmHandle>);
-impl core::ops::Deref for BorrowedRef {
-    type Target = VmHandle;
-    fn deref(&self) -> &VmHandle {
-        &self.0
-    }
-}
-
 impl VmHandle {
     /// Hand C++ one strong count on this handle.
     pub fn into_ref(self) -> *const Shared {
@@ -752,11 +751,12 @@ impl VmHandle {
     /// # Safety
     /// `r` is a live reference obtained from [`VmHandle::into_ref`] that its
     /// holder keeps for the duration.
-    pub unsafe fn borrow_ref(r: *const Shared) -> BorrowedRef {
-        // SAFETY: fn contract; ManuallyDrop leaves the holder's count untouched.
-        BorrowedRef(core::mem::ManuallyDrop::new(VmHandle(unsafe {
-            Arc::from_raw(r)
-        })))
+    pub unsafe fn clone_from_ref(r: *const Shared) -> VmHandle {
+        // SAFETY: fn contract.
+        unsafe {
+            Arc::increment_strong_count(r);
+            Self::from_ref(r)
+        }
     }
 
     /// # Safety
@@ -794,18 +794,9 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
 }
 
 /// Any thread (WebCore's `postTaskTo` / `postTaskConcurrently`).
-///
-/// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__post(
-    r: *const Shared,
-    task: crate::cpp_task::CppTask,
-    kind: LoopKind,
-) {
-    // SAFETY: fn contract.
-    let handle = unsafe { VmHandle::borrow_ref(r) };
-    drop(handle.post::<crate::CppTask>(kind, task));
+pub extern "C" fn Bun__VmHandle__post(r: &Shared, task: crate::cpp_task::CppTask, kind: LoopKind) {
+    drop(r.post::<crate::CppTask>(kind, task));
 }
 
 /// The JS thread, or the collector's while the JS thread is stopped.
@@ -827,27 +818,17 @@ pub extern "C" fn Bun__eventLoop__setKeptAlive(kept_alive: bool) {
 
 /// Any thread: adjust the keep-alive on the VM's `kind` loop (no-op once the
 /// VM is closed).
-///
-/// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
-    r: *const Shared,
-    kind: LoopKind,
-    delta: core::ffi::c_int,
-) {
-    // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.add_keep_alive(kind, delta.signum());
+pub extern "C" fn Bun__VmHandle__refKeepAlive(r: &Shared, kind: LoopKind, delta: core::ffi::c_int) {
+    if let Some(_a) = r.enter() {
+        r.add_keep_alive(kind, delta.signum());
+    }
 }
 
 /// Any thread: wake the VM's loop (no-op once closed).
-///
-/// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__wake(r: *const Shared) {
-    // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.wake()
+pub extern "C" fn Bun__VmHandle__wake(r: &Shared) {
+    r.wake()
 }
 
 /// Any thread: Node's `can_call_into_js()`.
@@ -944,7 +925,7 @@ struct VmPoster {
 
 impl bun_event_loop::PostToJs for VmPoster {
     fn post(&self, task: OwnedConcurrentTask) -> Posted {
-        self.handle.post_with(task.tag(), task, |task| {
+        self.handle.0.post_with(task.tag(), task, |task| {
             self.handle.0.deliver(self.kind, task);
         })
     }

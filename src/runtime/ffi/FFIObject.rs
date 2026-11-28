@@ -10,17 +10,13 @@ use crate::generated_bindgen::{ffi, ffi_object};
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
 /// JSC typed-array bytes deallocator. Centralized so the `usize → fn ptr`
 /// reinterpretation lives in one place.
-///
-/// # Safety
-/// `addr` must be either `0` or the address of a function with signature
-/// `extern "C" fn(*mut c_void, *mut c_void)`. This is user-supplied via
-/// `bun:ffi`; a bad value will crash when JSC invokes it.
 #[inline(always)]
-unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocator {
+fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocator {
     // SAFETY: `JSTypedArrayBytesDeallocator` is
     // `Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>`, which under
     // the null-pointer optimisation is layout-compatible with a single
     // pointer-sized word — exactly `usize` here. `0` round-trips to `None`.
+    // Any other word is a valid `unsafe fn` pointer.
     unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
@@ -606,8 +602,7 @@ pub(crate) fn to_array_buffer<'a>(
     let mut ctx: Option<*mut c_void> = None;
     if let Some(callback_value) = deallocator.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
-            // SAFETY: user-supplied raw fn pointer address.
-            callback = unsafe { deallocator_from_addr(callback_ptr) };
+            callback = deallocator_from_addr(callback_ptr);
 
             if let Some(ctx_value) = deallocator_context.map(JsLocal::to_js) {
                 if let Some(ctx_ptr) = get_cptr(ctx_value) {
@@ -625,8 +620,7 @@ pub(crate) fn to_array_buffer<'a>(
         }
     } else if let Some(callback_value) = deallocator_context.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
-            // SAFETY: user-supplied raw fn pointer address.
-            callback = unsafe { deallocator_from_addr(callback_ptr) };
+            callback = deallocator_from_addr(callback_ptr);
         } else if !callback_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected callback to be a C pointer (number or BigInt)"
@@ -679,8 +673,7 @@ pub(crate) fn to_buffer<'a>(
     let mut ctx: Option<*mut c_void> = None;
     if let Some(callback_value) = deallocator.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
-            // SAFETY: user-supplied raw fn pointer address.
-            callback = unsafe { deallocator_from_addr(callback_ptr) };
+            callback = deallocator_from_addr(callback_ptr);
 
             if let Some(ctx_value) = deallocator_context.map(JsLocal::to_js) {
                 if let Some(ctx_ptr) = get_cptr(ctx_value) {
@@ -698,8 +691,7 @@ pub(crate) fn to_buffer<'a>(
         }
     } else if let Some(callback_value) = deallocator_context.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
-            // SAFETY: user-supplied raw fn pointer address.
-            callback = unsafe { deallocator_from_addr(callback_ptr) };
+            callback = deallocator_from_addr(callback_ptr);
         } else if !callback_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected callback to be a C pointer (number or BigInt)"
@@ -713,6 +705,7 @@ pub(crate) fn to_buffer<'a>(
     // SAFETY: ptr/len came from get_ptr_slice; the `bun:ffi` user asserts that this
     // caller-owned FFI memory stays valid for the Buffer's lifetime. `callback`
     // controls disposal (a no-op when the storage stays caller-owned).
+    // The user also asserts that their callback is sound to invoke once with `ctx`.
     jsc::call_zero_is_throw(global_this, || unsafe {
         JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global_this,

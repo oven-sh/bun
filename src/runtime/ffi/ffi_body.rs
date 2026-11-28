@@ -2543,31 +2543,31 @@ impl CompilerRT {
         let offsets = Bun__FFI__offsets();
         state.define_symbols(&[
             (
-                "Bun_FFI_PointerOffsetToArgumentsList",
+                zstr!("Bun_FFI_PointerOffsetToArgumentsList"),
                 bun_jsc::sizes::BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST as i64,
             ),
             (
-                "Bun_FFI_PointerOffsetToArgumentCountIncludingThis",
+                zstr!("Bun_FFI_PointerOffsetToArgumentCountIncludingThis"),
                 offsets.call_frame_argument_count_including_this_slot as i64,
             ),
             (
-                "JSArrayBufferView__offsetOfLength",
+                zstr!("JSArrayBufferView__offsetOfLength"),
                 offsets.js_array_buffer_view_offset_of_length as i64,
             ),
             (
-                "JSArrayBufferView__offsetOfVector",
+                zstr!("JSArrayBufferView__offsetOfVector"),
                 offsets.js_array_buffer_view_offset_of_vector as i64,
             ),
             (
-                "JSCell__offsetOfType",
+                zstr!("JSCell__offsetOfType"),
                 offsets.js_cell_offset_of_type as i64,
             ),
             (
-                "JSTypeArrayBufferViewMin",
+                zstr!("JSTypeArrayBufferViewMin"),
                 jsc::JSType::MIN_TYPED_ARRAY.0 as i64,
             ),
             (
-                "JSTypeArrayBufferViewMax",
+                zstr!("JSTypeArrayBufferViewMax"),
                 jsc::JSType::MAX_TYPED_ARRAY.0 as i64,
             ),
         ]);

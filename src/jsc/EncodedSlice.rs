@@ -4,8 +4,10 @@
 use core::ffi::c_void;
 
 use crate::bun_string_jsc::{self, ErrorKind};
+use crate::webcore_types::store::Store;
 use crate::{DOMExceptionCode, JSGlobalObject, JSValue, JsResult, cpp};
 use bun_core::{EncodedSlice, StringView};
+use bun_ptr::RefPtr;
 
 /// # Safety
 /// `ptr` must be a (possibly tagged) pointer to `len` bytes allocated by the
@@ -32,17 +34,11 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn EncodedSlice__toValueGC(this: &EncodedSlice, global: &JSGlobalObject) -> JSValue;
     // EncodedSlice__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    // safe: `EncodedSlice`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
-    // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
-    // pointer C++ stores into the external string's finalizer slot and forwards
-    // to `callback` on GC (never dereferenced as Rust data) — same contract as
-    // `JSC__JSGlobalObject__queueMicrotaskCallback`. The caller-side ownership
-    // transfer is documented at the (already-safe) public wrapper.
-    safe fn EncodedSlice__external(
+    fn EncodedSlice__external(
         this: &EncodedSlice,
         global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
+        ctx: *mut c_void,
+        callback: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
     ) -> JSValue;
 }
 
@@ -66,18 +62,11 @@ pub trait EncodedSliceJsc: Sized {
     fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
-    /// callback (used to keep a `Blob::Store` ref alive).
+    /// Like `to_external_value`, for bytes that `store` owns: the string keeps the ref.
     ///
     /// # Safety
-    /// `ctx` and the string's backing buffer must satisfy `callback`'s contract;
-    /// ownership of both transfers to JSC, which invokes `callback` exactly once.
-    unsafe fn external(
-        &self,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JsResult<JSValue>;
+    /// The bytes stay valid and unchanged until `store` is dropped.
+    unsafe fn external(&self, global: &JSGlobalObject, store: RefPtr<Store>) -> JsResult<JSValue>;
 }
 impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
@@ -122,27 +111,21 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         cpp::EncodedSlice__toJSONObject(self, global)
     }
-    unsafe fn external(
-        &self,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JsResult<JSValue> {
+    unsafe fn external(&self, global: &JSGlobalObject, store: RefPtr<Store>) -> JsResult<JSValue> {
+        extern "C" fn release(store: RefPtr<Store>, _: *mut c_void, _: usize) {
+            drop(store);
+        }
         if self.len > bun_core::String::max_length() {
-            // SAFETY: invoking the caller-supplied finalizer on the buffer it owns.
-            unsafe {
-                callback(
-                    ctx,
-                    self.byte_slice()
-                        .as_ptr()
-                        .cast_mut()
-                        .cast::<core::ffi::c_void>(),
-                    self.len,
-                )
-            };
+            drop(store);
             return Err(global.throw_string_too_long());
         }
-        // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
-        Ok(EncodedSlice__external(self, global, ctx, callback))
+        // SAFETY: fn contract. A `RefPtr` is a thin pointer, and JSC passes this one to `release`, once.
+        Ok(unsafe {
+            let release = bun_ptr::cast_fn_ptr::<
+                extern "C" fn(RefPtr<Store>, *mut c_void, usize),
+                unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
+            >(release);
+            EncodedSlice__external(self, global, store.into_raw().cast(), release)
+        })
     }
 }

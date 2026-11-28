@@ -1118,9 +1118,9 @@ pub(crate) struct Offsets {
     pub compile_exec_argv_ptr: StringPointer,
     pub flags: Flags,
 }
-bun_core::impl_no_uninit!(Offsets);
+bun_core::impl_pod!(Offsets);
 
-// Outside `bitflags!`, whose own struct holds an associated type that `impl_no_uninit!` cannot see through.
+// Outside `bitflags!`, whose own struct holds an associated type that `impl_pod!` cannot see through.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
 pub struct Flags(u32);
@@ -3417,23 +3417,19 @@ impl StandaloneModuleGraph {
     }
 
     fn read_offsets(base: *mut u8, len: usize) -> Option<Offsets> {
-        if len < size_of::<Offsets>() + TRAILER.len() {
+        let footer_len = size_of::<Offsets>() + TRAILER.len();
+        if len < footer_len {
             bun_core::debug_warn!("bun standalone module graph is too small to be valid");
             return None;
         }
-        // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-        // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-        // ever spans the writable bytecode region carried in `base`'s provenance.
-        let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-        // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
-        let trailer_bytes =
-            unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
-        if trailer_bytes != TRAILER {
+        // SAFETY: `[len - footer_len, len)` is in-bounds (checked above) and read-only: the view does
+        // not span the writable bytecode region carried in `base`'s provenance.
+        let footer = unsafe { core::slice::from_raw_parts(base.add(len - footer_len), footer_len) };
+        if !footer.ends_with(TRAILER) {
             bun_core::debug_warn!("bun standalone module graph has invalid trailer");
             return None;
         }
-        // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-        Some(unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) })
+        bun_core::read_prefix(footer)
     }
 
     /// Starts reading the payload pages the entry point's static import closure

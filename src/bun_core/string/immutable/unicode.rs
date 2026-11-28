@@ -3,6 +3,7 @@ use crate::string::immutable::{
 };
 use crate::vec::BorrowedBuf;
 use bun_alloc::AllocError;
+use core::mem::MaybeUninit;
 
 use crate::string::immutable::CodePoint; // i32
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len, WithUtf16Len};
@@ -424,21 +425,23 @@ pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
 // `immutable.rs` keeps resolving.
 pub use crate::strings_impl::copy_latin1_into_utf8_stop_on_non_ascii;
 
-pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoResult {
+pub fn copy_cp1252_into_utf16(buf_: &mut [MaybeUninit<u16>], latin1_: &[u8]) -> EncodeIntoResult {
     let buf_total = buf_.len();
     let latin1_total = latin1_.len();
-    let mut buf: &mut [u16] = buf_;
+    let mut buf = buf_;
     let mut latin1: &[u8] = latin1_;
     while !buf.is_empty() && !latin1.is_empty() {
         let to_write = first_non_ascii(latin1)
             .map(|v| v as usize)
             .unwrap_or_else(|| latin1.len().min(buf.len()));
-        copy_u8_into_u16(buf, &latin1[..to_write]);
+        write_u8_as_u16(buf, &latin1[..to_write]);
 
         latin1 = &latin1[to_write..];
         buf = &mut buf[to_write..];
         if !latin1.is_empty() && buf.len() >= 1 {
-            buf[0] = cp1252_to_codepoint_bytes_assume_not_ascii16(u32::from(latin1[0]));
+            buf[0].write(cp1252_to_codepoint_bytes_assume_not_ascii16(u32::from(
+                latin1[0],
+            )));
             latin1 = &latin1[1..];
             buf = &mut buf[1..];
         }
@@ -479,12 +482,20 @@ pub fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
     }
 }
 
+/// [`copy_u8_into_u16`] for memory that can be uninitialized.
+fn write_u8_as_u16(output: &mut [MaybeUninit<u16>], input: &[u8]) {
+    debug_assert!(input.len() <= output.len());
+    for i in 0..input.len().min(output.len()) {
+        output[i].write(u16::from(input[i]));
+    }
+}
+
 #[inline]
 pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     debug_assert!(input.len() <= output.len());
     let count = input.len().min(output.len());
 
-    bun_highway::copy_u16_to_u8(&input[..count], output);
+    bun_highway::copy_u16_to_u8(&input[..count], BorrowedBuf::from(output).unfilled());
 }
 
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {

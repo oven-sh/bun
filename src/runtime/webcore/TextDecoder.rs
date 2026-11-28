@@ -271,10 +271,7 @@ impl TextDecoder {
                 units
                     .try_reserve_exact(out_length)
                     .map_err(|_| heap.memory_allocation_failed())?;
-                // SAFETY: `units` has `out_length` spare units; `buf` is only ever written.
-                let buf =
-                    unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
-                let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
+                let out = strings::copy_cp1252_into_utf16(units.spare_capacity_mut(), buffer_slice);
                 // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
                 unsafe { units.set_len(out.written) };
                 heap.create_utf16_string_from_vec(units)

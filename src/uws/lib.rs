@@ -1,3 +1,4 @@
+#![feature(core_io_borrowed_buf)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 use core::ffi::c_void;
@@ -135,12 +136,14 @@ pub use ssl_wrapper::check_server_identity;
 pub mod ssl_wrapper {
     use core::cell::{Cell, RefCell};
     use core::ffi::{c_char, c_int, c_long, c_void};
+    use core::mem::MaybeUninit;
     use core::ptr::NonNull;
     use std::collections::VecDeque;
     use std::sync::OnceLock;
 
     use bun_boringssl::ServerIdentity;
     use bun_core::UnwrapOrOom;
+    use bun_core::vec::BorrowedBuf;
     use bun_ptr::{AliasableBox, CellExt as _};
 
     // Re-export the canonical BoringSSL FFI surface; the lower-tier crate now
@@ -187,7 +190,7 @@ pub mod ssl_wrapper {
     const BUFFER_SIZE: usize = 65536;
 
     /// Stack scratch of `SSL_read`.
-    type IoBuffer = bun_core::vec::UninitBuf<BUFFER_SIZE>;
+    type IoBuffer = [MaybeUninit<u8>; BUFFER_SIZE];
 
     /// A queue that empties with more capacity than this gives it back.
     const QUEUE_RETAIN_LIMIT: usize = 2 * BUFFER_SIZE;
@@ -1102,7 +1105,7 @@ pub mod ssl_wrapper {
             handler: &mut dyn Handler,
             buffer: &mut IoBuffer,
         ) -> bool {
-            let mut read: usize = 0;
+            let mut buffer = BorrowedBuf::from(&mut buffer[..]);
 
             // read data from the input BIO
             loop {
@@ -1111,15 +1114,19 @@ pub mod ssl_wrapper {
                     return false;
                 }
 
-                // SAFETY: write-only view of the unfilled tail; SSL_read only stores into it.
-                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
-                // SAFETY: `handle_traffic` runs one pass at a time; available is a valid mutable slice.
+                let mut available = buffer.unfilled();
+                // SAFETY: `handle_traffic` runs one pass at a time. SSL_read writes at most the number
+                // of bytes it is given, and a positive result is how many it wrote.
                 let just_read = unsafe {
-                    boring_sys::SSL_read(
+                    let just_read = boring_sys::SSL_read(
                         ssl,
-                        available.as_mut_ptr().cast::<c_void>(),
-                        c_int::try_from(available.len()).expect("int cast"),
-                    )
+                        available.as_mut().as_mut_ptr().cast::<c_void>(),
+                        c_int::try_from(available.capacity()).expect("int cast"),
+                    );
+                    if just_read > 0 {
+                        available.advance(just_read as usize);
+                    }
+                    just_read
                 };
                 log!("just read {}", just_read);
                 if just_read <= 0 {
@@ -1180,8 +1187,7 @@ pub mod ssl_wrapper {
                                 .set_handshake_state(HandshakeState::HandshakeCompleted);
                         }
 
-                        // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
-                        if !self.dispatch_read(handler, unsafe { buffer.filled(read) }) {
+                        if !self.dispatch_read(handler, buffer.filled()) {
                             return false;
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {
@@ -1218,22 +1224,19 @@ pub mod ssl_wrapper {
                     self.handle_end_of_renegotiation(handler);
                 }
 
-                read += usize::try_from(just_read).expect("int cast");
-                if read == BUFFER_SIZE {
+                if buffer.len() == BUFFER_SIZE {
                     log!(
                         "triggering data callback (read {}) and resetting read buffer",
-                        read
+                        buffer.len()
                     );
                     // we filled the buffer
-                    // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
-                    if !self.dispatch_read(handler, unsafe { buffer.filled(read) }) {
+                    if !self.dispatch_read(handler, buffer.filled()) {
                         return false;
                     }
-                    read = 0;
+                    buffer.clear();
                 }
             }
-            // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
-            self.dispatch_read(handler, unsafe { buffer.filled(read) })
+            self.dispatch_read(handler, buffer.filled())
         }
 
         /// Wire order: what `SSL_read` parked came before these bytes. False once a callback closed the wrapper.
@@ -1299,7 +1302,7 @@ pub mod ssl_wrapper {
                 self.handle_writing(handler);
 
                 // PERF: 64KiB on-stack array — verify stack-size headroom.
-                let mut buffer = IoBuffer::uninit();
+                let mut buffer = [const { MaybeUninit::uninit() }; BUFFER_SIZE];
                 // drain the incoming queue in loop, because read can trigger writing and vice versa
                 // Once a callback re-entered, the next pass takes over: the bytes it fed in
                 // may belong to the handshake, which only update_handshake_state reports.

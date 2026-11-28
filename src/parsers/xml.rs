@@ -30,7 +30,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
-use bun_core::vec::BorrowedBuf;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use bun_core::{StackCheck, strings};
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
@@ -180,9 +180,9 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     fn structural_index_chunk(
         chunk: &[Self],
         base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
+        out: BorrowedCursor<'_, u32>,
         state: &mut [u64; 3],
-    ) -> usize;
+    );
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
     const KEY_NAME: &'static [Self];
@@ -221,9 +221,9 @@ impl Unit for u8 {
     fn structural_index_chunk(
         chunk: &[Self],
         base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
+        out: BorrowedCursor<'_, u32>,
         state: &mut [u64; 3],
-    ) -> usize {
+    ) {
         bun_highway::xml_structural_index_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
@@ -281,9 +281,9 @@ impl Unit for u16 {
     fn structural_index_chunk(
         chunk: &[Self],
         base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
+        out: BorrowedCursor<'_, u32>,
         state: &mut [u64; 3],
-    ) -> usize {
+    ) {
         bun_highway::xml_structural_index16_chunk(chunk, base_offset, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");

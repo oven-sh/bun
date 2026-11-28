@@ -15,7 +15,6 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_core::strings::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
@@ -907,34 +906,6 @@ pub mod store {
         #[inline]
         pub fn has_one_ref(&self) -> bool {
             self.ref_count.has_one_ref()
-        }
-
-        /// Consumes one reference; on last
-        /// ref, drops & frees the heap `Store`.
-        ///
-        /// # Safety
-        /// `this` must point to a live `Store` originally allocated via
-        /// `RefPtr::new`, and the caller must own one outstanding
-        /// reference being released.
-        #[inline]
-        pub unsafe fn deref(this: NonNull<Store>) {
-            // SAFETY: caller contract.
-            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
-        }
-
-        /// `JSCArrayBuffer` deallocator hook. Only ever passed as a
-        /// callback fn pointer, so no `#[unsafe(no_mangle)]` here.
-        pub extern "C" fn external(
-            ptr: *mut core::ffi::c_void,
-            _: *mut core::ffi::c_void,
-            _: usize,
-        ) {
-            let Some(this) = NonNull::new(ptr.cast::<Store>()) else {
-                return;
-            };
-            // SAFETY: caller passes a `*Store` (originally leaked via
-            // `heap::alloc`) as the opaque pointer.
-            unsafe { Store::deref(this) };
         }
 
         /// Mutable access to `data` through a shared handle. The caller must

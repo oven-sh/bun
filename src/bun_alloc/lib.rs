@@ -289,7 +289,7 @@ pub fn fmt_count(args: core::fmt::Arguments<'_>) -> usize {
 /// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
 /// [`buf_print`] / [`buf_print_len`] (and `bun_core::fmt::buf_print_z`).
 ///
-/// Lives at T0 so `bun_alloc` itself can use it (`BSSStringList::print`); T1
+/// Lives at T0 so `bun_alloc` itself can use it (`BSSStringListPtr::print`); T1
 /// `bun_core::fmt` re-exports it and adds an `io::Write` impl for write-only
 /// sites.
 pub struct SliceCursor<'a> {
@@ -853,7 +853,7 @@ pub mod allocators {
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
 //   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
-//   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
+//   //   pub fn dirname_store() -> BSSStringListPtr<4096,129>
 //
 // The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
 // Returning `&'static mut` means callers must not hold overlapping unique
@@ -1121,7 +1121,13 @@ macro_rules! bss_list {
 #[macro_export]
 macro_rules! bss_string_list {
     ($(#[$m:meta])* $vis:vis $name:ident : $count:expr, $item_len:expr) => {
-        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSStringList<{ $count }, { $item_len }>);
+        $(#[$m])*
+        #[inline(always)]
+        $vis fn $name() -> $crate::BSSStringListPtr<{ $count }, { $item_len }> {
+            $crate::bss_singleton!(fn $name() -> $crate::BSSStringList<{ $count }, { $item_len }>);
+            // SAFETY: the singleton is from `bss_heap_init`, and nothing else can name it.
+            unsafe { $crate::BSSStringListPtr::from_raw($name()) }
+        }
     };
 }
 
@@ -1564,6 +1570,24 @@ pub struct BSSStringList<
     pub(crate) mutex: Mutex,
 }
 
+/// An initialized `BSSStringList`, which is never freed.
+#[derive(Clone, Copy)]
+pub struct BSSStringListPtr<const COUNT: usize, const ITEM_LENGTH: usize>(
+    *mut BSSStringList<COUNT, ITEM_LENGTH>,
+);
+// SAFETY: what changes after `init_at` is guarded by `mutex`, and
+// the allocation is process-lifetime (never freed). The pointer is therefore
+// safe to publish and dereference from any thread.
+unsafe impl<const COUNT: usize, const ITEM_LENGTH: usize> Send
+    for BSSStringListPtr<COUNT, ITEM_LENGTH>
+{
+}
+// SAFETY: same invariant as `Send`.
+unsafe impl<const COUNT: usize, const ITEM_LENGTH: usize> Sync
+    for BSSStringListPtr<COUNT, ITEM_LENGTH>
+{
+}
+
 #[derive(Default, Clone, Copy)]
 struct EmptyType {
     len: usize,
@@ -1571,13 +1595,16 @@ struct EmptyType {
 
 struct LowerCase<'a>(&'a [u8]);
 
-/// Byte sources accepted by the `append*` methods.
-pub trait BSSAppendable {
-    /// Total byte length (excluding sentinel).
-    fn total_len(&self) -> usize;
-    /// Copy bytes into `dst[..total_len()]`. No-op for `EmptyType`.
-    fn copy_into(&self, dst: &mut [u8]);
+mod sealed {
+    /// Byte sources accepted by the `append*` methods.
+    pub trait BSSAppendable {
+        /// Total byte length (excluding sentinel).
+        fn total_len(&self) -> usize;
+        /// Copy bytes into `dst[..total_len()]`. No-op for `EmptyType`.
+        fn copy_into(&self, dst: &mut [u8]);
+    }
 }
+use sealed::BSSAppendable;
 
 impl BSSAppendable for EmptyType {
     fn total_len(&self) -> usize {
@@ -1615,8 +1642,6 @@ impl BSSAppendable for &[&[u8]] {
 }
 
 impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LENGTH> {
-    const MAX_INDEX: usize = COUNT - 1;
-
     /// In-place field initialization into uninitialized storage.
     ///
     /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
@@ -1641,24 +1666,35 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_string_list!` for the canonical singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
+    pub fn init() -> BSSStringListPtr<COUNT, ITEM_LENGTH> {
+        BSSStringListPtr(bss_heap_init(Self::init_at).as_ptr())
+    }
+}
+
+impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringListPtr<COUNT, ITEM_LENGTH> {
+    const MAX_INDEX: usize = COUNT - 1;
+    const BACKING_BUF_LEN: usize = COUNT * ITEM_LENGTH;
+
+    /// SAFETY: `list` is from `bss_heap_init(BSSStringList::init_at)`, and is only used through this type.
+    #[doc(hidden)] // Public only for the `bss_string_list!` macro expansion in dependent crates.
+    pub unsafe fn from_raw(list: *mut BSSStringList<COUNT, ITEM_LENGTH>) -> Self {
+        Self(list)
     }
 
-    // Singleton is process-lifetime; never freed.
-
-    fn exists(&self, value: &[u8]) -> bool {
+    fn exists(self, value: &[u8]) -> bool {
+        // SAFETY: the list is live, and only `init_at` writes this field.
+        let backing_buf = unsafe { (*self.0).backing_buf };
         // Pointer-range check against the backing storage. Done with addresses
         // rather than forming a `&[u8]` over `MaybeUninit<u8>` storage (which
         // would assert byte-validity of the unwritten tail).
-        let base = self.backing_buf.as_ptr().cast::<u8>() as usize;
-        let end = base + self.backing_buf.len();
+        let base = backing_buf.as_ptr().cast::<u8>() as usize;
+        let end = base + backing_buf.len();
         let p = value.as_ptr() as usize;
         base <= p && p + value.len() <= end
     }
 
     /// `value` with the store's lifetime, if it already points into the store.
-    pub fn as_interned(&'static self, value: &[u8]) -> Option<&'static [u8]> {
+    pub fn as_interned(self, value: &[u8]) -> Option<&'static [u8]> {
         if !self.exists(value) {
             return None;
         }
@@ -1670,39 +1706,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         Some(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) })
     }
 
-    /// Append `value` and return a mutable slice over the freshly-reserved bytes.
-    ///
-    /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
-    /// `bss_string_list!` singleton pointer directly without first
-    /// materializing a `&mut Self` — which would be aliased UB if two threads
-    /// did so concurrently *before* reaching the inner `self.mutex.lock()`.
-    /// The inner mutex is the sole
-    /// serialization point, so no caller-side outer lock is needed.
-    ///
-    /// SAFETY: `this` must point to a live, initialized `BSSStringList`
-    /// (typically the `bss_string_list!` singleton). Concurrent callers are
-    /// allowed.
-    pub(crate) unsafe fn append_mutable<'a, A: BSSAppendable>(
-        this: *mut Self,
-        value: &A,
-    ) -> core::result::Result<&'a mut [u8], AllocError> {
-        // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound.
-        let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(value)? };
-        // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
-        // and points into storage owned by `*this` (backing_buf or a process-lifetime
-        // mimalloc region); the slot was freshly reserved under the mutex so no other
-        // live borrow of that region exists.
-        Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
-    }
-
-    /// SAFETY: see [`append_mutable`].
-    pub(crate) unsafe fn print_with_type<'a>(
-        this: *mut Self,
+    pub fn print(
+        self,
         args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<&'a [u8], AllocError> {
+    ) -> core::result::Result<&'static [u8], AllocError> {
         // `core::fmt::write` drives a `dyn fmt::Write` vtable per
         // argument piece, so a count-then-write double pass pays that dispatch *twice* — the
         // dominant cost in `extract_tarball::build_url`, which is called once
@@ -1719,102 +1726,78 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `SliceCursor::write_str` only *writes* into `buf[at..end]`
         // via `copy_from_slice` and never reads it, so forming `&mut [u8]` over
         // uninit bytes is sound here — every byte in `[..c.at]` is initialized
-        // before being observed below. Same pattern as `do_append`'s
+        // before being observed below. Same pattern as `append_mutable`'s
         // `backing_buf` slice formation.
         let mut c = crate::SliceCursor::new(unsafe {
             core::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<u8>(), STACK)
         });
         if core::fmt::write(&mut c, args).is_ok() {
             let written: &[u8] = &c.buf[..c.at];
-            // SAFETY: forwarded — see `append`.
-            return unsafe { Self::append(this, &written) };
+            return self.append(&written);
         }
 
         // Overflow (> STACK bytes — rare): count exactly, reserve, re-format.
         let len = crate::fmt_count(args);
-        // SAFETY: forwarded — see `append_mutable`.
-        let buf = unsafe { Self::append_mutable(this, &EmptyType { len: len + 1 })? };
+        let buf = self.append_mutable(&EmptyType { len: len + 1 })?;
         let buf_len = buf.len();
         buf[buf_len - 1] = 0;
         let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
         Ok(&buf[..written])
     }
 
-    /// SAFETY: see [`append_mutable`].
-    pub unsafe fn print<'a>(
-        this: *mut Self,
-        args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<&'a [u8], AllocError> {
-        // SAFETY: forwarded — see `append_mutable`.
-        unsafe { Self::print_with_type(this, args) }
-    }
-
     /// Append `value`, returning a stable `&[u8]` over the freshly-reserved bytes.
-    ///
-    /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
-    /// `bss_string_list!` singleton pointer directly without first
-    /// materializing a `&mut Self` — see [`append_mutable`] for the full
-    /// rationale. The inner mutex is the sole serialization point.
-    ///
-    /// SAFETY: `this` must point to a live, initialized `BSSStringList`
-    /// (typically the `bss_string_list!` singleton). Concurrent callers are
-    /// allowed.
     #[inline]
-    pub unsafe fn append<'a, A: BSSAppendable>(
-        this: *mut Self,
+    pub fn append<A: BSSAppendable>(
+        self,
         value: &A,
-    ) -> core::result::Result<&'a [u8], AllocError> {
-        // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound.
-        let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(value)? };
-        // SAFETY: `ptr` points into storage owned by `*this` (backing_buf or a
-        // process-lifetime mimalloc region); the slot was freshly reserved under
-        // the mutex so no other writer aliases it, and reborrowing as shared is
-        // always sound.
-        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
+    ) -> core::result::Result<&'static [u8], AllocError> {
+        Ok(self.append_mutable(value)?)
     }
 
     /// Append `value` lowercased ASCII-wise.
-    ///
-    /// SAFETY: see [`append`].
-    pub unsafe fn append_lower_case<'a>(
-        this: *mut Self,
+    pub fn append_lower_case(
+        self,
         value: &[u8],
-    ) -> core::result::Result<&'a [u8], AllocError> {
-        // SAFETY: forwarded — see `append`.
-        unsafe { Self::append(this, &LowerCase(value)) }
+    ) -> core::result::Result<&'static [u8], AllocError> {
+        self.append(&LowerCase(value))
     }
 
-    /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),
-    /// where `ptr` carries write provenance (`out.as_mut_ptr()`). Callers reconstruct a
-    /// `&[u8]` (`append`) or `&mut [u8]` (`append_mutable`) from it; returning raw parts
-    /// avoids the `&self.backing_buf` ↔ `&mut self.slice_buf` borrowck conflict and
-    /// `&[u8] → &mut [u8]` provenance laundering.
+    /// Append `value` and return a mutable slice over the freshly-reserved bytes.
     #[inline]
-    fn do_append<A: BSSAppendable>(
-        &mut self,
+    fn append_mutable<A: BSSAppendable>(
+        self,
         value: &A,
-    ) -> core::result::Result<(*mut u8, usize), AllocError> {
+    ) -> core::result::Result<&'static mut [u8], AllocError> {
+        let list = self.0;
+        // SAFETY: the list is live; `Mutex: Sync` so concurrent `&Mutex` formation
+        // is sound.
+        let _guard = unsafe { (*list).mutex.lock() };
+        // SAFETY: mutex held ⇒ this thread has exclusive access to these fields.
+        let (backing_buf_used, slice_buf_used, overflow_list) = unsafe {
+            (
+                &mut (*list).backing_buf_used,
+                &mut (*list).slice_buf_used,
+                &mut (*list).overflow_list,
+            )
+        };
         let value_len: usize = value.total_len() + 1;
 
         let (out_ptr, out_len): (*mut u8, usize);
         let mut from_heap = false;
-        if value_len + (self.backing_buf_used as usize) < self.backing_buf.len() - 1 {
-            let start = self.backing_buf_used as usize;
-            self.backing_buf_used += value_len as u64;
-            let end = self.backing_buf_used as usize;
+        if value_len < Self::BACKING_BUF_LEN - 1 - (*backing_buf_used as usize) {
+            let start = *backing_buf_used as usize;
+            *backing_buf_used += value_len as u64;
+            let end = *backing_buf_used as usize;
 
             // SAFETY: `backing_buf` is a process-lifetime mapping of
             // `COUNT*ITEM_LENGTH` writable bytes owned by this singleton; we
-            // hold `&mut self` so no other live borrow of the region exists.
+            // hold the mutex so no other live borrow of the region exists.
             // Forming `&mut [u8]` only over `[start..end]` — these bytes are
             // about to be fully written (payload + trailing NUL), so no uninit
             // byte is exposed through the reference.
             let dst: &mut [u8] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    self.backing_buf.as_ptr().cast::<u8>().add(start),
+                    (*list).backing_buf.as_ptr().cast::<u8>().add(start),
                     end - start,
                 )
             };
@@ -1837,25 +1820,22 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             (out_ptr, out_len) = (out.as_mut_ptr(), out.len());
         }
 
-        let mut result = IndexType::new(
-            u32::MAX >> 1,
-            self.slice_buf_used as usize > Self::MAX_INDEX,
-        );
+        let mut result = IndexType::new(u32::MAX >> 1, *slice_buf_used as usize > Self::MAX_INDEX);
 
         if result.is_overflow() {
-            result.set_index(self.overflow_list.len());
+            result.set_index(overflow_list.len());
         } else {
-            result.set_index(self.slice_buf_used as u32);
-            self.slice_buf_used += 1;
+            result.set_index(*slice_buf_used as u32);
+            *slice_buf_used += 1;
         }
 
-        // SAFETY: `out_ptr` addresses self.backing_buf or a process-lifetime alloc, both
+        // SAFETY: `out_ptr` addresses backing_buf or a process-lifetime alloc, both
         // outliving 'static (singleton).
         let stored: &'static [u8] = unsafe { core::slice::from_raw_parts(out_ptr, out_len) };
 
         if result.is_overflow() {
-            if self.overflow_list.len() == result.index() {
-                if let Err(e) = self.overflow_list.append(stored) {
+            if overflow_list.len() == result.index() {
+                if let Err(e) = overflow_list.append(stored) {
                     if from_heap {
                         // SAFETY: `out_ptr` is the `default_alloc::malloc` above, unreferenced now.
                         unsafe { default_alloc::free(out_ptr.cast()) };
@@ -1863,22 +1843,25 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
                     return Err(e);
                 }
             } else {
-                *self.overflow_list.at_index_mut(result) = stored;
+                *overflow_list.at_index_mut(result) = stored;
             }
         } else {
             // SAFETY: `slice_buf` is a process-lifetime mapping of `COUNT`
             // `&[u8]`-sized slots owned by this singleton; `result.index() <
-            // slice_buf_used <= COUNT`; we hold `&mut self`. Raw write — slot
+            // slice_buf_used <= COUNT`; we hold the mutex. Raw write — slot
             // may be uninit.
             unsafe {
-                self.slice_buf
+                (*list)
+                    .slice_buf
                     .as_ptr()
                     .cast::<MaybeUninit<&'static [u8]>>()
                     .add(result.index() as usize)
                     .write(MaybeUninit::new(stored));
             }
         }
-        Ok((out_ptr, out_len))
+        // SAFETY: `out_ptr` came from `as_mut_ptr()` (write provenance); the bytes were
+        // freshly reserved under the mutex, and `stored` is never read.
+        Ok(unsafe { core::slice::from_raw_parts_mut(out_ptr, out_len) })
     }
 }
 

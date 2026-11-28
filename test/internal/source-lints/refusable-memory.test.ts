@@ -22,6 +22,7 @@ test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refu
       String.raw`(?:\.|::)(?:${functions.trim().split(/\s+/).join("|")})\b`,
       String.raw`\b(?:vec|format)!`,
       String.raw`\b(?:Box|Rc|Arc)::(?:<.*?>::)?(?:new\w*|from)\b`,
+      String.raw`\b(?:AliasableBox|RefPtr)::(?:<.*?>::)?new\b`,
       String.raw`\b(?:Vec|String)::(?:<.*?>::)?from\b`,
     ].join("|"),
   );

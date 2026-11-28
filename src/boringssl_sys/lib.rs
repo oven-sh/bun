@@ -1,7 +1,10 @@
+#![feature(core_io_borrowed_buf)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 pub mod boringssl;
 pub use boringssl::*;
+
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 
 /// Fill `buf` with cryptographically-secure random bytes via BoringSSL `RAND_bytes`.
 ///
@@ -10,13 +13,21 @@ pub use boringssl::*;
 /// a syscall per call. This is the CSPRNG for all of Bun.
 #[inline]
 pub fn rand_bytes(buf: &mut [u8]) {
-    if buf.is_empty() {
+    rand_bytes_buf(BorrowedBuf::from(buf).unfilled());
+}
+
+/// [`rand_bytes`] for memory that can be uninitialized.
+#[inline]
+pub fn rand_bytes_buf(mut buf: BorrowedCursor<'_, u8>) {
+    let len = buf.capacity();
+    if len == 0 {
         return;
     }
-    // SAFETY: `buf` is a valid writable slice of `buf.len()` bytes. BoringSSL's
-    // `RAND_bytes` always returns 1 (it `abort()`s on failure).
+    // SAFETY: `buf` is writable for `len` bytes. BoringSSL's `RAND_bytes`
+    // writes all of them (it `abort()`s on failure).
     unsafe {
-        boringssl::RAND_bytes(buf.as_mut_ptr(), buf.len());
+        boringssl::RAND_bytes(buf.as_mut().as_mut_ptr().cast(), len);
+        buf.advance(len);
     }
 }
 

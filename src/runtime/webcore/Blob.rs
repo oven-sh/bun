@@ -6,6 +6,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+#[cfg(unix)]
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
@@ -50,25 +51,9 @@ pub(crate) mod read_file;
 #[path = "blob/write_file.rs"]
 pub(crate) mod write_file;
 
-/// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
-/// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
-/// produced by `RefPtr<Store>::into_raw()`.
-///
-/// Defined here (rather than in `bun_jsc`) because `Store` is a `bun_runtime`
-/// type and the `bun_jsc` copy is a forward-dep placeholder.
-///
-/// Body wraps its only privileged op (`Store::deref`) locally; a safe
-/// `extern "C" fn` coerces to the `JSTypedArrayBytesDeallocator` pointer
-/// expected by `to_js_with_context`.
-pub(crate) extern "C" fn blob_store_array_buffer_deallocator(
-    _bytes: *mut c_void,
-    ctx: *mut c_void,
-) {
-    if let Some(store) = NonNull::new(ctx.cast::<Store>()) {
-        // SAFETY: `ctx` is a `*mut Store` previously yielded by `RefPtr<Store>::into_raw`
-        // (one outstanding strong ref). `Store::deref` consumes that ref.
-        unsafe { Store::deref(store) };
-    }
+/// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref.
+extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, store: RefPtr<Store>) {
+    drop(store);
 }
 
 /// WHATWG File API §3.1: a Blob/File `type` is only used when every character
@@ -2094,15 +2079,8 @@ impl BlobExt for Blob {
                     Lifetime::Transfer => self.take_store(),
                 };
                 let store = store.expect("infallible: store present");
-                // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
-                // is the matching finalizer that consumes `ctx` and the buffer.
-                unsafe {
-                    EncodedSlice::latin1(buf).external(
-                        global,
-                        store.into_raw().cast::<c_void>(),
-                        Store::external,
-                    )
-                }
+                // SAFETY: `buf` is a part of `raw_bytes`, which are the bytes of `store` (fn contract).
+                unsafe { EncodedSlice::latin1(buf).external(global, store) }
             }
         }
     }
@@ -2258,11 +2236,17 @@ impl BlobExt for Blob {
                 let store = self.take_store().expect("transfer with null store");
                 // SAFETY: nothing borrows the bytes. After `take()` the store ref is moved
                 // out of `self`, so JSC becomes the sole owner via the deallocator.
+                // A `RefPtr` is a thin pointer.
                 unsafe {
                     jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
-                        Some(blob_store_array_buffer_deallocator),
+                        Some(bun_ptr::cast_fn_ptr::<
+                            extern "C" fn(*mut c_void, RefPtr<Store>),
+                            unsafe extern "C" fn(*mut c_void, *mut c_void),
+                        >(
+                            blob_store_array_buffer_deallocator
+                        )),
                     )
                 }
             }

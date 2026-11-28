@@ -127,14 +127,15 @@ impl<'c> StructuralIndex<'c> {
             let chunk_len = (len - self.src_off).min(REFILL_INPUT);
             let word_off = self.src_off / 4096;
             let nwords = (chunk_len.div_ceil(64)).div_ceil(64);
-            let filled = self.win.len();
-            let (n, chunk_flags) = bun_highway::json_structural_index_chunk(
-                &self.contents[self.src_off..self.src_off + chunk_len],
-                self.src_off,
-                &mut self.win.spare_capacity_mut()[..chunk_len + 66],
-                &mut self.dirty[word_off..word_off + nwords],
-                &mut self.kernel_state,
-            );
+            let chunk_flags = bun_core::vec::append_with(&mut self.win, usize::MAX, |out| {
+                bun_highway::json_structural_index_chunk(
+                    &self.contents[self.src_off..self.src_off + chunk_len],
+                    self.src_off,
+                    out,
+                    &mut self.dirty[word_off..word_off + nwords],
+                    &mut self.kernel_state,
+                )
+            });
             if chunk_flags & FLAG_ODDITY != 0 {
                 self.use_scalar = true;
                 self.s_skip = self.base + self.win.len();
@@ -142,8 +143,6 @@ impl<'c> StructuralIndex<'c> {
                 return;
             }
             self.flags |= chunk_flags;
-            // SAFETY: the kernel initialized `n` entries of the spare capacity it was given.
-            unsafe { self.win.set_len(filled + n) };
             self.src_off += chunk_len;
             return;
         }

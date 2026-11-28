@@ -8,6 +8,8 @@ pub mod webp;
 pub mod zlib;
 pub mod zstd;
 
+use std::io::BorrowedCursor;
+
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
@@ -348,21 +350,17 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     if scalar_only(haystack.len()) {
         return haystack.iter().position(|&b| b == needle);
     }
-    // SAFETY: haystack.ptr/len are a valid readable range.
-    let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
-    let found = found_at(result, haystack.len());
+    let found = index_of_char_shared(haystack, needle);
     debug_assert!(found.is_none_or(|i| haystack[i] == needle));
     found
 }
 
 /// [`index_of_char`] of bytes that another thread may be writing. The byte found can have changed by the time this returns.
-///
-/// # Safety
-/// `len` bytes at `haystack` are readable.
 #[inline(always)]
-pub unsafe fn index_of_char_raw(haystack: *const u8, len: usize, needle: u8) -> Option<usize> {
-    // SAFETY: the caller's.
-    found_at(unsafe { highway_index_of_char(haystack, len, needle) }, len)
+pub fn index_of_char_shared(haystack: &[u8], needle: u8) -> Option<usize> {
+    // SAFETY: haystack.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    found_at(result, haystack.len())
 }
 
 #[inline(always)]
@@ -1129,10 +1127,14 @@ pub fn count_slashes(path: &[u8]) -> usize {
 // `&[u16]` requires
 // 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
-pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
-    let output = &mut output[..input.len()];
-    // SAFETY: input.ptr/len readable, output.ptr writable for input.len() bytes.
-    unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+pub fn copy_u16_to_u8(input: &[u16], mut output: BorrowedCursor<'_, u8>) {
+    assert!(input.len() <= output.capacity());
+    // SAFETY: input.ptr/len readable; the kernel writes all of input.len() bytes, which have room.
+    unsafe {
+        let to = output.as_mut().as_mut_ptr().cast();
+        highway_copy_u16_to_u8(input.as_ptr(), input.len(), to);
+        output.advance(input.len());
+    }
 }
 
 #[inline(always)]
@@ -1404,32 +1406,34 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
     unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
 }
 
-/// JSON structural index (simdjson-style stage 1) for one chunk of a document.
+/// JSON structural index (simdjson-style stage 1) for one chunk of a document. Returns the flags; an oddity appends nothing.
 #[inline(always)]
 pub fn json_structural_index_chunk(
     chunk: &[u8],
     base_offset: usize,
-    out: &mut [core::mem::MaybeUninit<u32>],
+    mut out: BorrowedCursor<'_, u32>,
     dirty: &mut [u64],
     state: &mut [u64; 3],
-) -> (usize, u32) {
-    assert!(out.len() >= chunk.len() + 66);
+) -> u32 {
+    assert!(out.capacity() >= chunk.len() + 66);
     assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
     assert!(base_offset.is_multiple_of(4096));
     let mut flags: u32 = 0;
     // SAFETY: the slices satisfy the kernel's size requirements (asserted above).
-    let n = unsafe {
-        highway_json_index_chunk(
+    // It returns how many indices it wrote to the start of `out`.
+    unsafe {
+        let n = highway_json_index_chunk(
             chunk.as_ptr(),
             chunk.len(),
             base_offset,
-            out.as_mut_ptr().cast::<u32>(),
+            out.as_mut().as_mut_ptr().cast::<u32>(),
             dirty.as_mut_ptr(),
             state.as_mut_ptr(),
             &raw mut flags,
-        )
-    };
-    (n, flags)
+        );
+        out.advance(n);
+    }
+    flags
 }
 
 /// XML structural index (stage 1) for one chunk of a document.
@@ -1437,19 +1441,21 @@ pub fn json_structural_index_chunk(
 pub fn xml_structural_index_chunk(
     chunk: &[u8],
     base_offset: usize,
-    out: &mut [core::mem::MaybeUninit<u32>],
+    mut out: BorrowedCursor<'_, u32>,
     state: &mut [u64; 3],
-) -> usize {
-    assert!(out.len() >= chunk.len() + 64);
+) {
+    assert!(out.capacity() >= chunk.len() + 64);
     // SAFETY: `out` has room for one index per byte plus a full trailing block (asserted above).
+    // The kernel returns how many it wrote to the start.
     unsafe {
-        highway_xml_index_chunk(
+        let n = highway_xml_index_chunk(
             chunk.as_ptr(),
             chunk.len(),
             base_offset,
-            out.as_mut_ptr().cast::<u32>(),
+            out.as_mut().as_mut_ptr().cast::<u32>(),
             state.as_mut_ptr(),
-        )
+        );
+        out.advance(n);
     }
 }
 
@@ -1458,19 +1464,21 @@ pub fn xml_structural_index_chunk(
 pub fn xml_structural_index16_chunk(
     chunk: &[u16],
     base_offset: usize,
-    out: &mut [core::mem::MaybeUninit<u32>],
+    mut out: BorrowedCursor<'_, u32>,
     state: &mut [u64; 3],
-) -> usize {
-    assert!(out.len() >= chunk.len() + 64);
+) {
+    assert!(out.capacity() >= chunk.len() + 64);
     // SAFETY: `out` has room for one index per unit plus a full trailing block (asserted above).
+    // The kernel returns how many it wrote to the start.
     unsafe {
-        highway_xml_index16_chunk(
+        let n = highway_xml_index16_chunk(
             chunk.as_ptr(),
             chunk.len(),
             base_offset,
-            out.as_mut_ptr().cast::<u32>(),
+            out.as_mut().as_mut_ptr().cast::<u32>(),
             state.as_mut_ptr(),
-        )
+        );
+        out.advance(n);
     }
 }
 

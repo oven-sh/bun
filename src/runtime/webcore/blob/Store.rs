@@ -28,12 +28,12 @@ pub(crate) use bun_jsc::webcore_types::store::{
 
 // ──────────────────────────────────────────────────────────────────────────
 // Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
-// data types. Inherent data-only methods (`size`/`shared_view`/`ref_`/`deref`/
+// data types. Inherent data-only methods (`size`/`shared_view`/
 // `init`/…) live on the `bun_jsc` types directly.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) trait StoreExt {
-    fn to_any_blob(&mut self) -> Option<super::Any>;
+    fn to_any_blob(this: &mut RefPtr<Store>) -> Option<super::Any>;
     fn init_s3(
         pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
@@ -91,10 +91,10 @@ fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
 }
 
 impl StoreExt for Store {
-    /// Caller is responsible for derefing the Store.
-    fn to_any_blob(&mut self) -> Option<super::Any> {
-        if self.has_one_ref() {
-            if let Data::Bytes(bytes) = &mut self.data {
+    fn to_any_blob(this: &mut RefPtr<Store>) -> Option<super::Any> {
+        if this.has_one_ref() {
+            // SAFETY: no other ref is left, and nothing borrows from this one.
+            if let Data::Bytes(bytes) = unsafe { &mut (*this.as_ptr()).data } {
                 return Some(super::Any::from_owned_slice(bytes.take_vec()));
             }
         }

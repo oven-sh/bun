@@ -129,13 +129,9 @@ impl Default for Response {
     }
 }
 
+bun_ptr::intrusive_field!(Response, weak_ptr_data: WeakPtrData);
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
-unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
-        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
-    }
-}
+unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {}
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
 
 // Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`

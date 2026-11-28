@@ -32,13 +32,9 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_ptr::RefPtr;
 use bun_ptr::weak_ptr::WeakPtrData;
 
+bun_ptr::intrusive_field!(Request, weak_ptr_data: WeakPtrData);
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
-unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
-        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
-    }
-}
+unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Request {}
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
 impl bun_jsc::JsClass for Request {

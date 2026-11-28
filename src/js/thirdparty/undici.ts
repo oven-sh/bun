@@ -253,29 +253,39 @@ function upgrade() {
   notImplemented();
 }
 
-class MockClient {
-  constructor() {}
+// https://github.com/nodejs/undici/blob/v8.12.4/lib/dispatcher/dispatcher.js
+class Dispatcher extends EventEmitter {
+  dispatch(_opts: object, _handler: object): boolean {
+    throw new Error("not implemented");
+  }
 }
-class MockPool {
-  constructor() {}
-}
-class MockAgent {
-  constructor() {}
-}
+type DispatcherCallback = (err: Error | null, data: null) => void;
 
-function mockErrors() {}
+// https://github.com/nodejs/undici/blob/v8.12.4/lib/dispatcher/dispatcher-base.js
+class DispatcherBase extends Dispatcher {
+  close(callback?: DispatcherCallback) {
+    if (callback === undefined) return Promise.$resolve(null);
+    if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
+    queueMicrotask(() => callback(null, null));
+  }
 
-class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
-class Pool extends Dispatcher {
+  destroy(err?: Error | DispatcherCallback | null, callback?: DispatcherCallback) {
+    if (typeof err === "function") callback = err;
+    if (callback === undefined) return Promise.$resolve(null);
+    if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
+    queueMicrotask(() => callback(null, null));
+  }
+}
+class Agent extends DispatcherBase {}
+class Pool extends DispatcherBase {
   request() {}
 }
-class BalancedPool extends Dispatcher {}
-class Client extends Dispatcher {
+class BalancedPool extends DispatcherBase {}
+class RoundRobinPool extends DispatcherBase {}
+class Client extends DispatcherBase {
   request() {}
 }
-
-class DispatcherBase extends EventEmitter {}
+class H2CClient extends Client {}
 
 class ProxyAgent extends DispatcherBase {
   constructor() {
@@ -283,15 +293,71 @@ class ProxyAgent extends DispatcherBase {
   }
 }
 
+class Socks5ProxyAgent extends DispatcherBase {}
+
 class EnvHttpProxyAgent extends DispatcherBase {
   constructor() {
     super();
   }
 }
 
-class RetryAgent extends Dispatcher {
+class RetryAgent extends DispatcherBase {
   constructor() {
     super();
+  }
+}
+
+class MockClient extends Client {}
+class MockPool extends Pool {}
+class MockAgent extends DispatcherBase {}
+class SnapshotAgent extends MockAgent {}
+class MockCallHistory {}
+class MockCallHistoryLog {}
+
+// https://github.com/nodejs/undici/blob/v8.12.4/lib/dispatcher/dispatcher1-wrapper.js
+interface WrappedDispatcher extends Dispatcher {
+  webSocketOptions?: object;
+  eventSourceOptions?: object;
+  close?(...args: unknown[]): unknown;
+  destroy?(...args: unknown[]): unknown;
+}
+
+class Dispatcher1Wrapper extends Dispatcher {
+  #dispatcher: WrappedDispatcher;
+
+  constructor(dispatcher: WrappedDispatcher) {
+    super();
+
+    if (!dispatcher || typeof dispatcher.dispatch !== "function") {
+      throw new InvalidArgumentError("Argument dispatcher must implement dispatch");
+    }
+
+    this.#dispatcher = dispatcher;
+  }
+
+  dispatch(opts: { allowH2?: boolean }, handler: object) {
+    // Legacy (v1) consumers do not support HTTP/2, so force HTTP/1.1.
+    if (opts.allowH2 !== false) {
+      opts = { ...opts, allowH2: false };
+    }
+
+    return this.#dispatcher.dispatch(opts, handler);
+  }
+
+  get webSocketOptions() {
+    return this.#dispatcher.webSocketOptions;
+  }
+
+  get eventSourceOptions() {
+    return this.#dispatcher.eventSourceOptions;
+  }
+
+  close(...args: unknown[]) {
+    return this.#dispatcher.close!(...args);
+  }
+
+  destroy(...args: unknown[]) {
+    return this.#dispatcher.destroy!(...args);
   }
 }
 
@@ -313,9 +379,28 @@ function createRedirectInterceptor() {
 
 const interceptors = {
   redirect: () => {},
+  responseError: () => {},
   retry: () => {},
   dump: () => {},
+  dns: () => {},
+  cache: () => {},
+  decompress: () => {},
+  deduplicate: () => {},
 };
+
+class MemoryCacheStore {
+  constructor() {
+    notImplemented();
+  }
+}
+
+class SqliteCacheStore {
+  constructor() {
+    notImplemented();
+  }
+}
+
+const cacheStores = { MemoryCacheStore, SqliteCacheStore };
 
 // Error classes
 class UndiciError extends Error {}
@@ -327,7 +412,15 @@ class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
 class ConnectTimeoutError extends UndiciError {}
 class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
+class InvalidArgumentError extends UndiciError {
+  declare code: string;
+
+  constructor(message?: string, options?: ErrorOptions) {
+    super(message || "Invalid Argument Error", options);
+    this.name = "InvalidArgumentError";
+    this.code = "UND_ERR_INVALID_ARG";
+  }
+}
 class InvalidReturnValueError extends UndiciError {}
 class RequestAbortedError extends AbortError {}
 class ClientDestroyedError extends UndiciError {}
@@ -340,6 +433,14 @@ class BalancedPoolMissingUpstreamError extends UndiciError {}
 class ResponseExceededMaxSizeError extends UndiciError {}
 class RequestRetryError extends UndiciError {}
 class SecureProxyConnectionError extends UndiciError {}
+class ProxyConnectionError extends UndiciError {}
+class ResponseError extends UndiciError {}
+class MaxRedirectsError extends UndiciError {}
+class MaxOriginsReachedError extends UndiciError {}
+class Socks5ProxyError extends UndiciError {}
+class MessageSizeExceededError extends UndiciError {}
+class WebAssemblyNotSupportedError extends Error {}
+class MockNotMatchedError extends UndiciError {}
 
 const errors = {
   AbortError,
@@ -364,7 +465,16 @@ const errors = {
   ResponseExceededMaxSizeError,
   RequestRetryError,
   SecureProxyConnectionError,
+  ProxyConnectionError,
+  ResponseError,
+  MaxRedirectsError,
+  MaxOriginsReachedError,
+  Socks5ProxyError,
+  MessageSizeExceededError,
+  WebAssemblyNotSupportedError,
 };
+
+const mockErrors = { MockNotMatchedError };
 
 const util = {
   parseHeaders: () => {
@@ -383,6 +493,54 @@ function ping(ws: WebSocket, body?: Buffer) {
   }
   if (!(ws instanceof WebSocket)) throw new TypeError("Expected a WebSocket");
   if (ws.readyState === WebSocket.OPEN) ws.ping(body);
+}
+
+// https://github.com/nodejs/undici/blob/v8.12.4/lib/web/websocket/stream/websocketerror.js
+class WebSocketError extends DOMException {
+  #closeCode: number | null;
+  #reason: string;
+
+  constructor(message = "", init: { closeCode?: number; reason?: string } | null = {}) {
+    super(`${message}`, "WebSocketError");
+
+    let code = init?.closeCode == null ? null : Math.trunc(Number(init.closeCode)) || 0;
+    const reason = `${init?.reason ?? ""}`;
+
+    if (code !== null && code !== 1000 && (code < 3000 || code > 4999)) {
+      throw new DOMException("invalid code", "InvalidAccessError");
+    }
+    const reasonBytesLength = Buffer.byteLength(reason);
+    if (reasonBytesLength > 123) {
+      throw new DOMException(`Reason must be less than 123 bytes; received ${reasonBytesLength}`, "SyntaxError");
+    }
+
+    if (reason.length !== 0 && code === null) {
+      code = 1000;
+    }
+
+    this.#closeCode = code;
+    this.#reason = reason;
+  }
+
+  get closeCode() {
+    return this.#closeCode;
+  }
+
+  get reason() {
+    return this.#reason;
+  }
+}
+
+Object.defineProperties(WebSocketError.prototype, {
+  closeCode: { enumerable: true },
+  reason: { enumerable: true },
+  [Symbol.toStringTag]: { value: "WebSocketError", writable: false, enumerable: false, configurable: true },
+});
+
+class WebSocketStream {
+  constructor() {
+    notImplemented();
+  }
 }
 
 class EventSource extends EventTarget {
@@ -412,6 +570,10 @@ function setCookie() {
   notImplemented();
 }
 
+function parseCookie() {
+  notImplemented();
+}
+
 // Add missing MIME type functions
 function parseMIMEType() {
   notImplemented();
@@ -429,7 +591,7 @@ function setGlobalDispatcher(dispatcher: Dispatcher) {
 }
 
 function getGlobalDispatcher() {
-  return (globalDispatcher ??= new Dispatcher());
+  return (globalDispatcher ??= new Agent());
 }
 
 // Add missing origin functions
@@ -462,12 +624,26 @@ function buildConnector(_options: object = {}) {
   };
 }
 
+// https://github.com/nodejs/undici/blob/v8.12.4/index.js, minus EventSource: the shim's cannot connect.
+function install() {
+  globalThis.fetch = fetch as typeof globalThis.fetch;
+  globalThis.Headers = Headers;
+  globalThis.Response = Response;
+  globalThis.Request = Request;
+  globalThis.FormData = FormData;
+  globalThis.WebSocket = WebSocket;
+  globalThis.CloseEvent = CloseEvent;
+  globalThis.ErrorEvent = ErrorEvent;
+  globalThis.MessageEvent = MessageEvent;
+}
+
 // Update the exports to match the exact structure
 const moduleExports = {
   Agent,
   BalancedPool,
   buildConnector,
   caches,
+  cacheStores,
   Client,
   CloseEvent,
   connect,
@@ -475,6 +651,7 @@ const moduleExports = {
   DecoratorHandler,
   deleteCookie,
   Dispatcher,
+  Dispatcher1Wrapper,
   EnvHttpProxyAgent,
   ErrorEvent,
   errors,
@@ -487,13 +664,18 @@ const moduleExports = {
   getGlobalDispatcher,
   getGlobalOrigin,
   getSetCookies,
+  H2CClient,
   Headers,
+  install,
   interceptors,
   MessageEvent,
   MockAgent,
+  MockCallHistory,
+  MockCallHistoryLog,
   MockClient,
   mockErrors,
   MockPool,
+  parseCookie,
   parseMIMEType,
   ping,
   pipeline,
@@ -505,14 +687,19 @@ const moduleExports = {
   Response,
   RetryAgent,
   RetryHandler,
+  RoundRobinPool,
   serializeAMimeType,
   setCookie,
   setGlobalDispatcher,
   setGlobalOrigin,
+  SnapshotAgent,
+  Socks5ProxyAgent,
   stream,
   upgrade,
   util,
   WebSocket,
+  WebSocketError,
+  WebSocketStream,
 };
 
 (moduleExports as typeof moduleExports & { default?: unknown }).default = moduleExports;

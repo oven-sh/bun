@@ -40,8 +40,9 @@ public:
     // loader this module's record is created against.
     JSC::JSModuleLoader* moduleLoader(JSC::JSGlobalObject*);
 
-    Status status() const { return m_status; }
-    void status(Status value) { m_status = value; }
+    // Whether a SourceTextModule is linked is the state of its module record, which the Link() of an importer changes too.
+    Status status() const;
+    void status(Status value);
 
     JSModuleNamespaceObject* namespaceObject(JSC::JSGlobalObject* globalObject);
     void namespaceObject(JSC::VM& vm, JSModuleNamespaceObject* value) { m_namespaceObject.set(vm, this, value); }
@@ -63,13 +64,11 @@ public:
     void reconcileEvaluationState(JSC::VM& vm);
 
     bool hasAsyncGraph() const;
-    void propagateLinked();
 
     JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
 
 protected:
     WTF::String m_identifier;
-    Status m_status = Status::Unlinked;
     WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
     WriteBarrier<JSObject> m_context;
     WriteBarrier<Unknown> m_evaluationResult;
@@ -84,6 +83,10 @@ protected:
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
+
+private:
+    // Read it through status(). A SourceTextModule never stores Linked here.
+    Status m_status = Status::Unlinked;
 };
 
 class NodeVMModulePrototype final : public JSC::JSNonFinalObject {

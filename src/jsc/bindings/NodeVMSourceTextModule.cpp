@@ -319,11 +319,6 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         return {};
     }
 
-    if (m_status != Status::Unlinked) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
-        return {};
-    }
-
     JSModuleRecord* record = m_moduleRecord.get();
 
     // The Link() of an importer already linked this record. It keeps the modules it linked with, as in Node.
@@ -508,6 +503,10 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
+    // An importer's instantiate() linked this record already: Link() has nothing left to do.
+    if (status() != Status::Unlinked)
+        return jsUndefined();
+
     JSGlobalObject* callerGlobalObject = globalObject;
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
@@ -540,8 +539,6 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
-    status(Status::Linked);
-    propagateLinked();
     return jsUndefined();
 }
 

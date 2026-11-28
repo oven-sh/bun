@@ -310,6 +310,39 @@ await Bun.build({
 
 You can call the `.defer()` function only once per `onLoad` callback.
 
+#### Import paths with a query string
+
+At runtime, an import path can end in a query string, as in `import("./data.csv?v=2")`. Bun runs the `filter` on the path with its query, and the callback receives the same `path`: `/app/data.csv?v=2`. A filter that ends at the file extension, such as `/\.csv$/`, doesn't match that path. Its callback doesn't run, and Bun loads the file without the plugin.
+
+To match the file with or without a query, allow a query in the filter. Remove the query from `path` before you read the file.
+
+```ts plugin.ts icon="/icons/typescript.svg"
+import { plugin } from "bun";
+
+plugin({
+  name: "csv loader",
+  setup(build) {
+    build.onLoad({ filter: /\.csv(\?.+)?$/ }, async ({ path }) => {
+      // "/app/data.csv?v=2" -> "/app/data.csv"
+      const file = path.split("?")[0];
+      const text = await Bun.file(file).text();
+      const rows = text
+        .trim()
+        .split("\n")
+        .map(line => line.split(","));
+      return {
+        contents: `export default ${JSON.stringify(rows)};`,
+        loader: "js",
+      };
+    });
+  },
+});
+```
+
+Return a `loader` from a callback that matches a query. The file extension that Bun falls back to comes from the end of `path`, after the query. `/app/config.ts?v=2` doesn't end in an extension that Bun knows, so Bun loads the returned `contents` as JavaScript.
+
+The filter `/\.csv(\?.+)?$/` also matches a path with an [import suffix](/runtime/module-resolution#import-suffixes), such as `./data.csv?raw`. A matching callback runs before Bun applies the suffix. To let Bun apply the suffix, return `undefined` for that `path`.
+
 ## Native plugins
 
 Bun's bundler is fast partly because it is written in native code and uses multiple threads to load and parse modules in parallel. Plugins written in JavaScript cannot take advantage of this, because JavaScript itself is single-threaded.

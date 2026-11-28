@@ -1446,6 +1446,18 @@ const ASKED_OF_OWN_EXPORTS: &[(&str, &[&str])] = &[
         "const table = (exports.table = { a: './a' }); this.table.a = other; require(table[x]);",
         &[],
     ),
+    (
+        "const table = (exports.table = { a: './b' }); require('./a'); require(table[x]);",
+        &[],
+    ),
+    (
+        r"const table = (exports.table = { a: './b' }); require('.\\a.cjs'); require(table[x]);",
+        &[],
+    ),
+    (
+        "const table = (exports.table = { a: './b' }); require('./c'); require(table[x]);",
+        &["table"],
+    ),
     ("const table = { a: './a' }; require(table[x]);", &[]),
     ("exports.table = { a: './a' }; require('./a');", &[]),
 ];
@@ -1648,6 +1660,11 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
     (
         "a.cjs",
         r#"require("module").createRequire(__dirname + "/lib/..")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/sub/..")("./a");"#,
         None,
     ),
     (
@@ -2698,6 +2715,31 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         "export {}; await import(new URL('../a/', import.meta.url) + x);",
         ResolvedForm::Url,
         &["../a/*"],
+    ),
+    (
+        "export {}; await import(new URL('.', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["./*"],
+    ),
+    (
+        "export {}; await import(new URL('..', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["../*"],
+    ),
+    (
+        "export {}; await import(new URL('./a/b/.', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["./a/b/./*"],
+    ),
+    (
+        "export {}; await import(new URL('./a/b/..', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["./a/b/../*"],
+    ),
+    (
+        "export {}; await import(new URL('./a/b..', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["./a/b..*"],
     ),
     (
         "export {}; await import(import.meta.resolve('./a/') + x);",

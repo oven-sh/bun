@@ -8,6 +8,7 @@ use crate::bind::Decl;
 use crate::bind::Parent;
 use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppercase_unicode_15};
 use crate::util::SharedSort;
+use bun_core::strings;
 use smallvec::SmallVec;
 
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None` is an access produced by instantiation
@@ -531,30 +532,30 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {
             // `property_name_of_type` produces this format.
-            let mut parts = rest.splitn(2, |&c| c == b'@');
-            let symbol = self.atoms().intern(parts.next().unwrap());
+            let (symbol, declaration) = match strings::split_once_char(rest, b'@') {
+                Some((symbol, declaration)) => (symbol, Some(declaration)),
+                None => (rest, None),
+            };
+            let symbol = self.atoms().intern(symbol);
             let number = |b: &[u8]| {
                 std::str::from_utf8(b)
                     .ok()
                     .and_then(|s| s.parse::<u32>().ok())
             };
-            let declaration = match parts
-                .next()
-                .map(|w| w.splitn(2, |&c| c == b'.').collect::<Vec<_>>())
-            {
-                Some(w) if w.len() == 2 => {
-                    let file = FileId(number(w[0])?);
-                    match w[1].strip_prefix(b"m") {
+            let declaration = match declaration.and_then(|w| strings::split_once_char(w, b'.')) {
+                Some((file, id)) => {
+                    let file = FileId(number(file)?);
+                    match id.strip_prefix(b"m") {
                         Some(member) => {
                             UniqueSymbolDeclaration::Member(file, MemberId(number(member)?))
                         }
                         None => UniqueSymbolDeclaration::Variable(Sym {
                             file,
-                            id: crate::bind::SymbolId(number(w[1])?),
+                            id: crate::bind::SymbolId(number(id)?),
                         }),
                     }
                 }
-                _ => UniqueSymbolDeclaration::SymbolConstructor,
+                None => UniqueSymbolDeclaration::SymbolConstructor,
             };
             return Some(self.intern(TypeData::UniqueSymbol {
                 symbol: declaration,

@@ -305,7 +305,9 @@ fn find_files_left_out(files: &[(&str, &str)]) -> Vec<String> {
         let (left_out, _) = find_left_out_code(&input, &run_serially);
         let names = left_out.files.iter().map(|&file| {
             let name = input.files.module(file).file_name();
-            let name = name.rsplit(|&byte| byte == b'/').next().expect("a name");
+            let after_slash =
+                bun_core::strings::last_index_of_char(name, b'/').map_or(0, |slash| slash + 1);
+            let name = &name[after_slash..];
             String::from_utf8_lossy(name).into_owned()
         });
         names.collect()

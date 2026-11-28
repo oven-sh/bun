@@ -1041,13 +1041,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// Whether `TransposeState::is_inlined_const` can tell the leaves of this `import()`,
-    /// `require()` or `require.resolve()` specifier apart by position: when bundling with `const`
-    /// inlining on, each leaf (the specifier, or each branch of a ternary) is an identifier, a
-    /// string literal or a template with no tag. A template that folds to a string gets its own
-    /// position, which is in the call. A concatenation gets the position of its left operand, and
-    /// a macro call gives a value with any position, so those are not accepted. Call it before
-    /// the visit of the specifier.
+    /// Before the visit: each leaf is an identifier, a string literal or an untagged template.
+    /// A folded concatenation takes the position of its left operand, so it is not a leaf here.
     #[inline(never)]
     pub(crate) fn specifier_is_written_as_identifier(&self, specifier: &Expr) -> bool {
         if !self.options.bundle || !self.options.features.inlining {
@@ -1541,8 +1536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
         }
 
-        // The first visit reported a leaf that the source holds in a variable. The re-visit after
-        // a single-use substitution sees the same leaf, or the value that replaced the variable.
+        // The first visit already reported this leaf.
         if !(is_inlined_const && self.is_revisit_for_substitution) {
             // An inlined `const` has the position of its declaration. Report at the call.
             let specifier_loc = if is_inlined_const { state.loc } else { arg.loc };

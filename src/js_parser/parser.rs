@@ -717,12 +717,8 @@ pub struct TransposeState {
 }
 
 impl TransposeState {
-    /// True for a specifier leaf that is a string only because the minifier replaced an
-    /// identifier with the value of its variable (a `const`, or a single-use variable before the
-    /// re-visit). The source holds that specifier in a variable, so the call stays a run-time
-    /// call and gets no import record, the same as when inlining is off. The value keeps the
-    /// position of the initializer of the variable, which is before the call. A literal in the
-    /// call, a folded template and a `--define` value have a position in the call.
+    /// A string that the minifier inlined from a variable keeps the position of the initializer,
+    /// which is before the call. That leaf gets no import record, as when inlining is off.
     #[inline]
     pub(crate) fn is_inlined_const(&self, leaf: &Expr) -> bool {
         self.specifier_written_as_identifier

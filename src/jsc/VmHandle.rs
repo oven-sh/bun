@@ -33,7 +33,6 @@
 
 #[cfg(debug_assertions)]
 use core::panic::Location;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -41,8 +40,9 @@ use bun_threading::{Condvar, Guarded};
 
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
-use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
-use bun_event_loop::{BoxedTask, IntoTask, Task, TaskTag};
+use bun_event_loop::AnyTaskWithExtraContext::MiniTask;
+use bun_event_loop::ConcurrentTask::{ConcurrentTask as ConcurrentTaskItem, OwnedConcurrentTask};
+use bun_event_loop::{BoxedTask, EventLoopTask, TaskTag, Taskable};
 
 pub use bun_event_loop::Posted;
 
@@ -179,7 +179,7 @@ impl Shared {
 
     /// Push + wake; while draining, also wake the waiting teardown (it sleeps
     /// on the condvar, not on the loop).
-    fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
+    fn deliver(&self, kind: LoopKind, task: OwnedConcurrentTask) {
         let el = self.loop_of(kind);
         el.post(task);
         if self.state() >= State::Draining {
@@ -237,12 +237,7 @@ impl Ticket {
     /// The JS thread may consume `task` — and free whatever it points into —
     /// before this returns, so `self` must not live inside that memory: move
     /// the ticket out of the work's struct first, post, then drop it.
-    pub fn post(&self, task: Box<ConcurrentTaskItem>) {
-        self.post_intrusive(bun_core::heap::into_raw_nn(task));
-    }
-
-    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
-    pub fn post_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
+    pub fn post(&self, task: OwnedConcurrentTask) {
         test_gate::before_ticket_post(self);
         debug_assert!(
             self.shared.state() != State::Closed,
@@ -269,7 +264,7 @@ impl Ticket {
 }
 
 impl bun_event_loop::PostToJs for Ticket {
-    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
+    fn post(&self, task: OwnedConcurrentTask) -> Posted {
         Ticket::post(self, task);
         Posted::Queued
     }
@@ -364,18 +359,21 @@ impl VmHandle {
 
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back if
     /// the VM is closed. For posters that hold no ticket.
-    pub fn post<T: IntoTask>(&self, kind: LoopKind, task: T) -> Posted<T> {
+    pub fn post<T: Taskable>(&self, kind: LoopKind, task: T::Payload) -> Posted<T::Payload> {
         self.post_with(T::TAG, task, |task| {
-            let node = ConcurrentTaskItem::create(task.into_task());
-            self.0.deliver(kind, bun_core::heap::into_raw_nn(node));
+            self.0.deliver(kind, ConcurrentTaskItem::create::<T>(task));
         })
     }
 
     /// As [`post`](Self::post), but a loop that is asleep stays asleep until something else wakes it.
-    pub fn post_without_waking<T: IntoTask>(&self, kind: LoopKind, task: T) -> Posted<T> {
+    pub fn post_without_waking<T: BoxedTask>(
+        &self,
+        kind: LoopKind,
+        task: Box<T>,
+    ) -> Posted<Box<T>> {
         self.post_with(T::TAG, task, |task| {
-            let node = ConcurrentTaskItem::create(task.into_task());
-            self.0.loop_of(kind).post(bun_core::heap::into_raw_nn(node));
+            let node = ConcurrentTaskItem::create_boxed(task);
+            self.0.loop_of(kind).post(node);
         })
     }
 
@@ -387,14 +385,7 @@ impl VmHandle {
         node: fn(&mut T) -> &mut ConcurrentTaskItem,
     ) -> Posted<Box<T>> {
         self.post_with(T::TAG, task, |task| {
-            let task = Task::from_boxed(task);
-            // SAFETY: the box that `task` owns, which nothing else can reach before it is delivered.
-            let node = node(unsafe { &mut *task.ptr().cast::<T>() });
-            *node = ConcurrentTaskItem {
-                task,
-                ..Default::default()
-            };
-            self.0.deliver(kind, NonNull::from(node));
+            self.0.deliver(kind, ConcurrentTaskItem::in_box(task, node));
         })
     }
 
@@ -802,19 +793,19 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
     drop(unsafe { VmHandle::from_ref(r) });
 }
 
-/// Any thread (WebCore's `postTaskTo` / `postTaskConcurrently`): whether the VM took `task`.
+/// Any thread (WebCore's `postTaskTo` / `postTaskConcurrently`).
 ///
 /// # Safety
-/// `r` is a live reference its holder keeps for the duration of the call; `task` is a live heap `WebCore::EventLoopTask` handed over.
+/// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__VmHandle__post(
     r: *const Shared,
-    task: *mut crate::cpp_task::CppTask,
+    task: crate::cpp_task::CppTask,
     kind: LoopKind,
-) -> bool {
+) {
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::borrow_ref(r) };
-    matches!(handle.post(kind, task), Posted::Queued)
+    drop(handle.post::<crate::CppTask>(kind, task));
 }
 
 /// The JS thread, or the collector's while the JS thread is stopped.
@@ -888,7 +879,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(&'static bun_event_loop::MiniEventLoop::MiniEventLoop),
+    Mini(&'static bun_event_loop::MiniEventLoop::Inbox),
 }
 
 impl Clone for ConcurrentPoster {
@@ -913,35 +904,33 @@ impl ConcurrentPoster {
                 let vm = unsafe { &*owner.bun_vm().cast::<VirtualMachine>() };
                 ConcurrentPoster::Js(vm.ticket())
             }
-            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(mini),
+            bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(&mini.inbox),
         }
     }
 
-    pub fn is_js(&self) -> bool {
-        matches!(self, ConcurrentPoster::Js(..))
-    }
-
     /// Post a JS-loop `ConcurrentTask`. Panics (debug) if this poster is `Mini`.
-    pub fn post_js(&self, task: Box<ConcurrentTaskItem>) {
-        self.post_js_intrusive(bun_core::heap::into_raw_nn(task));
-    }
-
-    /// As [`Ticket::post_intrusive`].
-    pub fn post_js_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
+    pub fn post_js(&self, task: OwnedConcurrentTask) {
         match self {
-            ConcurrentPoster::Js(t) => t.post_intrusive(task),
+            ConcurrentPoster::Js(t) => t.post(task),
             ConcurrentPoster::Mini(_) => debug_assert!(false, "post_js on a Mini poster"),
         }
     }
 
-    /// Post a mini-loop task (the mini loop outlives its work).
-    pub fn post_mini(
+    /// For a task that `node` returns a field of.
+    pub fn post_intrusive<T: BoxedTask + MiniTask>(
         &self,
-        task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
+        task: Box<T>,
+        node: fn(&mut T) -> &mut EventLoopTask,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
-            ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
+            ConcurrentPoster::Js(t) => {
+                t.post(ConcurrentTaskItem::in_box(task, |task| {
+                    node(task).insert_js()
+                }));
+            }
+            ConcurrentPoster::Mini(inbox) => {
+                inbox.post_intrusive(task, |task| node(task).insert_mini())
+            }
         }
     }
 }
@@ -954,9 +943,9 @@ struct VmPoster {
 }
 
 impl bun_event_loop::PostToJs for VmPoster {
-    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
-        self.handle.post_with(task.task.tag(), task, |task| {
-            (self.handle.0).deliver(self.kind, bun_core::heap::into_raw_nn(task));
+    fn post(&self, task: OwnedConcurrentTask) -> Posted {
+        self.handle.post_with(task.tag(), task, |task| {
+            self.handle.0.deliver(self.kind, task);
         })
     }
 }
@@ -1017,12 +1006,12 @@ impl IsolatedPoster {
 }
 
 impl bun_event_loop::PostToJs for IsolatedPoster {
-    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
+    fn post(&self, task: OwnedConcurrentTask) -> Posted {
         self.active.fetch_add(1, Ordering::SeqCst);
         let posted = if self.open.load(Ordering::SeqCst) {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.post(bun_core::heap::into_raw_nn(task));
+            el.post(task);
             el.wakeup();
             Posted::Queued
         } else {

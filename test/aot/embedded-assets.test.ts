@@ -21,15 +21,29 @@ async function run(cwd: string, cmd: string[], env = bunEnv) {
   return { stdout, stderr, exitCode };
 }
 
+/** For cases that one build serves: `work` runs once, whichever of them asks first. A failure is not kept: the next case that asks starts it again. */
+function once<T>(work: () => Promise<T>) {
+  let done: Promise<T> | undefined;
+  return () =>
+    (done ??= work().catch(error => {
+      done = undefined;
+      throw error;
+    }));
+}
+
 function bothWays(dir: string, entryPoint: string, ...flags: string[]) {
   return bothWaysIn(dir, "app", entryPoint, ...flags);
 }
 
 /** Builds in `folder`, which is `app` or lies below it. All of `app` is moved away before the executable runs. */
 async function bothWaysIn(dir: string, folder: string, entryPoint: string, ...flags: string[]) {
-  const cwd = join(dir, folder);
-  const plain = await run(cwd, [bunExe(), "run", entryPoint]);
-  const built = await run(cwd, [
+  const plain = await run(join(dir, folder), [bunExe(), "run", entryPoint]);
+  return { plain, ...(await compiledIn(dir, folder, entryPoint, ...flags)) };
+}
+
+/** As `bothWaysIn`, but plain Bun is not started: for a case that holds nothing against it. */
+async function compiledIn(dir: string, folder: string, entryPoint: string, ...flags: string[]) {
+  const built = await run(join(dir, folder), [
     bunExe(),
     "build",
     "--compile",
@@ -42,7 +56,7 @@ async function bothWaysIn(dir: string, folder: string, entryPoint: string, ...fl
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
   renameSync(join(dir, "app"), join(dir, "moved-away"));
   const compiled = await run(dir, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-  return { plain, built, compiled };
+  return { built, compiled };
 }
 
 /** Plain Bun runs behind the build, because the program changes its files. Then they are moved away, and `folders` are there without them. */
@@ -102,6 +116,9 @@ say("its data file is there", () => tool.has());
 say("an ES package's manifest", () => version());
 say("Bun.embeddedFiles", () => Bun.embeddedFiles.map(it => it.name).sort().join());
 `;
+  /** What `main` prints, with the names of `embedded` in its last line. */
+  const saidByMain = (...embedded: string[]) =>
+    `a CommonJS package's manifest 1.2.3\nits data file a font\nits data file is there true\nan ES package's manifest 4.5.6\nBun.embeddedFiles ${embedded}\n`;
   const warnings = (built: { stdout: string; stderr: string }) =>
     [...(built.stdout + built.stderr).matchAll(/(warn|note): (TS\d+): [^\n"]*"([^"]+)"/g)]
       .map(it => `${it[1]} ${it[2]} ${it[3].replaceAll("\\", "/")}`)
@@ -320,7 +337,7 @@ rm undefined
 gone false
 end false
 `;
-      expect(plain.stdout).toBe(expected);
+      expect(plain).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
       expect(compiled).toEqual(plain);
     }, 120_000);
   });
@@ -366,9 +383,12 @@ ${isModule ? "export { start };" : "exports.start = start;"}
       });
       const { plain, built, compiled } = await plainAndBeside(String(dir));
       expect(warnings(built)).toEqual([]);
-      expect(plain.stdout).toBe(
-        "a.txt,sub,sub/b.txt false a.txt,sub,sub/b.txt b b.txt a.txt true ENOTEMPTY false data data,data/b.txt b false\n",
-      );
+      expect(plain).toEqual({
+        stdout:
+          "a.txt,sub,sub/b.txt false a.txt,sub,sub/b.txt b b.txt a.txt true ENOTEMPTY false data data,data/b.txt b false\n",
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual(plain);
     },
     120_000,
@@ -668,18 +688,18 @@ export const start = async () => {
     expect(compiled).toEqual(plain);
   }, 120_000);
 
-  test.each([
-    ["removes a folder", ["remove"], "first"],
-    ["starts a process", ["start"], "changed"],
-    ["removes a folder, and starts a process later", ["remove", "start later"], "first"],
-  ])(
-    "another process writes a file of a package after the program %s",
-    async (_, deeds, expected) => {
-      using dir = tempDir("aot-files-of-a-package-changed-by-others", {
-        "app/package.json": `{ "name": "app" }`,
-        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
-        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name);`,
-        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+  const deedsBeforeAnotherWrites = {
+    "removes a folder": ["remove"],
+    "starts a process": ["start"],
+    "removes a folder, and starts a process later": ["remove", "start later"],
+  };
+  // One build serves the three cases. A run keeps what it learns of the disk in its own memory, so the next one starts afresh once the two files hold what was built.
+  const writtenByAnotherProcess = once(async () => {
+    using dir = tempDir("aot-files-of-a-package-changed-by-others", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
 import path from "node:path";
 export { below } from "./below.cjs";
 const ways = { own: name => path.join(import.meta.dirname, name) };
@@ -687,9 +707,9 @@ export const read = () => fs.readFileSync(path.join(import.meta.dirname, "a.txt"
 export const sheet = () => fs.readFileSync(path.join(import.meta.dirname, "a.module.css"), "utf8");
 export const classes = async way => Object.keys((await import(ways[way](Buffer.from("a.module.css").toString()))).default).join();
 `,
-        "app/node_modules/store/a.txt": "first",
-        "app/node_modules/store/a.module.css": ".first { color: red }",
-        "app/main.mjs": `import fs from "node:fs";
+      "app/node_modules/store/a.txt": "first",
+      "app/node_modules/store/a.module.css": ".first { color: red }",
+      "app/main.mjs": `import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { below, classes, read, sheet } from "store";
@@ -702,27 +722,56 @@ for await (const _ of console) break;
 if (deeds.includes("start later")) start();
 console.log(read(), path.basename(below("a.txt")), await classes("own"), sheet());
 `,
+    });
+    const app = join(String(dir), "app");
+    const outfile = join(String(dir), "built.exe");
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const env = { ...bunEnv, BUN_OF_TEST: bunExe() };
+    const lay = (word: string) => {
+      writeFileSync(join(app, "node_modules/store/a.txt"), word);
+      writeFileSync(join(app, "node_modules/store/a.module.css"), `.${word} { color: red }`);
+    };
+    const ran: Record<string, { said: string[]; stderr: string; exitCode: number }> = {};
+    for (const [name, deeds] of Object.entries(deedsBeforeAnotherWrites)) {
+      await using program = Bun.spawn({
+        cmd: [outfile, ...deeds],
+        cwd: app,
+        env,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const app = join(String(dir), "app");
-      const outfile = join(String(dir), "built.exe");
-      const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      const env = { ...bunEnv, BUN_OF_TEST: bunExe() };
-      await using program = Bun.spawn({ cmd: [outfile, ...deeds], cwd: app, env, stdin: "pipe", stdout: "pipe" });
+      const stderr = program.stderr.text();
       let said = "";
       for await (const bytes of program.stdout) {
         said += new TextDecoder().decode(bytes);
         if (said.trim() !== "ready") continue;
-        writeFileSync(join(app, "node_modules/store/a.txt"), "changed");
-        writeFileSync(join(app, "node_modules/store/a.module.css"), ".changed { color: red }");
+        lay("changed");
         program.stdin.write("go\n");
         program.stdin.end();
       }
-      expect(said.split(/\r?\n/)).toEqual(["ready", `${expected} a.txt ${expected} .${expected} { color: red }`, ""]);
-      expect(await program.exited).toBe(0);
+      ran[name] = { said: said.split(/\r?\n/), stderr: await stderr, exitCode: await program.exited };
+      lay("first");
+    }
+    return ran;
+  });
+
+  test.each([
+    ["removes a folder", "first"],
+    ["starts a process", "changed"],
+    ["removes a folder, and starts a process later", "first"],
+  ] as const)(
+    "another process writes a file of a package after the program %s",
+    async (title, expected) => {
+      expect((await writtenByAnotherProcess())[title]).toEqual({
+        said: ["ready", `${expected} a.txt ${expected} .${expected} { color: red }`, ""],
+        stderr: "",
+        exitCode: 0,
+      });
     },
     120_000,
   );
@@ -892,16 +941,12 @@ say("what nobody reads", () => fs.existsSync(path.join(here, "..", "node_modules
       "app/server/.env": "SECRET=1",
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./src/main.mjs");
-    const embedded = `a CommonJS package's manifest 1.2.3
-its data file a font
-its data file is there true
-an ES package's manifest 4.5.6
-Bun.embeddedFiles 
-the program's manifest 7.8.9
-`;
-    expect(plain.stdout).toBe(
-      `${embedded}the program's data data\nthe program's secrets SECRET=1\nwhat nobody reads true\n`,
-    );
+    const embedded = `${saidByMain()}the program's manifest 7.8.9\n`;
+    expect(plain).toEqual({
+      stdout: `${embedded}the program's data data\nthe program's secrets SECRET=1\nwhat nobody reads true\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual({
       stdout: `${embedded}the program's data ENOENT\nthe program's secrets ENOENT\nwhat nobody reads false\n`,
       stderr: "",
@@ -916,7 +961,9 @@ the program's manifest 7.8.9
       "app/server/package.json": `{ "name": "server" }`,
       "app/server/main.mjs": main,
     });
-    const { built } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--explain");
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--explain");
+    expect(plain).toEqual({ stdout: saidByMain(), stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
     expect(warnings(built).filter(it => it.includes("TS100166"))).toEqual([
       "note TS100166 node_modules/@scope/kit/package.json",
       "note TS100166 node_modules/tool/fonts/standard.flf",
@@ -951,7 +998,7 @@ console.log(path.basename(named.helper), named.list(), named.part("a"), named.re
     const metafile = join(String(dir), "meta.json");
     const flags = ["--explain", "--metafile=" + metafile];
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", ...flags);
-    expect(plain.stdout).toBe("helper a.txt,b.txt part a read true\n");
+    expect(plain).toEqual({ stdout: "helper a.txt,b.txt part a read true\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
     const slashes = (text: string) => text.replaceAll("\\", "/");
     const notes = [...(built.stdout + built.stderr).matchAll(/note: TS100176: [^:\n]*: ([^\r\n]+)/g)];
@@ -997,7 +1044,7 @@ console.log(tester.exists(), tester.existsToo(), tester.size(), tester.isReadabl
     const metafile = join(String(dir), "meta.json");
     const flags = ["--explain", "--metafile=" + metafile];
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", ...flags);
-    expect(plain.stdout).toBe("true true 5 true read\n");
+    expect(plain).toEqual({ stdout: "true true 5 true read\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
     const slashes = (text: string) => text.replaceAll("\\", "/");
     const notes = [...(built.stdout + built.stderr).matchAll(/note: TS100176: [^:\n]*: ([^\r\n]+)/g)];
@@ -1032,8 +1079,8 @@ console.log(tester.exists(), tester.existsToo(), tester.size(), tester.isReadabl
       "app/packages/server/main.mjs": main,
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app/packages/server", "./main.mjs");
+    expect(plain).toEqual({ stdout: saidByMain(), stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
-    expect(plain.stdout).toContain("an ES package's manifest 4.5.6\n");
     expect(warnings(built)).toEqual([]);
   }, 120_000);
 
@@ -1051,16 +1098,19 @@ say("a large file", () => size());
     });
     const flags = ["--asset", "node_modules/tool"];
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
-    const list = /^Bun\.embeddedFiles (.*)\n/m;
-    expect(compiled.stdout.replace(list, "")).toBe(plain.stdout.replace(list, ""));
-    expect(plain.stdout).toContain(`a large file ${11 * 1024 * 1024}\n`);
+    const large = `a large file ${11 * 1024 * 1024}\n`;
+    expect(plain).toEqual({ stdout: saidByMain() + large, stderr: "", exitCode: 0 });
     // What was asked for is listed, and nothing else.
-    const listed = list.exec(compiled.stdout)![1].replaceAll("\\", "/").split(",");
-    expect(listed).toContain("node_modules/tool/package.json");
-    expect(listed.filter(name => !name.startsWith("node_modules/tool/"))).toEqual([]);
-    expect((built.stdout + built.stderr).replaceAll("\\", "/")).toContain(
+    const asked = ["fonts/standard.flf", "fonts/unread.flf", "lib/index.cjs", "package.json"];
+    expect({ ...compiled, stdout: compiled.stdout.replaceAll("\\", "/") }).toEqual({
+      stdout: saidByMain(...asked.map(name => `node_modules/tool/${name}`)) + large,
+      stderr: "",
+      exitCode: 0,
+    });
+    const said = (built.stdout + built.stderr).replaceAll("\\", "/").split(/\r?\n/);
+    expect(said.filter(line => line.includes("the executable embeds"))).toEqual([
       `warn: the executable embeds "node_modules/big/table.bin", which a package reads: 11 MB`,
-    );
+    ]);
   }, 120_000);
 
   test.skipIf(isWindows)(
@@ -1098,13 +1148,17 @@ say("the application's file by a link in a package", () => throughLink());
       symlinkSync("../packages/member", join(String(dir), "app/node_modules/member"));
       symlinkSync("../../../../../private", join(String(dir), store, "stored/outward"));
       const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
-      expect(plain.stdout).toBe(`a stored package's own manifest 1.0.0
+      expect(plain).toEqual({
+        stdout: `a stored package's own manifest 1.0.0
 by the link in node_modules true
 is it there true
 a dependency by its sibling link needed
 a workspace member by its link member
 the application's file by a link in a package secret
-`);
+`,
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual({
         stdout: `a stored package's own manifest 1.0.0
 by the link in node_modules ENOENT
@@ -1176,9 +1230,11 @@ console.log("imported, it answers as a file that is left out", (await load("clie
     const asked = `a program that is tested for true\nits size 12\nmay it be read yes\n${read}`;
     // Windows has no Bun.mmap(), whose error has no code.
     const mapped = (answer: string) => `the program, mapped ${isWindows ? undefined : answer}`;
-    expect(plain.stdout).toBe(
-      `${asked}is that file there true\nthe program's bytes MZ a program\nthe script's bytes a script\n${mapped("12")}\nit is listed helper.bin\nimported, it answers as a file that is left out false\n`,
-    );
+    expect(plain).toEqual({
+      stdout: `${asked}is that file there true\nthe program's bytes MZ a program\nthe script's bytes a script\n${mapped("12")}\nit is listed helper.bin\nimported, it answers as a file that is left out false\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     // The program reads paths that aren't known, so what it finds there can be read. A program of machine code isn't there, and that is told.
     expect(compiled).toEqual({
       stdout: `a program that is tested for false\nits size ENOENT\nmay it be read ENOENT\n${read}is that file there false\nthe program's bytes ENOENT\nthe script's bytes a script\n${mapped("ENOENT")}\nit is listed ENOENT\nimported, it answers as a file that is left out false\n`,
@@ -1215,7 +1271,11 @@ say("and read", keeper.readOther);
       for (const name of ["asked.txt", "read.txt", "both.txt"])
         chmodSync(join(String(dir), "app/node_modules/keeper", name), 0);
       const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
-      expect(plain.stdout).toBe("asked about true\nread EACCES\nanother asked about true\nand read EACCES\n");
+      expect(plain).toEqual({
+        stdout: "asked about true\nread EACCES\nanother asked about true\nand read EACCES\n",
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual({
         stdout: "asked about true\nread ENOENT\nanother asked about true\nand read ENOENT\n",
         stderr: "",
@@ -1327,7 +1387,7 @@ console.log("the program's own", new Own().load());
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
     const asked = `a field field\na private field private\na field that the constructor stores stored\nan argument of the constructor argument\na folder inner\na static field static\na constructor function old\nan object literal literal\n`;
-    expect(plain.stdout).toBe(`${asked}the program's own own\n`);
+    expect(plain).toEqual({ stdout: `${asked}the program's own own\n`, stderr: "", exitCode: 0 });
     expect(compiled).toEqual({ stdout: `${asked}the program's own none\n`, stderr: "", exitCode: 0 });
     expect(warnings(built)).toEqual(["warn TS100098 own.txt", "warn TS100098 own.txt"]);
   }, 120_000);
@@ -1384,7 +1444,7 @@ try {
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
     const asked = "read one by one 1,2\nread by name first,second\ncopied inner,inner/page.html,package.json\n";
-    expect(plain.stdout).toBe(`${asked}1 1\nown text\n`);
+    expect(plain).toEqual({ stdout: `${asked}1 1\nown text\n`, stderr: "", exitCode: 0 });
     expect(compiled).toEqual({ stdout: `${asked}ENOENT 1\nENOENT\n`, stderr: "", exitCode: 0 });
     expect(warnings(built)).toEqual(["warn TS100098 texts/own.txt", "warn TS100098 views"]);
   }, 120_000);
@@ -1442,9 +1502,13 @@ console.log(linked.run(load));
       symlinkSync("../../../.env", join(app, "node_modules/served/data/out.txt"));
       symlinkSync("../../../config", join(app, "node_modules/served/data/folder"));
       const { plain, compiled } = await bothWays(String(dir), "./main.mjs");
-      expect(plain.stdout.split("\n")[0]).toBe(
-        ".env,.git,folder,out.txt,package-lock.json,plain.txt served:plain application:outside plain.txt plain.txt application:hidden served:hidden application:outside",
-      );
+      expect(plain).toEqual({
+        stdout: `.env,.git,folder,out.txt,package-lock.json,plain.txt served:plain application:outside plain.txt plain.txt application:hidden served:hidden application:outside
+.env,.git,package-lock.json,plain.txt linked:plain ENOENT plain.txt plain.txt ENOENT linked:hidden application:outside
+`,
+        stderr: "",
+        exitCode: 0,
+      });
       const missing = Array(6).fill("ENOENT").join(" ");
       expect(compiled).toEqual({
         stdout: `plain.txt served:plain ${missing}\nENOENT ENOENT ${missing}\n`,
@@ -1532,7 +1596,7 @@ console.log(name(path.join(import.meta.dirname, "written.txt")));
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
     const asked = `another package given\nits class class\nanother file own\na name and a folder beside\nan entry of a map entry\na name and a URL named\n`;
-    expect(plain.stdout).toBe(`${asked}own beside\ntrue\n`);
+    expect(plain).toEqual({ stdout: `${asked}own beside\ntrue\n`, stderr: "", exitCode: 0 });
     expect(compiled).toEqual({ stdout: `${asked}none none\ntrue\n`, stderr: "", exitCode: 0 });
     expect(warnings(built)).toEqual(["warn TS100098 beside.txt", "warn TS100098 own.txt"]);
   }, 120_000);
@@ -1592,7 +1656,7 @@ for (const [label, load] of Object.entries(served)) console.log(label, await Pro
     const expected = Object.keys(compiled)
       .map(name => `${name} ${name}\n`)
       .join("");
-    expect(plain.stdout).toBe(expected);
+    expect(plain).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
     expect(executable).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
     expect(warnings(built)).toEqual([]);
   }, 120_000);
@@ -1664,9 +1728,11 @@ say("the program's own file by its real path", () => fs.readFileSync(fs.realpath
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
     const asked = `the size of a file object 5\na slice of one slic\na response made of one sent\nthe real path real.txt\nthe first of two that is there present.txt\nthe first of a named list named.txt\nthe first of a list that grows pushed.txt\na read of the first that is there first\nreads of all that are there every\nthe first of a list of joined names joined.txt\na read of the real path resolved\nof one asked for as text as text\nof the native one native\nof a URL's url\n`;
-    expect(plain.stdout).toBe(
-      `${asked}the program's own page a page\nis what is only written there true\nthe bytes of what is only asked about real\nit can save function\nthe program's own file by its real path own\n`,
-    );
+    expect(plain).toEqual({
+      stdout: `${asked}the program's own page a page\nis what is only written there true\nthe bytes of what is only asked about real\nit can save function\nthe program's own file by its real path own\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual({
       stdout: `${asked}the program's own page ENOENT\nis what is only written there false\nthe bytes of what is only asked about real\nit can save function\nthe program's own file by its real path ENOENT\n`,
       stderr: "",
@@ -1703,9 +1769,12 @@ say("a name between two texts", () => fs.readFileSync(__dirname.concat("/notes/"
 `,
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.cjs");
-    expect(plain.stdout).toBe(
-      "a name without its end a page\nthe files that are listed one,two\na whole name a head\na name in the place of another hello\na name between two texts a note\n",
-    );
+    expect(plain).toEqual({
+      stdout:
+        "a name without its end a page\nthe files that are listed one,two\na whole name a head\na name in the place of another hello\na name between two texts a note\n",
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual({
       stdout:
         "a name without its end ENOENT\nthe files that are listed \na whole name ENOENT\na name in the place of another ENOENT\na name between two texts ENOENT\n",
@@ -1742,7 +1811,7 @@ await tell(async () => typeof (await fetch("data:text/plain,none")).text);
       });
       const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs", ...flags);
       const said = ["fetched", "a blob", "a variable"];
-      expect(plain.stdout).toBe([...said, "function", ""].join("\n"));
+      expect(plain).toEqual({ stdout: [...said, "function", ""].join("\n"), stderr: "", exitCode: 0 });
       expect(warnings(built)).toEqual(expected);
       expect(compiled).toEqual({
         stdout: [...said.map(it => failure ?? it), "function", ""].join("\n"),
@@ -1801,7 +1870,7 @@ console.log(require("./config/code.cjs").x, typeof paths.code);
       });
       const { plain, built, compiled } = await bothWays(String(dir), "./main.cjs", ...flags);
       const said = ["a file", "a view", "a file below a folder", "one.txt"];
-      expect(plain.stdout).toBe([...said, "1 string", ""].join("\n"));
+      expect(plain).toEqual({ stdout: [...said, "1 string", ""].join("\n"), stderr: "", exitCode: 0 });
       expect(warnings(built)).toEqual(expected);
       expect(compiled).toEqual({
         stdout: [...said.map(it => failure ?? it), "1 string", ""].join("\n"),
@@ -1848,7 +1917,11 @@ const none = async read => console.log((await read().catch(() => "none")).trim()
 `,
       });
       const { plain, built, compiled } = await bothWays(String(dir), "./main.cjs");
-      expect(plain.stdout).toBe("a tool\nan input\ninner\nown a package\ncompiled\na shell\nbuilt\nwatched\n");
+      expect(plain).toEqual({
+        stdout: "a tool\nan input\ninner\nown a package\ncompiled\na shell\nbuilt\nwatched\n",
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual({
         stdout: "none\nnone\nENOENT\nENOENT none\ncompiled\nnone\nnone\nnone\n",
         stderr: "",
@@ -1903,7 +1976,11 @@ tell(written);
 `,
       });
       const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs", ...flags);
-      expect(plain.stdout).toBe("a file\na file beside another module\nbelow\ninner.txt\nfalse\n");
+      expect(plain).toEqual({
+        stdout: "a file\na file beside another module\nbelow\ninner.txt\nfalse\n",
+        stderr: "",
+        exitCode: 0,
+      });
       expect(warnings(built)).toEqual(expected);
       expect(compiled).toEqual({ stdout: [...said, "false", ""].join("\n"), stderr: "", exitCode: 0 });
     },
@@ -1937,7 +2014,7 @@ await tell(async () => fs.readFileSync(Bun.resolveSync("./h.txt", import.meta.di
       });
       const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs", ...flags);
       const said = names.map(it => `file ${it}`);
-      expect(plain.stdout).toBe([...said, ""].join("\n"));
+      expect(plain).toEqual({ stdout: [...said, ""].join("\n"), stderr: "", exitCode: 0 });
       expect(warnings(built)).toEqual(expected);
       expect(compiled).toEqual({
         stdout: [...said.map(it => failure ?? it), ""].join("\n"),
@@ -1979,14 +2056,18 @@ say("a folder without a package.json", () => fs.readFileSync(path.join(here, "sr
 `,
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
-    expect(plain.stdout).toBe(`a package's data data
+    expect(plain).toEqual({
+      stdout: `a package's data data
 its hidden file hidden
 a file in its hidden folder state
 its lock file {}
 a file directly in node_modules loose
 a hidden folder of node_modules cached
 a folder without a package.json secret
-`);
+`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual({
       stdout: `a package's data data
 its hidden file ENOENT
@@ -2060,31 +2141,37 @@ say("they are used", () => [typeof list, typeof lister.stat, isMarked()].join())
 say("Bun.embeddedFiles", () => Bun.embeddedFiles.map(it => it.name).sort().join());
 `,
   };
+  /** What that program prints: the version of the package that asks about a known path elsewhere, and the program's own. */
+  const saidBySearchers = (elsewhere: string, own: string) => ({
+    stdout: [
+      "a package that climbs to its manifest 3.1.4",
+      "at the root of a package that lists folders 2.0.0",
+      "beside its code true",
+      "a scoped package that queries files 5.5.5",
+      "a known folder with an unknown name 4.4.4",
+      `a package that asks about a known path elsewhere ${elsewhere}`,
+      `the program's own ${own}`,
+      "they are used function,function,false",
+      "Bun.embeddedFiles ",
+      "",
+    ].join("\n"),
+    stderr: "",
+    exitCode: 0,
+  });
 
   test("the package.json of a package whose code reads paths that the build cannot know", async () => {
     using dir = tempDir("aot-package-json-of-searching-packages", searchers);
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    const embedded = `a package that climbs to its manifest 3.1.4
-at the root of a package that lists folders 2.0.0
-beside its code true
-a scoped package that queries files 5.5.5
-a known folder with an unknown name 4.4.4
-`;
-    const used = `they are used function,function,false\nBun.embeddedFiles \n`;
-    expect(plain.stdout).toBe(
-      `${embedded}a package that asks about a known path elsewhere 9.9.9\nthe program's own 7.8.9\n${used}`,
-    );
-    expect(compiled).toEqual({
-      stdout: `${embedded}a package that asks about a known path elsewhere ENOENT\nthe program's own ENOENT\n${used}`,
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(plain).toEqual(saidBySearchers("9.9.9", "7.8.9"));
+    expect(compiled).toEqual(saidBySearchers("ENOENT", "ENOENT"));
     expect(warnings(built)).toEqual([]);
   }, 120_000);
 
   test("--explain lists each such package.json once", async () => {
     using dir = tempDir("aot-package-json-files-listed", searchers);
-    const { built } = await bothWaysIn(String(dir), "app", "./main.mjs", "--explain");
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", "--explain");
+    expect(plain).toEqual(saidBySearchers("9.9.9", "7.8.9"));
+    expect(compiled).toEqual(saidBySearchers("ENOENT", "ENOENT"));
     expect(warnings(built).filter(it => it.includes("TS100170"))).toEqual([
       "note TS100170 node_modules/@scope/lister/package.json",
       "note TS100170 node_modules/climber/package.json",
@@ -2136,9 +2223,11 @@ say("that package searches", () => outer.has("/.made-up-marker"));
 `,
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", "--explain");
-    expect(plain.stdout).toBe(
-      `the program's own application\na package below the program asker\na package and a folder below a package that searches inner,vendored\nthat package searches false\n`,
-    );
+    expect(plain).toEqual({
+      stdout: `the program's own application\na package below the program asker\na package and a folder below a package that searches inner,vendored\nthat package searches false\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual(plain);
     expect(warnings(built).filter(it => /TS100166|TS10017\d/.test(it))).toEqual([
       "note TS100166 package.json",
@@ -2168,8 +2257,12 @@ exports.ownName = () => JSON.parse(fs.readFileSync(path.join(__dirname, "package
       mkdirSync(join(String(dir), "app/apps/web/node_modules"));
       symlinkSync("../../../packages/reads", join(String(dir), "app/apps/web/node_modules/reads"));
       const { plain, built, compiled } = await bothWaysIn(String(dir), "app/apps/web", "./main.mjs", ...flags);
-      expect(plain.stdout).toBe(`a read beside the package's code reads\n`);
-      expect(compiled.stdout).toBe(`a read beside the package's code ${flags.length ? "reads" : "ENOENT"}\n`);
+      expect(plain).toEqual({ stdout: `a read beside the package's code reads\n`, stderr: "", exitCode: 0 });
+      expect(compiled).toEqual({
+        stdout: `a read beside the package's code ${flags.length ? "reads" : "ENOENT"}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
       expect(warnings(built)).toEqual(flags.length ? [] : ["warn TS100098 ../../packages/reads/package.json"]);
     },
     120_000,
@@ -2363,16 +2456,24 @@ c.txt,e.txt,f.txt
     expect(compiled).toEqual(plain);
   }, 120_000);
 
-  test.each(["beside its sources", "where its files are gone"])(
-    "a package reads what other threads have copied and written, %s",
-    async place => {
-      const rows = ["copied", "called back", "cp", "written", "opened", "shell", "folder/shell", "folder/deep/shell"];
-      const some = ["a", "b", "c", "d", "e", "f", "g", "h"].map(name => `some/${name}`);
-      using dir = tempDir("aot-writes-of-other-threads", {
-        "app/main.mjs": `import { start } from "store"; console.log(await start());`,
-        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
-        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
-        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+  const writtenByOtherThreads = [
+    "copied",
+    "called back",
+    "cp",
+    "written",
+    "opened",
+    "shell",
+    "folder/shell",
+    "folder/deep/shell",
+  ];
+  // One build serves both places: the executable runs beside its sources, and then again where they are moved away.
+  const readsWhatOtherThreadsWrote = once(async () => {
+    const some = ["a", "b", "c", "d", "e", "f", "g", "h"].map(name => `some/${name}`);
+    using dir = tempDir("aot-writes-of-other-threads", {
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { $ } from "bun";
@@ -2421,31 +2522,46 @@ export const start = async () => {
   return said.join("\\n");
 };
 `,
-        ...Object.fromEntries(
-          [...rows, ...some, "folder/laid"].map(name => [`app/node_modules/store/data/${name}`, "first"]),
-        ),
-      });
-      const [app, copy, outfile] = ["app", "copy", "built.exe"].map(it => join(String(dir), it));
-      cpSync(app, copy, { recursive: true });
-      const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      ...Object.fromEntries(
+        [...writtenByOtherThreads, ...some, "folder/laid"].map(name => [
+          `app/node_modules/store/data/${name}`,
+          "first",
+        ]),
+      ),
+    });
+    const [app, copy, outfile] = ["app", "copy", "built.exe"].map(it => join(String(dir), it));
+    cpSync(app, copy, { recursive: true });
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const env = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+    const start = () => run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const laid = join(app, "node_modules/store/data/folder/laid");
+    // The program has not written this one, so it is not trusted.
+    writeFileSync(laid, "laid");
+    const plain = await run(copy, [bunExe(), "run", "./main.mjs"], env);
+    const beside = await start();
+    renameSync(app, join(String(dir), "moved-away"));
+    for (const folder of ["folder/deep", "some"]) {
+      mkdirSync(join(app, "node_modules/store/data", folder), { recursive: true });
+    }
+    writeFileSync(laid, "laid");
+    return { plain, "beside its sources": beside, "where its files are gone": await start() };
+  });
+
+  test.each(["beside its sources", "where its files are gone"] as const)(
+    "a package reads what other threads have copied and written, %s",
+    async place => {
+      const ran = await readsWhatOtherThreadsWrote();
+      const rows = writtenByOtherThreads.map(name => `${name} new new`);
+      expect(ran.plain).toEqual({
+        stdout: [...rows, "laid first", "some true true", ""].join("\n"),
         stderr: "",
         exitCode: 0,
       });
-      if (place !== "beside its sources") {
-        renameSync(app, join(String(dir), "moved-away"));
-        for (const folder of ["folder/deep", "some"]) {
-          mkdirSync(join(app, "node_modules/store/data", folder), { recursive: true });
-        }
-      }
-      // The program has not written this one, so it is not trusted.
-      writeFileSync(join(app, "node_modules/store/data/folder/laid"), "laid");
-      const env = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
-      const plain = await run(copy, [bunExe(), "run", "./main.mjs"], env);
-      const compiled = await run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      const stdout = [...rows.map(name => `${name} new new`), "laid first", "some true true", ""].join("\n");
-      expect(plain).toEqual({ stdout, stderr: "", exitCode: 0 });
-      expect(compiled).toEqual(plain);
+      expect(ran[place]).toEqual(ran.plain);
     },
     120_000,
   );
@@ -2706,7 +2822,7 @@ exports.run = () => console.log(finder.find(path.dirname(__dirname)), finder.fin
 `,
     });
     const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs");
-    expect(plain.stdout).toBe("package.json5 28 nothing\n");
+    expect(plain).toEqual({ stdout: "package.json5 28 nothing\n", stderr: "", exitCode: 0 });
     expect(warnings(built)).toEqual([]);
     expect(compiled).toEqual({ stdout: "package.json5 28 nothing\n", stderr: "", exitCode: 0 });
   }, 120_000);
@@ -2922,32 +3038,37 @@ exports.run = () => {
     "app/node_modules/keeper/data/deep.txt": "first",
   };
 
+  // One build serves three cases: the executable runs beside its sources, then where they are moved away and a file lies at the old place of one, then where a folder lies there.
+  const runsThatReadThreeFiles = once(async () => {
+    using dir = tempDir("aot-three-embedded-files", readsThreeFiles);
+    const cwd = join(String(dir), "app");
+    const built = await run(cwd, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", "../built.exe"]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const start = (...removed: string[]) =>
+      run(String(dir), ["./built.exe", ...removed], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    // The program removes the file with `rm`, which Windows does not have.
+    const removedBesideSources = isWindows ? undefined : await start("data/deep.txt");
+    renameSync(cwd, join(String(dir), "away"));
+    mkdirSync(join(cwd, "node_modules/keeper"), { recursive: true });
+    const other = join(cwd, "node_modules/keeper/other.txt");
+    writeFileSync(other, "laid");
+    const withFile = await start();
+    // Moved out and not removed: Windows may refuse to make a name again that was removed a moment ago.
+    renameSync(other, join(String(dir), "laid"));
+    mkdirSync(other);
+    return { removedBesideSources, "a file": withFile, "a folder": await start() };
+  });
+
   test.each([
-    ["a file", (path: string) => writeFileSync(path, "laid"), "laid"],
-    ["a folder", (path: string) => mkdirSync(path), "EISDIR"],
-  ])(
+    ["a file", "laid"],
+    ["a folder", "EISDIR"],
+  ] as const)(
     "%s laid at the old place of one embedded file leaves the others",
-    async (_, lay, answer) => {
-      using dir = tempDir("aot-one-file-laid-at-old-place", readsThreeFiles);
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      renameSync(cwd, join(String(dir), "away"));
-      mkdirSync(join(cwd, "node_modules/keeper"), { recursive: true });
-      lay(join(cwd, "node_modules/keeper/other.txt"));
-      const compiled = await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-      expect(compiled).toEqual({
+    async (laid, answer) => {
+      expect((await runsThatReadThreeFiles())[laid]).toEqual({
         stdout: `data.txt first\nother.txt ${answer}\ndeep.txt first\n`,
         stderr: "",
         exitCode: 0,
@@ -2959,26 +3080,7 @@ exports.run = () => {
   test.skipIf(isWindows)(
     "a file alone in its folder is gone where something else removed it beside the sources",
     async () => {
-      using dir = tempDir("aot-file-alone-in-folder-removed", readsThreeFiles);
-      const cwd = join(String(dir), "app");
-      const built = await run(cwd, [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        "./main.mjs",
-        "--outfile",
-        "../built.exe",
-      ]);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      const compiled = await run(String(dir), ["./built.exe", "data/deep.txt"], {
-        ...bunEnv,
-        BUN_JSC_crashIfInterpreterIsUsed: "1",
-      });
-      expect(compiled).toEqual({
+      expect((await runsThatReadThreeFiles()).removedBesideSources).toEqual({
         stdout: "data.txt first\nother.txt first\ndeep.txt ENOENT\n",
         stderr: "",
         exitCode: 0,
@@ -3063,9 +3165,16 @@ console.log(fs.readFileSync(o.file, "utf8"));
 exports.load = file => fs.existsSync(file);
 `,
     });
-    const { plain, built } = await bothWays(String(dir), "./main.cjs");
+    const { plain, built, compiled } = await bothWays(String(dir), "./main.cjs");
     expect(plain).toEqual({ stdout: "true\nother\n", stderr: "", exitCode: 0 });
     expect(warnings(built)).toEqual(["warn TS100098 other.txt", "warn TS100172 big.bin"]);
+    // Both warnings come true: the package finds nothing at the path that is passed on, and the read ends the program.
+    const error = compiled.stderr.split(/\r?\n/).find(line => line.startsWith("ENOENT: ")) ?? compiled.stderr;
+    expect({ ...compiled, stderr: error.replace(/'.*[\\/]/, "'") }).toEqual({
+      stdout: "false\n",
+      stderr: "ENOENT: no such file or directory, open 'other.txt'",
+      exitCode: 1,
+    });
   }, 120_000);
 
   test("a package reads with what its caller passes in place of a function that writes", async () => {
@@ -3170,7 +3279,7 @@ exports.five = use => use(path.join(__dirname, "five.txt"));
       "app/main.cjs": `const { read } = require("chooser");\nfor (const line of read()) console.log(line);\n`,
       "app/node_modules/chooser/package.json": `{ "name": "chooser", "version": "1.0.0", "main": "./index.cjs" }`,
       "app/node_modules/chooser/index.cjs": `const attempt = (name, load) => {
-  try { return name + ": " + load(); } catch (error) { return name + ": " + error.code; }
+  try { return name + ": " + load(); } catch (error) { return name + ": " + (error.code ?? error.name); }
 };
 exports.read = () => [
 ${names.map((name, index) => `  attempt(${JSON.stringify(name)}, () => require("./${index}.cjs")),`).join("\n")}
@@ -3200,9 +3309,20 @@ module.exports = fs.readFileSync(path.join(__dirname, \`files/${index}/\${v}.txt
     const plain = await Promise.all(all.map(env => run(app, [bunExe(), "run", "./main.cjs"], env)));
     renameSync(app, join(String(dir), "moved-away"));
     const compiled = await Promise.all(all.map(env => run(String(dir), [outfile], env)));
-    for (const { stdout, exitCode } of plain) {
-      expect({ lines: stdout.split("\n").length, exitCode }).toEqual({ lines: names.length + 1, exitCode: 0 });
+    // Under plain Bun every row names one of its files: a row that failed would hold one failure against another.
+    const fileOf = (row: string) => row.slice(row.indexOf(": ") + 2);
+    for (const { stdout, stderr, exitCode } of plain) {
+      const said = stdout.split("\n").slice(0, -1);
+      const withoutFile = said.filter(row => !values.includes(fileOf(row)));
+      expect({ rows: said.length, withoutFile, stderr, exitCode }).toEqual({
+        rows: names.length,
+        withoutFile: [],
+        stderr: "",
+        exitCode: 0,
+      });
     }
+    // And each environment chooses other files.
+    expect(new Set(plain.map(it => it.stdout)).size).toBe(environments.length);
     expect(compiled).toEqual(plain);
   }, 120_000);
 
@@ -3259,7 +3379,19 @@ module.exports = fs.readFileSync(file, "utf8");
     const compiled = await Promise.all(
       all.map(env => run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" })),
     );
-    expect(plain[0]).toEqual({ stdout: names.map(it => `${it}: chosen\n`).join(""), stderr: "", exitCode: 0 });
+    // The rows that choose the other file in each environment, under plain Bun.
+    const chosen = [
+      names,
+      ["not null", "a number and a boolean", "nothing"],
+      ["null", "undefined", "a number and a boolean", "nothing"],
+    ];
+    expect(plain).toEqual(
+      chosen.map(those => ({
+        stdout: names.map(it => `${it}: ${those.includes(it) ? "chosen" : "first"}\n`).join(""),
+        stderr: "",
+        exitCode: 0,
+      })),
+    );
     expect(compiled).toEqual(plain);
   }, 120_000);
 
@@ -3439,7 +3571,7 @@ console.log([${Object.keys(waysToHandOn)}].map(find => find()).join(" "));
   test("a package that hands its folder to another package's search finds its own package.json", async () => {
     using dir = tempDir("aot-folder-handed-to-a-search", { "app/main.mjs": askAll, ...packagesThatHandOn, ...finder });
     const { plain, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe(Object.keys(waysToHandOn).join(" ") + "\n");
+    expect(plain).toEqual({ stdout: Object.keys(waysToHandOn).join(" ") + "\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
   }, 120_000);
 
@@ -3454,7 +3586,7 @@ ${askAll}`,
       ...finder,
     });
     const { plain, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe("1.2.3\n" + Object.keys(waysToHandOn).join(" ") + "\n");
+    expect(plain).toEqual({ stdout: "1.2.3\n" + Object.keys(waysToHandOn).join(" ") + "\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
   }, 120_000);
 
@@ -3473,7 +3605,7 @@ export const byUrl = () => up(path.dirname(fileURLToPath(import.meta.url)));
       ...finder,
     });
     const { plain, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe("asks asks\n");
+    expect(plain).toEqual({ stdout: "asks asks\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
   }, 120_000);
 
@@ -3501,7 +3633,7 @@ exports.own = () => up(__dirname);
         ...finder,
       });
       const { plain, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-      expect(plain.stdout).toBe(`${own && "1.2.3\n"}asks-esm asks-dist asks\n`);
+      expect(plain).toEqual({ stdout: `${own && "1.2.3\n"}asks-esm asks-dist asks\n`, stderr: "", exitCode: 0 });
       expect(compiled).toEqual(plain);
     },
     120_000,
@@ -3527,8 +3659,10 @@ exports.own = () => up(__dirname);
         ...finder,
       });
       const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      expect(plain).toEqual({ stdout: `${own ? "1.2.3\n" : ""}server asks\n`, stderr: "", exitCode: 0 });
       expect(warnings(built)).toEqual(own ? [] : ["warn TS100174 ."]);
-      if (own) expect(compiled).toEqual(plain);
+      // What the warning tells of: the search from the folder above the package finds no package.json where the executable holds none.
+      expect(compiled).toEqual(own ? plain : { stdout: "none asks\n", stderr: "", exitCode: 0 });
     },
     120_000,
   );
@@ -3577,7 +3711,7 @@ module.exports = () => require("finder").up(path.join(__dirname, ".."));
       ...finder,
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe("6 server climbs\n");
+    expect(plain).toEqual({ stdout: "6 server climbs\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual({ ...plain, stdout: "6 none climbs\n" });
     expect(
       [...(built.stdout + built.stderr).matchAll(/TS100174[^\n]*\n\s+at [^\n]*node_modules[\\/](\w+)[\\/]/g)].map(
@@ -3605,18 +3739,18 @@ exports.beside = () => up(path.join(__dirname, "esm"));
       ...finder,
     });
     const { plain, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe("asks inner-esm\n");
+    expect(plain).toEqual({ stdout: "asks inner-esm\n", stderr: "", exitCode: 0 });
     expect(compiled).toEqual(plain);
   }, 120_000);
 
   test.each([
-    ["a link", "shut"],
-    ["a folder that is a link", "linked"],
-    ["a folder named package.json", "odd"],
-    ["another package", "node_modules/inner"],
+    ["a link", "shut", "linked"],
+    ["a folder that is a link", "linked", "real"],
+    ["a folder named package.json", "odd", "EISDIR"],
+    ["another package", "node_modules/inner", "inner"],
   ])(
     "a warning names a folder whose package.json can't be embedded: %s",
-    async (kind, folder) => {
+    async (kind, folder, found) => {
       using dir = tempDir("aot-nearest-package-json-stays-out", {
         "app/main.mjs": `import asks from "asks";
 console.log(asks());
@@ -3636,8 +3770,11 @@ module.exports = () => { try { return up(path.join(__dirname, ${JSON.stringify(f
       const asks = join(String(dir), "app", "node_modules", "asks");
       symlinkSync(join(asks, "manifest.json"), join(asks, "shut", "package.json"));
       symlinkSync(join(asks, "real"), join(asks, "linked"), "junction");
-      const { built } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      expect(plain).toEqual({ stdout: `${found}\n`, stderr: "", exitCode: 0 });
       expect(warnings(built)).toEqual([`warn TS100174 node_modules/asks/${folder}`]);
+      // What the warning tells of: the search goes on to the package's own package.json.
+      expect(compiled).toEqual({ stdout: "asks\n", stderr: "", exitCode: 0 });
     },
     120_000,
   );
@@ -3659,19 +3796,20 @@ module.exports = () => up(path.join(__dirname, ${kind === "its own" ? `"esm"` : 
       });
       const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
       expect(warnings(built)).toEqual([]);
-      expect(plain.stdout).toBe(kind === "its own" ? "esm\n" : "none\n");
+      expect(plain).toEqual({ stdout: kind === "its own" ? "esm\n" : "none\n", stderr: "", exitCode: 0 });
       expect(compiled).toEqual(plain);
     },
     120_000,
   );
 
+  // The last two: how many names the folder has on the disk, and how many of them the executable holds.
   test.each([
-    ["its own folder", "__dirname", "node_modules/asks"],
-    ["a folder below", `path.join(__dirname, "lib")`, "node_modules/asks/lib"],
-    ["a folder that is there whole", `path.join(__dirname, "whole")`, ""],
-  ])(
+    ["its own folder", "__dirname", "node_modules/asks", 5, 4],
+    ["a folder below", `path.join(__dirname, "lib")`, "node_modules/asks/lib", 2, 1],
+    ["a folder that is there whole", `path.join(__dirname, "whole")`, "", 1, 1],
+  ] as const)(
     "a warning names a folder that a package hands to code that lists it: %s",
-    async (kind, folder, named) => {
+    async (kind, folder, named, onDisk, held) => {
       using dir = tempDir("aot-folder-listed-in-part", {
         "app/main.mjs": `import asks from "asks";
 console.log(asks());
@@ -3691,8 +3829,10 @@ module.exports = () => require("lists")(${folder});
 module.exports = folder => fs.readdirSync(folder).length;
 `,
       });
-      const { built } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      expect(plain).toEqual({ stdout: `${onDisk}\n`, stderr: "", exitCode: 0 });
       expect(warnings(built)).toEqual(named ? [`warn TS100175 ${named}`] : []);
+      expect(compiled).toEqual({ stdout: `${held}\n`, stderr: "", exitCode: 0 });
     },
     120_000,
   );
@@ -3722,9 +3862,11 @@ say("a package.json with no code beside or below it", () => fs.existsSync(made("
       "app/parts/idle/package.json": `{ "name": "idle" }`,
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", "--explain");
-    expect(plain.stdout).toBe(
-      `the program's own application\na folder of the program with a package.json of its own part\na file beside that package.json true\na package.json with no code beside or below it true\n`,
-    );
+    expect(plain).toEqual({
+      stdout: `the program's own application\na folder of the program with a package.json of its own part\na file beside that package.json true\na package.json with no code beside or below it true\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual({
       stdout: `the program's own application\na folder of the program with a package.json of its own part\na file beside that package.json false\na package.json with no code beside or below it false\n`,
       stderr: "",
@@ -3743,9 +3885,11 @@ say("a package.json with no code beside or below it", () => fs.existsSync(made("
       "app/.parts/lib/package.json": `{ "name": "part" }`,
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe(
-      `the program's own application\na folder of the program with a package.json of its own part\na file beside that package.json false\na package.json with no code beside or below it false\n`,
-    );
+    expect(plain).toEqual({
+      stdout: `the program's own application\na folder of the program with a package.json of its own part\na file beside that package.json false\na package.json with no code beside or below it false\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual(withdrawn);
     expect(warnings(built)).toEqual(["warn TS100098 package.json"]);
   }, 120_000);
@@ -3758,7 +3902,12 @@ say("a package.json with no code beside or below it", () => fs.existsSync(made("
         "app/elsewhere/package.json": `{ "name": "part" }`,
       });
       symlinkSync("../../elsewhere/package.json", join(String(dir), "app/parts/lib/package.json"));
-      const { built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
+      expect(plain).toEqual({
+        stdout: `the program's own application\na folder of the program with a package.json of its own part\na file beside that package.json false\na package.json with no code beside or below it false\n`,
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual(withdrawn);
       expect(warnings(built)).toEqual(["warn TS100098 package.json"]);
     },
@@ -3779,13 +3928,21 @@ say("a package below the program", asker.ownName);
 `,
     });
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    expect(plain.stdout).toBe(`is the program's own there true\na package below the program asker\n`);
+    expect(plain).toEqual({
+      stdout: `is the program's own there true\na package below the program asker\n`,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(compiled).toEqual(plain);
     expect(warnings(built)).toEqual([]);
   }, 120_000);
 });
 
 describe.concurrent("--asset", () => {
+  /** The lines of a build that say that two assets share one path of the executable. */
+  const sharedPaths = (built: { stdout: string; stderr: string }) =>
+    (built.stdout + built.stderr).split("\n").filter(line => line.includes("share the path"));
+
   test("a folder is as new as the newest file in it, and above the entry point it has no time", async () => {
     using dir = tempDir("aot-times-of-embedded-folders", {
       "app/src/main.cjs": `const fs = require("node:fs");
@@ -3816,7 +3973,7 @@ for (const path of ["data", "data/deep", "data/old.txt", "data/deep/new.txt", "o
     };
     for (const [path, time] of Object.entries(times)) utimesSync(join(String(dir), "app", path), time, time);
     const flags = ["data", "other/one.txt", "../shared/deep/one.txt"].flatMap(path => ["--asset", path]);
-    const { compiled } = await bothWaysIn(String(dir), "app/src", "./main.cjs", ...flags);
+    const { compiled } = await compiledIn(String(dir), "app/src", "./main.cjs", ...flags);
     expect(compiled).toEqual({
       stdout: `data 2000000000 true true deep,old.txt
 data/deep 2000000000 true true new.txt
@@ -4041,8 +4198,10 @@ console.log(fs.existsSync(file) && JSON.parse(fs.readFileSync(file, "utf8")).lim
         "elsewhere/shared/config.json": `{ "limit": 7 }`,
       });
       symlinkSync("../elsewhere/dir", join(String(dir), "app/link"));
-      const { plain } = await bothWays(String(dir), "./main.cjs", "--asset", "shared");
+      const { plain, compiled } = await bothWays(String(dir), "./main.cjs", "--asset", "shared");
       expect(plain).toEqual({ stdout: "7\n", stderr: "", exitCode: 0 });
+      // Where the disk has nothing, the executable has no folder `link` for the path to go through.
+      expect(compiled).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
       mkdirSync(join(String(dir), "app/src"), { recursive: true });
       symlinkSync("../elsewhere/dir", join(String(dir), "app/link"));
       // The disk cannot follow the path, which runs through a folder of the executable alone. The asset is another file than the one that is asked for.
@@ -4259,7 +4418,7 @@ console.log(attempt(() => (fs.existsSync(at("pub")) ? [...new Bun.Glob("*.txt").
     });
     const flags = ["--asset", "../one/pub", "--asset", "../two/pub"];
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
-    expect(built.stdout + built.stderr).not.toContain("share the path");
+    expect(sharedPaths(built)).toEqual([]);
     const byOwnPlace = "a.txt,deep\nb.txt,deep\n";
     expect(plain).toEqual({ stdout: `ENOENT\nENOENT\n${byOwnPlace}\n`, stderr: "", exitCode: 0 });
     expect(compiled).toEqual({
@@ -4288,7 +4447,7 @@ console.log(read("pub", "same.txt"), read("pub", "only.txt"));
     });
     const flags = ["--asset", "../one/pub", "--asset", "../two/pub"];
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
-    expect((built.stdout + built.stderr).split("\n").filter(line => line.includes("share the path"))).toEqual([
+    expect(sharedPaths(built)).toEqual([
       `warn: assets "../one/pub/same.txt" and "../two/pub/same.txt" share the path "pub/same.txt" in the executable. That path reads "../one/pub/same.txt". Each asset is also at its own path`,
     ]);
     expect(plain).toEqual({ stdout: "of-one of-two only-in-two\nENOENT ENOENT\n", stderr: "", exitCode: 0 });
@@ -4341,7 +4500,11 @@ say("CommonJS", path.join(__dirname, "..", "..", "far", "a.txt"));
     const imported = ["below the root", "__dirname", "a __dirname of its own", "above the root"];
     const order = [...imported, "entry", "one folder up", "CommonJS"];
     const text = (label: string) => (label === "one folder up" ? "near" : "far");
-    expect(plain.stdout).toBe(order.map(label => `${label} ${text(label)}\n`).join(""));
+    expect(plain).toEqual({
+      stdout: order.map(label => `${label} ${text(label)}\n`).join(""),
+      stderr: "",
+      exitCode: 0,
+    });
     const isOutOfReach = (label: string) => ["entry", "below the root", "a __dirname of its own"].includes(label);
     expect(compiled).toEqual({
       stdout: order.map(label => `${label} ${isOutOfReach(label) ? "ENOENT" : text(label)}\n`).join(""),
@@ -4349,15 +4512,19 @@ say("CommonJS", path.join(__dirname, "..", "..", "far", "a.txt"));
       exitCode: 0,
     });
     const output = (built.stdout + built.stderr).replaceAll("\\", "/");
-    const warned = [...output.matchAll(/TS100087[^\n]*\n[^\n]*?at ([^\n:]+):(\d+)/g)].map(it => `${it[1]}:${it[2]}`);
     expect({ warnings: output.split("TS100087").length - 1, others: output.split("TS100098").length - 1 }).toEqual({
       warnings: 3,
       others: 0,
     });
-    expect(output).toContain(
-      `This reads "../../far/a.txt", which is in the executable, but this path doesn't lead there`,
+    // Each of the three names the read of a module that is out of reach.
+    const warned = output.matchAll(
+      /TS100087: This reads "([^"]+)", which is in the executable, but this path doesn't lead there[^\n]*\r?\n\s+at [^\n]*\/([^\n/]+):\d+:\d+/g,
     );
-    expect(warned.length === 0 || warned.every(it => /main\.mjs|below\.mjs|own-dirname\.mjs/.test(it))).toBe(true);
+    expect([...warned].map(it => `${it[2]} reads ${it[1]}`).sort()).toEqual([
+      "below.mjs reads ../../far/a.txt",
+      "main.mjs reads ../../far/a.txt",
+      "own-dirname.mjs reads ../../far/a.txt",
+    ]);
   }, 120_000);
 
   test.skipIf(isWindows)(
@@ -4385,7 +4552,11 @@ say("its listing", () => fs.readdirSync(path.join(import.meta.dirname, "..", "..
       symlinkSync("middle/near", join(String(dir), "app/far-link"));
       const flags = ["../near-link", "../../far-link", "../../far"].flatMap(asset => ["--asset", asset]);
       const { plain, built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...flags);
-      expect(plain.stdout).toBe("a link one up far\na link two up near\na folder two up true\nits listing a.txt\n");
+      expect(plain).toEqual({
+        stdout: "a link one up far\na link two up near\na folder two up true\nits listing a.txt\n",
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual({
         stdout: "a link one up far\na link two up ENOENT\na folder two up false\nits listing ENOENT\n",
         stderr: "",
@@ -4433,10 +4604,12 @@ say("below the root", () => fs.readFileSync(path.join(here, "held", "inner", "a.
         using dir = tempDir("aot-links-inside-assets", files);
         links(String(dir));
         const { plain, built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...given);
-        expect(plain.stdout).toBe(asked);
-        expect(compiled.stdout).toBe(
-          "through a folder link ENOENT\nthrough a file link ENOENT\nbeside them own\nbelow the root ENOENT\n",
-        );
+        expect(plain).toEqual({ stdout: asked, stderr: "", exitCode: 0 });
+        expect(compiled).toEqual({
+          stdout: "through a folder link ENOENT\nthrough a file link ENOENT\nbeside them own\nbelow the root ENOENT\n",
+          stderr: "",
+          exitCode: 0,
+        });
         const warnings = /(TS\d+): This reads "([^"]+)"[^\n]*? Embed it with --asset (\S+)/g;
         const found = [...(built.stdout + built.stderr).matchAll(warnings)];
         expect(found.map(it => `${it[1]} ${it[2]} > ${it[3]}`).sort()).toEqual([
@@ -4447,13 +4620,13 @@ say("below the root", () => fs.readFileSync(path.join(here, "held", "inner", "a.
         advised = found.map(it => it[3]);
       }
       {
-        // What the messages advise, word for word.
+        // What the messages advise, word for word. Plain Bun has run these files above.
         using dir = tempDir("aot-links-given-as-assets", files);
         links(String(dir));
         const flags = [...given, ...advised.flatMap(asset => ["--asset", asset])];
-        const { built, compiled } = await bothWaysIn(String(dir), "app/middle/server", "./main.mjs", ...flags);
-        expect(compiled.stdout).toBe(asked);
-        expect(built.stdout + built.stderr).not.toContain("This reads");
+        const { built, compiled } = await compiledIn(String(dir), "app/middle/server", "./main.mjs", ...flags);
+        expect(compiled).toEqual({ stdout: asked, stderr: "", exitCode: 0 });
+        expect((built.stdout + built.stderr).split("\n").filter(line => line.includes("This reads"))).toEqual([]);
       }
     },
     240_000,
@@ -4505,7 +4678,7 @@ console.log("embedded", Bun.embeddedFiles.map(it => tidy(it.name)).filter(it => 
       });
       const flags = ["--asset", "../one/pub", "--asset", "pub"];
       const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
-      expect((built.stdout + built.stderr).split("\n").filter(line => line.includes("share the path"))).toEqual([
+      expect(sharedPaths(built)).toEqual([
         `warn: assets "pub/same.txt" and "../one/pub/same.txt" share the path "pub/same.txt" in the executable. That path reads "pub/same.txt". Each asset is also at its own path`,
       ]);
       const ownPlace = "own place in own out outside";
@@ -4585,7 +4758,33 @@ say("below", () => fs.readdirSync(at("pub"), { recursive: true }).map(tidy).sort
       const { plain, compiled } = await bothWaysIn(String(dir), "app/server", `./main.${kind}`, ...flags);
       const isAsPlain = (line: string) => line.startsWith("as plain: ");
       const asPlain = plain.stdout.split("\n").filter(isAsPlain);
-      expect(asPlain).toHaveLength(8);
+      // Windows may name another code for a name below a file.
+      const anyCodeOnWindows = (line: string) =>
+        isWindows ? line.replace(/(below the own file) E[A-Z]+$/, "$1 a code") : line;
+      expect(asPlain.map(anyCodeOnWindows)).toEqual(
+        [
+          "the own folder is one true",
+          "the own folder is read EISDIR",
+          "the own folder is listed in.txt",
+          "the own folder is opened in.txt",
+          "the own file is read own file",
+          "below the own file ENOTDIR",
+          "the outside file outside file",
+          "the outside folder outside in",
+        ].map(line => anyCodeOnWindows(`as plain: ${line}`)),
+      );
+      // Under plain Bun the outside folder lies at its own place alone.
+      expect({
+        ...plain,
+        stdout: plain.stdout
+          .split("\n")
+          .filter(line => !isAsPlain(line))
+          .join("\n"),
+      }).toEqual({
+        stdout: `outside alone ENOENT\nlisted code.${kind},file,folder\nbelow code.${kind},file,folder,folder/in.txt\n`,
+        stderr: "",
+        exitCode: 0,
+      });
       // A gap in CommonJS off Windows: a name below a file of the executable fails with ENOENT where `bun run` says ENOTDIR. The day it says ENOTDIR this fails: take the line out.
       const hasGap = kind === "cjs" && !isWindows;
       const expected = asPlain.map(line => (hasGap ? line.replace("own file ENOTDIR", "own file ENOENT") : line));
@@ -4631,7 +4830,13 @@ say("listed below", () => fs.readdirSync(at(), { recursive: true }).map(it => it
         "app/two/pub/x/in.txt": "in two",
       });
       const flags = assets.flatMap(asset => ["--asset", asset]);
-      const { compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      const { plain, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      // Under plain Bun neither folder lies beside the entry point.
+      expect(plain).toEqual({
+        stdout: ["entry", "below", "is a folder", "listed", "listed below"].map(label => `${label} no file\n`).join(""),
+        stderr: "",
+        exitCode: 0,
+      });
       expect(compiled).toEqual({
         stdout: `entry ${entry}
 below ${below}
@@ -4667,12 +4872,14 @@ try {
         [`app/two/pub/${shared}`]: "of two",
       });
       const flags = ["zero", "one", "two"].flatMap(folder => ["--asset", `../${folder}/pub`]);
-      const { built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", ...flags);
+      // Under plain Bun no folder lies beside the entry point.
+      expect(plain).toEqual({ stdout: "no file\n", stderr: "", exitCode: 0 });
       expect(compiled).toEqual({ stdout: `${read}\n`, stderr: "", exitCode: 0 });
       const sentence = read === "of one" ? `"../one/${name}"` : `none of them: "../zero/pub/x" comes first`;
-      expect((built.stdout + built.stderr).replaceAll("\\", "/")).toContain(
-        `assets "../one/${name}" and "../two/${name}" share the path "${name}" in the executable. That path reads ${sentence}. Each`,
-      );
+      expect(sharedPaths(built).map(line => line.replaceAll("\\", "/"))).toEqual([
+        `warn: assets "../one/${name}" and "../two/${name}" share the path "${name}" in the executable. That path reads ${sentence}. Each asset is also at its own path`,
+      ]);
     },
     120_000,
   );
@@ -4760,6 +4967,17 @@ const spell = names => {
       const alsoOnPosix = { climbs: noFolder, backslashes: absent, forward: found, lower: found, upper: found };
       const said = Object.entries({ ...onPosix, ...alsoOnPosix }).map(([name, answer]) => `${name} ${answer}`);
       expect(isWindows ? asPlain.slice(0, 1) : asPlain).toEqual(isWindows ? said.slice(0, 1) : said);
+      // And nothing of it lies beside the entry point there.
+      expect({
+        ...plain,
+        stdout: linesOf(plain)
+          .filter(line => !/^(short|own) /.test(line))
+          .join("\n"),
+      }).toEqual({
+        stdout: `embedded \nroot main.${kind}\nglob \nglobSync \n`,
+        stderr: "",
+        exitCode: 0,
+      });
       // CI cuts the middle out of a long failure, so only the rows that differ are shown, each with both answers.
       const differing = ["short", "own"].flatMap(way => {
         const rows = rowsOf(compiled, way);

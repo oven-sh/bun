@@ -88,9 +88,7 @@ impl PerThread {
         for (key, index) in module_indexes.keys().iter().zip(module_indexes.values()) {
             let value = &mut bundled_outputs[index.get() as usize].value;
             let source = match core::mem::replace(value, OutputFileValue::Noop) {
-                OutputFileValue::Buffer { bytes } => {
-                    BunString::create_external_globally_allocated_latin1(bytes.into_vec())
-                }
+                OutputFileValue::Buffer { bytes } => BunString::from_owned_utf8(bytes.into_vec()),
                 _ => BunString::EMPTY,
             };
             module_map.put_assume_capacity(key, source);

@@ -833,14 +833,8 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                         let url = BunString::clone_utf8(&job.url);
                         // No bytecode optimizer: it doubles the write that lands after
                         // `exit` on every cold start. `bun build --bytecode` pays it once.
-                        let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format,
-                            &job.code,
-                            &url,
-                            u32::MAX,
-                            false,
-                            None,
-                        );
+                        let result =
+                            crate::cached_bytecode::generate(job.format, &job.code, &url, u32::MAX);
                         let _ = job.resp.send(result);
                     }
                 });

@@ -3,8 +3,18 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// Every workload below is time-bounded for 500ms. The sampler is a thread of its own, which on a busy machine runs a few
-// times in 100ms, or not once: "No samples collected." in --cpu-prof-md output.
+// Sample-dependent fixtures need actual CPU time: descheduling can consume the wall-clock window.
+const profilingWorkTimer = `
+  function profilingWorkRemaining() {
+    const wallStart = performance.now();
+    const cpuStart = process.cpuUsage();
+    return () => {
+      const cpu = process.cpuUsage(cpuStart);
+      return performance.now() - wallStart < 500 || cpu.user + cpu.system < 100_000;
+    };
+  }
+`;
+
 describe.concurrent("--cpu-prof", () => {
   test("generates CPU profile with default name", async () => {
     using dir = tempDir("cpu-prof", {
@@ -206,10 +216,11 @@ describe.concurrent("--cpu-prof", () => {
   test("profile captures function names", async () => {
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `
+        ${profilingWorkTimer}
         function myFunction() {
           let sum = 0;
-          const end = performance.now() + 500;
-          while (performance.now() < end) {
+          const workRemaining = profilingWorkRemaining();
+          while (workRemaining()) {
             for (let i = 0; i < 1000; i++) sum += i;
           }
           return sum;
@@ -245,6 +256,7 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof-md generates markdown format profile", async () => {
     using dir = tempDir("cpu-prof-md", {
       "test.js": `
+        ${profilingWorkTimer}
         // CPU-intensive task for text profile
         function fibonacci(n) {
           if (n <= 1) return n;
@@ -252,8 +264,8 @@ describe.concurrent("--cpu-prof", () => {
         }
 
         function main() {
-          const now = performance.now();
-          while (now + 500 > performance.now()) {
+          const workRemaining = profilingWorkRemaining();
+          while (workRemaining()) {
             Bun.inspect(fibonacci(20));
           }
         }
@@ -301,9 +313,10 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof-md with custom name", async () => {
     using dir = tempDir("cpu-prof-md-name", {
       "test.js": `
+        ${profilingWorkTimer}
         function loop() {
-          const end = Date.now() + 500;
-          while (Date.now() < end) {}
+          const workRemaining = profilingWorkRemaining();
+          while (workRemaining()) {}
         }
         loop();
       `,
@@ -334,6 +347,7 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof-md shows function details with relationships", async () => {
     using dir = tempDir("cpu-prof-md-details", {
       "test.js": `
+        ${profilingWorkTimer}
         function workA() {
           let sum = 0;
           for (let i = 0; i < 500000; i++) sum += i;
@@ -345,8 +359,8 @@ describe.concurrent("--cpu-prof", () => {
           return sum;
         }
         function main() {
-          const now = performance.now();
-          while (now + 500 > performance.now()) {
+          const workRemaining = profilingWorkRemaining();
+          while (workRemaining()) {
             workA();
             workB();
           }
@@ -386,9 +400,10 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof-md works standalone without --cpu-prof", async () => {
     using dir = tempDir("cpu-prof-md-standalone", {
       "test.js": `
+        ${profilingWorkTimer}
         function loop() {
-          const end = Date.now() + 500;
-          while (Date.now() < end) {}
+          const workRemaining = profilingWorkRemaining();
+          while (workRemaining()) {}
         }
         loop();
       `,
@@ -420,9 +435,10 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof and --cpu-prof-md together creates both files", async () => {
     using dir = tempDir("cpu-prof-both-formats", {
       "test.js": `
+        ${profilingWorkTimer}
         function loop() {
-          const end = Date.now() + 500;
-          while (Date.now() < end) {}
+          const workRemaining = profilingWorkRemaining();
+          while (workRemaining()) {}
         }
         loop();
       `,

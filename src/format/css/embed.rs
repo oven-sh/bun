@@ -367,8 +367,9 @@ fn print_embed_css<'a>(
     true
 }
 
+/// True if `e` is the name `name`, however it's escaped in the source.
 fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
-    matches!(e.kind(), ExprKind::Ident(_)) && e.text() == name
+    matches!(e.kind(), ExprKind::Ident(it) if it.bytes() == name)
 }
 
 /// Returns `e`'s object if `e` is a `MemberExpression`.
@@ -392,8 +393,7 @@ fn is_styled_extend(e: Expr<'_>) -> bool {
     matches!(e.kind(), ExprKind::Dot { obj, name, .. }
         if member_object(e).is_some()
             && name.bytes() == b"extend"
-            && matches!(obj.kind(), ExprKind::Ident(_))
-            && obj.text().first().is_some_and(u8::is_ascii_uppercase))
+            && matches!(obj.kind(), ExprKind::Ident(name) if name.bytes().first().is_some_and(u8::is_ascii_uppercase)))
 }
 
 fn is_styled_object(e: Expr<'_>) -> bool {
@@ -464,7 +464,7 @@ pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8])
 pub(crate) fn root_name_of_tag(mut tag: Expr<'_>) -> Option<&[u8]> {
     loop {
         tag = match tag.kind() {
-            ExprKind::Ident(_) => return Some(tag.text()),
+            ExprKind::Ident(name) => return Some(name.bytes()),
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
             ExprKind::Call(call) => call.callee(),
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,

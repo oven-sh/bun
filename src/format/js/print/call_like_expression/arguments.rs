@@ -1000,7 +1000,7 @@ fn is_decorated_function(argument: Expr<'_>) -> bool {
             matches!(
                 left.kind(),
                 ExprKind::Dot { obj, name, .. }
-                    if matches!(obj.kind(), ExprKind::Ident(_)) && obj.text() == b"module" && name.bytes() == b"exports"
+                    if matches!(obj.kind(), ExprKind::Ident(obj) if obj.is("module")) && name.bytes() == b"exports"
             )
         }),
         _ => false,

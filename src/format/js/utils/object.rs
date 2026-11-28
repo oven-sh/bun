@@ -57,7 +57,9 @@ fn write_key<'a>(key: Key<'a>, parent: KeyParent<'a>, f: &mut Formatter<'a>) -> 
     if is_name && f.is_quiet() && !f.options().quote_properties.is_consistent() {
         write!(f, source_text(span));
         return match f.elements().last() {
-            Some(FormatElement::SourceText(text)) => text.width.value() as usize,
+            Some(FormatElement::SourceText(text) | FormatElement::OwnedText(text)) => {
+                text.width.value() as usize
+            }
             _ => 0,
         };
     }
@@ -76,10 +78,15 @@ fn write_key<'a>(key: Key<'a>, parent: KeyParent<'a>, f: &mut Formatter<'a>) -> 
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),
     });
-    // With a line break in it, it isn't a single string to Prettier, which only measures the width of single strings.
-    match bun_core::strings::contains_char(&printed, b'\n') {
-        true => usize::MAX,
-        false => string_width(&printed) as usize,
+    match (&printed, key.kind()) {
+        // A name is printed without its escapes.
+        (Cow::Borrowed(_), KeyKind::Ident(name) | KeyKind::Private(name)) => {
+            string_width(name.bytes()) as usize
+        }
+        // With a line break in it, it isn't a single string to Prettier, which only measures the width of single
+        // strings.
+        _ if bun_core::strings::contains_char(&printed, b'\n') => usize::MAX,
+        _ => string_width(&printed) as usize,
     }
 }
 

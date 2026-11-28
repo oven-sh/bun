@@ -87,15 +87,18 @@ pub(crate) fn is_in_another_language(e: Expr<'_>) -> bool {
     let has_tag = match e.parent() {
         Node::Expr(parent) => match parent.kind() {
             ExprKind::TaggedTemplate(call) => {
-                matches!(
-                    call.callee().text(),
-                    b"gql" | b"graphql" | b"graphql.experimental" | b"md" | b"markdown"
-                ) || matches!(
-                    crate::css::embed::root_name_of_tag(call.callee()),
-                    Some(b"css" | b"styled" | b"gql" | b"graphql")
-                )
+                let callee = call.callee();
+                matches!(callee.kind(), ExprKind::Ident(name) if name.is_any(&["gql", "graphql", "md", "markdown"]))
+                    || matches!(callee.kind(), ExprKind::Dot { obj, name, .. }
+                        if matches!(obj.kind(), ExprKind::Ident(obj) if obj.is("graphql")) && name.bytes() == b"experimental")
+                    || matches!(
+                        crate::css::embed::root_name_of_tag(callee),
+                        Some(b"css" | b"styled" | b"gql" | b"graphql")
+                    )
             }
-            ExprKind::Call(call) => call.callee().text() == b"graphql",
+            ExprKind::Call(call) => {
+                matches!(call.callee().kind(), ExprKind::Ident(name) if name.is("graphql"))
+            }
             _ => false,
         },
         _ => false,

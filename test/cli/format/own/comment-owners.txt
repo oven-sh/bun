@@ -1360,6 +1360,8 @@ objects/computed-key-that-is-short.js
 474 481 L NumericLiteral 482 483 -
 574 599 T Identifier 571 573 -
 672 697 T StringLiteral 668 671 -
+objects/key-printed-differently-than-written.js
+1431 1498 L ObjectProperty 1501 1588 -
 objects/key-with-a-comment-is-not-short.js
 8 15 T Identifier 6 7 -
 140 147 T Identifier 136 137 -
@@ -1574,3 +1576,15 @@ types/type-with-only-a-comment-beside-a-pattern-that-breaks.ts
 273 280 D TSTypeLiteral 269 282 -
 310 314 T Property 308 309 -
 357 364 D TSTypeLiteral 353 366 -
+wide-indentation/key-printed-differently-than-written.js
+382 389 T Identifier 380 381 -
+476 483 L ObjectProperty 484 568 -
+575 582 T Identifier 573 574 -
+671 678 L Identifier 679 680 -
+771 778 T NumericLiteral 769 770 -
+871 878 T StringLiteral 867 870 -
+1542 1549 T Identifier 1540 1541 -
+1644 1651 L Identifier 1652 1653 -
+1744 1751 T Identifier 1742 1743 -
+1845 1852 L NumericLiteral 1853 1854 -
+1943 1950 L TemplateLiteral 1951 1954 -

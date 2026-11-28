@@ -1,0 +1,5 @@
+const a = c\u{73}s`color:red;   display:block`;
+const b = gq\u{6c}`{ a { b } }`;
+const c = ht\u{6d}l`<div><p>a</p></div>`;
+const d = m\u{64}`# a
+*  b`;

@@ -23,9 +23,9 @@ fn may_have_embedded_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | AstNodes::ObjectProperty(_)
         | AstNodes::ArrayExpression(_) => true,
         AstNodes::CallExpression(call)
-            if call
-                .callee()
-                .is_some_and(|callee| callee.text() == b"graphql") =>
+            if call.callee().is_some_and(
+                |callee| matches!(callee.kind(), ExprKind::Ident(name) if name.is("graphql")),
+            ) =>
         {
             true
         }

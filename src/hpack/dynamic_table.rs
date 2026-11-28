@@ -15,13 +15,13 @@ const MAX_COPY_LEN: usize = 2048;
 
 /// What a field counts for in the size of a table.
 #[inline(always)]
-pub(crate) const fn entry_size(name_len: usize, value_len: usize) -> usize {
+pub const fn entry_size(name_len: usize, value_len: usize) -> usize {
     name_len + value_len + ENTRY_OVERHEAD
 }
 
 /// Where the name and, right after it, the value of an entry are stored.
 #[derive(Clone, Copy)]
-pub(crate) struct Place {
+pub struct Place {
     start: u32,
     /// 0 if the name is not stored, but in the static table.
     name_len: u32,
@@ -39,6 +39,12 @@ impl Place {
         }
     }
 
+    /// The start and the length of all that is stored.
+    #[inline(always)]
+    pub fn stored(self) -> (u32, u32) {
+        (self.start, self.name_len + self.value_len)
+    }
+
     fn stored_len(self) -> usize {
         self.name_len as usize + self.value_len as usize
     }
@@ -52,7 +58,7 @@ impl Place {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Name<'a> {
+pub enum Name<'a> {
     Static(u8),
     /// The start and the length.
     Stored(u32, u32),
@@ -74,12 +80,12 @@ fn range(start: u32, len: u32) -> Range<usize> {
     start as usize..start as usize + len as usize
 }
 
-pub(crate) struct Entry<T> {
-    pub(crate) place: Place,
-    pub(crate) links: T,
+pub struct Entry<T> {
+    pub place: Place,
+    pub links: T,
 }
 
-pub(crate) struct DynamicTable<T> {
+pub struct DynamicTable<T> {
     /// The newest comes first.
     entries: VecDeque<Entry<T>>,
     /// A ring. An entry that does not fit in at the end leaves a gap there.
@@ -93,7 +99,7 @@ pub(crate) struct DynamicTable<T> {
 }
 
 impl<T> DynamicTable<T> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             entries: VecDeque::new(),
             storage: Box::default(),
@@ -104,11 +110,19 @@ impl<T> DynamicTable<T> {
         }
     }
 
-    pub(crate) fn max_size(&self) -> usize {
+    pub fn max_size(&self) -> usize {
         self.max_size
     }
 
-    pub(crate) fn set_max_size(&mut self, max_size: usize) {
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn set_max_size(&mut self, max_size: usize) {
         self.max_size = max_size;
         self.evict_down_to(max_size);
         if self.holds_too_much() {
@@ -118,12 +132,12 @@ impl<T> DynamicTable<T> {
 
     /// The newest has age 0.
     #[inline(always)]
-    pub(crate) fn get(&self, age: usize) -> Option<&Entry<T>> {
+    pub fn get(&self, age: usize) -> Option<&Entry<T>> {
         self.entries.get(age)
     }
 
     #[inline(always)]
-    pub(crate) fn name<'a>(&'a self, name: Name<'a>) -> &'a [u8] {
+    pub fn name<'a>(&'a self, name: Name<'a>) -> &'a [u8] {
         match name {
             Name::Static(index) => static_table::name(index),
             Name::Stored(start, len) => self.storage.get(range(start, len)).unwrap_or_default(),
@@ -139,7 +153,7 @@ impl<T> DynamicTable<T> {
 
     /// Returns `None` if the field is too large to enter. What that evicts stays in its place for now.
     #[inline(always)]
-    pub(crate) fn insert(&mut self, mut name: Name<'_>, value: &[u8], links: T) -> Option<Place> {
+    pub fn insert(&mut self, mut name: Name<'_>, value: &[u8], links: T) -> Option<Place> {
         let name_len = self.name(name).len();
         let size = entry_size(name_len, value.len());
         self.evict_down_to(self.max_size.saturating_sub(size));

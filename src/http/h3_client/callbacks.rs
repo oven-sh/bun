@@ -1,98 +1,46 @@
-//! lsquic → Rust callbacks for the HTTP/3 client. Registered on the
-//! `quic::Context` from `ClientContext::get_or_create`; lsquic invokes these
-//! from inside `process_conns` on the HTTP thread. Each one resolves the
-//! `ClientSession` / `Stream` from the ext slot and forwards into the
-//! corresponding session/stream method so the protocol logic stays in
-//! `client_session.rs` / `encode.rs`.
-
-use core::ffi::{c_int, c_uint};
-use core::ptr::NonNull;
+//! What the QUIC connections of the HTTP/3 client report. Each handler forwards to the session or the stream, so
+//! that the protocol logic stays in `client_session.rs` and `encode.rs`.
 
 use bstr::BStr;
+use bun_quic::http3::{Fields, Section};
+use bun_quic::{Context, Direction, Event, StreamEvent, http3_code};
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{ClientSession, quic_socket_mut, session_mut, stream_mut, stream_ref};
+use super::client_session::{ClientSession, Progress, session_mut, stream_mut};
 use super::encode;
 use super::stream::Stream;
 use crate::Headers;
-use crate::h2_client::dispatch::{
-    is_malformed_response_field, is_malformed_response_value, trim_response_value,
-};
 
 use crate::h3_client::h3_client;
-use crate::internal_state::TransportEnd;
 
-/// Recover the `ClientSession` from a `quic::Socket`'s ext slot.
-///
-/// INVARIANT: the slot is set by `ClientContext::connect` and lives until
-/// `on_conn_close` drops the registry's ref; the `ClientSession` outlives
-/// the callback. lsquic invokes these callbacks on the HTTP thread, so the
-/// returned `&mut` is the sole live borrow. The session is a distinct
-/// allocation from the `quic::Socket`, so the returned borrow does not alias
-/// the `&mut quic::Socket` the caller still holds.
-#[inline]
-fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
-    // Route through `client_session::session_mut` (one centralised unsafe);
-    // the ext slot is `Option<NonNull<ClientSession>>` — exactly the
-    // backref-upgrade that accessor encapsulates.
-    (*qs.ext::<ClientSession>()).map(|p| session_mut(p.as_ptr()))
-}
-
-/// Recover the h3 `Stream` from a `quic::Stream`'s ext slot.
-///
-/// INVARIANT: the slot is set in `on_stream_open` (and cleared in `detach`);
-/// the `Stream` is heap-owned by its `ClientSession` (`pending` list) and lives
-/// until `detach()`. HTTP-thread only, and a distinct allocation from the
-/// `quic::Stream`, so the returned `&mut` neither aliases the caller's
-/// `&mut quic::Stream` nor any other live borrow.
-#[inline]
-fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
-    // Route through `client_session::stream_mut` (one centralised unsafe);
-    // the ext slot is `Option<NonNull<Stream>>` — same backref invariant.
-    (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
-}
-
-pub(crate) fn register(qctx: &mut quic::Context) {
-    qctx.on_hsk_done(on_hsk_done);
-    qctx.on_goaway(on_goaway);
-    qctx.on_close(on_conn_close);
-    qctx.on_stream_open(on_stream_open);
-    qctx.on_stream_headers(on_stream_headers);
-    qctx.on_stream_data(on_stream_data);
-    qctx.on_stream_writable(on_stream_writable);
-    qctx.on_stream_close(on_stream_close);
-}
-
-extern "C" fn on_hsk_done(qs: &mut quic::Socket, ok: c_int) {
-    let Some(session) = session_of(qs) else {
-        return;
-    };
-    bun_core::scoped_log!(
-        h3_client,
-        "hsk_done ok={} pending={}",
-        ok,
-        session.pending.len()
-    );
-    if ok == 0 {
-        session.closed = true;
-        return;
-    }
-    session.handshake_done = true;
-    for _ in 0..session.pending.len() {
-        qs.make_stream();
+/// The context of a connection is its `ClientSession`, which the registry keeps alive until `Event::Closed`. That
+/// of a stream is its `Stream`, or null after `ClientSession::detach`.
+pub(super) fn on_event(connection: quic::Connection, session: Context, event: Event) {
+    match event {
+        Event::Stream(id, stream, event) => {
+            on_stream_event(connection, connection.stream(id), stream.cast(), event);
+        }
+        Event::Ready => {
+            let session = session_mut(session.cast());
+            bun_core::scoped_log!(h3_client, "ready pending={}", session.pending.len());
+            session.handshake_done = true;
+            session.open_streams();
+        }
+        Event::StreamsAvailable(Direction::Bidirectional) => {
+            session_mut(session.cast()).open_streams();
+        }
+        Event::GoAway { .. } => on_goaway(session_mut(session.cast())),
+        Event::Closed(closed) => {
+            bun_core::scoped_log!(h3_client, "closed {:?}", closed.close_reason());
+            on_close(session.cast());
+        }
+        _ => {}
     }
 }
 
-/// Peer sent GOAWAY: this connection won't accept new streams (RFC 9114
-/// §5.2). Mark the session unusable now so the next `connect()` opens a fresh
-/// one instead of waiting for `on_conn_close`, which only fires after lsquic's
-/// draining period. Stay in the registry so abort/body-chunk lookups still
-/// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
-extern "C" fn on_goaway(qs: &mut quic::Socket) {
-    let Some(session) = session_of(qs) else {
-        return;
-    };
+/// The session stays in the registry, where aborts and body chunks look for the requests in flight.
+fn on_goaway(session: &mut ClientSession) {
     bun_core::scoped_log!(
         h3_client,
         "goaway {}:{}",
@@ -100,31 +48,20 @@ extern "C" fn on_goaway(qs: &mut quic::Socket) {
         session.port,
     );
     session.closed = true;
+    while let Some(stream) = session.first_unopened() {
+        session.retry_or_fail(stream, crate::Error::ConnectionClosed);
+    }
+    session.close_if_idle();
 }
 
-extern "C" fn on_conn_close(qs: &mut quic::Socket) {
-    let Some(session) = session_of(qs) else {
-        return;
-    };
+fn on_close(session: *mut ClientSession) {
+    let session = session_mut(session);
     session.closed = true;
-    session.qsocket = None;
-    let mut buf = [0u8; 256];
-    let st = qs.status(&mut buf);
-    bun_core::scoped_log!(
-        h3_client,
-        "conn_close status={} '{}'",
-        st,
-        BStr::new(bun_core::slice_to_nul(&buf)),
-    );
-    // This is lsquic's last callback for the socket.
+    session.connection = None;
     let _registry_ref =
         ClientContext::get().and_then(|ctx| ClientContext::as_mut(ctx).unregister(session));
-    while !session.pending.is_empty() {
-        // lsquic fires on_stream_close for every bound stream before
-        // on_conn_closed, so anything still here never got a qstream.
-        let stream = session.pending[0].as_ptr();
-        // pending holds live Stream pointers owned by the session.
-        debug_assert!(stream_ref(stream).qstream.is_none());
+    // The streams that were opened are closed before their connection.
+    while let Some(stream) = session.first_unopened() {
         session.retry_or_fail(
             stream,
             if session.handshake_done {
@@ -136,162 +73,84 @@ extern "C" fn on_conn_close(qs: &mut quic::Socket) {
     }
 }
 
-extern "C" fn on_stream_open(s: &mut quic::Stream, is_client: c_int) {
-    *s.ext::<Stream>() = None;
-    if is_client == 0 {
-        return;
-    }
-    let Some(qs) = s.socket() else { return };
-    // Parent connection outlives this stream callback; single-threaded event
-    // loop, no other `&mut Socket` live across this reborrow — same invariant
-    // `quic_socket_mut` encapsulates.
-    let qs = quic_socket_mut(qs.as_ptr());
-    let Some(session) = session_of(qs) else {
-        s.close();
-        return;
-    };
-    // Bind the next pending request to this stream.
-    let stream: *mut Stream = 'find: {
-        for st in session.pending.iter().map(|st| st.as_ptr()) {
-            // pending holds live Stream pointers owned by the session.
-            if stream_ref(st).qstream.is_none() {
-                break 'find st;
-            }
+fn on_stream_event(
+    connection: quic::Connection,
+    qstream: quic::Stream,
+    stream_ptr: *mut Stream,
+    event: StreamEvent,
+) {
+    if stream_ptr.is_null() {
+        // If only the end was missing, the server need not be interrupted.
+        if matches!(event, StreamEvent::Data { is_last: false, .. }) {
+            qstream.stop(http3_code::REQUEST_CANCELLED);
         }
-        s.close();
-        return;
-    };
-    // `stream` is a live element of `session.pending` — `stream_mut`
-    // centralises that upgrade invariant.
-    stream_mut(stream).qstream = Some(NonNull::from(&mut *s));
-    *s.ext::<Stream>() = NonNull::new(stream);
-    bun_core::scoped_log!(h3_client, "stream_open");
-    // Headers and body go out from `on_stream_writable`, not here.
-    // `on_stream_open` can fire from inside `on_hsk_done`, which lsquic
-    // invokes from `ci_tick`'s crypto-read phase with `SC_BUFFER_STREAM` set
-    // while the client's TLS Finished is still only on the HSK crypto
-    // stream's frab list. Any `lsquic_stream_write` here fills the send
-    // controller so `write_is_possible()` goes false before
-    // `process_streams_write_events` ever dispatches the crypto stream, and
-    // the Finished is never packetized (the server stays a mini-conn and
-    // drops every 1-RTT packet). `on_write` is dispatched via lsquic's
-    // priority iterator, which serves the crypto stream first. This mirrors
-    // lsquic's reference `bin/http_client.c`, whose `on_new_stream` only
-    // calls `lsquic_stream_wantwrite(stream, 1)`.
-    s.want_write(true);
-}
-
-extern "C" fn on_stream_headers(s: &mut quic::Stream) {
-    let Some(stream) = stream_of(s) else { return };
-    let session = stream.session_mut();
-    if s.headers_too_large() {
-        session.fail(stream, crate::Error::ResponseHeadersTooLarge);
         return;
     }
-    let n = s.header_count();
-
-    let mut headers = Headers::default();
-    let field_len = |h: &quic::Header| h.name_bytes().len() + h.value_bytes().len();
-    headers
-        .buf
-        .reserve((0..n).filter_map(|i| s.header(i).map(field_len)).sum());
-    bun_core::handle_oom(headers.entries.ensure_total_capacity(n as usize));
-    let mut status: u16 = 0;
-    let mut i: c_uint = 0;
-    while i < n {
-        let Some(h) = s.header(i) else {
-            i += 1;
-            continue;
-        };
-        let name = h.name_bytes();
-        let value = h.value_bytes();
-        if name.first() == Some(&b':') {
-            if name == b":status" {
-                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
-            }
-            i += 1;
-            continue;
-        }
-        if stream.status_code == 0
-            && (is_malformed_response_field(name) || is_malformed_response_value(value))
-        {
-            session.fail(stream, crate::Error::HTTP3ProtocolError);
-            return;
-        }
-        headers.append(name, trim_response_value(value));
-        i += 1;
-    }
-    if status == 0 {
-        // A second HEADERS block after the final response is trailers
-        // (RFC 9114 §4.1) and carries no :status; ignore it rather than
-        // treating the stream as malformed.
-        if stream.status_code != 0 {
-            return;
-        }
-        session.fail(stream, crate::Error::HTTP3ProtocolError);
-        return;
-    }
-    if status >= 100 && status < 200 {
-        return;
-    }
-    stream.status_code = status;
-    stream.decoded_headers = headers;
-    session.deliver(stream, None);
-}
-
-extern "C" fn on_stream_data(s: &mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
-    let Some(stream) = stream_of(s) else { return };
-    // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
-    let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
-    stream.body_buffer.extend_from_slice(slice);
-    let end = (fin != 0).then_some(TransportEnd::Clean);
-    stream.session_mut().deliver(stream, end);
-
-    let Some(stream) = stream_of(s) else { return };
-    if fin != 0 || stream.read_paused {
-        return;
-    }
-    let Some(client) = &stream.client else { return };
-    if client.holds_off_receiving() {
-        stream.read_paused = true;
-        s.want_read(false);
-    }
-}
-
-extern "C" fn on_stream_writable(s: &mut quic::Stream) {
-    let Some(stream_ptr) = *s.ext::<Stream>() else {
-        return;
-    };
-    let stream_ptr = stream_ptr.as_ptr();
     let stream = stream_mut(stream_ptr);
-    if !stream.headers_sent {
-        stream.headers_sent = true;
-        let session = stream.session_mut();
-        if let Err(e) = encode::write_request(session, stream_mut(stream_ptr), s) {
-            session.fail(stream_ptr, e);
+    match event {
+        StreamEvent::Headers(_) | StreamEvent::Data { .. } if !stream.headers_sent => {
+            (stream.session_mut()).fail(stream, crate::Error::HTTP3ProtocolError);
         }
-        return;
+        StreamEvent::Headers(fields) => {
+            on_headers(stream, &fields);
+            connection.recycle(fields);
+        }
+        StreamEvent::Data { data, is_last } => {
+            stream.body_buffer = data;
+            stream.session_mut().made_progress = true;
+            let progress = if is_last {
+                Progress::Complete
+            } else {
+                Progress::Partial
+            };
+            stream.session_mut().deliver(stream, progress);
+        }
+        StreamEvent::Writable if stream.headers_sent => {
+            stream.session_mut().made_progress = true;
+            encode::drain_send_body(stream, qstream);
+        }
+        StreamEvent::Writable => {
+            (stream.headers_sent, stream.idle_seconds) = (true, 0);
+            if let Err(e) = encode::write_request(stream, qstream) {
+                stream.session_mut().fail(stream_ptr, e);
+            }
+        }
+        StreamEvent::Reset(http3_code::MESSAGE_ERROR)
+            if (stream.client.as_ref()).is_none_or(|it| it.state.content_length.is_none()) =>
+        {
+            (stream.session_mut()).fail(stream, crate::Error::HTTP3ProtocolError);
+        }
+        StreamEvent::Stopped(_) if qstream.has_received() => {}
+        StreamEvent::Reset(http3_code::REQUEST_REJECTED)
+        | StreamEvent::Stopped(http3_code::REQUEST_REJECTED) => {
+            stream.peer_rejected = true;
+            stream.session_mut().deliver(stream, Progress::Aborted);
+        }
+        StreamEvent::Reset(_) | StreamEvent::Closed => {
+            stream.session_mut().deliver(stream, Progress::Aborted);
+        }
+        StreamEvent::Opened | StreamEvent::Stopped(_) => {}
     }
-    encode::drain_send_body(stream, s);
 }
 
-/// RFC 9114 §8.1: the server did no application processing.
-/// `US_QUIC_H3_REQUEST_REJECTED` in quic.h.
-const H3_REQUEST_REJECTED: u64 = 0x10B;
-
-extern "C" fn on_stream_close(s: &mut quic::Stream) {
-    let Some(stream) = stream_of(s) else { return };
-    *s.ext::<Stream>() = None;
-    stream.qstream = None;
-    stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED || s.refused_by_goaway();
-    bun_core::scoped_log!(
-        h3_client,
-        "stream_close status={} delivered={}",
-        stream.status_code,
-        stream.headers_delivered,
-    );
-    // A FIN that was read detached the stream in `on_stream_data`.
-    stream
-        .session_mut()
-        .deliver(stream, Some(TransportEnd::Failed));
+fn on_headers(stream: &mut Stream, fields: &Fields) {
+    let session = stream.session_mut();
+    if fields.is_incomplete {
+        return session.fail(stream, crate::Error::ResponseHeadersTooLarge);
+    }
+    if fields.section != Section::Head {
+        return;
+    }
+    let mut headers = Headers::default();
+    (headers.buf).reserve(fields.iter().map(|it| it.0.len() + it.1.len()).sum());
+    bun_core::handle_oom(headers.entries.ensure_total_capacity(fields.len()));
+    for (name, value) in fields.iter() {
+        match name {
+            b":status" => stream.status_code = bun_core::fmt::parse_int(value, 10).unwrap_or(0),
+            _ => headers.append(name, value),
+        }
+    }
+    stream.decoded_headers = headers;
+    session.made_progress = true;
+    session.deliver(stream, Progress::Partial);
 }

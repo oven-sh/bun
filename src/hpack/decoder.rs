@@ -1,4 +1,5 @@
 use crate::dynamic_table::{DynamicTable, Name, Place};
+use crate::literal::Literal;
 use crate::{DEFAULT_TABLE_SIZE, Error, MAX_FIELD_LEN, Result, huffman, integer, static_table};
 
 const MIN_SCRATCH_LEN: usize = 256;
@@ -81,37 +82,6 @@ impl Decoder {
         self.table.set_max_size(smallest.min(last));
         self.table.set_max_size(last);
         rest
-    }
-}
-
-/// A string literal (RFC 7541 §5.2).
-#[derive(Clone, Copy)]
-struct Literal<'a> {
-    bytes: &'a [u8],
-    /// The block as far as the end of `bytes`.
-    context: &'a [u8],
-    is_huffman: bool,
-}
-
-impl<'a> Literal<'a> {
-    /// The most that [`Self::decode`] needs.
-    #[inline(always)]
-    fn room(self) -> usize {
-        if self.is_huffman {
-            huffman::max_decoded_len(self.bytes.len()) + huffman::SLACK
-        } else {
-            0
-        }
-    }
-
-    /// Takes what it fills off `room`.
-    #[inline(always)]
-    fn decode(self, room: &mut &'a mut [u8]) -> Result<&'a [u8]> {
-        if !self.is_huffman {
-            return Ok(self.bytes);
-        }
-        let len = huffman::decode(self.bytes, self.context, room)?;
-        Ok(room.split_off_mut(..len).unwrap_or_default())
     }
 }
 

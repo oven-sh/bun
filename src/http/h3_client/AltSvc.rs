@@ -73,8 +73,8 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
         };
         let eq = eq as usize;
         let proto = &alternative[..eq];
-        // Only the final IETF "h3" ALPN token; draft `h3-NN` versions are
-        // ignored since lsquic is built for the final spec.
+        // Only the final IETF "h3" ALPN token: the client does not
+        // speak the draft `h3-NN` versions.
         if !strings::eql_case_insensitive_ascii(proto, b"h3", true) {
             continue;
         }

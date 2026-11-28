@@ -1,7 +1,4 @@
-//! One QUIC connection to an origin. Owns its UDP endpoint via quic.cpp and
-//! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
-//! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
-//! checks `closed` first.
+//! One QUIC connection to an origin. Multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -9,6 +6,7 @@ use core::sync::atomic::Ordering;
 
 use bun_core::strings;
 use bun_ptr::{AliasableBox, RefPtr};
+use bun_quic::http3_code;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
@@ -22,13 +20,17 @@ use crate::{HeaderResult, InFlightRequest, Protocol};
 
 use crate::h3_client::h3_client;
 
+/// For how long a connection is kept without a request, whatever the server does to keep it alive.
+const MAX_IDLE_SECONDS: u32 = 5 * 60;
+/// The same for one on which the server allows no more streams.
+const MAX_SPENT_SECONDS: u32 = 8;
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Held by the `ClientContext.sessions` registry, and by `PendingConnect` while DNS is in flight.
     ref_count: Cell<u32>,
-    /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
-    // FFI handle that becomes dangling after onConnClose; raw is intentional.
-    pub(crate) qsocket: Option<NonNull<quic::Socket>>,
+    /// `None` while DNS is in flight, and once it is closed.
+    pub(crate) connection: Option<quic::Connection>,
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
@@ -37,10 +39,20 @@ pub struct ClientSession {
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
     pub(crate) registry_index: u32,
+    idle_seconds: u32,
+    /// Since the last sweep, with any of the requests. The others may be waiting for their turn.
+    pub(crate) made_progress: bool,
 
-    /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
-    /// FIFO; `lsquic_conn_make_stream` was already called once per entry.
+    /// The requests that are in flight or wait for a stream, oldest first.
     pub(crate) pending: Vec<AliasableBox<Stream>>,
+}
+
+/// How far the response has got.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Progress {
+    Partial,
+    Complete,
+    Aborted,
 }
 
 impl ClientSession {
@@ -53,7 +65,7 @@ impl ClientSession {
         H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
-            qsocket: None,
+            connection: None,
             hostname,
             port,
             reject_unauthorized,
@@ -61,6 +73,8 @@ impl ClientSession {
             handshake_done: false,
             closed: false,
             registry_index: u32::MAX,
+            idle_seconds: 0,
+            made_progress: false,
             pending: Vec::new(),
         })
     }
@@ -79,52 +93,36 @@ impl ClientSession {
             && strings::eql_long(&self.hostname, hostname)
     }
 
-    /// Mutable access to the live lsquic connection handle.
-    ///
-    /// INVARIANT: `qsocket` is set by `ClientContext::connect` once
-    /// `us_quic_connect_addr` returns and remains valid until
-    /// `callbacks::on_conn_close` (which sets `closed = true`). The
-    /// `quic::Socket` is an FFI-owned allocation distinct from `self`, so the
-    /// returned `&mut` does not alias `self`. HTTP-thread-only.
-    #[inline]
-    fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
-        // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
-        self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
+    pub(crate) fn origin(&self) -> quic::client::Origin<'_> {
+        quic::client::Origin {
+            hostname: &self.hostname,
+            port: self.port,
+            reject_unauthorized: self.reject_unauthorized,
+        }
     }
 
-    /// `on_conn_close` runs from a later engine tick, so the registry is not
-    /// touched from here.
-    pub(crate) fn close_if_idle(&mut self, pool_id: u64) {
-        if self.pool_id != pool_id || self.closed || !self.pending.is_empty() {
-            return;
-        }
-        if let Some(qs) = self.qsocket_mut() {
+    /// `Event::Closed` comes in a later turn, so the registry is not touched from here.
+    pub(crate) fn close_if_idle(&mut self) {
+        if let Some(connection) = self.connection.filter(|_| self.pending.is_empty()) {
             // No later request may pick a connection that is going away.
             self.closed = true;
-            qs.close();
+            connection.close();
         }
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
-        if self.closed {
-            return false;
+        match self.connection {
+            _ if self.closed => false,
+            Some(connection) if self.handshake_done => {
+                let newest_first = self.pending.iter().rev();
+                let unopened = newest_first.take_while(|it| it.qstream.is_none());
+                connection.available_streams() > unopened.count() as u64
+            }
+            // The limit of the server is not known yet.
+            _ => self.pending.len() < 64,
         }
-        let Some(qs) = self.qsocket_mut() else {
-            return self.pending.len() < 64;
-        };
-        // After handshake every pending entry has had make_stream called, so
-        // lsquic's n_avail_streams already accounts for them — comparing
-        // against pending.len would double-subtract. Before handshake nothing
-        // is counted yet, so cap optimistically at the default MAX_STREAMS.
-        if !self.handshake_done {
-            return self.pending.len() < 64;
-        }
-        qs.streams_avail() > 0
     }
 
-    /// Queue `client` for a stream on this connection. The lsquic stream is
-    /// created asynchronously, so the request goes into `pending` until
-    /// `onStreamOpen` pops it.
     pub(crate) fn enqueue(&mut self, mut client: InFlightRequest) {
         debug_assert!(!self.closed);
         client.flags.protocol = Protocol::Http3;
@@ -133,10 +131,28 @@ impl ClientSession {
         let stream = AliasableBox::new(Stream::new(self, client));
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
         self.pending.push(stream);
+        self.idle_seconds = 0;
 
         if self.handshake_done {
-            // handshake_done implies qsocket is Some and valid.
-            self.qsocket_mut().unwrap().make_stream();
+            self.open_streams();
+        }
+    }
+
+    pub(crate) fn first_unopened(&self) -> Option<*mut Stream> {
+        (self.pending.iter().map(AliasableBox::as_ptr)).find(|&it| stream_ref(it).qstream.is_none())
+    }
+
+    /// The requests are written when their streams are reported as writable.
+    pub(crate) fn open_streams(&mut self) {
+        while let Some(stream) = self.first_unopened()
+            && let Some(client) = &stream_ref(stream).client
+            && let can_be_repeated =
+                (client.method.is_idempotent() && !client.state.original_request_body.is_stream())
+            && let Some(connection) = self.connection
+            && let Some(qstream) = connection.open(stream.cast(), can_be_repeated)
+        {
+            stream_mut(stream).qstream = Some(qstream);
+            qstream.want_write();
         }
     }
 
@@ -159,7 +175,7 @@ impl ClientSession {
                     return true;
                 }
                 s.ended = message == WriteMessageType::End;
-                if let Some(qs) = stream.qstream_mut() {
+                if let Some(qs) = stream.qstream.filter(|_| stream.headers_sent) {
                     encode::drain_send_body(stream, qs);
                 }
             }
@@ -186,8 +202,8 @@ impl ClientSession {
                 }
             }
             if !client.holds_off_receiving() && core::mem::take(&mut stream.read_paused) {
-                if let Some(qs) = stream.qstream_mut() {
-                    qs.want_read(true);
+                if let Some(qs) = stream.qstream {
+                    qs.set_paused(false);
                 }
             }
             return true;
@@ -197,34 +213,36 @@ impl ClientSession {
 
     /// Unlink and free `stream`, whose `client` the caller has taken.
     pub(super) fn detach(&mut self, stream: *mut Stream) {
-        self.detach_with(stream, false);
-    }
-
-    /// `abort` kills the lsquic stream even when the request body is done (the response is not).
-    fn detach_with(&mut self, stream: *mut Stream, abort: bool) {
         let st = stream_mut(stream);
         debug_assert!(core::ptr::eq(st.session.as_ptr(), self));
-        let request_body_done = st.request_body_done;
-        if let Some(qs) = st.qstream_mut() {
-            *qs.ext::<Stream>() = None;
-            // The success path can reach here while the request body is still
-            // being written (server responded early). FIN would be a
-            // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
-            // is the correct "I'm abandoning this send half" so lsquic reaps
-            // the stream instead of leaking it on the pooled session.
-            if abort || !request_body_done {
-                qs.reset();
-            }
+        if let Some(qs) = st.qstream.take() {
+            qs.set_context(core::ptr::null_mut());
+            // The server can respond before it has got the whole request.
+            qs.reset_unfinished(http3_code::REQUEST_CANCELLED);
         }
-        st.qstream = None;
         if let Some(i) = self.pending.iter().position(|s| s.as_ptr() == stream) {
             self.pending.remove(i);
         }
+        if self.closed {
+            self.close_if_idle();
+        }
+    }
+
+    /// For when the rest of the response is of no interest.
+    fn cancel(&mut self, stream: *mut Stream) {
+        if let Some(qs) = stream_ref(stream).qstream {
+            // A server that has responded may be about to read what is left of the request.
+            if stream_ref(stream).status_code == 0 {
+                qs.reset_unless_delivered(http3_code::REQUEST_CANCELLED);
+            }
+            qs.stop(http3_code::REQUEST_CANCELLED);
+        }
+        self.detach(stream);
     }
 
     pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
         let client = stream_mut(stream).client.take();
-        self.detach_with(stream, true);
+        self.cancel(stream);
         if let Some(client) = client {
             client.fail(err);
         }
@@ -243,19 +261,19 @@ impl ClientSession {
         };
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
-        if client.flags.h3_retried || st.is_streaming_body || !replay_safe {
-            self.detach_with(stream, true);
+        if client.flags.h3_retried || st.is_streaming_body || st.headers_delivered || !replay_safe {
+            self.cancel(stream);
             return client.fail(err);
         }
         let Some(ctx) = ClientContext::get() else {
-            self.detach_with(stream, true);
+            self.cancel(stream);
             return client.fail(err);
         };
         client.flags.h3_retried = true;
         // The end of one stream leaves the connection usable, and connect() may
         // pick it again. It must not if the connection is going, or if the
         // origin rejected the request, which it does when it shuts down.
-        if st.peer_rejected || !self.qsocket_mut().is_some_and(|qs| qs.is_connected()) {
+        if st.peer_rejected || !self.connection.is_some_and(|it| it.is_usable()) {
             self.closed = true;
         }
         let port = self.port;
@@ -266,9 +284,41 @@ impl ClientSession {
             port,
             bstr::BStr::new(err.name()),
         );
-        self.detach_with(stream, true);
+        self.cancel(stream);
         if let Err(client) = ClientContext::as_mut(ctx).connect(client, port) {
             client.fail(err);
+        }
+    }
+
+    pub(crate) fn sweep(&mut self, elapsed_seconds: u32) {
+        if self.pending.is_empty() {
+            self.idle_seconds = self.idle_seconds.saturating_add(elapsed_seconds);
+            let max_seconds = match self.has_headroom() {
+                true => MAX_IDLE_SECONDS,
+                false => MAX_SPENT_SECONDS,
+            };
+            if self.idle_seconds >= max_seconds {
+                self.close_if_idle();
+            }
+        }
+        if let Some(connection) = self.connection {
+            // Their end is long in coming.
+            connection.stop_streams_without_context(http3_code::REQUEST_CANCELLED);
+        }
+        let made_progress = core::mem::take(&mut self.made_progress);
+        let streams: Vec<_> = self.pending.iter().map(AliasableBox::as_ptr).collect();
+        for stream in streams {
+            let st = stream_mut(stream);
+            if made_progress {
+                st.idle_seconds = 0;
+            }
+            let Some(client) = st.client.as_ref().filter(|_| !st.read_paused) else {
+                continue;
+            };
+            st.idle_seconds = st.idle_seconds.saturating_add(elapsed_seconds);
+            if (1..=st.idle_seconds).contains(&client.effective_idle_timeout_seconds()) {
+                self.fail(stream, crate::Error::Timeout);
+            }
         }
     }
 
@@ -292,13 +342,11 @@ impl ClientSession {
         false
     }
 
-    /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
-    /// `end` = the response side of the stream is over; deliver whatever is buffered then
-    /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
+    /// Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub(crate) fn deliver(&mut self, stream: *mut Stream, end: Option<TransportEnd>) {
-        let done = end.is_some();
+    pub(crate) fn deliver(&mut self, stream: *mut Stream, progress: Progress) {
         let st = stream_mut(stream);
+        let done = progress != Progress::Partial;
         let Some(mut client) = st.client.take() else {
             if done {
                 self.detach(stream);
@@ -307,7 +355,7 @@ impl ClientSession {
         };
 
         if client.signals.get(Signal::Aborted) {
-            self.detach_with(stream, true);
+            self.cancel(stream);
             return client.fail(crate::Error::Aborted);
         }
 
@@ -318,15 +366,12 @@ impl ClientSession {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    self.detach_with(stream, true);
+                    self.cancel(stream);
                     return client.fail(e);
                 }
             };
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
-            if result == HeaderResult::Finished
-                || (done && st.body_buffer.is_empty())
-                || client.state.is_done()
-            {
+            if result == HeaderResult::Finished || client.state.is_done() {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
                     return client.do_redirect_multiplexed();
@@ -361,15 +406,24 @@ impl ClientSession {
             return;
         }
 
+        if progress == Progress::Aborted {
+            self.cancel(stream);
+            let err = match client.state.content_length {
+                Some(_) => crate::Error::HTTP3ContentLengthMismatch,
+                None => crate::Error::ConnectionClosed,
+            };
+            return client.fail(err);
+        }
+
         if !st.body_buffer.is_empty() {
-            if let Some(end) = end {
-                client.state.end_body(end);
+            if done {
+                client.state.end_body(TransportEnd::Clean);
             }
             let report = match client.handle_response_body(st.body_buffer.as_slice(), false) {
                 Ok(r) => r,
                 Err(e) => {
                     st.body_buffer.clear();
-                    self.detach_with(stream, true);
+                    self.cancel(stream);
                     return client.fail(e);
                 }
             };
@@ -385,13 +439,19 @@ impl ClientSession {
             if report {
                 client.send_partial_result();
             }
+            if client.holds_off_receiving()
+                && let Some(qs) = st.qstream
+            {
+                st.read_paused = true;
+                qs.set_paused(true);
+            }
             st.client = Some(client);
             return;
         }
 
-        if let Some(end) = end {
+        if done {
             self.detach(stream);
-            if let Err(err) = client.finalize_body_on_eof(end) {
+            if let Err(err) = client.finalize_body_on_eof(TransportEnd::Clean) {
                 return client.fail(err);
             }
             return finish(client);
@@ -399,20 +459,6 @@ impl ClientSession {
 
         st.client = Some(client);
     }
-}
-
-/// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
-///
-/// INVARIANT: every caller passes a non-null `quic::Socket` that lsquic owns
-/// and keeps live for the borrow's duration — either the socket of a callback's
-/// argument (live for the callback), or a `ClientSession.qsocket` field (set
-/// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
-/// FFI-owned allocation distinct from any Rust struct holding it. All access
-/// is HTTP-thread-only, so the returned `&mut` is the sole live borrow.
-#[inline(always)]
-pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
-    // SAFETY: see INVARIANT above.
-    unsafe { &mut *qs }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry) to `&mut Stream`. Entries live

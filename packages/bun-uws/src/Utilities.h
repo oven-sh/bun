@@ -26,7 +26,16 @@
 #include <cstdint>
 #include <limits>
 
+extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
+
 namespace uWS {
+
+/* The methods Bun.serve can represent: the HTTP/1 parser's strict set, in
+ * their RFC 9110 case-sensitive wire form. */
+static inline bool isKnownMethod(std::string_view method) {
+    for (unsigned char c : method) if (!((c >= 'A' && c <= 'Z') || c == '-')) return false;
+    return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
+}
 
 /* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
  * allowed in HTTP/2 or HTTP/3 responses. */

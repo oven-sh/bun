@@ -241,6 +241,7 @@ impl Route {
                         is_response_pending: Cell::new(true),
                     };
                     self.pending_responses.with_mut(|v| v.push(pending));
+                    resp.timeout(server.config().idle_timeout);
                     resp.on_aborted_ref(Self::on_pending_response_aborted, &self);
                     req.set_yield(false);
                 }

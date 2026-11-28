@@ -43,8 +43,8 @@ impl Socket {
         _data_cb: H,
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
-        host: &ZStr,
+        recv_error_cb: Option<extern "C" fn(*mut Socket, c_int, c_int)>,
+        host: Option<&ZStr>,
         port: c_ushort,
         options: c_int,
         err: Option<&mut c_int>,
@@ -59,7 +59,7 @@ impl Socket {
                 drain_cb,
                 close_cb,
                 recv_error_cb,
-                host.as_ptr(),
+                host.map_or(core::ptr::null(), ZStr::as_ptr),
                 port,
                 options,
                 match err {
@@ -223,7 +223,7 @@ unsafe extern "C" {
         data_cb: extern "C" fn(*mut Socket, &PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        recv_error_cb: Option<extern "C" fn(*mut Socket, c_int, c_int)>,
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -319,7 +319,7 @@ pub mod raw {
 
 bun_opaque::opaque_ffi! {
     /// Opaque uSockets UDP packet buffer (`us_udp_packet_buffer_t`).
-    struct PacketBuffer;
+    pub(crate) struct PacketBuffer;
 }
 
 extern "C" fn on_data<H: Fn(*mut Socket, Packets<'_>) + Copy + 'static>(
@@ -343,6 +343,23 @@ impl<'a> Iterator for Packets<'a> {
     fn next(&mut self) -> Option<Packet<'a>> {
         let buf = self.buf;
         self.indices.next().map(|index| Packet { buf, index })
+    }
+}
+
+impl Packets<'_> {
+    /// Lends `f` each payload to change in place, with the buffer and the index by which C knows the packet.
+    #[inline]
+    pub(crate) fn for_each_mut(self, mut f: impl FnMut(&PacketBuffer, c_int, &mut [u8])) {
+        let Self { buf, indices } = self;
+        for index in indices {
+            // SAFETY: as in `Packet::payload`, and there is no `Packet` with this index.
+            let payload = unsafe {
+                let payload = us_udp_packet_buffer_payload(buf, index).cast_mut();
+                let len = us_udp_packet_buffer_payload_length(buf, index);
+                core::slice::from_raw_parts_mut(payload, usize::try_from(len).expect("int cast"))
+            };
+            f(buf, index, payload);
+        }
     }
 }
 

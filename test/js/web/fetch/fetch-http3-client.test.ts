@@ -174,7 +174,7 @@ beforeAll(async () => {
 });
 
 // Don't await: the H3 client's pooled session to this origin stays open
-// until lsquic's idle timeout, so stop(true) would block on it draining.
+// until its idle timeout, so stop(true) would block on it draining.
 afterAll(() => void server?.stop(true));
 
 const h3 = { protocol: "http3", tls: { rejectUnauthorized: false } } as const;
@@ -404,16 +404,11 @@ describe("fetch protocol: http3", () => {
     expect(res.headers.get("x-recv-len")).toBe("1");
   });
 
-  // Regression: src/uws_sys/quic/Header.zig defines `Qpack = enum(u8) { ... _ }`
-  // (non-exhaustive — any u8 is a valid value). The Rust port uses an exhaustive
-  // `#[repr(u8)] enum`, so the only safety net against discriminant drift / a UB
-  // `from_raw` is that every named index must equal its RFC 9204 Appendix A
-  // static-table entry. This pins that contract end-to-end: each header below
-  // hits `Qpack::classify` → `qpack_index` → lsqpack encode → wire → server
-  // decode. A wrong discriminant makes lsqpack emit the wrong static-table
-  // name (or garbage), so the echoed value disappears.
+  // Every variant of `Qpack` (src/uws_sys/quic/header.rs) must equal the index
+  // of its RFC 9204 Appendix A static-table entry. With a wrong one the encoder
+  // emits another name, so the echoed value disappears.
   test("QPACK static-table indexed headers round-trip", async () => {
-    // Every `Class::Indexed` entry in Header.zig's classify map, minus
+    // Every `Class::Indexed` entry in the classify map, minus
     // content-length / accept-encoding (build_request rewrites those).
     // Mixed case on a few to exercise the case-insensitive lookup.
     const sent: Record<string, string> = {
@@ -751,8 +746,7 @@ describe("fetch protocol: http3", () => {
 });
 
 // An aborted upload must end with RESET_STREAM. A FIN tells the server that the
-// truncated body is the whole body. If the request declared a content-length,
-// the server's lsquic answers that FIN by closing the whole connection.
+// truncated body is the whole body.
 describe("aborted upload", () => {
   let server: Server<undefined>;
   let origin: string;
@@ -1128,7 +1122,7 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
 
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC
 // connect to a resolved hostname probes each address with a throwaway UDP
-// `connect(2)` (quic.cpp, us_quic_connect_result) and gives up when no entry is
+// `connect(2)` (quic.cpp, us_quic_is_routable) and gives up when no entry is
 // reachable. The shim lets the first probe through and refuses every later
 // one, so the handshake failure below retries onto a connect that fails
 // before it returns. On that path the request must be failed once, by the
@@ -1191,7 +1185,7 @@ int connect(int fd, const struct sockaddr *addr, socklen_t len) {
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-test.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns rejects once", async () => {
+test.concurrent.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns rejects once", async () => {
   // rejectUnauthorized with the self-signed cert fails the handshake, so the
   // request's stream closes before any response header: the retry trigger.
   // The hostname (not an IP literal) is what makes both connects take the
@@ -1465,7 +1459,8 @@ test.each([
     socket: {
       data(_socket, packet, port, address) {
         client = { port, address };
-        if (origin === b.port && (bytesForB += packet.length) > 2 * body.length) written.resolve();
+        // The end of the handshake may be sent again, in datagrams that start with a long header.
+        if (origin === b.port && packet[0] < 0x80 && (bytesForB += packet.length) > 2 * body.length) written.resolve();
         // A ClientHello takes two Initial packets, and a server that reads the first one
         // alone answers with a Retry. It gets the first two of a connection together.
         if ((packet[0] & 0xf0) === 0xc0) {
@@ -1500,6 +1495,53 @@ test.each([
     front.close();
     back.close();
     await a.destroy();
+  }
+});
+
+test("a request is not written to a connection that is about to time out", async () => {
+  using pool = new Bun.FetchSession();
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 1 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "204" }, { terminal: true });
+      },
+    },
+  );
+  const { port: originPort } = origin.address!;
+  let [clientPort, isDark] = [0, false];
+  const relay = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(socket, packet, port) {
+        if (port !== originPort) clientPort = port;
+        // Until the client starts over.
+        isDark &&= packet[0] >> 4 !== 0xc;
+        if (!isDark) socket.send(packet, port === originPort ? clientPort : originPort, "127.0.0.1");
+      },
+    },
+  });
+  const send = () =>
+    fetch(`https://127.0.0.1:${relay.port}/`, { ...h3, session: pool, method: "POST", body: "x" }).then(
+      res => res.status,
+      err => err.code,
+    );
+  try {
+    // So that the timeout does not depend on how long the first round trips took.
+    for (let i = 0; i < 20; i++) expect(await send()).toBe(204);
+    isDark = true;
+    // By then the client has read what was on its way.
+    await fetch(`${base}/hello`, h3).then(res => res.text());
+    await Bun.sleep(950);
+    expect(await send()).toBe(204);
+  } finally {
+    relay.close();
+    await origin.destroy();
   }
 });
 
@@ -1716,7 +1758,7 @@ test("connects to a server with an Ed25519 certificate", async () => {
     const res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
     expect(await res.text()).toBe("ed25519 over h3");
   } finally {
-    // As in afterAll: the pooled session drains on lsquic's idle timeout, so stop(true) is not awaited.
+    // As in afterAll: the pooled session drains on its idle timeout, so stop(true) is not awaited.
     server.stop(true);
   }
 });

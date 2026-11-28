@@ -49,7 +49,6 @@ function wrapCertificate(der: Uint8Array | undefined) {
 
 // Stand-ins for the Node.js primordials used by the original source.
 const ArrayIsArray = Array.isArray;
-const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
@@ -87,6 +86,9 @@ function assert(value, message?: string) {
     throw $ERR_INTERNAL_ASSERTION(message || "Internal assertion failed");
   }
 }
+
+// Close options with which not even a client in mid-handshake is told.
+const kSilently = {};
 
 // Stand-in for Node's internalBinding('util').markPromiseAsHandled.
 function noop() {}
@@ -147,9 +149,6 @@ function ERR_QUIC_STREAM_RESET(code) {
 function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
   return $ERR_QUIC_VERSION_NEGOTIATION_ERROR("The QUIC session requires version negotiation");
 }
-
-const kClientHttp = Symbol("kClientHttp");
-const kNoteClientHttp = Symbol("kNoteClientHttp");
 
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
 Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
@@ -1046,6 +1045,10 @@ setCallbacks({
           resetCode,
           `stream reset with code ${resetCode}`,
         );
+        // H3_REQUEST_REJECTED: any request can cross the end of a session.
+        if (resetCode === 0x10bn && getQuicSessionState(this[kOwner].session).headersSupported === 1) {
+          markPromiseAsHandled(this[kOwner].closed);
+        }
       }
     }
     debug(`stream ${this[kOwner]!.id} closed callback with error: ${error}`);
@@ -1473,6 +1476,7 @@ async function writeBatchWithDrain(handle: StreamHandle, stream: QuicStream, bat
     await waitForDrain(stream);
     if (stream.destroyed) return true;
   }
+  if (state.writeEnded) return true;
 
   const result = handle.write(batch);
   if (result === undefined) {
@@ -1497,8 +1501,6 @@ async function consumeAsyncSource(handle: StreamHandle, stream: QuicStream, sour
   } catch (err) {
     if (!stream.destroyed) {
       stream.destroy(err);
-    } else {
-      throw err;
     }
   }
 }
@@ -1519,8 +1521,6 @@ async function consumeSyncSource(handle: StreamHandle, stream: QuicStream, sourc
   } catch (err) {
     if (!stream.destroyed) {
       stream.destroy(err);
-    } else {
-      throw err;
     }
   }
 }
@@ -1653,6 +1653,7 @@ interface QuicStreamInner {
   oninfo: Callback | undefined;
   onwanttrailers: Callback | undefined;
   earlySnapshot?: boolean;
+  resetCodeSnapshot?: bigint;
 }
 
 class QuicStream {
@@ -1754,13 +1755,9 @@ class QuicStream {
 
     yield* createBlobReaderIterable(inner.reader, {
       getReadError: () => {
-        if (inner.state.readEnded && !inner.state.finReceived) {
-          if (inner.state.reset) {
-            return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
-          }
-          return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
-        }
-        return $ERR_INVALID_STATE("The stream is not readable");
+        const resetCode = inner.state.reset ? inner.state.resetCode : inner.resetCodeSnapshot;
+        if (resetCode !== undefined) return ERR_QUIC_STREAM_RESET(Number(resetCode));
+        return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
       },
     });
   }
@@ -2077,7 +2074,7 @@ class QuicStream {
       // No error: Node still shuts the stream down on the wire with
       // RESET_STREAM(0)/STOP_SENDING(0) (ngtcp2_conn_shutdown_stream with
       // app code 0) — a clean FIN would make the peer surface a normal
-      // empty stream instead of never seeing it.
+      // empty stream.
       abortCode = 0n;
     }
     // When the whole session is being torn down, the cascaded per-stream
@@ -2086,7 +2083,6 @@ class QuicStream {
     // the surviving peer is expected to clean up via its own close/idle
     // timeout rather than via per-stream RESET/STOP_SENDING.
     const cascadingFromSessionDestroy = inner.session !== undefined && isQuicSessionDestroying(inner.session);
-    // Node parity for streams created and abandoned in one turn.
     if (abortCode !== undefined && !cascadingFromSessionDestroy) {
       const wantStop = !inner.state.readEnded;
       const wantReset = inner.writer === undefined && !inner.state.writeEnded;
@@ -2100,7 +2096,7 @@ class QuicStream {
     }
     const handle = this.#handle;
     this[kFinishClose](error);
-    handle!.destroy(cascadingFromSessionDestroy);
+    handle?.destroy(cascadingFromSessionDestroy);
   }
 
   /**
@@ -2509,8 +2505,10 @@ class QuicStream {
       });
     }
     inner.stats?.[kFinishClose]();
-    inner.earlySnapshot = inner.state?.early;
-    inner.state?.[kFinishClose]();
+    const { state } = inner;
+    inner.earlySnapshot = state?.early;
+    if (state?.reset) inner.resetCodeSnapshot = state.resetCode;
+    state?.[kFinishClose]();
     inner.session![kRemoveStream](this);
     inner.writer?.fail(error);
     inner.reader ??= this.#handle?.getReader();
@@ -2717,6 +2715,7 @@ interface QuicSessionInner {
   endpoint: QuicEndpoint | undefined;
   isPendingClose: boolean;
   selfInitiatedClose: boolean;
+  warnedAboutStream?: boolean;
   destroying: boolean;
   handshakeCompleted: boolean;
   pendingClose: PendingPromise;
@@ -2919,6 +2918,7 @@ class QuicSession {
       validateFunction(fn, "onstream");
       inner.onstream = FunctionPrototypeBind(fn, this);
     }
+    inner.state.hasStreamListener = fn !== undefined;
   }
 
   /** @type {OnDatagramCallback} */
@@ -3519,7 +3519,7 @@ class QuicSession {
     const inner = this.#inner;
     if (inner.destroying || this.destroyed) return;
 
-    if (options !== undefined) options = validateCloseOptions(options);
+    if (options !== undefined && options !== kSilently) options = validateCloseOptions(options);
     inner.destroying = true;
 
     debug("destroying the session");
@@ -3602,7 +3602,7 @@ class QuicSession {
     inner.peerCertificate = undefined;
     inner.ephemeralKeyInfo = undefined;
 
-    this.#handle!.destroy(options);
+    this.#handle!.destroy(options === kSilently ? null : options);
     this.#handle = undefined;
 
     if (onSessionClosedChannel.hasSubscribers) {
@@ -3658,6 +3658,9 @@ class QuicSession {
       this.destroy();
       return;
     }
+
+    // This is how a closing endpoint cuts off sessions that make no progress.
+    if (errorType === 0 && code === 0xcn && this.#inner.endpoint?.closing) markPromiseAsHandled(this.closed);
 
     switch (errorType) {
       case 0:
@@ -3969,7 +3972,10 @@ class QuicSession {
     stream.highWaterMark = kDefaultHighWaterMark;
 
     if (typeof inner.onstream !== "function") {
-      process.emitWarning("A new stream was received but no onstream callback was provided");
+      if (!inner.warnedAboutStream) {
+        inner.warnedAboutStream = true;
+        process.emitWarning("A new stream was received but no onstream callback was provided");
+      }
       stream.destroy();
       return;
     }
@@ -4216,7 +4222,6 @@ interface QuicEndpointInner {
   busy: boolean;
   isPendingClose: boolean;
   listening: boolean;
-  clientHttp: boolean | undefined;
   pendingClose: PendingPromise;
   pendingError: unknown;
   sessions: Set<QuicSession>;
@@ -4236,7 +4241,6 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
-    clientHttp: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
     sessions: new SafeSet(),
@@ -4712,14 +4716,6 @@ class QuicEndpoint {
     return this.#inner.listening;
   }
 
-  get [kClientHttp]() {
-    return this.#inner.clientHttp;
-  }
-
-  [kNoteClientHttp](wantHttp) {
-    this.#inner.clientHttp ??= wantHttp;
-  }
-
   /** @type {boolean} */
   get destroyed() {
     assertIsQuicEndpoint(this);
@@ -4744,7 +4740,7 @@ class QuicEndpoint {
     const alreadyClosing = this.#isClosedOrClosing;
     for (const session of inner.sessions) {
       markPromiseAsHandled(session.closed);
-      session.destroy(error, !alreadyClosing && session[kHandshakeCompleted] ? closeOptions : undefined);
+      session.destroy(error, !alreadyClosing && session[kHandshakeCompleted] ? closeOptions : kSilently);
     }
     if (!this.#isClosedOrClosing) {
       this.close();
@@ -4912,28 +4908,9 @@ class QuicEndpoint {
   }
 }
 
-/**
- * MUST match `alpn_cstr_is_http` in `src/runtime/node/quic/endpoint.rs`
- * (which cross-references this fn). `alpn` is the RAW, not-yet-validated
- * `options.alpn`: never throw here -- a non-string is treated as the HTTP/3
- * default and rejected with the proper error by `processTlsOptions` later.
- * @param {string|string[]|undefined} alpn
- */
-function alpnWantsHttp(alpn) {
-  const first = ArrayIsArray(alpn) ? alpn[0] : alpn;
-  return typeof first !== "string" || first === "h3" || StringPrototypeStartsWith(first, "h3-");
-}
-
-function findSuitableEndpoint(wantHttp) {
+function findSuitableEndpoint() {
   for (const endpoint of endpointRegistry) {
-    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy) {
-      const mode = endpoint[kClientHttp];
-      if (mode !== undefined && mode !== wantHttp) {
-        continue;
-      }
-      if (endpoint.listening) {
-        continue;
-      }
+    if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy && !endpoint.listening) {
       return endpoint;
     }
   }
@@ -4946,7 +4923,7 @@ function findSuitableEndpoint(wantHttp) {
  * @param {boolean} forServer
  * @returns {QuicEndpoint}
  */
-function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true): QuicEndpoint {
+function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false): QuicEndpoint {
   if (isQuicEndpoint(endpoint)) {
     return endpoint;
   }
@@ -4954,7 +4931,7 @@ function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false
     return new QuicEndpoint(endpoint);
   }
   if (reuseEndpoint && !forServer) {
-    const existing = findSuitableEndpoint(wantHttp);
+    const existing = findSuitableEndpoint();
     if (existing !== undefined) return existing;
   }
   return new QuicEndpoint();
@@ -5370,8 +5347,7 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     }
   }
 
-  const wantHttp = forServer || alpnWantsHttp(options.alpn);
-  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, wantHttp);
+  const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer);
 
   // Normalize into the shape Node stores and returns from `session.applicationOptions`.
   const {
@@ -5519,8 +5495,6 @@ async function connect(address, options: SessionOptions = kEmptyObject) {
   }
 
   const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
-
-  endpoint[kNoteClientHttp](alpnWantsHttp(options.alpn));
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
     onEndpointClientSessionChannel.publish({

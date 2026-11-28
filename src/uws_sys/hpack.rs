@@ -91,7 +91,7 @@ impl HpackBuffer {
                 };
                 self.fields.push(Header {
                     qpack_index: field.static_index.into(),
-                    ..Header::init(name, copy_to(&mut room, field.value), None)
+                    ..Header::init(name, copy_to(&mut room, field.value))
                 });
             }
         }

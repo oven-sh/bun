@@ -48,7 +48,7 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
-void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
+void uws_h3_app_close(uws_h3_app_t* app, void (*on_drained)(void*, bool), void* user) { ((H3App*)app)->close(on_drained, user); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
@@ -90,9 +90,9 @@ void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t
 }
 
 int uws_h3_listen_socket_port(us_quic_listen_socket_t* ls) { return us_quic_listen_socket_port(ls); }
-int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, int len)
+int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char (*ip)[16])
 {
-    return us_quic_listen_socket_local_address(ls, buf, len);
+    return us_quic_listen_socket_local_address(ls, ip);
 }
 void uws_h3_listen_socket_close(us_quic_listen_socket_t* ls) { us_quic_listen_socket_close(ls); }
 
@@ -117,7 +117,7 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_close((us_quic_stream_t*)res);
+    us_quic_stream_close(&((Http3Response*)res)->stream);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)
@@ -177,7 +177,7 @@ bool uws_h3_res_has_responded(uws_h3_res_t* res) { return ((Http3Response*)res)-
 size_t uws_h3_res_get_buffered_amount(uws_h3_res_t* res) { return ((Http3Response*)res)->getBufferedAmount(); }
 
 void uws_h3_res_reset_timeout(uws_h3_res_t*) {}
-void uws_h3_res_timeout(uws_h3_res_t*, uint8_t) {}
+void uws_h3_res_timeout(uws_h3_res_t* res, uint8_t seconds) { us_quic_stream_timeout(&((Http3Response*)res)->stream, seconds); }
 void uws_h3_res_end_sendfile(uws_h3_res_t* res, uint64_t, bool close)
 {
     /* sendfile path falls back to plain end-of-stream over QUIC. */
@@ -217,22 +217,13 @@ uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest
 {
     /* Mirror uws_res_get_remote_address_info: the caller gets text, not raw in_addr bytes. */
     static thread_local char b[64];
-    int len = 0, ipv6 = 0;
-    us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
-    if (!qs) {
-        *dest = b;
-        *port = 0;
-        *is_ipv6 = false;
-        return 0;
-    }
-    us_quic_socket_remote_address(qs, b, &len, port, &ipv6);
-    if (len == 0) {
-        *dest = b;
-        *is_ipv6 = false;
-        return 0;
-    }
+    char ip[16];
+    int len = us_quic_stream_remote_address(&((Http3Response*)res)->stream, &ip, port);
     *dest = b;
-    *is_ipv6 = len != 4;
+    *is_ipv6 = len == 16;
+    if (len == 0)
+        return 0;
+    memcpy(b, ip, len);
     return Bun__formatIpAddress(b, *is_ipv6);
 }
 

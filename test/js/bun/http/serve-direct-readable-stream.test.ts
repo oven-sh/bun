@@ -949,11 +949,9 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
 
 // The HTTP/3 sibling must NOT take the ended_response short-circuit.
 // Http3Response::markDone() deliberately leaves onAborted armed (unlike
-// HTTP/1's markDone()) so that Http3Context's on_stream_close can notify the
+// HTTP/1's markDone()) so that Http3Context's on_close can notify the
 // holder; end_stream() -> detach_response() -> clear_aborted() is what disarms
-// it. Skipping that leaves the callback pointing at a RequestContext the
-// stream-resolution microtask has already released, and lsquic's later
-// on_stream_close invokes it on the freed slot.
+// it. Skipping that leaves the callback armed after the request has ended.
 test.skipIf(!isASAN)(
   "h3: controller.end() from a parked pull() disarms onAborted before the context is released",
   async () => {
@@ -977,7 +975,7 @@ test.skipIf(!isASAN)(
               // Suspend so assignToStream sees a pending promise. The
               // resolution then runs as an on_resolve_stream microtask AFTER
               // controller.end() has markDone()d the H3 stream, before
-              // lsquic can fire on_stream_close.
+              // the stream is closed.
               await gate.promise;
               controller.end();
             },
@@ -1000,8 +998,8 @@ test.skipIf(!isASAN)(
       body += decoder.decode(value, { stream: true });
     }
     gate.resolve();
-    // Drain to completion; both sides have FINned, so lsquic's next ticks
-    // run on_stream_close for this stream.
+    // Drain to completion; both sides have FINned, so the next ticks
+    // close this stream.
     while (!(await reader.read()).done);
     for (let i = 0; i < 20; i++) await Bun.sleep(5);
     server.stop(true);

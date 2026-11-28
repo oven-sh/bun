@@ -1,0 +1,22 @@
+[package]
+name = "bun_quic"
+version.workspace = true
+edition.workspace = true
+autotests = false
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+bun_core.workspace = true
+bun_qpack.workspace = true
+hashbrown.workspace = true
+smallvec.workspace = true
+
+[[test]]
+name = "quic"
+path = "tests/main.rs"

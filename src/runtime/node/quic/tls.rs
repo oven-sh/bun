@@ -57,7 +57,7 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
-// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` and `X509_V_FLAG_*` values below, against BoringSSL's
+// packages/bun-usockets/src/quic.cpp asserts these, and the `SSL_EARLY_DATA_*` and `X509_V_FLAG_*` values below, against BoringSSL's
 // headers.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
 const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 3;
@@ -92,7 +92,8 @@ impl TlsConfig {
     ) -> JsResult<Self> {
         let mut config = TlsConfig {
             is_server,
-            alpn: Vec::new(),
+            // Node's default.
+            alpn: b"\x02h3".to_vec(),
             servername: None,
             certs_pem: Vec::new(),
             keys_pem: Vec::new(),
@@ -110,7 +111,7 @@ impl TlsConfig {
             return Ok(config);
         }
         if let Some(v) = tls.get(global, "alpn")? {
-            if let Some(bytes) = value_to_bytes(global, v)? {
+            if let Some(bytes) = value_to_bytes(global, v)?.filter(|it| !it.is_empty()) {
                 config.alpn = bytes;
             }
         }
@@ -151,6 +152,7 @@ impl TlsConfig {
         if let Some(v) = tls.get(global, "enableEarlyData")? {
             config.enable_early_data = v.to_boolean();
         }
+        config.enable_early_data &= !(is_server && config.verify_client);
         if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
             config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
@@ -180,97 +182,6 @@ pub(super) fn early_data_info(ssl: &ssl::SSL) -> (bool, bool) {
             SSL_EARLY_DATA_UNKNOWN | SSL_EARLY_DATA_DISABLED | SSL_EARLY_DATA_NO_SESSION_OFFERED
         );
     (attempted, accepted)
-}
-
-/// lsquic borrows the raw pointer; this struct owns it.
-pub(super) struct TlsContext {
-    ctx: ssl::OwnedSslCtx,
-    /// Keep the wire-format ALPN alive at a stable heap address: BoringSSL
-    /// stores the `arg` pointer we pass to `SSL_CTX_set_alpn_select_cb` and
-    /// the callback dereferences it on every ClientHello.
-    #[expect(
-        clippy::box_collection,
-        reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
-    )]
-    _alpn: Option<Box<Vec<u8>>>,
-}
-
-unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
-    if line.is_null() {
-        return;
-    }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
-    if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
-        if !peer_ctx.is_null() {
-            // SAFETY: as above.
-            let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
-        }
-        return;
-    }
-    // SAFETY: ctx is the QuicSession (conn-ctx).
-    let session = unsafe { &*ctx.cast::<super::session::QuicSession>() };
-    session.push_event(super::session::SessionEvent::Keylog(bytes));
-}
-
-unsafe extern "C" fn alpn_select_cb(
-    _ssl: &ssl::SSL,
-    out: *mut *const u8,
-    outlen: *mut u8,
-    inbuf: *const u8,
-    inlen: u32,
-    arg: *mut core::ffi::c_void,
-) -> c_int {
-    if arg.is_null() {
-        return ssl::SSL_TLSEXT_ERR_NOACK;
-    }
-    // SAFETY: non-null `arg` is the Vec<u8> the context owns and keeps alive for
-    // the SSL_CTX's life; `inbuf[..inlen]` is the client's wire-format ALPN
-    // list, valid for this callback.
-    unsafe {
-        let server: &Vec<u8> = &*arg.cast::<Vec<u8>>();
-        if ssl::SSL_select_next_proto(
-            out.cast_mut().cast(),
-            outlen,
-            server.as_ptr(),
-            server.len() as u32,
-            inbuf,
-            inlen,
-        ) == ssl::OPENSSL_NPN_NEGOTIATED
-        {
-            ssl::SSL_TLSEXT_ERR_OK
-        } else {
-            ssl::SSL_TLSEXT_ERR_ALERT_FATAL
-        }
-    }
 }
 
 fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
@@ -347,19 +258,15 @@ fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
-impl TlsContext {
-    pub(super) fn new(config: &TlsConfig) -> Result<Self, &'static str> {
-        // SAFETY: each SSL_CTX call below is paired with the matching free on
-        // failure via Drop (the half-built `this` is dropped on early return).
+impl TlsConfig {
+    pub(super) fn create_context(&self) -> Result<ssl::OwnedSslCtx, &'static str> {
+        let config = self;
+        // SAFETY: the context is live, and is not shared before this returns.
         unsafe {
             let Some(owned) = ssl::SSL_CTX_new(ssl::TLS_method()) else {
                 return Err("failed to allocate SSL_CTX");
             };
             let ctx = owned.as_ptr();
-            let mut this = TlsContext {
-                ctx: owned,
-                _alpn: None,
-            };
 
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
                 if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {
@@ -393,48 +300,37 @@ impl TlsContext {
                 if i > 0 {
                     ssl::SSL_CTX_clear_chain_certs(ctx);
                 }
-                load_cert_chain(&this.ctx, pem)?;
+                load_cert_chain(&owned, pem)?;
                 if let Some(key) = config.keys_pem.get(i) {
-                    load_private_key(&this.ctx, key)?;
+                    load_private_key(&owned, key)?;
                 }
             }
             if config.certs_pem.is_empty() {
                 if let Some(key) = config.keys_pem.first() {
-                    load_private_key(&this.ctx, key)?;
+                    load_private_key(&owned, key)?;
                 }
             }
             for pem in &config.ca_pem {
-                load_ca_store(&this.ctx, pem)?;
+                load_ca_store(&owned, pem)?;
             }
             for pem in &config.crl_pem {
-                load_crl_store(&this.ctx, pem)?;
+                load_crl_store(&owned, pem)?;
             }
 
             ssl::SSL_CTX_set_early_data_enabled(ctx, config.enable_early_data as c_int);
             if config.keylog {
-                ssl::SSL_CTX_set_keylog_callback(ctx, Some(keylog_cb));
+                bun_quic_tls::enable_key_log(&owned);
             }
+            owned.set_session_id_context(&config.session_context());
             if config.is_server {
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);
                 }
-                if !config.alpn.is_empty() {
-                    let alpn = Box::new(config.alpn.clone());
-                    // The callback's `arg` is the heap address of the boxed
-                    // Vec (stable for the box's life, which is `this`'s).
-                    ssl::SSL_CTX_set_alpn_select_cb(
-                        &this.ctx,
-                        Some(alpn_select_cb),
-                        (&raw const *alpn).cast_mut().cast(),
-                    );
-                    this._alpn = Some(alpn);
-                }
+                bun_quic_tls::enable_alpn(&owned);
             } else {
-                if !config.alpn.is_empty()
-                    && ssl::SSL_CTX_set_alpn_protos(ctx, config.alpn.as_ptr(), config.alpn.len())
-                        != 0
-                {
+                bun_quic_tls::enable_tickets(&owned);
+                if ssl::SSL_CTX_set_alpn_protos(ctx, config.alpn.as_ptr(), config.alpn.len()) != 0 {
                     return Err("failed to set ALPN protocols");
                 }
                 let mode = if config.verify_peer_strict {
@@ -462,28 +358,47 @@ impl TlsContext {
             }
 
             ssl::ERR_clear_error();
-            Ok(this)
+            Ok(owned)
         }
     }
 
-    pub(super) fn raw(&self) -> *mut ssl::SSL_CTX {
-        self.ctx.as_ptr()
-    }
-
-    pub(super) fn alpn_cstr(config: &TlsConfig) -> Vec<u8> {
-        if config.alpn.len() < 2 {
-            return Vec::new();
+    /// Who the peers of a session are, and how that has been established.
+    fn session_context(&self) -> [u8; bun_sha_hmac::SHA256::DIGEST] {
+        let mut hasher = bun_sha_hmac::SHA256::init();
+        let flags = [
+            self.verify_hostname,
+            self.is_server && self.verify_client,
+            self.is_server && self.enable_early_data,
+        ];
+        hasher.update(&flags.map(u8::from));
+        for list in [
+            self.servername.as_slice(),
+            &self.certs_pem,
+            &self.ca_pem,
+            &self.crl_pem,
+        ] {
+            hasher.update(&list.len().to_ne_bytes());
+            for item in list {
+                hasher.update(&item.len().to_ne_bytes());
+                hasher.update(item);
+            }
         }
-        let n = config.alpn[0] as usize;
-        let mut out = config.alpn[1..1 + n.min(config.alpn.len() - 1)].to_vec();
-        out.push(0);
-        out
+        let mut digest = [0; _];
+        hasher.r#final(&mut digest);
+        digest
     }
-}
 
-pub(super) fn negotiated_alpn(ssl: &mut ssl::SSL) -> Option<Vec<u8>> {
-    let alpn = ssl.alpn_selected();
-    (!alpn.is_empty()).then(|| alpn.to_vec())
+    /// Whether the protocols are HTTP/3, or `None` if only some of them are.
+    pub(super) fn is_http3(&self) -> Option<bool> {
+        let mut rest = self.alpn.as_slice();
+        let mut names = core::iter::from_fn(|| {
+            let len = *rest.split_off_first()?;
+            rest.split_off(..usize::from(len))
+        })
+        .map(|name| name == b"h3" || name.starts_with(b"h3-"));
+        let first = names.next()?;
+        names.all(|it| it == first).then_some(first)
+    }
 }
 
 unsafe extern "C" {

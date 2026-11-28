@@ -13,87 +13,73 @@ namespace uWS {
 static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 has the field limit of HTTP/1 and HTTP/2");
 
 struct Http3Context {
-
-    struct Deleter {
-        void operator()(Http3Context *ctx) const {
-            ctx->getContextData()->~Http3ContextData();
-            us_quic_socket_context_free((us_quic_socket_context_t *) ctx);
-        }
-    };
-    using Ptr = std::unique_ptr<Http3Context, Deleter>;
+    using Ptr = std::unique_ptr<Http3Context>;
 
     static Ptr create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {
-        us_quic_socket_context_t *ctx = us_create_quic_socket_context(
-            (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
-        if (!ctx) return nullptr;
-        new (us_quic_socket_context_ext(ctx)) Http3ContextData();
+        static constexpr us_quic_callbacks_t callbacks = {
+            .on_open = [](void *user, const us_quic_stream_t *stream) -> void * {
+                Http3Context *ctx = (Http3Context *) user;
+                return new Http3Response{*stream, ctx, ctx->loopData, {}};
+            },
+            .on_headers = [](void *response, const us_quic_header_t *headers, unsigned count, bool incomplete) {
+                Http3Response *res = (Http3Response *) response;
+                if (incomplete) {
+                    res->writeStatus("431 Request Header Fields Too Large")->end();
+                    return;
+                }
+                Http3ContextData *cd = res->context->getContextData();
+                Http3Request req(headers, count);
+                if (!isKnownMethod(req.getCaseSensitiveMethod())) {
+                    res->writeStatus("501 Not Implemented")->end();
+                    return;
+                }
+                if (req.getHeader("expect") == "100-continue") res->writeContinue();
+                cd->router.getUserData() = {res, &req};
+                if (!cd->router.route(req.getCaseSensitiveMethod(), req.getUrl())) {
+                    res->writeStatus("404 Not Found")->end();
+                }
+            },
+            .on_data = [](void *response, const char *data, unsigned len, bool fin) {
+                Http3Response *res = (Http3Response *) response;
+                Http3ResponseData *rd = res->getHttpResponseData();
+                if (rd->inStream) rd->inStream(res, data, len, fin, rd->userData);
+            },
+            .on_writable = [](void *response) {
+                Http3Response *res = (Http3Response *) response;
+                if (!res->drain()) us_quic_stream_want_write(&res->stream);
+            },
+            .on_close = [](void *response) {
+                std::unique_ptr<Http3Response> res{(Http3Response *) response};
+                Http3ResponseData *rd = res->getHttpResponseData();
+                /* Fire onAborted for both real aborts and post-completion stream
+                 * teardown. The handler distinguishes via hasResponded(); for the
+                 * completed case it ends the request here, because this is its
+                 * last notification and its pointer must not outlive this
+                 * destructor. */
+                if (rd->onAborted) {
+                    rd->onAborted(res.get(), rd->userData);
+                }
+            },
+        };
 
-        us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
-            new (us_quic_stream_ext(s)) Http3ResponseData();
-        });
-
-        us_quic_socket_context_on_stream_headers(ctx, [](us_quic_stream_t *s) {
-            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context(s));
-            Http3Response *res = (Http3Response *) s;
-            Http3ResponseData *rd = res->getHttpResponseData();
-            /* lsquic re-fires on_stream_headers for every HEADERS block on
-             * the stream; only the first one is the request. Re-running
-             * reset()/route() for trailers would wipe the live response's
-             * onAborted/userData and dispatch the handler a second time.
-             * state is 0 only before the first reset() on this stream. */
-            if (rd->state != 0) return;
-            rd->reset();
-
-            if (us_quic_stream_headers_too_large(s)) {
-                res->writeStatus("431 Request Header Fields Too Large")->end();
-                return;
-            }
-
-            Http3Request req(s);
-            if (req.getHeader("expect") == "100-continue") res->writeContinue();
-            cd->router.getUserData() = {res, &req};
-            if (!cd->router.route(req.getMethod(), req.getUrl())) {
-                res->writeStatus("404 Not Found")->end();
-            }
-        });
-
-        us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {
-            Http3Response *res = (Http3Response *) s;
-            Http3ResponseData *rd = res->getHttpResponseData();
-            if (rd->inStream) rd->inStream(res, data, len, fin != 0, rd->userData);
-        });
-
-        us_quic_socket_context_on_stream_writable(ctx, [](us_quic_stream_t *s) {
-            Http3Response *res = (Http3Response *) s;
-            if (!res->drain()) us_quic_stream_want_write(s, 1);
-        });
-
-        us_quic_socket_context_on_stream_close(ctx, [](us_quic_stream_t *s) {
-            Http3Response *res = (Http3Response *) s;
-            Http3ResponseData *rd = res->getHttpResponseData();
-            /* Fire onAborted for both real aborts and post-completion stream
-             * teardown. The handler distinguishes via hasResponded(); for the
-             * completed case it ends the request here, because this is its
-             * last notification and its pointer must not outlive this
-             * destructor. */
-            if (rd->onAborted) {
-                rd->onAborted(res, rd->userData);
-            }
-            rd->~Http3ResponseData();
-        });
-
-        return Ptr((Http3Context *) ctx);
+        Ptr ctx = std::make_unique<Http3Context>();
+        ctx->loopData = (LoopData *) us_loop_ext((us_loop_t *) loop);
+        /* Same limit as Http2Context::maxHeaderListSize. */
+        ctx->quic.reset(us_create_quic_socket_context((us_loop_t *) loop, &options, idleTimeoutSecs,
+            BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : 64 * 1024, &callbacks, ctx.get()));
+        if (!ctx->quic) return nullptr;
+        return ctx;
     }
 
-    Http3ContextData *getContextData() {
-        return (Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this);
-    }
+    Http3ContextData *getContextData() { return &data; }
 
     void onHttp(std::string_view method, std::string_view pattern,
                 MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
         Http3ContextData *cd = getContextData();
-        std::vector<std::string_view> methods =
-            method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
+        std::span<const std::string_view> methods{&method, 1};
+        /* Those of Http3App, and then the tree for the others. */
+        static constexpr std::string_view all[] = {"GET", "POST", "OPTIONS", "DELETE", "PATCH", "PUT", "HEAD", "CONNECT", "TRACE", "*"};
+        if (method == "*") methods = all;
         cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
             /* Copy out: the handler may reload routes, replacing `router`
              * (and its user data) while we're inside it. */
@@ -107,15 +93,20 @@ struct Http3Context {
     }
 
     us_quic_listen_socket_t *listen(const char *host, int port, int flags) {
-        return us_quic_socket_context_listen((us_quic_socket_context_t *) this,
-            host, port, flags, sizeof(Http3ResponseData));
+        return us_quic_socket_context_listen(quic.get(), host, port, flags);
     }
 
-    void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }
+    void shutdown(void (*onDrained)(void *, bool), void *user) { us_quic_socket_context_shutdown(quic.get(), onDrained, user); }
 
     bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
-        return us_quic_socket_context_add_server_name((us_quic_socket_context_t *) this, hostname, options) == 0;
+        return us_quic_socket_context_add_server_name(quic.get(), hostname, &options);
     }
+
+private:
+    LoopData *loopData;
+    Http3ContextData data;
+    std::unique_ptr<us_quic_socket_context_t,
+        decltype([](us_quic_socket_context_t *ctx) { us_quic_socket_context_free(ctx); })> quic;
 };
 
 }

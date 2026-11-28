@@ -2799,7 +2799,7 @@ declare namespace $Bindgen {
     readonly statsByteOffset: number;
     readonly state: ArrayBuffer;
     readonly stateByteOffset: number;
-    destroy(options?: object): void;
+    destroy(options?: object | null): void;
     gracefulClose(options?: object): void;
     getRemoteAddress(): object | undefined;
     getLocalAddress(): object | undefined;

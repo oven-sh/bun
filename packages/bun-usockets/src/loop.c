@@ -475,18 +475,15 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     /* Flush stream writes that JS tasks made before this tick (timers,
      * immediates, promise resolutions outside on_read) so they go out
      * before epoll blocks. loop_post handles what this iteration receives. */
-    if (loop->data.quic_head) us_quic_loop_process(loop);
+    if (loop->data.quic_drivers) us_quic_loop_process(loop);
 #endif
-    /* Same corking as the QUIC block above, for node:quic's engines. */
-    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
 #ifdef LIBUS_USE_QUIC
-    if (loop->data.quic_head) us_quic_loop_process(loop);
+    if (loop->data.quic_drivers) us_quic_loop_process(loop);
 #endif
-    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
     /* Runs at every tick depth because a nested tick may be waiting for this close. */
     us_internal_close_unresumable_sockets(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
@@ -1108,7 +1105,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
+                        u->has_read_enough = 0;
                         u->on_data(u, &recvbuf, npackets);
+                        if (u->has_read_enough && !error) break;
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {
@@ -1131,8 +1130,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 #endif
                                     u->on_recv_error(u, recv_err, 0);
                                 } else {
-                                    /* No error handler (QUIC creates its UDP
-                                     * sockets with recv_error_cb = NULL): the
+                                    /* No error handler: the
                                      * close is the only handling this path has,
                                      * and a persistent recv error on a still-
                                      * readable fd must not spin the loop. */
@@ -1159,7 +1157,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
             if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {
                 /* Clear WRITABLE before on_drain so a callback that re-arms it
-                 * (e.g. QUIC packets_out hitting EAGAIN) keeps the re-arm. We
+                 * (e.g. us_quic_send hitting EAGAIN) keeps the re-arm. We
                  * still default to one-shot drain semantics for callers that
                  * don't touch the poll mask. Not gated on !error: a queued
                  * ICMP error must not leave WRITABLE armed (level-triggered

@@ -96,7 +96,7 @@ describe.skipIf(isWindows)("trimmable build config", () => {
   });
 
   test("with LTO, C is compiled so that each c-function of src/trim/features stays a function", () => {
-    const keepsFunction = "-force-attribute=us_nq_loop_drain:noinline";
+    const keepsFunction = "-force-attribute=posix_spawn_bun:noinline";
     const flagsOf = (partial: PartialConfig) => computeFlags(resolve({ ...linux, ...partial }));
     expect(flagsOf({ lto: true }).cflags).toContain(keepsFunction);
     expect(flagsOf({ lto: true }).cxxflags).not.toContain(keepsFunction);

@@ -1095,7 +1095,7 @@ opaque!(
 
 /// `int (*SSL_verify_cb)(int preverify_ok, X509_STORE_CTX *ctx)` — verify
 /// callback type for `SSL_set_verify` / `SSL_CTX_set_verify`.
-pub(crate) type SSL_verify_cb = Option<extern "C" fn(c_int, &X509_STORE_CTX) -> c_int>;
+pub type SSL_verify_cb = Option<extern "C" fn(c_int, &X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
 pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;

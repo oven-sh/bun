@@ -1,4 +1,4 @@
-// Holds a QUIC handshake half way, and meanwhile makes the first lsquic engine of the API named in argv.
+// Holds a QUIC handshake half way, and meanwhile makes the first QUIC endpoint of the API named in argv.
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { SocketAddress } from "node:net";

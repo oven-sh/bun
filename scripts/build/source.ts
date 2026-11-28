@@ -442,8 +442,6 @@ export type DepName =
   | "highway"
   | "libuv"
   | "lolhtml"
-  | "lsqpack"
-  | "lsquic"
   | "mimalloc"
   | "nodejs"
   | "rust-argon2"
@@ -467,8 +465,8 @@ export interface Dependency {
   patches?: string[];
 
   /**
-   * Other deps whose headers this dep's sources include — e.g. lsquic,
-   * which needs BoringSSL's `ssl.h`.
+   * Other deps whose headers this dep's sources include — e.g. a local
+   * WebKit, which needs `mimalloc.h`.
    *
    * Resolves to the named dep's `outputs` (generated headers + source stamp),
    * order-only inputs of this dep's compiles. Does NOT link the other dep.
@@ -688,7 +686,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 
 /**
  * Path to a dep's source tree: its `--local-deps` checkout if redirected,
- * else vendor/<name>/. Cross-dep references (lsquic's -I into boringssl,
+ * else vendor/<name>/. Cross-dep references (WebKit's -I into mimalloc,
  * boringssl's nasm -I) go through here so they follow a redirect too. Does
  * NOT handle in-tree sources — use the per-dep `srcDir` computed in
  * resolveDep() for those.
@@ -827,8 +825,8 @@ export function resolveDep(
   }
 
   // ─── Resolve fetchDeps → order-only inputs of this dep's compiles ───
-  // Deps whose headers this one includes (lsquic → BoringSSL's
-  // ssl.h): they must exist first; the depfiles track their content.
+  // Deps whose headers this one includes (WebKit →
+  // mimalloc.h): they must exist first; the depfiles track their content.
   const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);

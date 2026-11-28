@@ -1,35 +1,32 @@
-//! Process-global lazily-initialised on the HTTP thread. Owns the lsquic
-//! client engine and the live-session registry. Never freed — the engine
-//! lives for the process, same as the HTTP thread itself.
+//! Process-global lazily-initialised on the HTTP thread. Owns the QUIC client
+//! and the live-session registry. Never freed, same as the HTTP thread itself.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
+use std::rc::Rc;
 
 use bun_ptr::RefPtr;
 use bun_uws::Loop as UwsLoop;
 use bun_uws::quic;
-use bun_uws::quic::context::ConnectResult;
+use bun_uws::quic::client::Connecting;
 
 use super::callbacks;
-use super::client_session::{ClientSession, quic_socket_mut, session_mut};
+use super::client_session::{ClientSession, session_mut};
 use super::pending_connect::PendingConnect;
 use crate::InFlightRequest;
 use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
+/// That of the timeouts of sockets, for which [`crate::normalize_idle_timeout_seconds`] makes up.
+const SWEEP_SECONDS: u32 = 4;
+
 pub(crate) struct ClientContext {
-    // FFI handle owned for process lifetime (never freed).
-    qctx: NonNull<quic::Context>,
+    pub(super) client: Rc<quic::Client>,
     sessions: Vec<RefPtr<ClientSession>>,
 }
 
 /// One instance per HTTP-thread loop. Stored as a process global only
-/// because `bun.http.http_thread` is itself a process singleton — the
-/// underlying lsquic engine is bound to the `loop` passed to
-/// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
-/// driven by that loop's pre/post hooks), so a second loop would get its
-/// own engine; this var would just need to become per-loop storage.
+/// because `bun.http.http_thread` is itself a process singleton.
 // PORTING.md §Global mutable state: HTTP-thread-only singleton. AtomicCell
 // over RacyCell because the payload is a pointer-sized `Copy` value
 // (`Option<NonNull<_>>` has an `Atom` impl) so load/store are safe; the
@@ -38,17 +35,6 @@ static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
     bun_core::AtomicCell::new(None);
 
 impl ClientContext {
-    /// Mutable access to the lsquic client engine.
-    ///
-    /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
-    /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
-    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
-    #[inline]
-    fn qctx_mut(&mut self) -> &mut quic::Context {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
-    }
-
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
     pub(crate) fn get() -> Option<NonNull<ClientContext>> {
@@ -72,21 +58,10 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        let qctx = quic::Context::create_client(UwsLoop::get())?;
-
-        // Process-lifetime singleton — published into `INSTANCE` below and
-        // never torn down (the lsquic engine outlives every request).
-        // `alloc_nn` is the
-        // `Box::into_raw`-as-`NonNull` spelling of that one-time hand-off.
         let self_ = bun_core::heap::alloc_nn(ClientContext {
-            qctx,
+            client: create_client()?,
             sessions: Vec::new(),
         });
-        // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
-        // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
-        // `self_` is the freshly-boxed sole owner; callbacks don't fire until
-        // the loop runs, so registering after construction is order-neutral.
-        callbacks::register(Self::as_mut(self_).qctx_mut());
         INSTANCE.store(Some(self_));
         Some(self_)
     }
@@ -99,6 +74,7 @@ impl ClientContext {
     ) -> Result<(), InFlightRequest> {
         let hostname = bun_url::strip_ipv6_brackets(client.url.hostname);
         let reject = client.flags.reject_unauthorized;
+        self.client.set_alarm(SWEEP_SECONDS);
         for s in self.sessions.iter().map(RefPtr::as_ptr) {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
@@ -118,15 +94,6 @@ impl ClientContext {
 
         client.trace(|_| crate::request_trace::Event::Connecting);
 
-        // Owned NUL-terminated buffer: copy the bytes
-        // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
-        // it as a C string so an interior NUL truncates on the C side. This is
-        // deliberately not `CString::new`, which would reject interior NUL
-        // and diverge by returning `Err`.
-        // Resolution and certificate verification name an IPv6 literal without its brackets.
-        let mut host_buf = hostname.to_vec();
-        host_buf.push(0);
-        let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
         let registry_ref = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
         let session = registry_ref.as_ptr();
         // `session` was just allocated by ClientSession::new — `session_mut`
@@ -135,17 +102,9 @@ impl ClientContext {
         self.sessions.push(registry_ref);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
-        match result {
-            ConnectResult::Socket(qs) => {
-                session_mut(session).qsocket = NonNull::new(qs);
-                // `qs` is a fresh lsquic-owned socket — route the backref deref
-                // through the centralised [`quic_socket_mut`] accessor and use
-                // the safe `&mut` ext-slot accessor it exposes (sized for
-                // `*mut ClientSession` in `get_or_create`).
-                *quic_socket_mut(qs).ext::<ClientSession>() = NonNull::new(session);
+        match (self.client).connect(&session_mut(session).origin(), session.cast()) {
+            Some(Connecting::Started(connection)) => {
+                session_mut(session).connection = Some(connection);
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",
@@ -153,16 +112,16 @@ impl ClientContext {
                     port,
                 );
             }
-            ConnectResult::Pending(pending) => {
+            Some(Connecting::Resolving(lookup)) => {
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (dns pending)",
                     bstr::BStr::new(hostname),
                     port,
                 );
-                PendingConnect::register(session, pending);
+                PendingConnect::register(session, lookup);
             }
-            ConnectResult::Err => {
+            None => {
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} failed",
@@ -218,6 +177,20 @@ impl ClientContext {
         false
     }
 
+    fn sweep() {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // See `abort_by_http_id`.
+        let ctx = bun_ptr::BackRef::from(this);
+        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
+            session_mut(s).sweep(SWEEP_SECONDS);
+        }
+        if !ctx.sessions.is_empty() {
+            ctx.client.set_alarm(SWEEP_SECONDS);
+        }
+    }
+
     /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {
@@ -225,8 +198,8 @@ impl ClientContext {
         };
         // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
         let ctx = bun_ptr::BackRef::from(this);
-        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
-            session_mut(s).close_if_idle(pool_id);
+        for s in ctx.sessions.iter().filter(|it| it.pool_id == pool_id) {
+            session_mut(s.as_ptr()).close_if_idle();
         }
     }
 
@@ -255,4 +228,10 @@ impl ClientContext {
             }
         }
     }
+}
+
+#[inline(never)]
+fn create_client() -> Option<Rc<quic::Client>> {
+    bun_removable_features::removable_definition!(Http3, create_client);
+    quic::Client::new(UwsLoop::get(), callbacks::on_event, ClientContext::sweep)
 }

@@ -1,29 +1,25 @@
-//! DNS-pending QUIC connect. Created when `quic.Context.connect` returns
-//! `.pending` (cache miss); the global DNS cache notifies via
-//! `onDNSResolved[Threadsafe]`, at which point the resolved address is
-//! handed to lsquic and the resulting `quic.Socket` bound to the waiting
-//! `ClientSession`.
+//! A QUIC connection that waits for the global DNS cache, which notifies via `on_dns_resolved[_threadsafe]`.
 //!
 //! Lifetime: holds one ref on `session` from `register` until
 //! `on_dns_resolved` runs.
 
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_ptr::RefPtr;
 use bun_threading::Guarded;
-use bun_uws::quic;
+use bun_uws::quic::client::Lookup;
 
 use super::ClientSession;
 use super::client_context::ClientContext;
-use super::client_session::{quic_socket_mut, session_mut};
+use super::client_session::session_mut;
 
 pub struct PendingConnect {
     session: RefPtr<ClientSession>,
-    pc: quic::OwnedPendingConnect,
+    lookup: Lookup,
 }
 
 // SAFETY: a DNS thread only moves it into `RESOLVED`. The HTTP thread uses and drops it.
+#[cfg_attr(mordant, allow(unsafe_send_covers_more_than_pointers))]
 unsafe impl Send for PendingConnect {}
 
 unsafe extern "Rust" {
@@ -32,16 +28,16 @@ unsafe extern "Rust" {
 }
 
 impl PendingConnect {
-    pub(crate) fn register(session: *mut ClientSession, pc: quic::OwnedPendingConnect) {
+    pub(crate) fn register(session: *mut ClientSession, lookup: Lookup) {
         __bun_dns_register_quic(PendingConnect {
             // SAFETY: caller passes a live intrusive-refcounted ClientSession.
             session: unsafe { RefPtr::init_ref(session) },
-            pc,
+            lookup,
         });
     }
 
     pub fn addrinfo(&self) -> *mut c_void {
-        self.pc.addrinfo()
+        self.lookup.request()
     }
 
     pub fn on_dns_resolved(self) {
@@ -53,19 +49,19 @@ impl PendingConnect {
         if s.closed || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
             // connection nobody will use.
-            drop(self.pc);
+            drop(self.lookup);
             if !s.closed {
                 Self::fail_session(session, crate::Error::Aborted);
             }
             return;
         }
-        let Some(qs) = self.pc.resolved() else {
+        s.connection = ClientContext::get().and_then(|ctx| {
+            let client = &ClientContext::as_mut(ctx).client;
+            client.connect_resolved(self.lookup, &s.origin(), session.cast())
+        });
+        if s.connection.is_none() {
             Self::fail_session(session, crate::Error::DNSResolutionFailed);
-            return;
-        };
-        s.qsocket = Some(qs);
-        // qs.ext() returns the per-socket user storage slot for ClientSession.
-        *quic_socket_mut(qs.as_ptr()).ext::<ClientSession>() = NonNull::new(session);
+        }
     }
 
     /// DNS worker may call from off the HTTP thread; mirror
@@ -84,7 +80,7 @@ impl PendingConnect {
         }
     }
 
-    /// Tear down a session that never reached `on_conn_close` (DNS failure or
+    /// Tear down a session that never got a connection (DNS failure or
     /// every waiter aborted while DNS was in flight).
     pub(crate) fn fail_session(session: *mut ClientSession, err: crate::Error) {
         // Caller guarantees `session` is live (held by an intrusive ref) —

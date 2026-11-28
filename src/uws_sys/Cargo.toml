@@ -25,6 +25,8 @@ bun_errno.workspace = true
 bun_hpack.workspace = true
 bun_http1.workspace = true
 bun_http_types.workspace = true
+bun_quic.workspace = true
+bun_quic_tls.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

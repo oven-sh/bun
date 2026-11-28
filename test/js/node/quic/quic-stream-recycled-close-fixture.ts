@@ -1,7 +1,7 @@
 // Each flight, the client opens FLIGHT unidirectional streams in one tick. The server destroys the
 // first REFUSED of them in `onstream` while their read and close events are still queued on the
 // session, runs GC, and opens FRESH streams that reuse the freed allocations. If a stale close event
-// reaches a fresh stream, it loses its GC root and the next GC frees it while lsquic is still writing.
+// reaches a fresh stream, it loses its GC root and the next GC frees it while it is still writing.
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { connect, listen, type QuicStream, type SessionOptions } from "node:quic";
@@ -14,7 +14,7 @@ const FLIGHTS = 2;
 const FLIGHT = 8;
 const REFUSED = 6;
 const FRESH = 8;
-// Larger than lsquic accepts in one write, so each stream still has a pending write after its flight.
+// Larger than a connection accepts in one write, so each stream still has a pending write after its flight.
 const BODY = 65536;
 // If a body is lost, the session idles out before the test times out.
 const transportParams = { maxIdleTimeout: 10, initialMaxStreamsUni: 1024 };
@@ -95,7 +95,7 @@ for (let flight = 0; flight < FLIGHTS; flight++) {
     client.createUnidirectionalStream({ body: Buffer.from("s" + i) }).then(stream => stream.closed.catch(() => {}));
   }
   if (!(await Promise.race([flightDelivered.promise.then(() => true), failed.promise.then(() => false)]))) ok = false;
-  // Let the flight's callbacks return, run GC, then let lsquic write again.
+  // Let the flight's callbacks return, run GC, then let the streams write again.
   await new Promise(resolve => setImmediate(resolve));
   Bun.gc(true);
   await new Promise(resolve => setImmediate(resolve));

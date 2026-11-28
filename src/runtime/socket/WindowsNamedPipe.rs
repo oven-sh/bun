@@ -29,7 +29,7 @@ use bun_io::{IoEvent, Owner, PollTag, StreamingWriter, WriteHandler, WriteStatus
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell, SysErrorJsc};
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd, ReturnCodeExt as _, SystemErrno};
 use bun_uws::ssl_wrapper::{self, SSLWrapper};
@@ -46,7 +46,7 @@ use crate::jsc_hooks::timer_all;
 pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::queue_free)]
+#[ref_count(destroy_box = Self::queue_free)]
 pub(crate) struct WindowsNamedPipe {
     ref_count: Cell<u32>,
     /// Held until the pipe closes, or fails to open.
@@ -215,17 +215,9 @@ impl WindowsNamedPipe {
         unsafe { RefPtr::init_ref(self.root_ptr()) }
     }
 
-    fn queue_free(this: *mut Self) {
-        // SAFETY: the count just reached zero; `this` is live until the task runs.
-        unsafe { (*this).vm }
-            .event_loop()
-            .enqueue_task(bun_jsc::Task::init(this));
-    }
-
-    /// SAFETY: `this` is the queued pointer, whose last ref is gone. The call frees it.
-    pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: fn contract.
-        drop(unsafe { bun_core::heap::take(this) });
+    fn queue_free(this: AliasableBox<Self>) {
+        let event_loop = this.vm.event_loop();
+        event_loop.enqueue_task(bun_jsc::Task::new::<Self>(this));
     }
 
     /// `self` as the handle its socket holds.
@@ -827,13 +819,10 @@ impl Drop for WindowsNamedPipe {
 
 impl bun_event_loop::Taskable for WindowsNamedPipe {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipe;
-    /// The free that the last ref queued will not run, and nobody else frees `this`. It runs no script.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Self::run_event(this) }
-    }
+    type Payload = AliasableBox<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// A socket's own hop. Its handlers carry their context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

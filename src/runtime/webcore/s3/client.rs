@@ -631,33 +631,29 @@ fn download_stream(
 
     let headers = result.headers(range.as_deref(), None);
     let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
-    let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
-        S3HttpDownloadStreamingTask {
-            sign_result: result,
-            proxy_url: owned_proxy,
-            wrapper,
-            headers,
-            http_ticket: None,
-            has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
-            signal_store: Default::default(),
-            poll_ref: JsKeepAlive::active(),
-            mutex: Default::default(),
-            request_error: None,
-            reported_response_buffer: MutableString::default(),
-            is_out_of_memory: false,
-            // `State::default()` sets
-            // `has_more = true` (bit 48). Passing 0 here would start the task with
-            // `has_more == false`, tripping the `assert(state.has_more)` in
-            // `process_http_callback` on the very first HTTP-thread callback.
-            state: core::sync::atomic::AtomicU64::new(
-                crate::webcore::s3::download_stream::State::default().0,
-            ),
-            concurrent_task: Default::default(),
-            async_http_id: 0,
-            abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
-        },
-    ));
-    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
+    let owner = AliasableBox::new(S3HttpDownloadStreamingTask {
+        sign_result: result,
+        proxy_url: owned_proxy,
+        wrapper,
+        headers,
+        http_ticket: None,
+        self_box: None,
+        signal_store: Default::default(),
+        poll_ref: JsKeepAlive::active(),
+        mutex: Default::default(),
+        request_error: None,
+        reported_response_buffer: MutableString::default(),
+        is_out_of_memory: false,
+        // Not 0: `has_more` starts out true.
+        state: core::sync::atomic::AtomicU64::new(
+            crate::webcore::s3::download_stream::State::default().0,
+        ),
+        concurrent_task: Default::default(),
+        async_http_id: 0,
+        abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
+    });
+    let task_ptr = owner.as_ptr();
+    // SAFETY: just allocated, `owner` is not dereferenced, and `task` is not used once `task_ptr` is.
     // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
     // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
     // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
@@ -699,6 +695,7 @@ fn download_stream(
     );
     task.async_http_id = http.client.async_http_id;
     task.wrapper.task.set(task_ptr);
+    task.self_box = Some(owner);
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request

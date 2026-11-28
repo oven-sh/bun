@@ -18,7 +18,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{AsCtxPtr as _, Attached, BackRef, Detach, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
-use crate::api::native_promise_context;
+use crate::api::native_promise_context::{self, Claim, DeferredDerefTask};
 use crate::generated_bindgen::html_rewriter::{
     AttributeIteratorResult, ContentOptions, js_AttributeIterator, js_Comment, js_DocEnd,
     js_DocType, js_Element, js_EndTag, js_HTMLRewriter, js_HTMLRewriterTransform, js_TextChunk,
@@ -347,14 +347,14 @@ enum PullPacing {
 
 /// [`RewriterPipe::schedule_background_pull`]'s task.
 pub(crate) struct RewriterPipeBackgroundPull;
-impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
+impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HTMLRewriterBackgroundPull;
-    type Ref = RefPtr<RewriterPipe>;
-    fn release_unrun(pipe: Self::Ref) {
+    type Payload = RefPtr<RewriterPipe>;
+    fn release_unrun(pipe: Self::Payload) {
         pipe.background_pull_root.set(None);
     }
     /// See [`RewriterPipe::run_background_pull`].
-    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -730,8 +730,7 @@ impl RewriterPipe {
 
     /// For an entry point that runs JS, which can get the cell swept mid-call.
     fn pin(&self) -> PipePin {
-        self.ref_();
-        PipePin(BackRef::new(self))
+        PipePin(self.ref_guard())
     }
 
     /// Continues from the event loop, so an unread rewrite still runs its handlers, one chunk per turn.
@@ -752,9 +751,9 @@ impl RewriterPipe {
         // Nothing else may reach the cell until then.
         self.background_pull_root
             .set(Some(self.cell.get_or_undefined().protected()));
-        vm.enqueue_task(
-            bun_event_loop::Task::from_ref::<RewriterPipeBackgroundPull>(self.ref_guard()),
-        );
+        vm.enqueue_task(bun_event_loop::Task::new::<RewriterPipeBackgroundPull>(
+            self.ref_guard(),
+        ));
     }
 
     pub(crate) fn run_background_pull(&self) {
@@ -1297,19 +1296,13 @@ impl RewriterPipe {
 
 /// A ref that leaves the free to the event loop: whoever is on the stack may still dispatch into the pipe.
 #[must_use = "dropping immediately releases the ref"]
-struct PipePin(BackRef<RewriterPipe>);
+struct PipePin(RefPtr<RewriterPipe>);
 
 impl Drop for PipePin {
     fn drop(&mut self) {
-        let refs = self.0.ref_count.get();
-        if refs > 1 {
-            self.0.ref_count.set(refs - 1);
-            return;
+        if self.0.ref_count.get() == 1 {
+            DeferredDerefTask::schedule(Claim::HTMLRewriterPipeFree(self.0.clone()));
         }
-        native_promise_context::DeferredDerefTask::schedule(
-            self.0.as_const_ptr().cast_mut().cast(),
-            native_promise_context::Tag::HTMLRewriterPipeFree,
-        );
     }
 }
 

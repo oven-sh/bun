@@ -32,7 +32,7 @@ pub use bv2_impl::{
     BuildResult, DependenciesScanner, DependenciesScannerResult, OnDependenciesAnalyze,
 };
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
+use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
 use crate::IndexInt;
 use crate::PathToSourceIndexMap::{ModuleMap, PathToSourceIndexMap};
@@ -264,7 +264,7 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Mutable projection of the `plugins` backref for FFI calls that take
-    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
+    /// `*mut`. The pointee is disjoint from `self` storage.
     #[inline]
     pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
@@ -829,7 +829,7 @@ pub mod bv2_impl {
                     kind: u8,
                 );
                 #[link_name = "JSBundlerPlugin__drainDeferred"]
-                safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
+                safe fn JSBundlerPlugin__drainDeferred(this: &Plugin, rejected: bool);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
                 #[link_name = "JSBundlerPlugin__freezeFilters"]
@@ -855,10 +855,10 @@ pub mod bv2_impl {
             impl Plugin {
                 /// `Plugin.drainDeferred` — resolve every onLoad
                 /// `.defer()` promise. The
-                /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)
+                /// only bundler caller (`DeferredBatch::run_on_js_thread`)
                 /// ignores failures, so the void FFI call is the observable
                 /// behaviour at this tier.
-                pub(crate) fn drain_deferred(&mut self, rejected: bool) {
+                pub(crate) fn drain_deferred(&self, rejected: bool) {
                     JSBundlerPlugin__drainDeferred(self, rejected)
                 }
 
@@ -1236,10 +1236,8 @@ pub mod bv2_impl {
                 pub owner: LoadOwner<'a>,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                /// `.defer()`ed during this `Graph::defer_epoch`: until that epoch's batch is drained (or
-                /// this load's answer arrives first) its scan-counter unit sits in
-                /// `Graph::deferred_pending`. Bundle thread only.
-                pub(crate) deferred_in: Option<u32>,
+                /// The `Graph::defer_epoch` that a `.defer()` falls in: it cannot end while this load is pending.
+                pub(crate) defer_epoch: u32,
                 /// Intrusive node for the Mini-loop queue: carries this load's answer back to the bundle
                 /// thread (`on_load_async`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
@@ -1259,7 +1257,7 @@ pub mod bv2_impl {
                     value: LoadValue::Pending,
                     owner,
                     called_defer: false,
-                    deferred_in: None,
+                    defer_epoch: bv2.graph.defer_epoch,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
@@ -1319,26 +1317,28 @@ pub mod bv2_impl {
                 }
             }
             /// A plugin `.defer()`red a [`Load`]: the notice to the loop that runs the bundle, when
-            /// that is a JS loop. Borrows the request: the answer, which frees it, is queued later.
-            #[repr(transparent)]
-            pub struct LoadDeferred(Load<'static>);
+            /// that is a JS loop.
+            pub struct LoadDeferred(*mut BundleV2<'static>);
             impl bun_event_loop::Taskable for LoadDeferred {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginLoadDeferred;
-                /// Nothing is owned.
-                unsafe fn release_unrun(_: *mut Self) {}
+                type Payload = Self;
+                fn release_unrun(_: Self) {}
                 /// A step of the bundle.
-                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                fn context(_: &Self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
                 }
             }
             impl LoadDeferred {
+                /// SAFETY: it is queued once, for the bundle's thread, ahead of the answer to `load`.
+                pub unsafe fn new(load: &Load<'_>) -> Self {
+                    Self(load.bv2)
+                }
                 #[inline(never)]
-                pub fn run(&mut self) {
+                pub fn run(self) {
                     bun_removable_features::removable_definition!(Bundler, Self::run);
-                    // SAFETY: `bv2` is a live backref set in `Load::init`.
-                    let bv2 = unsafe { &mut *self.0.bv2 };
-                    BundleV2::on_notify_defer(&mut self.0, bv2);
+                    // SAFETY: the pass cannot finish before the answer, which is still to come.
+                    unsafe { &mut *self.0 }.on_notify_defer();
                 }
             }
         }
@@ -4247,7 +4247,7 @@ pub mod bv2_impl {
             let (source_index, path) = (parse_task.source_index, parse_task.path);
             this.graph.plugin_requests -= 1;
             this.answer_taken();
-            if load.deferred_in == Some(this.graph.defer_epoch) {
+            if load.called_defer && load.defer_epoch == this.graph.defer_epoch {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
                 // answer accounts for it like any other.
@@ -6914,16 +6914,11 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
-        pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            debug_assert!(matches!(
-                load.owner,
-                jsc_api::JSBundler::LoadOwner::Bundle(_)
-            ));
-            this.thread_lock.assert_locked();
-            this.answer_taken();
-            load.deferred_in = Some(this.graph.defer_epoch);
-            this.graph.deferred_pending += 1;
-            this.decrement_scan_counter();
+        pub fn on_notify_defer(&mut self) {
+            self.thread_lock.assert_locked();
+            self.answer_taken();
+            self.graph.deferred_pending += 1;
+            self.decrement_scan_counter();
         }
 
         #[inline(never)]

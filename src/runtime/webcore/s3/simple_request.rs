@@ -1,15 +1,16 @@
+use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, Task, TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, Method,
 };
 use bun_io::JsKeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{ErrorCodeAndMessage, S3Error, get_sign_error_code_and_message};
@@ -112,15 +113,17 @@ bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause|
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
+    /// Not a `Box`: its context points at `abort_handle` until `on_response` calls `leave`.
+    type Payload = AliasableBox<Self>;
     /// A response the HTTP thread handed back during teardown: its native
     /// completion is what finishes the caller's operation (and settles a promise
     /// nobody can observe — script is forbidden), so run it.
-    unsafe fn release_unrun(this: *mut Self) {
-        let _ = S3HttpSimpleTask::on_response(this);
+    fn release_unrun(this: Self::Payload) {
+        let _ = this.on_response();
     }
     /// `on_response` enters the request's context itself, stopped or not: a multipart upload still
     /// sends its rollback for a graph that was disposed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -296,25 +299,14 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    ///
-    /// # Safety
-    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
-    /// is being transferred to this call (it is reclaimed and dropped here exactly once).
-    //
-    // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
-    // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
-    pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
+    pub(crate) fn on_response(self: AliasableBox<Self>) -> bun_jsc::JsResult<()> {
         // The next request of a multipart upload, a retry, and the script this calls continue
         // what the requesting script started.
         // (In a stopped context, whatever a retry arms is aborted at once.)
         let vm = VirtualMachine::get();
-        // SAFETY: fn contract — `this` is live.
-        let _context = vm.enter_context(unsafe { (*this).context });
-        // SAFETY: fn contract — `this` is live.
-        unsafe { (*this).abort_handle.leave() };
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc), and its task is
-        // posted once.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let _context = vm.enter_context(self.context);
+        self.abort_handle.leave();
+        let mut this = self.into_box();
 
         let callback = this.callback.take().expect("a request is answered once");
         if !this.result.is_success() {
@@ -420,14 +412,20 @@ impl S3HttpSimpleTask {
         // by the HTTP thread until the handoff below; this borrow is scoped to the call.
         unsafe { (*this).stage_http_result(result) };
         if is_done {
-            // SAFETY: same exclusivity as above; the queue takes ownership of the inline
-            // `concurrent_task` field's `next` link. The ticket is moved out first: the
-            // JS thread may free `this` the moment it is queued.
-            unsafe {
-                let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-                let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
-                ticket.post_intrusive(queued);
-            }
+            // SAFETY: as above, and this is the last result.
+            unsafe { Self::post(this) };
+        }
+    }
+
+    /// SAFETY: `this` came from a `Box`, and the HTTP thread is done with it.
+    unsafe fn post(this: *mut Self) {
+        // SAFETY: fn contract. The ticket is moved out first: the JS thread may free `this` the
+        // moment it is queued.
+        unsafe {
+            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
+            let task = Task::new::<Self>(AliasableBox::from_non_null(NonNull::new_unchecked(this)));
+            let node = &raw mut (*this).concurrent_task;
+            ticket.post(ConcurrentTask::in_place(node, task));
         }
     }
 
@@ -443,9 +441,7 @@ impl S3HttpSimpleTask {
         unsafe {
             (*this).result.fail = Some(bun_http::Error::Aborted);
             (*this).result.has_more = false;
-            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-            let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
-            ticket.post_intrusive(queued);
+            Self::post(this);
         }
     }
 }

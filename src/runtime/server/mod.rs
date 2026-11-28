@@ -201,7 +201,7 @@ bun_jsc::impl_abort_handle_owner!(
 );
 
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::schedule_deinit)]
+#[ref_count(destroy_box = Self::schedule_deinit)]
 pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// The JS wrapper holds one ref, `open_ref` another.
     ref_count: bun_ptr::RefCount<Self>,
@@ -1214,22 +1214,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.
-    fn schedule_deinit(this: *mut Self) {
-        // SAFETY: `this` stays allocated until it is destroyed below or by the task.
-        let server = unsafe { &*this };
-
+    fn schedule_deinit(server: bun_ptr::AliasableBox<Self>) {
         if server.vm().is_shutting_down() {
             // No more ticks.
-            if !server.phase_held.get() {
-                // SAFETY: the box from `init`, and the last ref is gone.
-                unsafe { bun_core::heap::destroy(this) };
+            if server.phase_held.get() {
+                server.into_raw();
             }
             return;
         }
 
-        server.vm().enqueue_task(bun_event_loop::Task::init(
-            this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
-        ));
+        let vm = server.vm;
+        vm.enqueue_task(bun_event_loop::Task::new::<Self>(server));
+    }
+
+    /// `schedule_deinit`'s task: frees the server outside the finalizer that can drop the last ref.
+    pub(crate) fn run_scheduled_deinit(server: bun_ptr::AliasableBox<Self>) {
+        let vm = server.vm;
+        if vm.uws_loop().internal_loop_data.is_ticking() {
+            // A listener turned the event loop, and the app's handler that called it goes on afterwards.
+            return vm
+                .event_loop()
+                .enqueue_task_for_outermost_tick(bun_event_loop::Task::new::<Self>(server));
+        }
+        drop(server);
     }
 
     pub(crate) fn on_listen(
@@ -3069,38 +3076,22 @@ pub(crate) enum SavedRequestUnion<'a> {
     Saved(&'a SavedRequest),
 }
 
-/// Frees the server outside the finalizer that can drop the last ref. Same pointer as the server, one tag per monomorphization.
-#[repr(transparent)]
-pub(crate) struct ServerDeinitTask<const SSL: bool, const DEBUG: bool>(NewServer<SSL, DEBUG>);
-
-impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for ServerDeinitTask<SSL, DEBUG> {
+// ─── schedule_deinit's task ──────────────────────────────────────────────────
+impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for NewServer<SSL, DEBUG> {
     const TAG: bun_event_loop::TaskTag = match (SSL, DEBUG) {
         (false, false) => bun_event_loop::task_tag::HTTPServerDeinit,
         (true, false) => bun_event_loop::task_tag::HTTPSServerDeinit,
         (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
         (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
     };
+    type Payload = bun_ptr::AliasableBox<Self>;
     /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
-    unsafe fn release_unrun(_: *mut Self) {}
-    /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
+    fn release_unrun(server: Self::Payload) {
+        server.into_raw();
     }
-}
-
-impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
-    /// # Safety
-    /// `this` is the unique owning server pointer `schedule_deinit` queued.
-    pub(crate) unsafe fn run(this: *mut Self) {
-        let vm = jsc::VirtualMachine::get();
-        if vm.uws_loop().internal_loop_data.is_ticking() {
-            // A listener turned the event loop, and the app's handler that called it goes on afterwards.
-            return vm
-                .event_loop()
-                .enqueue_task_for_outermost_tick(bun_event_loop::Task::init(this));
-        }
-        // SAFETY: caller contract.
-        unsafe { bun_core::heap::destroy(this) };
+    /// Enters no context.
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

@@ -27,7 +27,6 @@ use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
 // bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
 };
@@ -251,9 +250,9 @@ pub enum TopLevelWaitError {
 
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
-// `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
+// `Task { tag, payload }`. Per PORTING.md, the *high tier owns the match loop*:
 // `bun_runtime` registers the real dispatcher at init; this crate only stores
-// `(tag, ptr)` and the hook. The dispatch match lives in
+// `(tag, payload)` and the hook. The dispatch match lives in
 // `bun_runtime::dispatch::run_tasks` (every arm names a `bun_runtime` type).
 // ──────────────────────────────────────────────────────────────────────────
 // The hook receives the specific `EventLoop` to drain (which may be the
@@ -682,7 +681,7 @@ impl EventLoop {
         }
 
         let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
+        let count = concurrent.len();
         if count == 0 {
             return tasks.readable_length() - start_count;
         }
@@ -790,9 +789,8 @@ impl EventLoop {
     }
 
     /// Any thread.
-    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) {
-        // SAFETY: the task is the caller's until it is pushed.
-        match unsafe { task.as_ref() }.task.tag().is_plugin_request() {
+    pub(crate) fn post(&self, task: ConcurrentTask::OwnedConcurrentTask) {
+        match task.tag().is_plugin_request() {
             true => self.concurrent_plugin_requests.push(task),
             false => self.concurrent_tasks.push(task),
         }
@@ -959,21 +957,9 @@ impl EventLoop {
         }
     }
 
-    /// Move a batch that other threads posted into `tasks`, freeing the heap carriers.
-    fn take_concurrent_tasks(
-        tasks: &mut Queue,
-        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
-    ) {
-        let mut iter = batch.iterator();
-        loop {
-            let node = iter.next();
-            if node.is_null() {
-                break;
-            }
-            // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning.
-            let task =
-                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
+    /// Move a batch that other threads posted into `tasks`.
+    fn take_concurrent_tasks(tasks: &mut Queue, batch: impl Iterator<Item = Task>) {
+        for task in batch {
             let _ = tasks.write_item(task);
         }
     }

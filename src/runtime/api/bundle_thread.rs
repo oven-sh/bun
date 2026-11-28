@@ -451,7 +451,8 @@ fn watch() -> ! {
         }
         drop(state);
         for vm in to_probe {
-            let _ = vm.post(LoopKind::Regular, Box::new(StuckBuildsProbe { progress }));
+            let probe = Box::new(StuckBuildsProbe { progress });
+            let _ = vm.post::<StuckBuildsProbe>(LoopKind::Regular, probe);
         }
         state = STATE.lock();
     }

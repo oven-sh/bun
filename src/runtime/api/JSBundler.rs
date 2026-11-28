@@ -15,7 +15,6 @@ use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
-use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
@@ -2121,15 +2120,12 @@ pub(crate) mod js_bundler {
             unsafe {
                 match ctx.any_loop() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::create_from(
-                            std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
-                        );
                         let poster = ctx
                             .js_poster
                             .as_ref()
                             .expect("JS-owned bundle has a poster");
                         // Refused: the VM was torn down mid-bundle, the notify never runs.
-                        let _ = poster.post(ct);
+                        poster.post_task::<LoadDeferred>(LoadDeferred::new(self));
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
@@ -2146,12 +2142,11 @@ pub(crate) mod js_bundler {
     }
 
     #[inline(never)]
-    fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
+    fn on_notify_defer_mini_wrap(_: *mut Load, ctx: *mut BundleV2<'static>) {
         bun_removable_features::removable_definition!(Bundler, on_notify_defer_mini_wrap);
-        // SAFETY: callback contract — `load` was passed as the `Context` arg to
-        // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
+        // SAFETY: callback contract — `ctx` is the bundle-thread
         // `BundleV2` backref the mini loop's tick supplies as `extra`.
-        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx });
+        unsafe { &mut *ctx }.on_notify_defer();
     }
 
     #[unsafe(no_mangle)]

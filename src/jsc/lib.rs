@@ -1224,9 +1224,9 @@ pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
-    AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
-    EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,
-    Stopped, Task, WorkPool, WorkPoolTask,
+    ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask,
+    GarbageCollectionController, MiniEventLoop, PosixSignalTask, Stopped, Task, WorkPool,
+    WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]

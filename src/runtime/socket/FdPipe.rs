@@ -4,7 +4,7 @@ use core::cell::Cell;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JsCell, JsResult};
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_uws::{SocketTCP, Transport};
 
@@ -19,8 +19,8 @@ pub(crate) struct FdPipe {
     socket: JsCell<Option<RefPtr<TCPSocket>>>,
     is_shutdown: Cell<bool>,
     rejected_send_error: Cell<i32>,
-    /// The task that closes and frees `self` is in the queue.
-    is_queued: Cell<bool>,
+    /// `None` once it is in the queue, as the task that closes and frees `self`.
+    owner: Cell<Option<AliasableBox<Self>>>,
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
     abort_handle: bun_jsc::AbortHandle,
     /// Forced: the kernel keeps a fired poll for as long as the file is open, and `close` leaves stdout open.
@@ -40,21 +40,23 @@ impl FdPipe {
         fd: Fd,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> JsResult<()> {
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        let owner = AliasableBox::new(Self {
             handle: Default::default(),
             fd,
             socket: JsCell::new(Some(socket.clone())),
             is_shutdown: Cell::new(false),
             rejected_send_error: Cell::new(0),
-            is_queued: Cell::new(false),
+            owner: Cell::new(None),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Self>(),
             #[cfg(not(windows))]
             poll: JsCell::new(None),
-        }));
-        // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
-        unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
+        });
+        let this = owner.as_ptr();
         // SAFETY: just allocated, and freed only by the task that `close` queues.
         let pipe = unsafe { &*this };
+        pipe.owner.set(Some(owner));
+        // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
+        unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         pipe.handle.set(this);
         let handle = SocketTCP::from_transport(&raw const pipe.handle);
         socket.socket.set(handle);
@@ -94,19 +96,17 @@ impl FdPipe {
     }
 
     fn enqueue(&self) {
-        if !self.is_queued.replace(true) {
+        if let Some(owner) = self.owner.take() {
             VirtualMachine::get()
                 .event_loop()
-                .enqueue_task(bun_jsc::Task::init(core::ptr::from_ref(self).cast_mut()));
+                .enqueue_task(bun_jsc::Task::new::<Self>(owner));
         }
     }
 
-    /// SAFETY: `this` is the queued pointer. The call frees it.
-    pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { &*this }.close();
-        // SAFETY: fn contract; a closed pipe's socket holds no handle to it.
-        drop(unsafe { bun_core::heap::take(this) });
+    pub(crate) fn close_and_free(this: AliasableBox<Self>) {
+        this.close();
+        // A closed pipe's socket holds no handle to it.
+        drop(this);
     }
 }
 
@@ -188,13 +188,13 @@ impl Transport for FdPipe {
 
 impl bun_event_loop::Taskable for FdPipe {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FdPipe;
+    type Payload = AliasableBox<Self>;
     /// What the task does runs no script by then.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Self::run_event(this) }
+    fn release_unrun(this: Self::Payload) {
+        Self::close_and_free(this);
     }
     /// A socket's own hop. Its handlers carry their context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Payload) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

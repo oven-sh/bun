@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_uws::ssl_wrapper::{self, SSLWrapper};
 use bun_uws::{Transport, us_bun_verify_error_t};
 
@@ -34,18 +34,15 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::queue_free)]
+#[ref_count(destroy_box = Self::queue_free)]
 pub(crate) struct UpgradedDuplex {
-    /// One ref for the open connection and one per entry point on the stack ([`Self::keep_alive`]). At zero the `Close` hop frees `self`.
+    /// One ref for the open connection, one for the queued `start_tls` and one per entry point on the stack ([`Self::keep_alive`]). At zero the free is queued.
     ref_count: Cell<u32>,
     handle: bun_uws::TransportHandle,
     connection_ref: JsCell<Option<RefPtr<Self>>>,
     /// The socket that hears this engine's events. `None` once it heard its close or its connect error.
     tls: JsCell<Option<RefPtr<TLSSocket>>>,
-    task_event: Cell<EventState>,
-    /// A `task_event` hop is in the VM's queue. It holds `self` by pointer, so at most one may exist.
-    queued: Cell<bool>,
-    /// Taken by the `StartTLS` hop.
+    /// Taken by `start_tls`.
     ctx: JsCell<Option<bun_boringssl_sys::OwnedSslCtx>>,
     is_open: Cell<bool>,
     is_client: bool,
@@ -82,7 +79,7 @@ pub(crate) struct UpgradedDuplex {
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: JsCell<Vec<u8>>,
     /// The transport closed before the TLS engine existed (same window as
-    /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
+    /// [`Self::pending_data`]). Consumed by the queued `start_tls`.
     pub pending_close: Cell<bool>,
     /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
     pub pending_shutdown: Cell<bool>,
@@ -101,12 +98,6 @@ pub(crate) struct ServerVerify {
     pub request_cert: bool,
     /// `rejectUnauthorized` — only meaningful when `request_cert` is set.
     pub reject_unauthorized: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EventState {
-    StartTLS,
-    Close,
 }
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
@@ -251,7 +242,7 @@ impl UpgradedDuplex {
             self.resume_stream();
         }
 
-        // Early teardown (the `Close` hop drops the struct later).
+        // Early teardown (a task drops the struct later).
         self.teardown();
         js_wrapper.ensure_still_alive();
     }
@@ -382,7 +373,7 @@ impl UpgradedDuplex {
     fn drain_pending(&self) {
         let _keep_alive = self.keep_alive();
         // Nothing to replay, or the engine never came up (the socket died
-        // before `StartTLS`). Bail before taking so the bytes are not
+        // before `start_tls`). Bail before taking so the bytes are not
         // destroyed by a drain that could not deliver them.
         if self.wrapper_ref().is_none() {
             return;
@@ -421,7 +412,7 @@ impl UpgradedDuplex {
         let _ = vm.uncaught_exception(vm.global(), err_value, false);
     }
 
-    /// Reports ECONNREFUSED to a socket that never opened. The still-queued `StartTLS` hop then finds no socket to open.
+    /// Reports ECONNREFUSED to a socket that never opened. The still-queued `start_tls` then finds no socket to open.
     fn fail_connect(&self, tls: RefPtr<TLSSocket>) {
         self.debug_assert_kept_alive();
         // Neuter the listener thunks while the wrapper is still strongly held.
@@ -429,7 +420,7 @@ impl UpgradedDuplex {
         fold(tls.handle_connect_error(bun_sys::SystemErrno::ECONNREFUSED, 0));
     }
 
-    /// The transport closed, or `StartTLS` could not start it.
+    /// The transport closed, or `start_tls` could not start it.
     fn release_connection(&self) {
         if let Some(_connection_ref) = self.connection_ref.take() {
             // Nothing is left for the owning context to close, and its hook would take a ref.
@@ -438,36 +429,13 @@ impl UpgradedDuplex {
     }
 
     /// The last ref is usually an entry point's guard, which drops while that entry point's `&self` is live: a hop frees `this`.
-    fn queue_free(this: *mut Self) {
-        // SAFETY: the count just reached zero; `this` is live until that hop runs.
-        unsafe { &*this }.enqueue(EventState::Close);
-    }
-
-    fn enqueue(&self, event: EventState) {
-        self.task_event.set(event);
-        // An entry that is already in the queue runs the updated `task_event`.
-        if !self.queued.replace(true) {
-            self.vm
-                .event_loop()
-                .enqueue_task(bun_jsc::Task::init(std::ptr::from_ref(self).cast_mut()));
-        }
-    }
-
-    /// SAFETY: `this` is the queued engine, which the `Close` hop frees.
-    pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: fn contract.
-        let engine = unsafe { &*this };
-        engine.queued.set(false);
-        match engine.task_event.get() {
-            EventState::StartTLS => engine.start_tls(),
-            // SAFETY: the last ref queued this hop, and no borrow of `*this` is live.
-            EventState::Close => drop(unsafe { bun_core::heap::take(this) }),
-        }
+    fn queue_free(this: AliasableBox<Self>) {
+        let event_loop = this.vm.event_loop();
+        event_loop.enqueue_task(bun_jsc::Task::new::<UpgradedDuplexFree>(this));
     }
 
     /// Deferred from [`Self::upgrade`], so that `on_open` can't re-enter JS before the caller holds the handle.
-    fn start_tls(&self) {
-        let _keep_alive = self.keep_alive();
+    pub(crate) fn start_tls(self: RefPtr<Self>) {
         // A pre-open error took the socket, and no engine exists whose close would release the connection's ref.
         if self.tls.get().is_none() {
             return self.release_connection();
@@ -476,7 +444,7 @@ impl UpgradedDuplex {
         if self.pending_close.replace(false) {
             return self.finish_close();
         }
-        let ctx = self.ctx.take().expect("StartTLS ran twice");
+        let ctx = self.ctx.take().expect("start_tls ran twice");
         let w = self
             .wrapper
             .get_or_init(|| SSLWrapper::init_with_ctx(ctx, self.is_client));
@@ -506,8 +474,6 @@ impl UpgradedDuplex {
             handle: Default::default(),
             connection_ref: JsCell::new(None),
             tls: JsCell::new(Some(tls)),
-            task_event: Cell::new(EventState::StartTLS),
-            queued: Cell::new(false),
             ctx: JsCell::new(Some(ctx)),
             is_open: Cell::new(false),
             is_client,
@@ -541,7 +507,8 @@ impl UpgradedDuplex {
         }
         // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
-        engine.enqueue(EventState::StartTLS);
+        let task = bun_jsc::Task::new::<Self>(engine.clone());
+        engine.vm.event_loop().enqueue_task(task);
         engine
     }
 
@@ -728,29 +695,31 @@ bun_jsc::impl_abort_handle_owner!(UpgradedDuplex, abort_handle, |this, _cause| {
 
 impl bun_event_loop::Taskable for UpgradedDuplex {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UpgradedDuplex;
-    /// The one queued hop will not run. A `StartTLS` that never ran made no engine, so no close detached the socket.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the single queue entry for `this`.
-        let engine = unsafe { &*this };
+    type Payload = RefPtr<Self>;
+    /// A `start_tls` that never ran made no engine, so no close detached the socket.
+    fn release_unrun(engine: Self::Payload) {
         if let Some(tls) = engine.tls.replace(None) {
             // Neuter the listener thunks while the wrapper is still strongly held.
             engine.teardown();
             // Detaches the socket, so its finalizer finds nothing to reach into. `Err` is left for the release dispatcher's fold.
             let _ = tls.on_close(engine.socket(), 0, None);
         }
-        // Still `queued`, so at zero `queue_free` leaves the free to this call.
         engine.release_connection();
-        engine.queued.set(false);
-        // An entry point on the stack still holds it: the release of that ref queues the free.
-        if engine.ref_count.get() == 0 {
-            // SAFETY: fn contract; nothing holds `this` and no borrow of it is live.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
     }
-    /// The hop continues the script that upgraded the stream: once that context has stopped, `StartTLS` must not run.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract: the queued engine.
-        unsafe { (*this).context }
+    /// The hop continues the script that upgraded the stream: once that context has stopped, `start_tls` must not run.
+    fn context(engine: &Self::Payload) -> bun_event_loop::ContextId {
+        engine.context
+    }
+}
+
+/// [`UpgradedDuplex::queue_free`]'s task.
+pub(crate) struct UpgradedDuplexFree;
+impl bun_event_loop::Taskable for UpgradedDuplexFree {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UpgradedDuplexFree;
+    type Payload = AliasableBox<UpgradedDuplex>;
+    fn release_unrun(_: Self::Payload) {}
+    fn context(engine: &Self::Payload) -> bun_event_loop::ContextId {
+        engine.context
     }
 }
 

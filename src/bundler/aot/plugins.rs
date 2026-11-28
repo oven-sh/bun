@@ -10,6 +10,7 @@ use std::borrow::Cow;
 
 use super::options::in_memory_files_by_path;
 use crate::BundleV2;
+use crate::DeferredBatchTask::DeferredBatch;
 use crate::bun_fs as Fs;
 use crate::bundle_v2::api::JSBundler::{
     Load, LoadOwner, LoadValue, MiniImportRecord, Plugin, Resolve, ResolveOwner, ResolveValue,
@@ -395,9 +396,10 @@ impl PluginRequests {
         debug_assert!(self.drain_waiter.state.lock().answer.is_none());
         let drain_waiter = NonNull::from_ref(self.drain_waiter.as_ref());
         self.with_bundle(|bundle| {
-            debug_assert!(bundle.drain_defer_task.waiter.is_none());
-            bundle.drain_defer_task.waiter = Some(drain_waiter);
-            bundle.drain_defer_task.schedule();
+            debug_assert!(bundle.drain_defer_task.waiter.get().is_none());
+            bundle.drain_defer_task.waiter.set(Some(drain_waiter));
+            // SAFETY: waited for below, by the only caller at a time.
+            unsafe { DeferredBatch::schedule(bundle) };
         });
         match self.drain_waiter.wait_for_answer() {
             Answer::Drained => {}

@@ -10,7 +10,7 @@ Bun's event loop is built on top of **uSockets** (a cross-platform event loop ba
 
 ### 1. Task Queue (`src/jsc/Task.rs`)
 
-A tagged pointer union containing various async task types (file I/O, network requests, timers, etc.). Tasks are queued by various subsystems and drained by the main event loop.
+A tag and a one-word payload, for various async task types (file I/O, network requests, timers, etc.). Tasks are queued by various subsystems and drained by the main event loop.
 
 ### 2. Immediate Tasks (`event_loop.rs:14-15`)
 

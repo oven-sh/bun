@@ -5,6 +5,7 @@ use bun_ast::server_component_boundary;
 use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
+use crate::DeferredBatchTask::DeferredBatch;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
@@ -59,7 +60,7 @@ pub struct Graph<'a> {
     pub(crate) plugin_requests: u32,
 
     /// Which deferred batch is being collected: bumped each time `drain_deferred_tasks` moves the parked
-    /// units back, so a `Load` can tell whether its own unit is still parked. Bundle thread only.
+    /// units back, so a `Load` can tell whether its own unit is still parked. Only the bundle thread writes it.
     pub(crate) defer_epoch: u32,
     /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
     /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
@@ -236,7 +237,8 @@ impl BundleV2<'_> {
             self.graph.pending_items += self.graph.deferred_pending + 1;
             self.graph.deferred_pending = 0;
             self.graph.defer_epoch += 1;
-            self.drain_defer_task.schedule();
+            // SAFETY: counted above, and a pass with pending items neither ends nor drains.
+            unsafe { DeferredBatch::schedule(self) };
 
             return true;
         }

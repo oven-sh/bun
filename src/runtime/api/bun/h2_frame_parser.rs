@@ -20,7 +20,7 @@ use crate::socket::{NativeCallbacks, NewSocket};
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HiveArrayFallback, VecExt, recycle_vec};
 use bun_core::scoped::ScopedFlag as _;
-use bun_event_loop::{ContextId, RefTask, Task, TaskTag, task_tag};
+use bun_event_loop::{ContextId, Task, TaskTag, Taskable, task_tag};
 use bun_hpack::Indexing;
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, MAX_WINDOW_SIZE};
 use bun_http_types::h2::frame::{
@@ -4041,7 +4041,7 @@ impl H2FrameParser {
             return;
         }
         let event_loop = self.handlers.vm.event_loop();
-        let task = Task::from_ref::<Self>(self.ref_guard());
+        let task = Task::new::<Self>(self.ref_guard());
         // Like in Node, ahead of the immediates, unless one answer leads to the next.
         if self.held_input_read_in_drain.get() == event_loop.task_drains() {
             event_loop.enqueue_task_after_yield(task);
@@ -4500,12 +4500,12 @@ bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
     unsafe { (*this).release_from_js(false) }
 });
 
-impl RefTask for H2FrameParser {
+impl Taskable for H2FrameParser {
     const TAG: TaskTag = task_tag::H2HeldInput;
-    type Ref = RefPtr<Self>;
-    fn release_unrun(_: Self::Ref) {}
+    type Payload = RefPtr<Self>;
+    fn release_unrun(_: Self::Payload) {}
     /// The handlers carry their own.
-    fn context(_: &Self::Ref) -> ContextId {
+    fn context(_: &Self::Payload) -> ContextId {
         ContextId::NONE
     }
 }

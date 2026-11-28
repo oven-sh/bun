@@ -586,6 +586,8 @@ interface HotUpdate {
 function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: SourceMapURL | undefined): HotUpdate {
   const toReload = new Set<HMRModule>();
   const toAccept: HotUpdate["toAccept"] = [];
+  // Each accept callback once per update for each module it accepts, however many changed modules reach it.
+  const accepting = new Map<HotAccept, Set<Id>>();
   let failures: Set<Id> | null = null;
   const toDispose = new Set<HMRModule>();
 
@@ -608,6 +610,9 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
     const visited = new Set<HMRModule>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
+    // Each module's importers on the way from `existing`: what lies between it and an accepting importer reloads too.
+    const reachedFrom = new Map<HMRModule, Set<HMRModule>>();
+    const accepted = new Set<HMRModule>();
     while (true) {
       const mod = queue.shift();
       if (!mod) break;
@@ -641,16 +646,36 @@ function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: Source
       }
 
       for (const importer of mod.importers) {
-        const cb = importer.depAccepts?.[key];
+        const cb = importer.depAccepts?.[mod.id];
         if (cb) {
-          toAccept.push({ cb, key });
+          const keys = accepting.get(cb) ?? new Set<Id>();
+          accepting.set(cb, keys);
+          if (!keys.has(mod.id)) {
+            keys.add(mod.id);
+            toAccept.push({ cb, key: mod.id });
+          }
+          accepted.add(mod);
         } else if (hadSelfAccept) {
+          let from = reachedFrom.get(importer);
+          if (!from) reachedFrom.set(importer, (from = new Set()));
+          from.add(mod);
           if (visited.has(importer)) continue;
           visited.add(importer);
           queue.push(importer);
         }
       }
     }
+
+    // Outward from the changed module, so each reloads after what it imports.
+    const seen = new Set<HMRModule>([existing]);
+    const reload = (m: HMRModule) => {
+      if (seen.has(m)) return;
+      seen.add(m);
+      for (const before of reachedFrom.get(m) ?? []) reload(before);
+      if (!toReload.has(m) && m.onDispose) toDispose.add(m);
+      toReload.add(m);
+    };
+    for (const m of accepted) reload(m);
   }
 
   return { toReload, toAccept, toDispose, failures };
@@ -734,14 +759,21 @@ function disposeModules(toDispose: Set<HMRModule>): Promise<void>[] {
   return disposePromises;
 }
 
-/** Returns a promise for each module that still loads, or that threw. */
+/**
+ * Returns a promise for each module that still loads, or that threw. Each is marked stale before any loads: one loaded
+ * first (an importer sent along with what it imports) would otherwise be handed the old version of a module further on.
+ */
 function reloadModules(toReload: Set<HMRModule>): Promise<HMRModule>[] {
   const promises: Promise<HMRModule>[] = [];
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    selfAccepts.set(mod, mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
+  }
+  for (const mod of toReload) {
+    const selfAccept = selfAccepts.get(mod);
 
     let modOrPromise: HMRModule | Promise<HMRModule>;
     try {

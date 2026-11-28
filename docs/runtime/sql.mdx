@@ -1389,6 +1389,7 @@ await Promise.all([
 
 - Bun starts the pool when a caller finds no connection ready: at the first query, and again after every connection has closed, for example at `idleTimeout`. It opens connections until the pool has `max`. Queries share the open connections.
 - `sql.begin` and `sql.reserve` need a connection of their own, so they wait for an idle one.
+- Callers that come one after the other get the same connection, whether they are queries, transactions or reservations. The connections that the load does not need can then reach `idleTimeout`. Bun opens connections again when callers have to wait, as the next items describe.
 - Bun serves the callers that wait for a connection oldest first.
 - A pool that lost some of its connections opens new ones when queries have to wait.
 - When Bun cannot open a new connection, callers wait for the connections that are open. They reject with the error of that attempt only when the pool has no connection left. A caller that finds every open connection reserved makes Bun try again at once. While an open connection can still take queries, Bun adds at most one connection at a time for the queries that wait, and after each failed attempt it pauses before the next: a few tens of milliseconds at first, then twice as long each time, up to 1 second.

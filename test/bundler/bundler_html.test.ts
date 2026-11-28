@@ -124,6 +124,111 @@ describe("bundler", () => {
     },
   });
 
+  // The emitted file that a rewritten src/href reaches: the attribute text as the
+  // HTML parser reads it, then the path as a static file server decodes it.
+  const servedFile = (api: BundlerTestBundleAPI, attribute: string) =>
+    api.readFile("out" + decodeURIComponent(new URL(attribute.replaceAll("&amp;", "&"), "http://localhost/").pathname));
+
+  // A src/href value is HTML text that spells a URL. The character references
+  // and percent escapes of its path are decoded before the file is resolved.
+  itBundled("html/url-decoding", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a&amp;b.css">
+    <script src="./my%20script.js"></script>
+    <link rel="icon" href="./ic%C3%B6n.png">
+  </head>
+  <body>
+    <img src="./sprite&#x26;2.svg">
+    <img src="./my%20photo.jpg?w=100&amp;h=50#x">
+    <img src="assets/my%20photo.jpg">
+    <img src="/assets/my%20photo.jpg">
+  </body>
+</html>`,
+      "/a&b.css": "body { color: red }",
+      "/my script.js": "console.log('my script')",
+      "/icön.png": "icon",
+      "/sprite&2.svg": "<svg></svg>",
+      "/my photo.jpg": "photo",
+      "/assets/my photo.jpg": "asset photo",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const attributes = [...html.matchAll(/(?:src|href)="([^"]*)"/g)].map(m => m[1]);
+      // The page's own stylesheet and script are put back at the end of <head>.
+      const [icon, css, js, sprite, photo, bare, rooted] = attributes;
+      expect(servedFile(api, css)).toContain("color: red");
+      expect(servedFile(api, js)).toContain("my script");
+      expect(servedFile(api, icon)).toBe("icon");
+      expect(servedFile(api, sprite)).toBe("<svg></svg>");
+      expect(servedFile(api, photo)).toBe("photo");
+      expect(servedFile(api, bare)).toBe("asset photo");
+      expect(servedFile(api, rooted)).toBe("asset photo");
+    },
+  });
+
+  // A path the decoder cannot turn into a file name is resolved as written, so
+  // the build fails with the text of the page: a malformed escape, bytes that
+  // are not UTF-8, a name that reads as a scheme, and an escape or a character
+  // reference for a byte that the output URL cannot carry as itself. Each file
+  // below exists under its decoded name. A srcset is a list, not a URL.
+  itBundled("html/url-decoding-keeps-unsafe-path-as-written", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico">
+  </head>
+  <body>
+    <img src="./caf%E9.png">
+    <img src="./%80.png">
+    <img src="./s&#xD800;s.png">
+    <img src="./caf&#128;.png">
+    <img src="./favicon.ico&#63;v=1">
+    <img src="./h%23ash.png">
+    <img src="./100%25.png">
+    <img src="./dir%2Fphoto.png">
+    <img src="data%3Aphoto.png">
+    <img src="./c&quot;d.png">
+    <img src="./a&#92;b.png">
+    <img src="./a&amp;amp;lit.png">
+    <img srcset="./my%20photo.png 2x">
+  </body>
+</html>`,
+      "/favicon.ico": "icon",
+      "/h#ash.png": "hash",
+      "/100%.png": "percent",
+      "/dir/photo.png": "slash",
+      "/my photo.png": "space",
+      "/a&amp;lit.png": "reference",
+      ...(isWindows ? {} : { "/data:photo.png": "colon", '/c"d.png': "quote", "/a\\b.png": "backslash" }),
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [
+        `Could not resolve: "%PUBLIC_URL%/favicon.ico"`,
+        `Could not resolve: "./caf%E9.png"`,
+        `Could not resolve: "./%80.png"`,
+        `Could not resolve: "./s&#xD800;s.png"`,
+        `Could not resolve: "./caf&#128;.png"`,
+        `Could not resolve: "./favicon.ico&#63;v=1"`,
+        `Could not resolve: "./h%23ash.png"`,
+        `Could not resolve: "./100%25.png"`,
+        `Could not resolve: "./dir%2Fphoto.png"`,
+        `Could not resolve: "data%3Aphoto.png"`,
+        `Could not resolve: "./c&quot;d.png"`,
+        `Could not resolve: "./a&#92;b.png"`,
+        `Could not resolve: "./a&amp;amp;lit.png"`,
+        `Could not resolve: "./my%20photo.png 2x"`,
+      ],
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

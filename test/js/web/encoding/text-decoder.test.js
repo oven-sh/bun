@@ -1120,6 +1120,46 @@ describe("UTF-8 without a code point above U+00FF becomes an 8-bit string", () =
     }
   });
 
+  // Up to 64 bytes from the first that is not ASCII are decoded without simdutf.
+  it("at every length around 64, behind ASCII too", () => {
+    const fatal = new TextDecoder("utf-8", { fatal: true });
+    const tails = [
+      ["", []],
+      ["\ufffd", [0xc3]],
+      ["\ufffd\ufffd", [0xc3, 0xc3]],
+      ["\ufffd\ufffda", [0xc3, 0xc3, 0x61]],
+      ["\ufffda", [0xc3, 0x61]],
+      ["Ā", [0xc4, 0x80]],
+    ];
+    const dense = Buffer.alloc(140, "ÿ\u0080a").toString();
+    const sparse = Buffer.alloc(140, "a").toString();
+    for (const ascii of ["", sparse.slice(0, 33)]) {
+      for (const following of [dense, sparse]) {
+        for (let length = 0; length <= 70; length++) {
+          if (length > 4 && length < 58) continue;
+          let text = ascii + "é" + following.slice(0, length);
+          while (Buffer.byteLength(text) > ascii.length + 2 + length) text = text.slice(0, -1);
+          for (const [end, invalid] of tails) {
+            const bytes = Uint8Array.from([...utf8(text), ...invalid]);
+            const decoded = Buffer.from(bytes).toString();
+            if (end === "") expect(decoded).toBeLatin1String();
+            expect(decoded).toBe(text + end);
+            expect(new TextDecoder().decode(bytes)).toBe(text + end);
+            if (end.startsWith("\ufffd")) expect(() => fatal.decode(bytes)).toThrow(TypeError);
+          }
+        }
+      }
+    }
+  });
+
+  it("a chunk that ends in a lead byte behind only ASCII", () => {
+    const decoder = new TextDecoder();
+    const first = decoder.decode(Uint8Array.of(0x61, 0x62, 0xc3), { stream: true });
+    expect(first).toBeLatin1String();
+    expect(first).toBe("ab");
+    expect(decoder.decode(Uint8Array.of(0xa9))).toBe("é");
+  });
+
   it("across chunks, and behind a BOM", async () => {
     const decoder = new TextDecoder("utf-8", { fatal: true });
     expect(decoder.decode(Uint8Array.of(0xc3), { stream: true })).toBe("");

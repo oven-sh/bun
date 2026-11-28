@@ -19,6 +19,9 @@ commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@esli
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
+`prefer-optional-chain` follows typescript-eslint 8.71.2, which no longer reports `a === undefined || a.b === null`. Two
+cases of `more/` record 8.71.1 reporting it, and fail with `--every-typed=1`: `reviews/typescript-eslint/prefer-optional-chain#1273`
+and `oxlint-tsgolint/typescript-eslint/prefer-optional-chain#270`.
 
 The commits of eslint and typescript-eslint are `main`, a few commits after the release: the tests come from there. What is
 recorded is what the release reports: `lib` of eslint 10.12.0 and the rules of typescript-eslint 8.71.1 as they are published. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and

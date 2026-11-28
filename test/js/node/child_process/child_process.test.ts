@@ -1811,3 +1811,36 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
 });
+
+// Neither byte becomes text, so no 'data' comes: the reader asks for byte 1 from inside the push() of byte 0.
+it.skipIf(!isPosix).concurrent(
+  "execFile() calls back when a pull inside _read() returns a byte that the decoder holds back",
+  async () => {
+    using dir = tempDir("child-stdout-held-pull", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "../stream/native-readable-held-pull-fixture.js"),
+        "execFile",
+        "e2",
+        "82",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify({
+          // Byte 0 settles the read that waited. Byte 1 is pushed inside _read().
+          pushed: [[1, false], [1, true], null],
+          callback: { error: null, stdout: "\ufffd", stderr: "" },
+          close: 1,
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

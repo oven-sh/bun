@@ -1064,6 +1064,73 @@ describe("Error serialization semantics", () => {
       Error.prepareStackTrace = original;
     }
   });
+
+  const ownNames = (error: Error) => Object.getOwnPropertyNames(error).sort();
+  function errorWithoutPosition() {
+    const e: any = new Error("message");
+    for (const name of ["line", "column", "sourceURL"]) delete e[name];
+    return e;
+  }
+
+  test("line, column and sourceURL are cloned", () => {
+    expect(ownNames(structuredClone(new Error("message")))).toEqual([
+      "column",
+      "line",
+      "message",
+      "sourceURL",
+      "stack",
+    ]);
+  });
+
+  test("an error without line, column and sourceURL clones without them", () => {
+    const e = errorWithoutPosition();
+    const cloned = structuredClone(e);
+    expect(ownNames(cloned)).toEqual(["message", "stack"]);
+    expect(Object.getOwnPropertyDescriptor(cloned, "stack")).toEqual(Object.getOwnPropertyDescriptor(e, "stack"));
+  });
+
+  // The first is what an error made under Error.prepareStackTrace has.
+  test.each([
+    { line: 0, column: 0 },
+    { line: 0, column: 0, sourceURL: "" },
+    { line: 0 },
+    { column: 0 },
+    { sourceURL: "" },
+  ])("with %j the clone has line and column", position => {
+    const e = Object.assign(errorWithoutPosition(), position);
+    expect(ownNames(structuredClone(e))).toEqual(["column", "line", "message", "stack"]);
+  });
+
+  describe("between versions of Bun", () => {
+    // serialize() of it with the stack "Error: message", written by Bun 1.4.3. The flag of its null sourceURL is at 29.
+    const writtenByBun143 = "DgAAADcAAAAAAAcAAIBtZXNzYWdlAAAAAAAAAAABAAAAAAAAAA4AAIBFcnJvcjogbWVzc2FnZQ==";
+
+    test("an error without them is written as before, but for a flag that earlier readers take for the same", () => {
+      const bytes = Buffer.from(serialize(Object.assign(errorWithoutPosition(), { stack: "Error: message" })));
+      expect(bytes.readInt32LE(29)).toBe(-1);
+      bytes.writeInt32LE(1, 29);
+      expect(bytes.toString("base64")).toBe(writtenByBun143);
+    });
+
+    test("what an earlier writer wrote for it is read with line and column", () => {
+      expect(ownNames(deserialize(Buffer.from(writtenByBun143, "base64")))).toEqual([
+        "column",
+        "line",
+        "message",
+        "stack",
+      ]);
+    });
+  });
+
+  // It adds frames to an error whose stack has not been made yet.
+  test("a stream that is errored with a clone without line, column and sourceURL leaves it as it is", async () => {
+    const e = errorWithoutPosition();
+    const cloned = structuredClone(e);
+    const reader = new ReadableStream({ pull: controller => controller.error(cloned) }).getReader();
+    expect(await reader.read().catch(error => error)).toBe(cloned);
+    expect(ownNames(cloned)).toEqual(["message", "stack"]);
+    expect(cloned.stack).toBe(e.stack);
+  });
 });
 
 describe("options.transfer iterator error propagation", () => {

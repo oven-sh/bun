@@ -2919,7 +2919,9 @@ pub(crate) fn download_to_path(
             // error returns after it) ends the node exactly once.
             // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
-            let reject_unauthorized = env.get_tls_reject_unauthorized();
+            // Every project of this user is built with what is stored, so the `.env` of one, which `env` can hold, does not say whom to trust.
+            let reject_unauthorized =
+                bun_core::getenv_z(bun_core::zstr!("NODE_TLS_REJECT_UNAUTHORIZED")) != Some(b"0");
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
             refresher.start(b"Downloading", 0);
 

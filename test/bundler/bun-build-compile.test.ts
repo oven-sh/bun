@@ -12,6 +12,7 @@ import {
   isPosix,
   isWindows,
   tempDir,
+  tls,
   unprivilegedSpawnOptions,
 } from "harness";
 import {
@@ -147,6 +148,38 @@ describe("Bun.build compile", () => {
     });
     expect(await proc.exited).toBe(1);
     expect(readdirSync(join(String(dir), "cache"))).toHaveLength(1);
+  });
+
+  // The cache is shared by every project of the user.
+  test.concurrent.each([
+    ["the .env of the project", "NODE_TLS_REJECT_UNAUTHORIZED=0\n", {}, 0],
+    ["the environment", "", { NODE_TLS_REJECT_UNAUTHORIZED: "0" }, 1],
+  ] as const)("whether the download checks certificates when %s says no", async (_, dotenv, env, cached) => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, tls, fetch: () => new Response(Bun.gzipSync(tar)) });
+    using dir = tempDir("build-compile-download-tls", { "app/app.js": "", "app/.env": dotenv, "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--env=inline",
+        `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`,
+        "app.js",
+      ],
+      cwd: join(String(dir), "app"),
+      env: {
+        ...bunEnv,
+        NODE_TLS_REJECT_UNAUTHORIZED: undefined,
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_COMPILE_TARGET_TARBALL_URL: `https://localhost:${server.port}/`,
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await proc.exited).toBe(1);
+    expect(readdirSync(join(String(dir), "cache"))).toHaveLength(cached);
   });
 
   test.concurrent.skipIf(!isPosix).each(["000", "002", "022", "027", "077"])(

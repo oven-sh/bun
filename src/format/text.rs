@@ -230,3 +230,8 @@ pub(crate) fn last_char(text: &[u8]) -> Option<(char, usize)> {
         }
     }
 }
+
+/// True if `text` ends with a backslash that isn't escaped itself: an odd number of backslashes.
+pub(crate) fn ends_with_unescaped_backslash(text: &[u8]) -> bool {
+    text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
+}

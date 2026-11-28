@@ -2097,6 +2097,9 @@ impl RunCommand {
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
+            // POSIX: npm runs a command through a shell, which runs a script that has no `#!` line with sh.
+            #[cfg(unix)]
+            shell_fallback: Some(crate::shell::subproc::is_shell_script),
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(

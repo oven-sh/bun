@@ -21,6 +21,47 @@ describe.concurrent("run-shell", () => {
     expect(stdout).toEqual("wah\n");
   });
 
+  test("a backtick substitution after text stays in its word", async () => {
+    using dir = tempDir("run-shell-backtick", {
+      "script.sh": 'FOO=`echo hi`\necho "[$FOO]"\necho pre`echo m`post\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "script.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[hi]\nprempost\n", stderr: "", exitCode: 0 });
+  });
+
+  test("command substitutions that do not end in a word", async () => {
+    const script = 'echo $( (echo one) ) `echo two;` "[$()]"';
+    using dir = tempDir("run-shell-cmd-subst", {
+      // The last substitution closes on a line of its own.
+      "script.sh": script + '\nX=`\necho three\n`\necho "[$X]"\n',
+      "package.json": JSON.stringify({ scripts: { subst: script } }),
+    });
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    expect(await run("script.sh")).toEqual({ stdout: "one two []\n[three]\n", stderr: "", exitCode: 0 });
+    expect(await run("run", "--shell=bun", "subst")).toEqual({
+      stdout: "one two []\n",
+      stderr: `$ ${script}\n`,
+      exitCode: 0,
+    });
+  });
+
   test("invalid syntax reports the error correctly", async () => {
     const dir = tmpdirSync("bun-shell-test-error");
     mkdirSync(dir, { recursive: true });

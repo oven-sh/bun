@@ -438,6 +438,21 @@ const client = new RedisClient("redis://localhost:6379", {
 
 ### Reconnection Behavior
 
+A command that the client already sent when the connection drops rejects with `ERR_REDIS_CONNECTION_CLOSED`. The client does not send it again on the new connection, because the server may have run it. The offline queue holds only the commands that the client did not send yet.
+
+If a command is safe to repeat, retry it in the caller. The retry waits in the offline queue until the client reconnects, so it needs `enableOfflineQueue` on (the default). A retry does not help after the client used up `maxRetries`: the client stays closed until you call `connect()`.
+
+```ts redis.ts icon="/icons/typescript.svg"
+const retryOnce = <T>(command: () => Promise<T>) =>
+  command().catch(error => (error?.code === "ERR_REDIS_CONNECTION_CLOSED" ? command() : Promise.reject(error)));
+
+const value = await retryOnce(() => client.get("key"));
+```
+
+Do not retry a command that follows `WATCH` or that is inside `MULTI`. The new connection is a new server session with no `WATCH` and no open transaction, so a later `EXEC` runs with no guard.
+
+If a NAT or a load balancer drops an idle connection without closing it, the client learns of it only when it sends the next command. A subscriber sends nothing, so it gets no more messages, no rejection and no `onclose`.
+
 When a connection is lost, the client automatically attempts to reconnect with exponential backoff:
 
 1. The client starts with a small delay (50ms) and doubles it with each attempt
